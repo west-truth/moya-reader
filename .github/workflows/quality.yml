@@ -32,3 +32,6 @@ jobs:
         env:
           READER_AUTH_TOKEN: ci-config-check-only
           CORS_ALLOWED_ORIGINS: https://reader.example.test
+      - name: Build hosted images
+        if: github.event_name != 'pull_request'
+        run: docker compose build web api worker
