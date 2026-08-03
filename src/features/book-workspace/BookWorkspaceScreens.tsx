@@ -1,0 +1,263 @@
+import { lazy, Suspense, useEffect, useMemo, useState } from 'react';
+import type { LibraryScreenActions } from '../library/library-screen-contract';
+import { LibraryScreen } from '../library/LibraryScreen';
+import type { BookWorkspaceController } from './book-workspace-controller';
+import type { BookWorkspaceProjection } from './book-workspace-projection';
+import type { BookWorkspaceState } from './book-workspace-contract';
+import type { LibraryManagementController } from '../library/useLibraryManagementController';
+import { useResponsiveLayoutMode } from './useResponsiveLayoutMode';
+
+const ChaptersScreen = lazy(() =>
+  import('../chapters/ChaptersScreen').then((module) => ({ default: module.ChaptersScreen })),
+);
+const LibraryManagementPanel = lazy(() => import('../library/LibraryManagementPanel'));
+
+export interface BookWorkspaceScreensProps {
+  readonly controller: BookWorkspaceController;
+  readonly state: BookWorkspaceState;
+  readonly projection: BookWorkspaceProjection;
+  readonly libraryDrop: {
+    readonly active: boolean;
+    readonly importBusy: boolean;
+    readonly actions: LibraryScreenActions['drag'];
+  };
+  readonly bootstrap: {
+    readonly status: 'loading' | 'ready' | 'failed';
+    readonly message?: string;
+    retry(): void;
+  };
+  readonly sync: { readonly label: string; readonly tone: string };
+  readonly annotationTotals: {
+    readonly bookmarks: number;
+    readonly highlights: number;
+    readonly notes: number;
+  };
+  readonly openSync: () => void;
+  readonly openSettings: () => void;
+  readonly openBackup: () => void;
+  readonly openImport: () => void;
+  readonly openLibraryFolders: () => void;
+  readonly addSample: () => void | Promise<void>;
+  readonly exportSource: (novel: import('../../domain/types').Novel) => void | Promise<void>;
+  readonly reselectSource: (novel: import('../../domain/types').Novel, file: File) => void | Promise<void>;
+  readonly reconstructSource: (novel: import('../../domain/types').Novel) => void | Promise<void>;
+  readonly openChapterStructure: (bookId: string) => void | Promise<void>;
+  readonly libraryManagement: LibraryManagementController;
+}
+
+export function BookWorkspaceScreens({
+  controller,
+  state,
+  projection,
+  libraryDrop,
+  bootstrap,
+  sync,
+  annotationTotals,
+  openSync,
+  openSettings,
+  openBackup,
+  openImport,
+  openLibraryFolders,
+  addSample,
+  exportSource,
+  reselectSource,
+  reconstructSource,
+  openChapterStructure,
+  libraryManagement,
+}: BookWorkspaceScreensProps) {
+  const layoutMode = useResponsiveLayoutMode();
+  const [focusedBookId, setFocusedBookId] = useState<string>();
+  const [inspectorOpen, setInspectorOpen] = useState(false);
+  const activeShelfBookIds = useMemo(
+    () =>
+      libraryManagement.activeShelfId
+        ? new Set(
+            libraryManagement.memberships
+              .filter((membership) => membership.shelfId === libraryManagement.activeShelfId)
+              .map((membership) => membership.bookId),
+          )
+        : undefined,
+    [libraryManagement.activeShelfId, libraryManagement.memberships],
+  );
+  const shelfBookCounts = useMemo(() => {
+    const activeBookIds = new Set(state.novels.filter((novel) => !novel.deletedAt).map((novel) => novel.id));
+    const counts = new Map<string, number>();
+    libraryManagement.memberships.forEach((membership) => {
+      if (!activeBookIds.has(membership.bookId)) return;
+      counts.set(membership.shelfId, (counts.get(membership.shelfId) ?? 0) + 1);
+    });
+    return counts;
+  }, [libraryManagement.memberships, state.novels]);
+  const libraryCollection = useMemo(
+    () =>
+      activeShelfBookIds
+        ? {
+            ...projection.libraryCollection,
+            visibleBooks: projection.libraryCollection.visibleBooks.filter((book) =>
+              activeShelfBookIds.has(book.novel.id),
+            ),
+          }
+        : projection.libraryCollection,
+    [activeShelfBookIds, projection.libraryCollection],
+  );
+
+  useEffect(() => {
+    if (state.view !== 'library') return;
+    if (focusedBookId && libraryCollection.visibleBooks.some((book) => book.novel.id === focusedBookId)) return;
+    const featuredVisible = libraryCollection.visibleBooks.find(
+      (book) => book.novel.id === libraryCollection.featuredBook?.novel.id,
+    );
+    setFocusedBookId(featuredVisible?.novel.id ?? libraryCollection.visibleBooks[0]?.novel.id);
+  }, [focusedBookId, libraryCollection.featuredBook?.novel.id, libraryCollection.visibleBooks, state.view]);
+
+  useEffect(() => {
+    if (layoutMode === 'mobile') setInspectorOpen(false);
+  }, [layoutMode]);
+
+  const focusBook = (novel: import('../../domain/types').Novel) => {
+    setFocusedBookId(novel.id);
+    if (layoutMode === 'compact') setInspectorOpen(true);
+  };
+
+  return (
+    <>
+      {state.view === 'library' && (
+        <LibraryScreen
+          model={{
+            bootstrap: { status: bootstrap.status, message: bootstrap.message },
+            drop: libraryDrop,
+            query: state.libraryQuery,
+            sync,
+            filter: state.libraryFilter,
+            sort: state.librarySort,
+            viewMode: state.libraryViewMode,
+            collection: libraryCollection,
+            presentation: {
+              layoutMode,
+              focusedBookId,
+              inspectorOpen: layoutMode === 'wide' || inspectorOpen,
+              shelfBookCounts,
+            },
+            management: {
+              available: libraryManagement.available,
+              shelves: libraryManagement.shelves,
+              activeShelfId: libraryManagement.activeShelfId,
+              selectionMode: libraryManagement.selectionMode,
+              selectedBookIds: libraryManagement.selectedBookIds,
+              busy: libraryManagement.busy,
+              lastBatchReceipt: libraryManagement.lastBatchReceipt,
+            },
+          }}
+          actions={{
+            drag: libraryDrop.actions,
+            header: {
+              setQuery: controller.setLibraryQuery,
+              retryBootstrap: bootstrap.retry,
+              openSync,
+              openSettings,
+              openBackup,
+              openImport,
+              openLibraryFolders,
+            },
+            presentation: {
+              focusBook,
+              closeInspector: () => setInspectorOpen(false),
+            },
+            controls: {
+              setFilter: controller.setLibraryFilter,
+              setSort: controller.setLibrarySort,
+              setViewMode: controller.setLibraryViewMode,
+              emptyTrash: controller.emptyTrash,
+              setShelf: libraryManagement.setActiveShelf,
+              openShelves: libraryManagement.openShelves,
+              startSelection: libraryManagement.startSelection,
+              selectVisible: () =>
+                libraryManagement.selectBooks(libraryCollection.visibleBooks.map((book) => book.novel.id)),
+              clearSelection: libraryManagement.clearSelection,
+              applyBatch: (command) => libraryManagement.applyBatch(command, state.novels),
+              exportSelectedMetadata: () => libraryManagement.exportSelectedMetadata(state.novels),
+            },
+            books: {
+              open: controller.openNovel,
+              continueReading: controller.continueReading,
+              toggleFavorite: controller.toggleFavorite,
+              remove: controller.removeNovel,
+              restore: controller.restoreNovel,
+              purge: controller.purgeNovel,
+              downloadSource: exportSource,
+              addSample,
+              editMetadata: libraryManagement.openMetadata,
+              toggleSelected: (novel) => libraryManagement.toggleSelected(novel.id),
+            },
+          }}
+        />
+      )}
+
+      {state.view === 'chapters' && state.selectedNovel && projection.selectedNovelScreenBook && (
+        <Suspense fallback={null}>
+          <ChaptersScreen
+            model={{
+              book: projection.selectedNovelScreenBook,
+              titleEditor: { editing: state.bookTitleEditing, draft: state.bookTitleDraft },
+              query: state.chapterQuery,
+              readFilter: state.chapterReadFilter,
+              sort: state.chapterSort,
+              chapterList: projection.chapterList,
+              summary: {
+                readChapterProgress: projection.readChapterProgress,
+                readLocationLabel: projection.readLocationLabel,
+                bookmarkCount: annotationTotals.bookmarks,
+                highlightCount: annotationTotals.highlights,
+                noteCount: annotationTotals.notes,
+                syncLabel: sync.label,
+                firstUnreadChapter: projection.firstUnreadChapter,
+                currentReadTargetChapter: projection.currentReadTargetChapter,
+                canMarkCurrentChapterRead: projection.canMarkCurrentChapterRead,
+                canMarkBookFinished: projection.canMarkBookFinished,
+                canResetBookProgress: projection.canResetBookProgress,
+              },
+            }}
+            actions={{
+              navigation: {
+                backToLibrary: () => controller.setView('library'),
+                continueReading: () => controller.continueReading(),
+                openSettings,
+                openSync,
+                openImport,
+                openStructureEditor: () => void openChapterStructure(state.selectedNovel!.id),
+                openMetadata: () => libraryManagement.openMetadata(state.selectedNovel!),
+              },
+              titleEditor: {
+                start: controller.startBookTitleEdit,
+                cancel: controller.cancelBookTitleEdit,
+                setDraft: controller.setBookTitleDraft,
+                save: controller.saveBookTitle,
+              },
+              book: {
+                toggleFavorite: controller.toggleFavorite,
+                openFirstUnreadChapter: controller.openFirstUnreadChapter,
+                markCurrentChapterRead: controller.markCurrentChapterRead,
+                markFinished: controller.markBookFinished,
+                resetProgress: controller.resetBookProgress,
+                exportSource,
+                reselectSource,
+                reconstructSource,
+              },
+              chapterList: {
+                setQuery: controller.setChapterQuery,
+                setReadFilter: controller.setChapterReadFilter,
+                setSort: controller.setChapterSort,
+                openChapter: controller.openChapterFromList,
+              },
+            }}
+          />
+        </Suspense>
+      )}
+      {libraryManagement.panel && (
+        <Suspense fallback={null}>
+          <LibraryManagementPanel controller={libraryManagement} />
+        </Suspense>
+      )}
+    </>
+  );
+}

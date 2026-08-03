@@ -1,0 +1,47 @@
+{
+  "name": "server",
+  "version": "0.1.0",
+  "private": true,
+  "license": "Apache-2.0",
+  "type": "module",
+  "scripts": {
+    "build": "tsc -p tsconfig.json --noEmit",
+    "bundle": "node build.mjs",
+    "dev": "tsx watch src/index.ts",
+    "migrate": "tsx src/db/migrate.ts",
+    "migrate:production": "node dist/db/migrate.js",
+    "id-v2:migrate": "tsx src/cli/id-v2-migration.ts",
+    "id-v2:migrate:production": "node dist/cli/id-v2-migration.js",
+    "provider:smoke": "tsx src/providers/provider-smoke.ts",
+    "tts:smoke": "tsx src/providers/tts-provider-smoke.ts",
+    "start": "tsx src/index.ts",
+    "start:production": "node dist/index.js",
+    "worker": "tsx src/worker.ts",
+    "worker:production": "node dist/worker.js"
+  },
+  "dependencies": {
+    "7z-wasm": "1.2.0",
+    "@aws-sdk/client-s3": "^3.734.0",
+    "@google/genai": "^2.10.0",
+    "@noble/hashes": "2.0.1",
+    "@xmldom/xmldom": "0.9.10",
+    "@zip.js/zip.js": "2.8.26",
+    "bullmq": "^5.34.3",
+    "fastify": "^5.2.1",
+    "libarchive-wasm": "1.2.0",
+    "node-unrar-js": "2.0.2",
+    "pdfjs-dist": "5.7.284",
+    "pg": "^8.13.1"
+  },
+  "devDependencies": {
+    "@noveldesk/contracts": "workspace:*",
+    "@noveldesk/epub-core": "workspace:*",
+    "@noveldesk/fixed-document-core": "workspace:*",
+    "@noveldesk/text-core": "workspace:*",
+    "@types/node": "^22.10.7",
+    "@types/pg": "^8.11.11",
+    "esbuild": "^0.28.1",
+    "tsx": "^4.19.2",
+    "typescript": "^5.6.3"
+  }
+}

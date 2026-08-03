@@ -1,0 +1,32 @@
+name: Quality
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  hosted-source:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11.7.0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm check
+      - run: docker compose config --quiet
+      - run: docker compose -f compose.yaml -f compose.local-tts.yaml config --quiet
+      - run: docker compose -f compose.yaml -f compose.public.yaml config --quiet
+        env:
+          READER_AUTH_TOKEN: ci-config-check-only
+          CORS_ALLOWED_ORIGINS: https://reader.example.test

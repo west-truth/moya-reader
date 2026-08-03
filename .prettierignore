@@ -1,0 +1,5 @@
+dist
+apps/server/dist
+node_modules
+screenshots
+pnpm-lock.yaml

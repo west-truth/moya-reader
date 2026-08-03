@@ -1,0 +1,83 @@
+{
+  "name": "@noveldesk/text-core",
+  "version": "0.1.0",
+  "private": true,
+  "license": "Apache-2.0",
+  "type": "module",
+  "exports": {
+    "./hash": {
+      "types": "./hash.ts",
+      "default": "./hash.ts"
+    },
+    "./legacy-hash": {
+      "types": "./legacy-hash.ts",
+      "default": "./legacy-hash.ts"
+    },
+    "./normalization": {
+      "types": "./normalization.ts",
+      "default": "./normalization.ts"
+    },
+    "./spoken-text": {
+      "types": "./spoken-text.ts",
+      "default": "./spoken-text.ts"
+    },
+    "./chapter-structure": {
+      "types": "./chapter-structure.ts",
+      "default": "./chapter-structure.ts"
+    },
+    "./speaker-attribution": {
+      "types": "./speaker-attribution.ts",
+      "default": "./speaker-attribution.ts"
+    },
+    "./library-metadata": {
+      "types": "./library-metadata.ts",
+      "default": "./library-metadata.ts"
+    },
+    "./image-format": {
+      "types": "./image-format.ts",
+      "default": "./image-format.ts"
+    },
+    "./parser": {
+      "types": "./parser.ts",
+      "default": "./parser.ts"
+    },
+    "./identity/parser": {
+      "types": "./identity/parser.ts",
+      "default": "./identity/parser.ts"
+    },
+    "./identity/reader": {
+      "types": "./identity/reader.ts",
+      "default": "./identity/reader.ts"
+    },
+    "./identity/ai": {
+      "types": "./identity/ai.ts",
+      "default": "./identity/ai.ts"
+    },
+    "./identity/provider": {
+      "types": "./identity/provider.ts",
+      "default": "./identity/provider.ts"
+    },
+    "./identity/sync": {
+      "types": "./identity/sync.ts",
+      "default": "./identity/sync.ts"
+    },
+    "./identity/tts": {
+      "types": "./identity/tts.ts",
+      "default": "./identity/tts.ts"
+    },
+    "./identity/workflow": {
+      "types": "./identity/workflow.ts",
+      "default": "./identity/workflow.ts"
+    }
+  },
+  "scripts": {
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "@noble/hashes": "2.0.1"
+  },
+  "devDependencies": {
+    "@noveldesk/contracts": "workspace:*",
+    "typescript": "^5.6.3"
+  }
+}

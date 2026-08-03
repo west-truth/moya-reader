@@ -1,0 +1,25 @@
+{
+  "name": "@noveldesk/fixed-document-core",
+  "version": "0.1.0",
+  "private": true,
+  "license": "Apache-2.0",
+  "type": "module",
+  "exports": {
+    ".": "./index.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "7z-wasm": "1.2.0",
+    "@noveldesk/text-core": "workspace:*",
+    "@zip.js/zip.js": "2.8.26",
+    "libarchive-wasm": "1.2.0",
+    "node-unrar-js": "2.0.2",
+    "pdfjs-dist": "5.7.284"
+  },
+  "devDependencies": {
+    "@noveldesk/contracts": "workspace:*",
+    "typescript": "^5.6.3"
+  }
+}

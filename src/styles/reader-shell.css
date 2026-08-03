@@ -1,0 +1,211 @@
+.reader-screen {
+  position: relative;
+  height: 100dvh;
+  overflow: hidden;
+  background: var(--reading-background, var(--reader-canvas));
+}
+
+.top-progress {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  z-index: var(--layer-chrome);
+  height: 2px;
+  background: color-mix(in srgb, var(--border) 35%, transparent);
+}
+
+.reader-topbar,
+.reader-bottombar {
+  position: fixed;
+  left: 0;
+  right: 0;
+  z-index: var(--layer-chrome);
+  justify-content: space-between;
+  min-height: 58px;
+  padding: 8px 14px;
+  background: color-mix(in srgb, var(--reader-surface) 96%, transparent);
+  border-radius: 0;
+  backdrop-filter: blur(16px);
+  opacity: 0;
+  pointer-events: none;
+  transform: translateY(-8px);
+  transition:
+    opacity 180ms ease,
+    transform 180ms ease;
+}
+
+.reader-topbar {
+  top: 0;
+  border-bottom: 1px solid var(--border);
+}
+
+.reader-bottombar {
+  bottom: 0;
+  padding-bottom: max(8px, env(safe-area-inset-bottom, 0px));
+  border-top: 1px solid var(--border);
+  transform: translateY(8px);
+}
+
+.reader-screen.chrome-visible .reader-topbar,
+.reader-screen.chrome-visible .reader-bottombar,
+.reader-screen:hover .reader-topbar,
+.reader-screen:hover .reader-bottombar,
+.reader-topbar:focus-within,
+.reader-bottombar:focus-within,
+.reader-topbar.always-visible,
+.reader-bottombar.always-visible {
+  opacity: 1;
+  pointer-events: auto;
+  transform: translateY(0);
+}
+
+.reader-title {
+  min-width: 0;
+  flex: 1;
+  display: flex;
+  align-items: baseline;
+  gap: 9px;
+}
+
+.reader-title strong,
+.reader-title span {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.reader-title span {
+  color: var(--text-2);
+  font-size: 0.74rem;
+}
+
+.reader-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.reader-scroll {
+  height: 100dvh;
+  overflow: auto;
+  overflow-anchor: none;
+  padding: calc(76px + var(--reading-margin-y)) var(--reading-margin-x) calc(124px + var(--reading-margin-y));
+  background: var(--reading-background, var(--reader-canvas));
+  filter: brightness(var(--reading-brightness, 1));
+}
+
+.reader-screen.addon-open .reader-scroll {
+  padding-right: max(var(--reading-margin-x), calc(var(--reader-panel-width) + 20px));
+}
+
+.reader-scroll.page-flow {
+  overflow-y: hidden;
+  scroll-snap-type: y mandatory;
+}
+
+.reader-scroll.page-flow .reader-virtual-row {
+  scroll-snap-align: start;
+  scroll-snap-stop: always;
+}
+
+.reader-scroll:focus {
+  outline: none;
+}
+
+.reader-scroll:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--primary) 72%, transparent);
+  outline-offset: -3px;
+}
+
+.reader-screen.addon-open .reader-topbar,
+.reader-screen.addon-open .reader-bottombar {
+  right: var(--reader-panel-width);
+}
+
+.reader-mobile-search-toggle {
+  display: none;
+}
+
+.reader-mobile-search {
+  position: fixed;
+  top: 58px;
+  left: 8px;
+  right: 8px;
+  z-index: 28;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px;
+  background: color-mix(in srgb, var(--surface) 96%, transparent);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-panel);
+  box-shadow: var(--shadow-soft);
+  backdrop-filter: blur(16px);
+}
+
+.reader-mobile-search .search-box {
+  min-width: 0;
+  flex: 1;
+}
+
+.reader-search-results-layer {
+  position: fixed;
+  z-index: var(--layer-floating);
+  top: 66px;
+  left: 50%;
+  width: min(460px, calc(100vw - 28px));
+  transform: translateX(-50%);
+}
+
+.reader-overflow {
+  position: relative;
+  display: inline-flex;
+}
+
+.reader-overflow-menu {
+  position: absolute;
+  right: 0;
+  bottom: 44px;
+  z-index: var(--layer-floating);
+  min-width: 150px;
+  display: grid;
+  gap: 2px;
+  padding: 6px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-panel);
+  box-shadow: var(--shadow);
+}
+
+.reader-overflow-menu button {
+  min-height: 34px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 10px;
+  color: var(--text-2);
+  background: transparent;
+  border: 0;
+  border-radius: var(--radius-control);
+  cursor: pointer;
+  text-align: left;
+  white-space: nowrap;
+}
+
+.reader-overflow-menu button:hover,
+.reader-overflow-menu button:focus-visible {
+  color: var(--text);
+  background: var(--surface-2);
+}
+
+.reader-loading::after {
+  content: '본문을 준비하는 중입니다.';
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  color: var(--text-2);
+  font-size: 0.9rem;
+}

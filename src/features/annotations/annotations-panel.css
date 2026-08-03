@@ -1,0 +1,149 @@
+.annotation-panel,
+.annotation-section,
+.annotation-list,
+.note-list {
+  display: grid;
+  gap: 8px;
+}
+
+.annotation-note-editor {
+  display: block;
+}
+
+.note-editor-actions {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+}
+
+.annotation-export-actions {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.annotation-export-actions .ghost-btn {
+  min-width: 0;
+  padding-inline: 8px;
+}
+
+.annotation-row {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 30px;
+  align-items: center;
+  gap: 6px;
+  padding: 5px;
+  background: var(--surface-2);
+  border: 1px solid transparent;
+  border-radius: var(--radius);
+}
+
+.annotation-row-main {
+  min-width: 0;
+  display: grid;
+  gap: 4px;
+  padding: 5px;
+  color: var(--text);
+  text-align: left;
+  background: transparent;
+  border: 0;
+  cursor: pointer;
+}
+
+.annotation-row-main span,
+.annotation-row-main small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.annotation-row-main small {
+  color: var(--text-2);
+}
+
+.highlight-palette {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.highlight-swatch {
+  width: 34px;
+  height: 34px;
+  border: 1px solid var(--border);
+  border-radius: 50%;
+  cursor: pointer;
+  box-shadow: inset 0 0 0 3px color-mix(in srgb, var(--surface) 82%, transparent);
+}
+
+.highlight-swatch.active {
+  border-color: var(--primary);
+  box-shadow:
+    inset 0 0 0 3px color-mix(in srgb, var(--surface) 82%, transparent),
+    0 0 0 2px color-mix(in srgb, var(--primary) 52%, transparent);
+}
+
+.highlight-swatch.yellow {
+  background: #facc15;
+}
+
+.highlight-swatch.green {
+  background: #22c55e;
+}
+
+.highlight-swatch.blue {
+  background: #38bdf8;
+}
+
+.highlight-swatch.pink {
+  background: #f472b6;
+}
+
+.note-list article {
+  padding: 10px;
+  background: var(--surface-2);
+  border: 1px solid transparent;
+  border-radius: var(--radius);
+}
+
+.note-list article.is-editing {
+  border-color: color-mix(in srgb, var(--primary) 55%, var(--border));
+  background: color-mix(in srgb, var(--primary) 8%, var(--surface-2));
+}
+
+.note-list blockquote {
+  margin: 0 0 8px;
+  padding-left: 10px;
+  color: var(--text-2);
+  border-left: 3px solid var(--accent);
+}
+
+.note-list article > small {
+  display: block;
+  margin-top: 8px;
+  color: var(--muted);
+  font-size: 0.76rem;
+}
+
+.note-list footer {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.note-list footer button {
+  min-height: 30px;
+  padding: 0 10px;
+  color: var(--text-2);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  cursor: pointer;
+}
+
+.note-list footer button:hover {
+  color: var(--text);
+  border-color: color-mix(in srgb, var(--primary) 35%, var(--border));
+}

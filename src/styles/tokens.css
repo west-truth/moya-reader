@@ -1,0 +1,154 @@
+:root {
+  color-scheme: light;
+
+  --app-canvas: #f5f3ed;
+  --app-surface: #fbfaf6;
+  --app-surface-strong: #ffffff;
+  --app-surface-muted: #efede6;
+  --app-surface-hover: #eae8e0;
+  --app-text: #242520;
+  --app-text-strong: #171814;
+  --app-text-muted: #777970;
+  --app-text-faint: #a1a399;
+  --app-line: #d9d7cf;
+  --app-line-strong: #c9c7be;
+  --app-accent: #59634a;
+  --app-accent-strong: #48513d;
+  --app-accent-soft: #e4e7dd;
+  --app-accent-contrast: #ffffff;
+  --app-danger: #934b44;
+  --app-warning: #996627;
+  --app-rail-background: #22231f;
+  --app-rail-text: #f5f3ed;
+  --app-rail-muted: #a7aaa1;
+
+  /* Compatibility aliases used by the current feature styles. */
+  --bg: var(--app-canvas);
+  --surface: var(--app-surface);
+  --surface-2: var(--app-surface-muted);
+  --border: var(--app-line);
+  --border-strong: var(--app-line-strong);
+  --text: var(--app-text);
+  --text-2: var(--app-text-muted);
+  --muted: var(--app-text-faint);
+  --primary: var(--app-accent);
+  --primary-2: var(--app-accent-strong);
+  --accent: var(--app-accent);
+  --danger: var(--app-danger);
+  --warning: var(--app-warning);
+
+  --reader-canvas: var(--app-canvas);
+  --reader-surface: var(--app-surface);
+  --reader-text: var(--app-text);
+  --reader-muted: var(--app-text-muted);
+  --reader-line: var(--app-line);
+
+  --shadow: 0 18px 52px rgba(30, 31, 27, 0.13);
+  --shadow-soft: 0 6px 20px rgba(30, 31, 27, 0.09);
+  --radius: 4px;
+  --radius-control: 3px;
+  --radius-panel: 4px;
+  --radius-overlay: 6px;
+
+  --app-rail-width: 58px;
+  --library-sidebar-width: 220px;
+  --library-inspector-width: 310px;
+  --reader-panel-width: 370px;
+  --app-topbar-height: 58px;
+  --reader-bottombar-height: 64px;
+
+  --layer-chrome: 20;
+  --layer-floating: 40;
+  --layer-drawer: 70;
+  --layer-dialog: 100;
+  --layer-toast: 120;
+
+  --font-ui: 'Pretendard Variable', Pretendard, 'Segoe UI', 'Malgun Gothic', Arial, sans-serif;
+  --font-serif: 'Noto Serif KR', 'KoPub Batang', 'Batang', Georgia, serif;
+  --font-sans: 'Pretendard Variable', Pretendard, 'Segoe UI', 'Malgun Gothic', Arial, sans-serif;
+  --font-mono: 'JetBrains Mono', 'D2Coding', Consolas, monospace;
+  --reading-font-size: 18px;
+  --reading-line-height: 1.85;
+  --reading-paragraph-spacing: 1.15em;
+  --reading-margin-x: 12vw;
+  --reading-width: 760px;
+}
+
+[data-theme='dark'] {
+  color-scheme: dark;
+
+  --app-canvas: #141513;
+  --app-surface: #191a18;
+  --app-surface-strong: #20211f;
+  --app-surface-muted: #252724;
+  --app-surface-hover: #292b28;
+  --app-text: #e5e6e1;
+  --app-text-strong: #f5f5ef;
+  --app-text-muted: #979b93;
+  --app-text-faint: #6f736c;
+  --app-line: #30332f;
+  --app-line-strong: #424640;
+  --app-accent: #7d96a2;
+  --app-accent-strong: #93aab4;
+  --app-accent-soft: #27343a;
+  --app-accent-contrast: #101614;
+  --app-danger: #c5766f;
+  --app-warning: #d1a45f;
+  --app-rail-background: #0e100f;
+  --app-rail-text: #f0f1ec;
+  --app-rail-muted: #858a82;
+  --shadow: 0 18px 54px rgba(0, 0, 0, 0.44);
+  --shadow-soft: 0 7px 24px rgba(0, 0, 0, 0.3);
+}
+
+[data-theme='sepia'] {
+  color-scheme: light;
+
+  --app-canvas: #eee4d3;
+  --app-surface: #faf3e6;
+  --app-surface-strong: #fffaf0;
+  --app-surface-muted: #e5d8c3;
+  --app-surface-hover: #dfd0b8;
+  --app-text: #34291f;
+  --app-text-strong: #251c15;
+  --app-text-muted: #6f5c49;
+  --app-text-faint: #927d66;
+  --app-line: #cfbda2;
+  --app-line-strong: #bca789;
+  --app-accent: #6c7350;
+  --app-accent-strong: #555d3d;
+  --app-accent-soft: #e1e1cf;
+  --app-accent-contrast: #ffffff;
+  --app-danger: #9b554d;
+  --app-warning: #966522;
+  --app-rail-background: #29241e;
+  --app-rail-text: #f8efe1;
+  --app-rail-muted: #aa9d8b;
+}
+
+[data-theme='midnight'] {
+  color-scheme: dark;
+
+  --app-canvas: #101318;
+  --app-surface: #171b21;
+  --app-surface-strong: #1e232b;
+  --app-surface-muted: #222833;
+  --app-surface-hover: #29313d;
+  --app-text: #e3e7eb;
+  --app-text-strong: #f3f6f8;
+  --app-text-muted: #9ca6b2;
+  --app-text-faint: #697482;
+  --app-line: #303844;
+  --app-line-strong: #46515e;
+  --app-accent: #8097ae;
+  --app-accent-strong: #97abc0;
+  --app-accent-soft: #263443;
+  --app-accent-contrast: #11161c;
+  --app-danger: #c57676;
+  --app-warning: #d2a45c;
+  --app-rail-background: #0b0e12;
+  --app-rail-text: #edf1f5;
+  --app-rail-muted: #7f8995;
+  --shadow: 0 18px 54px rgba(0, 0, 0, 0.5);
+  --shadow-soft: 0 7px 24px rgba(0, 0, 0, 0.34);
+}

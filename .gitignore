@@ -1,0 +1,43 @@
+# Dependencies
+node_modules/
+
+# Frontend build output
+dist/
+
+# Hosted server build output
+apps/server/dist/
+
+# Local runtime/cache files
+.DS_Store
+Thumbs.db
+*.log
+__pycache__/
+*.pyc
+
+# Local environment files
+.env
+.env.*
+!.env.example
+vertex env/
+vertex env/**
+secrets/vertex/*
+!secrets/vertex/.gitkeep
+
+# Local hosted data and credentials
+.codex-provider-pg/
+.server-test-data/
+coverage/
+
+# Generated verification captures
+screenshots/
+fixtures/generated/
+
+# Development-repository material must never enter this deployment repository
+AGENTS.md
+artifacts/
+handoff/
+test_novel/
+.noveldesk-lab/
+smart-novel-reader-codex-pack/
+speaker-review-studio/
+ui-reference/

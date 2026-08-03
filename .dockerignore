@@ -1,0 +1,44 @@
+.git
+.github
+.idea
+.vscode
+AGENTS.md
+
+# Internal planning, review packets, and local artifacts are not image inputs
+artifacts/
+docs/
+handoff/
+.noveldesk-lab/
+scripts/
+speaker-review-studio/
+
+# Local credentials and runtime data
+vertex env/
+vertex env/**
+secrets/
+.codex-provider-pg/
+.server-test-data/
+
+node_modules
+**/node_modules
+.pnpm-store
+
+dist
+coverage
+screenshots
+fixtures/generated/
+
+# Test corpora and design/reference packs are not build inputs
+test_novel/
+smart-novel-reader-codex-pack/
+ui-reference/
+
+# Native desktop/mobile sources are not used by the hosted images
+src-tauri/
+
+*.log
+*.tmp
+*.local
+.env
+.env.*
+!.env.example

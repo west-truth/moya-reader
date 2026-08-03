@@ -1,0 +1,35 @@
+{
+  "version": 1,
+  "projectLicense": "Apache-2.0",
+  "requiredNoticeFiles": [
+    "LICENSE",
+    "THIRD_PARTY_NOTICES.md",
+    "third_party/licenses/7z-wasm/License.txt",
+    "third_party/licenses/common/LGPL-2.1.txt",
+    "third_party/licenses/common/unRarLicense.txt",
+    "third_party/licenses/node-unrar-js/LICENSE.md"
+  ],
+  "componentExceptions": [
+    {
+      "component": "7z-wasm@1.2.0",
+      "reportedLicense": "SEE LICENSE IN License.txt",
+      "notice": "THIRD_PARTY_NOTICES.md"
+    },
+    {
+      "component": "libarchive-wasm@1.2.0",
+      "reportedLicense": "MIT",
+      "notice": "THIRD_PARTY_NOTICES.md"
+    },
+    {
+      "component": "node-unrar-js@2.0.2",
+      "reportedLicense": "MIT",
+      "notice": "THIRD_PARTY_NOTICES.md"
+    }
+  ],
+  "releaseBlockers": [
+    "7z-wasm-corresponding-source-and-relink-offer",
+    "libarchive-wasm-binary-license-and-source-capture",
+    "container-and-python-dependency-inventory",
+    "release-artifact-notice-inspection"
+  ]
+}

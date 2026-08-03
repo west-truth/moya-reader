@@ -1,0 +1,1267 @@
+{
+  "format": "noveldesk-production-license-inventory",
+  "version": 1,
+  "scope": "pnpm production dependencies for the web and Hosted server workspaces",
+  "source": "pnpm licenses list --prod --json",
+  "summary": {
+    "componentCount": 178,
+    "byLicense": {
+      "0BSD": 1,
+      "Apache-2.0": 39,
+      "Apache-2.0 OR MIT": 1,
+      "BSD-2-Clause": 1,
+      "BSD-3-Clause": 15,
+      "ISC": 5,
+      "MIT": 115,
+      "SEE LICENSE IN License.txt": 1
+    }
+  },
+  "components": [
+    {
+      "ecosystem": "npm",
+      "name": "@aws-sdk/checksums",
+      "version": "3.1000.12",
+      "license": "Apache-2.0",
+      "homepage": "https://github.com/aws/aws-sdk-js-v3/tree/main/packages-internal/checksums"
+    },
+    {
+      "ecosystem": "npm",
+      "name": "@aws-sdk/client-s3",
+      "version": "3.1079.0",
+      "license": "Apache-2.0",
+      "homepage": "https://github.com/aws/aws-sdk-js-v3/tree/main/clients/client-s3"
+    },
+    {
+      "ecosystem": "npm",
+      "name": "@aws-sdk/core",
+      "version": "3.974.27",
+      "license": "Apache-2.0",
+      "homepage": "https://github.com/aws/aws-sdk-js-v3/tree/main/packages-internal/core"
+    },
+    {
+      "ecosystem": "npm",
+      "name": "@aws-sdk/credential-provider-env",
+      "version": "3.972.53",
+      "license": "Apache-2.0",
+      "homepage": "https://github.com/aws/aws-sdk-js-v3/tree/main/packages-internal/credential-provider-env"
+    },
+    {
+      "ecosystem": "npm",
+      "name": "@aws-sdk/credential-provider-http",
+      "version": "3.972.55",
+      "license": "Apache-2.0",
+      "homepage": "https://github.com/aws/aws-sdk-js-v3/tree/main/packages-internal/credential-provider-http"
+    },
+    {
+      "ecosystem": "npm",
+      "name": "@aws-sdk/credential-provider-ini",
+      "version": "3.972.60",
+      "license": "Apache-2.0",
+      "homepage": "https://github.com/aws/aws-sdk-js-v3/tree/main/packages-internal/credential-provider-ini"
+    },
+    {
+      "ecosystem": "npm",
+      "name": "@aws-sdk/credential-provider-login",
+      "version": "3.972.59",
+      "license": "Apache-2.0",
+      "homepage": "https://github.com/aws/aws-sdk-js-v3/tree/main/packages-internal/credential-provider-login"
+    },
+    {
+      "ecosystem": "npm",
+      "name": "@aws-sdk/credential-provider-node",
+      "version": "3.972.62",
+      "license": "Apache-2.0",
+      "homepage": "https://github.com/aws/aws-sdk-js-v3/tree/main/packages-internal/credential-provider-node"
+    },
+    {
+      "ecosystem": "npm",
+      "name": "@aws-sdk/credential-provider-process",
+      "version": "3.972.53",
+      "license": "Apache-2.0",
+      "homepage": "https://github.com/aws/aws-sdk-js-v3/tree/main/packages-internal/credential-provider-process"
+    },
+    {
+      "ecosystem": "npm",
+      "name": "@aws-sdk/credential-provider-sso",
+      "version": "3.972.59",
+      "license": "Apache-2.0",
+      "homepage": "https://github.com/aws/aws-sdk-js-v3/tree/main/packages-internal/credential-provider-sso"
+    },
+    {
+      "ecosystem": "npm",
+      "name": "@aws-sdk/credential-provider-web-identity",
+      "version": "3.972.59",
+      "license": "Apache-2.0",
+      "homepage": "https://github.com/aws/aws-sdk-js-v3/tree/main/packages-internal/credential-provider-web-identity"
+    },
+    {
+      "ecosystem": "npm",
+      "name": "@aws-sdk/middleware-sdk-s3",
+      "version": "3.972.58",
+      "license": "Apache-2.0",
+      "homepage": "https://github.com/aws/aws-sdk-js-v3/tree/main/packages-internal/middleware-sdk-s3"
+    },
+    {
+      "ecosystem": "npm",
+      "name": "@aws-sdk/nested-clients",
+      "version": "3.997.27",
+      "license": "Apache-2.0",
+      "homepage": "https://github.com/aws/aws-sdk-js-v3/tree/main/packages/nested-clients"
+    },
+    {
+      "ecosystem": "npm",
+      "name": "@aws-sdk/signature-v4-multi-region",
+      "version": "3.996.38",
+      "license": "Apache-2.0",
+      "homepage": "https://github.com/aws/aws-sdk-js-v3/tree/main/packages/signature-v4-multi-region"
+    },
+    {
+      "ecosystem": "npm",
+      "name": "@aws-sdk/token-providers",
+      "version": "3.1079.0",
+      "license": "Apache-2.0",
+      "homepage": "https://github.com/aws/aws-sdk-js-v3/tree/main/packages/token-providers"
+    },
+    {
+      "ecosystem": "npm",
+      "name": "@aws-sdk/types",
+      "version": "3.973.15",
+      "license": "Apache-2.0",
+      "homepage": "https://github.com/aws/aws-sdk-js-v3/tree/main/packages-internal/types"
+    },
+    {
+      "ecosystem": "npm",
+      "name": "@aws-sdk/xml-builder",
+      "version": "3.972.33",
+      "license": "Apache-2.0",
+      "homepage": "https://github.com/aws/aws-sdk-js-v3/tree/main/packages-internal/xml-builder"
+    },
+    {
+      "ecosystem": "npm",
+      "name": "@aws/lambda-invoke-store",
+      "version": "0.3.0",
+      "license": "Apache-2.0",
+      "homepage": "https://github.com/awslabs/aws-lambda-invoke-store"
+    },
+    {
+      "ecosystem": "npm",
+      "name": "@fastify/ajv-compiler",
+      "version": "4.0.5",
+      "license": "MIT",
+      "homepage": "https://github.com/fastify/ajv-compiler#readme"
+    },
+    {
+      "ecosystem": "npm",
+      "name": "@fastify/error",
+      "version": "4.2.0",
+      "license": "MIT",
+      "homepage": "https://github.com/fastify/fastify-error#readme"
+    },
+    {
+      "ecosystem": "npm",
+      "name": "@fastify/fast-json-stringify-compiler",
+      "version": "5.0.3",
+      "license": "MIT",
+      "homepage": "https://github.com/fastify/fast-json-stringify-compiler#readme"
+    },
+    {
+      "ecosystem": "npm",
+      "name": "@fastify/forwarded",
+      "version": "3.0.1",
+      "license": "MIT",
+      "homepage": "https://github.com/fastify/forwarded#readme"
+    },
+    {
+      "ecosystem": "npm",
+      "name": "@fastify/merge-json-schemas",
+      "version": "0.2.1",
+      "license": "MIT",
+      "homepage": "https://github.com/fastify/merge-json-schemas#readme"
+    },
+    {
+      "ecosystem": "npm",
+      "name": "@fastify/proxy-addr",
+      "version": "5.1.0",
+      "license": "MIT",
+      "homepage": "https://github.com/fastify/proxy-addr#readme"
+    },
+    {
+      "ecosystem": "npm",
+      "name": "@google/genai",
+      "version": "2.10.0",
+      "license": "Apache-2.0",
+      "homepage": "https://github.com/googleapis/js-genai#readme"
+    },
+    {
+      "ecosystem": "npm",
+      "name": "@ioredis/commands",
+      "version": "1.5.1",
+      "license": "MIT",
+      "homepage": "https://github.com/ioredis/commands"
+    },
+    {
+      "ecosystem": "npm",
+      "name": "@msgpackr-extract/msgpackr-extract-win32-x64",
+      "version": "3.0.4",
+      "license": "MIT",
+      "homepage": "https://github.com/kriszyp/msgpackr-extract#readme"
+    },
+    {
+      "ecosystem": "npm",
+      "name": "@napi-rs/canvas",
+      "version": "0.1.100",
+      "license": "MIT",
+      "homepage": "https://github.com/Brooooooklyn/canvas#readme"
+    },
+    {
+      "ecosystem": "npm",
+      "name": "@napi-rs/canvas-win32-x64-msvc",
+      "version": "0.1.100",
+      "license": "MIT",
+      "homepage": "https://github.com/Brooooooklyn/canvas#readme"
+    },
+    {
+      "ecosystem": "npm",
+      "name": "@noble/hashes",
+      "version": "2.0.1",
+      "license": "MIT",
+      "homepage": "https://paulmillr.com/noble/"
+    },
+    {
+      "ecosystem": "npm",
+      "name": "@pinojs/redact",
+      "version": "0.4.0",
+      "license": "MIT",
+      "homepage": "https://github.com/pinojs/redact#readme"
+    },
+    {
+      "ecosystem": "npm",
+      "name": "@protobufjs/aspromise",
+      "version": "1.1.2",
+      "license": "BSD-3-Clause",
+      "homepage": "https://github.com/dcodeIO/protobuf.js#readme"
+    },
+    {
+      "ecosystem": "npm",
+      "name": "@protobufjs/base64",
+      "version": "1.1.2",
+      "license": "BSD-3-Clause",
+      "homepage": "https://github.com/dcodeIO/protobuf.js#readme"
+    },
+    {
+      "ecosystem": "npm",
+      "name": "@protobufjs/codegen",
+      "version": "2.0.5",
+      "license": "BSD-3-Clause",
+      "homepage": "https://github.com/dcodeIO/protobuf.js#readme"
+    },
+    {
+      "ecosystem": "npm",
+      "name": "@protobufjs/eventemitter",
+      "version": "1.1.1",
+      "license": "BSD-3-Clause",
+      "homepage": "https://github.com/dcodeIO/protobuf.js#readme"
+    },
+    {
+      "ecosystem": "npm",
+      "name": "@protobufjs/fetch",
+      "version": "1.1.1",
+      "license": "BSD-3-Clause",
+      "homepage": "https://github.com/dcodeIO/protobuf.js#readme"
+    },
+    {
+      "ecosystem": "npm",
+      "name": "@protobufjs/float",
+      "version": "1.0.2",
+      "license": "BSD-3-Clause",
+      "homepage": "https://github.com/dcodeIO/protobuf.js#readme"
+    },
+    {
+      "ecosystem": "npm",
+      "name": "@protobufjs/path",
+      "version": "1.1.2",
+      "license": "BSD-3-Clause",
+      "homepage": "https://github.com/dcodeIO/protobuf.js#readme"
+    },
+    {
+      "ecosystem": "npm",
+      "name": "@protobufjs/pool",
+      "version": "1.1.0",
+      "license": "BSD-3-Clause",
+      "homepage": "https://github.com/dcodeIO/protobuf.js#readme"
+    },
+    {
+      "ecosystem": "npm",
+      "name": "@protobufjs/utf8",
+      "version": "1.1.1",
+      "license": "BSD-3-Clause",
+      "homepage": "https://github.com/dcodeIO/protobuf.js#readme"
+    },
+    {
+      "ecosystem": "npm",
+      "name": "@smithy/core",
+      "version": "3.29.1",
+      "license": "Apache-2.0",
+      "homepage": "https://github.com/smithy-lang/smithy-typescript/tree/main/packages/core"
+    },
+    {
+      "ecosystem": "npm",
+      "name": "@smithy/credential-provider-imds",
+      "version": "4.4.6",
+      "license": "Apache-2.0",
+      "homepage": "https://github.com/smithy-lang/smithy-typescript/tree/main/packages/credential-provider-imds"
+    },
+    {
+      "ecosystem": "npm",
+      "name": "@smithy/fetch-http-handler",
+      "version": "5.6.3",
+      "license": "Apache-2.0",
+      "homepage": "https://github.com/smithy-lang/smithy-typescript/tree/main/packages/fetch-http-handler"
+    },
+    {
+      "ecosystem": "npm",
+      "name": "@smithy/node-http-handler",
+      "version": "4.9.3",
+      "license": "Apache-2.0",
+      "homepage": "https://github.com/smithy-lang/smithy-typescript/tree/main/packages/node-http-handler"
+    },
+    {
+      "ecosystem": "npm",
+      "name": "@smithy/signature-v4",
+      "version": "5.6.2",
+      "license": "Apache-2.0",
+      "homepage": "https://github.com/smithy-lang/smithy-typescript/tree/main/packages/signature-v4"
+    },
+    {
+      "ecosystem": "npm",
+      "name": "@smithy/types",
+      "version": "4.15.1",
+      "license": "Apache-2.0",
+      "homepage": "https://github.com/smithy-lang/smithy-typescript/tree/main/packages/types"
+    },
+    {
+      "ecosystem": "npm",
+      "name": "@tanstack/react-virtual",
+      "version": "3.14.5",
+      "license": "MIT",
+      "homepage": "https://tanstack.com/virtual"
+    },
+    {
+      "ecosystem": "npm",
+      "name": "@tanstack/virtual-core",
+      "version": "3.17.3",
+      "license": "MIT",
+      "homepage": "https://tanstack.com/virtual"
+    },
+    {
+      "ecosystem": "npm",
+      "name": "@tauri-apps/api",
+      "version": "2.11.1",
+      "license": "Apache-2.0 OR MIT",
+      "homepage": "https://github.com/tauri-apps/tauri#readme"
+    },
+    {
+      "ecosystem": "npm",
+      "name": "@types/node",
+      "version": "22.20.0",
+      "license": "MIT",
+      "homepage": "https://github.com/DefinitelyTyped/DefinitelyTyped/tree/master/types/node"
+    },
+    {
+      "ecosystem": "npm",
+      "name": "@types/retry",
+      "version": "0.12.0",
+      "license": "MIT",
+      "homepage": "https://github.com/DefinitelyTyped/DefinitelyTyped#readme"
+    },
+    {
+      "ecosystem": "npm",
+      "name": "@xmldom/xmldom",
+      "version": "0.9.10",
+      "license": "MIT",
+      "homepage": "https://github.com/xmldom/xmldom"
+    },
+    {
+      "ecosystem": "npm",
+      "name": "@zip.js/zip.js",
+      "version": "2.8.26",
+      "license": "BSD-3-Clause",
+      "homepage": "https://gildas-lormeau.github.io/zip.js"
+    },
+    {
+      "ecosystem": "npm",
+      "name": "7z-wasm",
+      "version": "1.2.0",
+      "license": "SEE LICENSE IN License.txt",
+      "homepage": "https://github.com/use-strict/7z-wasm#README.md"
+    },
+    {
+      "ecosystem": "npm",
+      "name": "abstract-logging",
+      "version": "2.0.1",
+      "license": "MIT",
+      "homepage": "https://github.com/jsumners/abstract-logging#readme"
+    },
+    {
+      "ecosystem": "npm",
+      "name": "agent-base",
+      "version": "7.1.4",
+      "license": "MIT",
+      "homepage": "https://github.com/TooTallNate/proxy-agents#readme"
+    },
+    {
+      "ecosystem": "npm",
+      "name": "ajv",
+      "version": "8.20.0",
+      "license": "MIT",
+      "homepage": "https://ajv.js.org"
+    },
+    {
+      "ecosystem": "npm",
+      "name": "ajv-formats",
+      "version": "3.0.1",
+      "license": "MIT",
+      "homepage": "https://github.com/ajv-validator/ajv-formats#readme"
+    },
+    {
+      "ecosystem": "npm",
+      "name": "atomic-sleep",
+      "version": "1.0.0",
+      "license": "MIT",
+      "homepage": "https://github.com/davidmarkclements/atomic-sleep#readme"
+    },
+    {
+      "ecosystem": "npm",
+      "name": "avvio",
+      "version": "9.2.0",
+      "license": "MIT",
+      "homepage": "https://github.com/fastify/avvio#readme"
+    },
+    {
+      "ecosystem": "npm",
+      "name": "base64-js",
+      "version": "1.5.1",
+      "license": "MIT",
+      "homepage": "https://github.com/beatgammit/base64-js"
+    },
+    {
+      "ecosystem": "npm",
+      "name": "bignumber.js",
+      "version": "9.3.1",
+      "license": "MIT",
+      "homepage": "https://github.com/MikeMcl/bignumber.js#readme"
+    },
+    {
+      "ecosystem": "npm",
+      "name": "bmp-js",
+      "version": "0.1.0",
+      "license": "MIT",
+      "homepage": "https://github.com/shaozilee/bmp-js#readme"
+    },
+    {
+      "ecosystem": "npm",
+      "name": "bowser",
+      "version": "2.14.1",
+      "license": "MIT",
+      "homepage": "https://github.com/bowser-js/bowser"
+    },
+    {
+      "ecosystem": "npm",
+      "name": "buffer-equal-constant-time",
+      "version": "1.0.1",
+      "license": "BSD-3-Clause",
+      "homepage": "https://github.com/goinstant/buffer-equal-constant-time#readme"
+    },
+    {
+      "ecosystem": "npm",
+      "name": "bullmq",
+      "version": "5.79.2",
+      "license": "MIT",
+      "homepage": "https://bullmq.io/"
+    },
+    {
+      "ecosystem": "npm",
+      "name": "cluster-key-slot",
+      "version": "1.1.2",
+      "license": "Apache-2.0",
+      "homepage": "https://github.com/Salakar/cluster-key-slot#readme"
+    },
+    {
+      "ecosystem": "npm",
+      "name": "cookie",
+      "version": "1.1.1",
+      "license": "MIT",
+      "homepage": "https://github.com/jshttp/cookie#readme"
+    },
+    {
+      "ecosystem": "npm",
+      "name": "cron-parser",
+      "version": "4.9.0",
+      "license": "MIT",
+      "homepage": "https://github.com/harrisiirak/cron-parser#readme"
+    },
+    {
+      "ecosystem": "npm",
+      "name": "data-uri-to-buffer",
+      "version": "4.0.1",
+      "license": "MIT",
+      "homepage": "https://github.com/TooTallNate/node-data-uri-to-buffer"
+    },
+    {
+      "ecosystem": "npm",
+      "name": "debug",
+      "version": "4.4.3",
+      "license": "MIT",
+      "homepage": "https://github.com/debug-js/debug#readme"
+    },
+    {
+      "ecosystem": "npm",
+      "name": "denque",
+      "version": "2.1.0",
+      "license": "Apache-2.0",
+      "homepage": "https://docs.page/invertase/denque"
+    },
+    {
+      "ecosystem": "npm",
+      "name": "dequal",
+      "version": "2.0.3",
+      "license": "MIT",
+      "homepage": "https://github.com/lukeed/dequal#readme"
+    },
+    {
+      "ecosystem": "npm",
+      "name": "detect-libc",
+      "version": "2.1.2",
+      "license": "Apache-2.0",
+      "homepage": "https://github.com/lovell/detect-libc#readme"
+    },
+    {
+      "ecosystem": "npm",
+      "name": "ecdsa-sig-formatter",
+      "version": "1.0.11",
+      "license": "Apache-2.0",
+      "homepage": "https://github.com/Brightspace/node-ecdsa-sig-formatter#readme"
+    },
+    {
+      "ecosystem": "npm",
+      "name": "extend",
+      "version": "3.0.2",
+      "license": "MIT",
+      "homepage": "https://github.com/justmoon/node-extend#readme"
+    },
+    {
+      "ecosystem": "npm",
+      "name": "fast-decode-uri-component",
+      "version": "1.0.1",
+      "license": "MIT",
+      "homepage": "https://github.com/delvedor/fast-decode-uri-component#readme"
+    },
+    {
+      "ecosystem": "npm",
+      "name": "fast-deep-equal",
+      "version": "3.1.3",
+      "license": "MIT",
+      "homepage": "https://github.com/epoberezkin/fast-deep-equal#readme"
+    },
+    {
+      "ecosystem": "npm",
+      "name": "fast-json-stringify",
+      "version": "6.4.0",
+      "license": "MIT",
+      "homepage": "https://github.com/fastify/fast-json-stringify#readme"
+    },
+    {
+      "ecosystem": "npm",
+      "name": "fast-querystring",
+      "version": "1.1.2",
+      "license": "MIT",
+      "homepage": "https://github.com/anonrig/fast-querystring#readme"
+    },
+    {
+      "ecosystem": "npm",
+      "name": "fast-uri",
+      "version": "3.1.3",
+      "license": "BSD-3-Clause",
+      "homepage": "https://github.com/fastify/fast-uri"
+    },
+    {
+      "ecosystem": "npm",
+      "name": "fastify",
+      "version": "5.9.0",
+      "license": "MIT",
+      "homepage": "https://fastify.dev/"
+    },
+    {
+      "ecosystem": "npm",
+      "name": "fastq",
+      "version": "1.20.1",
+      "license": "ISC",
+      "homepage": "https://github.com/mcollina/fastq#readme"
+    },
+    {
+      "ecosystem": "npm",
+      "name": "fetch-blob",
+      "version": "3.2.0",
+      "license": "MIT",
+      "homepage": "https://github.com/node-fetch/fetch-blob#readme"
+    },
+    {
+      "ecosystem": "npm",
+      "name": "find-my-way",
+      "version": "9.6.0",
+      "license": "MIT",
+      "homepage": "https://github.com/delvedor/find-my-way#readme"
+    },
+    {
+      "ecosystem": "npm",
+      "name": "formdata-polyfill",
+      "version": "4.0.10",
+      "license": "MIT",
+      "homepage": "https://github.com/jimmywarting/FormData#readme"
+    },
+    {
+      "ecosystem": "npm",
+      "name": "gaxios",
+      "version": "7.1.5",
+      "license": "Apache-2.0",
+      "homepage": "https://github.com/googleapis/google-cloud-node-core/tree/main/packages/gaxios"
+    },
+    {
+      "ecosystem": "npm",
+      "name": "gcp-metadata",
+      "version": "8.1.2",
+      "license": "Apache-2.0",
+      "homepage": "https://github.com/googleapis/google-cloud-node-core/tree/main/packages/gcp-metadata"
+    },
+    {
+      "ecosystem": "npm",
+      "name": "google-auth-library",
+      "version": "10.9.0",
+      "license": "Apache-2.0",
+      "homepage": "https://github.com/googleapis/google-cloud-node/tree/main/core/packages/google-auth-library-nodejs"
+    },
+    {
+      "ecosystem": "npm",
+      "name": "google-logging-utils",
+      "version": "1.1.3",
+      "license": "Apache-2.0",
+      "homepage": "https://github.com/googleapis/google-cloud-node-core/tree/main/dev-packages/logging-utils"
+    },
+    {
+      "ecosystem": "npm",
+      "name": "https-proxy-agent",
+      "version": "7.0.6",
+      "license": "MIT",
+      "homepage": "https://github.com/TooTallNate/proxy-agents#readme"
+    },
+    {
+      "ecosystem": "npm",
+      "name": "idb-keyval",
+      "version": "6.3.0",
+      "license": "Apache-2.0",
+      "homepage": "https://github.com/jakearchibald/idb-keyval#readme"
+    },
+    {
+      "ecosystem": "npm",
+      "name": "ioredis",
+      "version": "5.10.1",
+      "license": "MIT",
+      "homepage": "https://github.com/luin/ioredis#readme"
+    },
+    {
+      "ecosystem": "npm",
+      "name": "ipaddr.js",
+      "version": "2.4.0",
+      "license": "MIT",
+      "homepage": "https://github.com/whitequark/ipaddr.js#readme"
+    },
+    {
+      "ecosystem": "npm",
+      "name": "is-url",
+      "version": "1.2.4",
+      "license": "MIT",
+      "homepage": "https://github.com/segmentio/is-url#readme"
+    },
+    {
+      "ecosystem": "npm",
+      "name": "js-tokens",
+      "version": "4.0.0",
+      "license": "MIT",
+      "homepage": "https://github.com/lydell/js-tokens#readme"
+    },
+    {
+      "ecosystem": "npm",
+      "name": "json-bigint",
+      "version": "1.0.0",
+      "license": "MIT",
+      "homepage": "https://github.com/sidorares/json-bigint#readme"
+    },
+    {
+      "ecosystem": "npm",
+      "name": "json-schema-ref-resolver",
+      "version": "3.0.0",
+      "license": "MIT",
+      "homepage": "https://github.com/fastify/json-schema-ref-resolver#readme"
+    },
+    {
+      "ecosystem": "npm",
+      "name": "json-schema-traverse",
+      "version": "1.0.0",
+      "license": "MIT",
+      "homepage": "https://github.com/epoberezkin/json-schema-traverse#readme"
+    },
+    {
+      "ecosystem": "npm",
+      "name": "jwa",
+      "version": "2.0.1",
+      "license": "MIT",
+      "homepage": "https://github.com/brianloveswords/node-jwa#readme"
+    },
+    {
+      "ecosystem": "npm",
+      "name": "jws",
+      "version": "4.0.1",
+      "license": "MIT",
+      "homepage": "https://github.com/brianloveswords/node-jws#readme"
+    },
+    {
+      "ecosystem": "npm",
+      "name": "libarchive-wasm",
+      "version": "1.2.0",
+      "license": "MIT",
+      "homepage": "https://github.com/ofk/libarchive-wasm#readme"
+    },
+    {
+      "ecosystem": "npm",
+      "name": "light-my-request",
+      "version": "6.6.0",
+      "license": "BSD-3-Clause",
+      "homepage": "https://github.com/fastify/light-my-request#readme"
+    },
+    {
+      "ecosystem": "npm",
+      "name": "lodash.defaults",
+      "version": "4.2.0",
+      "license": "MIT",
+      "homepage": "https://lodash.com/"
+    },
+    {
+      "ecosystem": "npm",
+      "name": "lodash.isarguments",
+      "version": "3.1.0",
+      "license": "MIT",
+      "homepage": "https://lodash.com/"
+    },
+    {
+      "ecosystem": "npm",
+      "name": "long",
+      "version": "5.3.2",
+      "license": "Apache-2.0",
+      "homepage": "https://github.com/dcodeIO/long.js#readme"
+    },
+    {
+      "ecosystem": "npm",
+      "name": "loose-envify",
+      "version": "1.4.0",
+      "license": "MIT",
+      "homepage": "https://github.com/zertosh/loose-envify"
+    },
+    {
+      "ecosystem": "npm",
+      "name": "lucide-react",
+      "version": "0.468.0",
+      "license": "ISC",
+      "homepage": "https://lucide.dev"
+    },
+    {
+      "ecosystem": "npm",
+      "name": "luxon",
+      "version": "3.7.2",
+      "license": "MIT",
+      "homepage": "https://github.com/moment/luxon#readme"
+    },
+    {
+      "ecosystem": "npm",
+      "name": "ms",
+      "version": "2.1.3",
+      "license": "MIT",
+      "homepage": "https://github.com/vercel/ms#readme"
+    },
+    {
+      "ecosystem": "npm",
+      "name": "msgpackr",
+      "version": "2.0.4",
+      "license": "MIT",
+      "homepage": "https://github.com/kriszyp/msgpackr#readme"
+    },
+    {
+      "ecosystem": "npm",
+      "name": "msgpackr-extract",
+      "version": "3.0.4",
+      "license": "MIT",
+      "homepage": "https://github.com/kriszyp/msgpackr-extract#readme"
+    },
+    {
+      "ecosystem": "npm",
+      "name": "node-abort-controller",
+      "version": "3.1.1",
+      "license": "MIT",
+      "homepage": "https://github.com/southpolesteve/node-abort-controller#readme"
+    },
+    {
+      "ecosystem": "npm",
+      "name": "node-domexception",
+      "version": "1.0.0",
+      "license": "MIT",
+      "homepage": "https://github.com/jimmywarting/node-domexception#readme"
+    },
+    {
+      "ecosystem": "npm",
+      "name": "node-fetch",
+      "version": "2.7.0",
+      "license": "MIT",
+      "homepage": "https://github.com/node-fetch/node-fetch"
+    },
+    {
+      "ecosystem": "npm",
+      "name": "node-fetch",
+      "version": "3.3.2",
+      "license": "MIT",
+      "homepage": "https://github.com/node-fetch/node-fetch"
+    },
+    {
+      "ecosystem": "npm",
+      "name": "node-gyp-build-optional-packages",
+      "version": "5.2.2",
+      "license": "MIT",
+      "homepage": "https://github.com/prebuild/node-gyp-build"
+    },
+    {
+      "ecosystem": "npm",
+      "name": "node-unrar-js",
+      "version": "2.0.2",
+      "license": "MIT",
+      "homepage": "https://github.com/YuJianrong/node-unrar.js"
+    },
+    {
+      "ecosystem": "npm",
+      "name": "on-exit-leak-free",
+      "version": "2.1.2",
+      "license": "MIT",
+      "homepage": "https://github.com/mcollina/on-exit-or-gc#readme"
+    },
+    {
+      "ecosystem": "npm",
+      "name": "opencollective-postinstall",
+      "version": "2.0.3",
+      "license": "MIT",
+      "homepage": "https://github.com/opencollective/opencollective-postinstall#readme"
+    },
+    {
+      "ecosystem": "npm",
+      "name": "p-retry",
+      "version": "4.6.2",
+      "license": "MIT",
+      "homepage": "https://github.com/sindresorhus/p-retry#readme"
+    },
+    {
+      "ecosystem": "npm",
+      "name": "pdfjs-dist",
+      "version": "5.7.284",
+      "license": "Apache-2.0",
+      "homepage": "https://mozilla.github.io/pdf.js/"
+    },
+    {
+      "ecosystem": "npm",
+      "name": "pg",
+      "version": "8.22.0",
+      "license": "MIT",
+      "homepage": "https://github.com/brianc/node-postgres"
+    },
+    {
+      "ecosystem": "npm",
+      "name": "pg-cloudflare",
+      "version": "1.4.0",
+      "license": "MIT",
+      "homepage": "https://github.com/brianc/node-postgres#readme"
+    },
+    {
+      "ecosystem": "npm",
+      "name": "pg-connection-string",
+      "version": "2.14.0",
+      "license": "MIT",
+      "homepage": "https://github.com/brianc/node-postgres/tree/master/packages/pg-connection-string"
+    },
+    {
+      "ecosystem": "npm",
+      "name": "pg-int8",
+      "version": "1.0.1",
+      "license": "ISC",
+      "homepage": "https://github.com/charmander/pg-int8#readme"
+    },
+    {
+      "ecosystem": "npm",
+      "name": "pg-pool",
+      "version": "3.14.0",
+      "license": "MIT",
+      "homepage": "https://github.com/brianc/node-postgres/tree/master/packages/pg-pool#readme"
+    },
+    {
+      "ecosystem": "npm",
+      "name": "pg-protocol",
+      "version": "1.15.0",
+      "license": "MIT",
+      "homepage": "https://github.com/brianc/node-postgres#readme"
+    },
+    {
+      "ecosystem": "npm",
+      "name": "pg-types",
+      "version": "2.2.0",
+      "license": "MIT",
+      "homepage": "https://github.com/brianc/node-pg-types"
+    },
+    {
+      "ecosystem": "npm",
+      "name": "pgpass",
+      "version": "1.0.5",
+      "license": "MIT",
+      "homepage": "https://github.com/hoegaarden/pgpass#readme"
+    },
+    {
+      "ecosystem": "npm",
+      "name": "pino",
+      "version": "10.3.1",
+      "license": "MIT",
+      "homepage": "https://getpino.io"
+    },
+    {
+      "ecosystem": "npm",
+      "name": "pino-abstract-transport",
+      "version": "3.0.0",
+      "license": "MIT",
+      "homepage": "https://github.com/pinojs/pino-abstract-transport#readme"
+    },
+    {
+      "ecosystem": "npm",
+      "name": "pino-std-serializers",
+      "version": "7.1.0",
+      "license": "MIT",
+      "homepage": "https://github.com/pinojs/pino-std-serializers#readme"
+    },
+    {
+      "ecosystem": "npm",
+      "name": "postgres-array",
+      "version": "2.0.0",
+      "license": "MIT",
+      "homepage": "https://github.com/bendrucker/postgres-array#readme"
+    },
+    {
+      "ecosystem": "npm",
+      "name": "postgres-bytea",
+      "version": "1.0.1",
+      "license": "MIT",
+      "homepage": "https://github.com/bendrucker/postgres-bytea#readme"
+    },
+    {
+      "ecosystem": "npm",
+      "name": "postgres-date",
+      "version": "1.0.7",
+      "license": "MIT",
+      "homepage": "https://github.com/bendrucker/postgres-date#readme"
+    },
+    {
+      "ecosystem": "npm",
+      "name": "postgres-interval",
+      "version": "1.2.0",
+      "license": "MIT",
+      "homepage": "https://github.com/bendrucker/postgres-interval#readme"
+    },
+    {
+      "ecosystem": "npm",
+      "name": "process-warning",
+      "version": "4.0.1",
+      "license": "MIT",
+      "homepage": "https://github.com/fastify/fastify-warning#readme"
+    },
+    {
+      "ecosystem": "npm",
+      "name": "process-warning",
+      "version": "5.0.0",
+      "license": "MIT",
+      "homepage": "https://github.com/fastify/fastify-warning#readme"
+    },
+    {
+      "ecosystem": "npm",
+      "name": "protobufjs",
+      "version": "7.6.5",
+      "license": "BSD-3-Clause",
+      "homepage": "https://protobufjs.github.io/protobuf.js/"
+    },
+    {
+      "ecosystem": "npm",
+      "name": "quick-format-unescaped",
+      "version": "4.0.4",
+      "license": "MIT",
+      "homepage": "https://github.com/davidmarkclements/quick-format#readme"
+    },
+    {
+      "ecosystem": "npm",
+      "name": "react",
+      "version": "18.3.1",
+      "license": "MIT",
+      "homepage": "https://reactjs.org/"
+    },
+    {
+      "ecosystem": "npm",
+      "name": "react-dom",
+      "version": "18.3.1",
+      "license": "MIT",
+      "homepage": "https://reactjs.org/"
+    },
+    {
+      "ecosystem": "npm",
+      "name": "readline-sync",
+      "version": "1.4.10",
+      "license": "MIT",
+      "homepage": "https://github.com/anseki/readline-sync"
+    },
+    {
+      "ecosystem": "npm",
+      "name": "real-require",
+      "version": "0.2.0",
+      "license": "MIT",
+      "homepage": "https://github.com/pinojs/real-require"
+    },
+    {
+      "ecosystem": "npm",
+      "name": "real-require",
+      "version": "1.0.0",
+      "license": "MIT",
+      "homepage": "https://github.com/pinojs/real-require"
+    },
+    {
+      "ecosystem": "npm",
+      "name": "redis-errors",
+      "version": "1.2.0",
+      "license": "MIT",
+      "homepage": "https://github.com/NodeRedis/redis-errors#readme"
+    },
+    {
+      "ecosystem": "npm",
+      "name": "redis-parser",
+      "version": "3.0.0",
+      "license": "MIT",
+      "homepage": "https://github.com/NodeRedis/node-redis-parser#readme"
+    },
+    {
+      "ecosystem": "npm",
+      "name": "regenerator-runtime",
+      "version": "0.13.11",
+      "license": "MIT",
+      "homepage": "https://github.com/facebook/regenerator/tree/main#readme"
+    },
+    {
+      "ecosystem": "npm",
+      "name": "require-from-string",
+      "version": "2.0.2",
+      "license": "MIT",
+      "homepage": "https://github.com/floatdrop/require-from-string#readme"
+    },
+    {
+      "ecosystem": "npm",
+      "name": "ret",
+      "version": "0.5.0",
+      "license": "MIT",
+      "homepage": "https://github.com/fent/ret.js#readme"
+    },
+    {
+      "ecosystem": "npm",
+      "name": "retry",
+      "version": "0.13.1",
+      "license": "MIT",
+      "homepage": "https://github.com/tim-kos/node-retry"
+    },
+    {
+      "ecosystem": "npm",
+      "name": "reusify",
+      "version": "1.1.0",
+      "license": "MIT",
+      "homepage": "https://github.com/mcollina/reusify#readme"
+    },
+    {
+      "ecosystem": "npm",
+      "name": "rfdc",
+      "version": "1.4.1",
+      "license": "MIT",
+      "homepage": "https://github.com/davidmarkclements/rfdc#readme"
+    },
+    {
+      "ecosystem": "npm",
+      "name": "safe-buffer",
+      "version": "5.2.1",
+      "license": "MIT",
+      "homepage": "https://github.com/feross/safe-buffer"
+    },
+    {
+      "ecosystem": "npm",
+      "name": "safe-regex2",
+      "version": "5.1.1",
+      "license": "MIT",
+      "homepage": "https://github.com/fastify/safe-regex2"
+    },
+    {
+      "ecosystem": "npm",
+      "name": "safe-stable-stringify",
+      "version": "2.5.0",
+      "license": "MIT",
+      "homepage": "https://github.com/BridgeAR/safe-stable-stringify#readme"
+    },
+    {
+      "ecosystem": "npm",
+      "name": "scheduler",
+      "version": "0.23.2",
+      "license": "MIT",
+      "homepage": "https://reactjs.org/"
+    },
+    {
+      "ecosystem": "npm",
+      "name": "secure-json-parse",
+      "version": "4.1.0",
+      "license": "BSD-3-Clause",
+      "homepage": "https://github.com/fastify/secure-json-parse#readme"
+    },
+    {
+      "ecosystem": "npm",
+      "name": "semver",
+      "version": "7.8.5",
+      "license": "ISC",
+      "homepage": "https://github.com/npm/node-semver#readme"
+    },
+    {
+      "ecosystem": "npm",
+      "name": "set-cookie-parser",
+      "version": "2.7.2",
+      "license": "MIT",
+      "homepage": "https://github.com/nfriedly/set-cookie-parser"
+    },
+    {
+      "ecosystem": "npm",
+      "name": "sonic-boom",
+      "version": "4.2.1",
+      "license": "MIT",
+      "homepage": "https://github.com/pinojs/sonic-boom#readme"
+    },
+    {
+      "ecosystem": "npm",
+      "name": "split2",
+      "version": "4.2.0",
+      "license": "ISC",
+      "homepage": "https://github.com/mcollina/split2#readme"
+    },
+    {
+      "ecosystem": "npm",
+      "name": "standard-as-callback",
+      "version": "2.1.0",
+      "license": "MIT",
+      "homepage": "https://github.com/luin/asCallback#readme"
+    },
+    {
+      "ecosystem": "npm",
+      "name": "tesseract.js",
+      "version": "7.0.0",
+      "license": "Apache-2.0",
+      "homepage": "https://github.com/naptha/tesseract.js"
+    },
+    {
+      "ecosystem": "npm",
+      "name": "tesseract.js-core",
+      "version": "7.0.0",
+      "license": "Apache-2.0",
+      "homepage": "https://github.com/naptha/tesseract.js-core"
+    },
+    {
+      "ecosystem": "npm",
+      "name": "thread-stream",
+      "version": "4.2.0",
+      "license": "MIT",
+      "homepage": "https://github.com/mcollina/thread-stream#readme"
+    },
+    {
+      "ecosystem": "npm",
+      "name": "toad-cache",
+      "version": "3.7.4",
+      "license": "MIT",
+      "homepage": "https://github.com/kibertoad/toad-cache"
+    },
+    {
+      "ecosystem": "npm",
+      "name": "tr46",
+      "version": "0.0.3",
+      "license": "MIT",
+      "homepage": "https://github.com/Sebmaster/tr46.js#readme"
+    },
+    {
+      "ecosystem": "npm",
+      "name": "tslib",
+      "version": "2.8.1",
+      "license": "0BSD",
+      "homepage": "https://www.typescriptlang.org/"
+    },
+    {
+      "ecosystem": "npm",
+      "name": "undici-types",
+      "version": "6.21.0",
+      "license": "MIT",
+      "homepage": "https://undici.nodejs.org"
+    },
+    {
+      "ecosystem": "npm",
+      "name": "wasm-feature-detect",
+      "version": "1.8.0",
+      "license": "Apache-2.0",
+      "homepage": "https://github.com/GoogleChromeLabs/wasm-feature-detect#readme"
+    },
+    {
+      "ecosystem": "npm",
+      "name": "web-streams-polyfill",
+      "version": "3.3.3",
+      "license": "MIT",
+      "homepage": "https://github.com/MattiasBuelens/web-streams-polyfill#readme"
+    },
+    {
+      "ecosystem": "npm",
+      "name": "webidl-conversions",
+      "version": "3.0.1",
+      "license": "BSD-2-Clause",
+      "homepage": "https://github.com/jsdom/webidl-conversions#readme"
+    },
+    {
+      "ecosystem": "npm",
+      "name": "whatwg-url",
+      "version": "5.0.0",
+      "license": "MIT",
+      "homepage": "https://github.com/jsdom/whatwg-url#readme"
+    },
+    {
+      "ecosystem": "npm",
+      "name": "ws",
+      "version": "8.21.0",
+      "license": "MIT",
+      "homepage": "https://github.com/websockets/ws"
+    },
+    {
+      "ecosystem": "npm",
+      "name": "xtend",
+      "version": "4.0.2",
+      "license": "MIT",
+      "homepage": "https://github.com/Raynos/xtend"
+    },
+    {
+      "ecosystem": "npm",
+      "name": "zlibjs",
+      "version": "0.3.1",
+      "license": "MIT",
+      "homepage": "https://github.com/imaya/zlib.js"
+    }
+  ]
+}

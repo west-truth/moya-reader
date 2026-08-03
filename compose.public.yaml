@@ -1,0 +1,8 @@
+# Apply this override only behind a TLS-terminating reverse proxy on the same host.
+# Required-variable interpolation makes accidental unauthenticated public exposure fail closed.
+services:
+  api:
+    environment:
+      SERVER_EXPOSURE: external
+      READER_AUTH_TOKEN: ${READER_AUTH_TOKEN:?Set READER_AUTH_TOKEN before public deployment}
+      CORS_ALLOWED_ORIGINS: ${CORS_ALLOWED_ORIGINS:?Set CORS_ALLOWED_ORIGINS to the public HTTPS origin}

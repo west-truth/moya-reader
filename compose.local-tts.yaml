@@ -1,0 +1,66 @@
+services:
+  api:
+    environment:
+      TTS_PROVIDER_DEFAULT: ${LOCAL_TTS_PROVIDER_DEFAULT:-local-endpoint}
+      TTS_PROVIDER_ENABLED: ${LOCAL_TTS_PROVIDER_ENABLED:-local-endpoint}
+      TTS_LOCAL_ENDPOINT_MODEL_ID: ${TTS_LOCAL_ENDPOINT_MODEL_ID:-melotts-korean}
+      TTS_LOCAL_ENDPOINT_URL: http://tts-model:9010/synthesize
+      TTS_LOCAL_ENDPOINT_VOICE_ID: ${TTS_LOCAL_ENDPOINT_VOICE_ID:-KR}
+      LOCAL_TTS_ALLOWED_HOSTS: tts-model
+    depends_on:
+      tts-model:
+        condition: service_healthy
+
+  worker:
+    environment:
+      TTS_PROVIDER_DEFAULT: ${LOCAL_TTS_PROVIDER_DEFAULT:-local-endpoint}
+      TTS_PROVIDER_ENABLED: ${LOCAL_TTS_PROVIDER_ENABLED:-local-endpoint}
+      TTS_LOCAL_ENDPOINT_MODEL_ID: ${TTS_LOCAL_ENDPOINT_MODEL_ID:-melotts-korean}
+      TTS_LOCAL_ENDPOINT_URL: http://tts-model:9010/synthesize
+      TTS_LOCAL_ENDPOINT_VOICE_ID: ${TTS_LOCAL_ENDPOINT_VOICE_ID:-KR}
+      LOCAL_TTS_ALLOWED_HOSTS: tts-model
+    depends_on:
+      tts-model:
+        condition: service_healthy
+
+  tts-model:
+    build:
+      context: .
+      dockerfile: deploy/local-tts.Dockerfile
+      args:
+        MELOTTS_COMMIT: ${MELOTTS_COMMIT:-209145371cff8fc3bd60d7be902ea69cbdb7965a}
+    environment:
+      HF_HOME: /models/huggingface
+      MELOTTS_DEVICE: ${MELOTTS_DEVICE:-cpu}
+      MELOTTS_LANGUAGE: ${MELOTTS_LANGUAGE:-KR}
+      MELOTTS_MODEL_ID: ${TTS_LOCAL_ENDPOINT_MODEL_ID:-melotts-korean}
+      MELOTTS_MAX_TEXT_CHARACTERS: ${MELOTTS_MAX_TEXT_CHARACTERS:-20000}
+      PORT: 9010
+    volumes:
+      - local-tts-models:/models
+    expose:
+      - '9010'
+    healthcheck:
+      test:
+        [
+          'CMD',
+          'python',
+          '-c',
+          "import urllib.request; urllib.request.urlopen('http://127.0.0.1:9010/health', timeout=5).read()",
+        ]
+      interval: 15s
+      timeout: 10s
+      retries: 20
+      start_period: 10m
+    init: true
+    stop_grace_period: 30s
+    restart: unless-stopped
+    mem_limit: ${LOCAL_TTS_MEMORY_LIMIT:-4g}
+    logging:
+      driver: json-file
+      options:
+        max-size: ${LOG_MAX_SIZE:-10m}
+        max-file: ${LOG_MAX_FILES:-5}
+
+volumes:
+  local-tts-models:
