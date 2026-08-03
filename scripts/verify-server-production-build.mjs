@@ -194,7 +194,7 @@ for (const dependency of externalPackages) {
   check(`external is a production dependency: ${dependency}`, productionDependencies.has(dependency));
 }
 
-check('Dockerfile has a build stage', /FROM node:22-alpine AS build/i.test(dockerfile));
+check('Dockerfile has a Debian Bookworm Node 22 build stage', /FROM node:22-bookworm-slim AS build/i.test(dockerfile));
 check(
   'Docker build installs and copies shared workspaces',
   dockerfile.includes('COPY packages/contracts/package.json packages/contracts/package.json') &&
@@ -210,10 +210,10 @@ check('Dockerfile creates a production dependency stage', /FROM build AS product
 check('Dockerfile generates the server bundle', dockerfile.includes('pnpm --filter server bundle'));
 check('Dockerfile deploys production dependencies only', dockerfile.includes('deploy --prod /opt/server'));
 
-const runtimeMarker = 'FROM node:22-alpine AS runtime';
+const runtimeMarker = 'FROM node:22-bookworm-slim AS runtime';
 const runtimeIndex = dockerfile.indexOf(runtimeMarker);
 const runtimeStage = runtimeIndex >= 0 ? dockerfile.slice(runtimeIndex) : '';
-check('Dockerfile has a Node 22 runtime stage', runtimeIndex >= 0);
+check('Dockerfile has a Debian Bookworm Node 22 runtime stage', runtimeIndex >= 0);
 check(
   'runtime copies only deployed node_modules and dist',
   runtimeStage.includes('/opt/server/node_modules') && runtimeStage.includes('/workspace/apps/server/dist'),

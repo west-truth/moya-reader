@@ -204,6 +204,12 @@ pnpm check:server:production
 pnpm check
 ```
 
+The canonical hosted/server target is Ubuntu-compatible Linux x64 with glibc. GitHub Actions runs on Ubuntu 24.04,
+and the Node build/runtime container stages use Debian Bookworm slim so native production dependencies resolve to the
+same Linux/glibc family. The committed production-license inventory must therefore be generated on Ubuntu or WSL2
+Ubuntu with `pnpm licenses:generate`. A Windows `pnpm check` still verifies all platform-neutral dependencies and the
+licenses of the locally installed Windows native variants, but it cannot overwrite the canonical Linux inventory.
+
 `pnpm test` runs the focused parser/import/health/source-download deployment suite. The broader development repository
 maintains additional platform and research-path tests that are outside this hosted deployment snapshot.
 

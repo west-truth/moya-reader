@@ -1,4 +1,4 @@
-FROM node:22-alpine AS build
+FROM node:22-bookworm-slim AS build
 
 WORKDIR /workspace
 RUN corepack enable
@@ -22,7 +22,7 @@ RUN pnpm --filter server build && pnpm --filter server bundle
 FROM build AS production-dependencies
 RUN pnpm --config.inject-workspace-packages=true --filter server deploy --prod /opt/server
 
-FROM node:22-alpine AS runtime
+FROM node:22-bookworm-slim AS runtime
 
 ENV NODE_ENV=production
 WORKDIR /app

@@ -3,6 +3,11 @@
   "version": 1,
   "scope": "pnpm production dependencies for the web and Hosted server workspaces",
   "source": "pnpm licenses list --prod --json",
+  "target": {
+    "os": "linux",
+    "arch": "x64",
+    "libc": "glibc"
+  },
   "summary": {
     "componentCount": 178,
     "byLicense": {
@@ -201,7 +206,7 @@
     },
     {
       "ecosystem": "npm",
-      "name": "@msgpackr-extract/msgpackr-extract-win32-x64",
+      "name": "@msgpackr-extract/msgpackr-extract-linux-x64",
       "version": "3.0.4",
       "license": "MIT",
       "homepage": "https://github.com/kriszyp/msgpackr-extract#readme"
@@ -215,7 +220,7 @@
     },
     {
       "ecosystem": "npm",
-      "name": "@napi-rs/canvas-win32-x64-msvc",
+      "name": "@napi-rs/canvas-linux-x64-gnu",
       "version": "0.1.100",
       "license": "MIT",
       "homepage": "https://github.com/Brooooooklyn/canvas#readme"

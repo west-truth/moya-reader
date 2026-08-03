@@ -9,6 +9,11 @@ const inventoryPath = path.join(repositoryRoot, 'third_party', 'production-licen
 const policyPath = path.join(repositoryRoot, 'third_party', 'license-release-policy.json');
 const apacheLicensePath = path.join(repositoryRoot, 'LICENSE');
 const canonicalApacheLicenseSha256 = 'cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30';
+const canonicalInventoryTarget = Object.freeze({ os: 'linux', arch: 'x64', libc: 'glibc' });
+const platformSpecificPackagePatterns = [
+  /^@msgpackr-extract\/msgpackr-extract-(?:darwin|linux|win32)-/,
+  /^@napi-rs\/canvas-(?:android|darwin|freebsd|linux|win32)-/,
+];
 const sourceReleaseGate = process.argv.includes('--source-release');
 const releaseGate = process.argv.includes('--release');
 const checkOnly = process.argv.includes('--check') || sourceReleaseGate || releaseGate;
@@ -41,6 +46,32 @@ function productionLicenseReport() {
   return JSON.parse(result.stdout);
 }
 
+function currentInventoryTarget() {
+  const target = { os: process.platform, arch: process.arch };
+  if (process.platform === 'linux') {
+    const reportHeader = process.report?.getReport?.().header;
+    target.libc = reportHeader?.glibcVersionRuntime ? 'glibc' : 'musl';
+  }
+  return target;
+}
+
+function hasCanonicalInventoryTarget(target) {
+  return (
+    target?.os === canonicalInventoryTarget.os &&
+    target?.arch === canonicalInventoryTarget.arch &&
+    target?.libc === canonicalInventoryTarget.libc
+  );
+}
+
+function summarizeComponents(components) {
+  const byLicense = {};
+  for (const component of components) byLicense[component.license] = (byLicense[component.license] ?? 0) + 1;
+  return {
+    componentCount: components.length,
+    byLicense: Object.fromEntries(Object.entries(byLicense).sort(([left], [right]) => left.localeCompare(right))),
+  };
+}
+
 function buildInventory(report) {
   const components = [];
   for (const [reportedLicense, packages] of Object.entries(report)) {
@@ -57,19 +88,23 @@ function buildInventory(report) {
     }
   }
   components.sort((left, right) => left.name.localeCompare(right.name) || left.version.localeCompare(right.version));
-  const byLicense = {};
-  for (const component of components) byLicense[component.license] = (byLicense[component.license] ?? 0) + 1;
   return {
     format: 'noveldesk-production-license-inventory',
     version: 1,
     scope: 'pnpm production dependencies for the web and Hosted server workspaces',
     source: 'pnpm licenses list --prod --json',
-    summary: {
-      componentCount: components.length,
-      byLicense: Object.fromEntries(Object.entries(byLicense).sort(([left], [right]) => left.localeCompare(right))),
-    },
+    target: currentInventoryTarget(),
+    summary: summarizeComponents(components),
     components,
   };
+}
+
+function platformNeutralInventory(inventory) {
+  const components = inventory.components.filter(
+    (component) => !platformSpecificPackagePatterns.some((pattern) => pattern.test(component.name)),
+  );
+  const { target: _target, summary: _summary, components: _components, ...metadata } = inventory;
+  return { ...metadata, summary: summarizeComponents(components), components };
 }
 
 function verifyPolicy(inventory) {
@@ -103,11 +138,31 @@ const serialized = `${JSON.stringify(inventory, null, 2)}\n`;
 verifyPolicy(inventory);
 
 if (checkOnly) {
-  if (!existsSync(inventoryPath) || readFileSync(inventoryPath, 'utf8') !== serialized) {
-    fail('Production license inventory is stale. Run pnpm licenses:generate.');
+  if (!existsSync(inventoryPath)) fail('Production license inventory is missing.');
+  const storedText = readFileSync(inventoryPath, 'utf8');
+  const storedInventory = JSON.parse(storedText);
+  if (!hasCanonicalInventoryTarget(storedInventory.target)) {
+    fail('Production license inventory must target Ubuntu-compatible Linux x64 (glibc).');
   }
-  process.stdout.write(`Production license inventory verified (${inventory.summary.componentCount} npm components).\n`);
+  verifyPolicy(storedInventory);
+  if (hasCanonicalInventoryTarget(inventory.target)) {
+    if (storedText !== serialized) {
+      fail('Production license inventory is stale. Run pnpm licenses:generate on Linux x64 (glibc).');
+    }
+  } else if (
+    JSON.stringify(platformNeutralInventory(storedInventory)) !== JSON.stringify(platformNeutralInventory(inventory))
+  ) {
+    fail(
+      'Production license inventory is stale outside platform-specific native packages. Regenerate it on Linux x64 (glibc).',
+    );
+  }
+  process.stdout.write(
+    `Production license inventory verified against Linux x64 (glibc) (${storedInventory.summary.componentCount} npm components).\n`,
+  );
 } else {
+  if (!hasCanonicalInventoryTarget(inventory.target)) {
+    fail('Generate the production license inventory on Linux x64 (glibc), such as Ubuntu or WSL2 Ubuntu.');
+  }
   writeFileSync(inventoryPath, serialized, 'utf8');
   process.stdout.write(`Wrote production license inventory (${inventory.summary.componentCount} npm components).\n`);
 }

@@ -3,6 +3,17 @@
 Status: current
 Last verified: 2026-08-04
 
+## 권장 서버 환경
+
+모야의 기준 서버 환경은 **x86-64 Ubuntu + Docker Engine + Docker Compose v2**이다. GitHub 검사는 Ubuntu 24.04에서
+실행하며, Node 빌드와 서버 런타임 이미지는 Ubuntu와 같은 glibc 계열인 Debian Bookworm slim을 사용한다. 로컬
+TTS 이미지도 Debian 기반이다. 따라서 Windows에서 만든 네이티브 패키지 목록이나 Alpine/musl 패키지가 서버용
+라이선스 기준본에 섞이지 않는다.
+
+Ubuntu가 아닌 Linux에서도 같은 Compose 구성을 실행할 수는 있지만, 문서와 CI가 직접 보장하는 기준은 Ubuntu
+x86-64이다. Docker를 사용하면 호스트 운영체제와 컨테이너 운영체제는 별개이며, 모야의 Node 컨테이너는 의도적으로
+Debian/glibc 계열을 사용한다.
+
 이 문서는 Docker를 처음 사용하는 사람도 모야 서버를 실행할 수 있도록 단계별로 설명한다. 명령은
 프로젝트 루트, 즉 `compose.yaml`이 있는 폴더에서 실행한다.
 

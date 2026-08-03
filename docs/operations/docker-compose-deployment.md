@@ -9,6 +9,18 @@ loopback-only. Public exposure requires the fail-closed override and a separate 
 For a Korean step-by-step first deployment, read [모야 Docker Compose 배포 가이드](docker-compose-guide-ko.md)
 before this technical reference.
 
+## Supported Linux baseline
+
+The supported hosted baseline is an x86-64 Ubuntu server running Docker Engine and Docker Compose v2. GitHub source
+checks are pinned to Ubuntu 24.04. The Node build and server runtime stages use Debian Bookworm slim, which—like
+Ubuntu—uses glibc; the local TTS image is also Debian-based. This keeps native npm dependencies aligned with the
+canonical `linux-x64-glibc` production-license inventory instead of mixing a Windows inventory with an Alpine/musl
+container runtime.
+
+The host distribution and container distribution are separate concerns: an Ubuntu host can run Alpine containers,
+but Moya intentionally uses the Debian/glibc Node images for the hosted path. Other Linux distributions may work when
+they can run the same Compose stack, but Ubuntu x86-64 is the documented and CI-covered deployment target.
+
 ## Services and durable data
 
 The base stack contains:
