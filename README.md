@@ -1,72 +1,112 @@
 # 모야 - 텍스트 및 만화 뷰어
 
-모야(Moya)는 TXT·EPUB·PDF와 이미지 만화를 한곳에서 읽고 관리하는 개인용 셀프 호스팅 뷰어입니다.
+모야(Moya)는 TXT·EPUB·PDF와 이미지 만화를 한곳에서 보관하고 읽는 개인용 뷰어입니다. 책장, 읽던 위치,
+검색, 북마크, 하이라이트, 메모, 통계와 TTS를 지원하며 Docker Compose를 이용해 개인 서버에 설치할 수 있습니다.
 
-This repository is the public web/server deployment snapshot: it contains the React reader, hosted API and worker, shared
-document packages, and Docker Compose deployment files. Internal planning material and the native Tauri desktop and
-Android projects are intentionally maintained outside this repository.
+> **현재 공개 범위**
+>
+> 이 저장소에는 바로 실행 가능한 **웹 앱·서버·Docker Compose 소스**가 들어 있습니다. Tauri 데스크톱과
+> Android 앱은 개발본에 구현되어 있지만, 현재 이 공개 저장소에는 네이티브 프로젝트와 정식 설치 파일이
+> 포함되어 있지 않습니다. 따라서 지금 GitHub에서 일반 사용자가 설치할 수 있는 공식 경로는 Docker 기반
+> 웹 서버입니다. 데스크톱과 Android의 정확한 상태는 아래에서 별도로 설명합니다.
 
-The application preserves imported source files. Browser UI code does not call external AI or TTS providers directly;
-configured provider requests pass through the hosted worker boundary.
+모야는 공개 SaaS가 아니라 한 사람 또는 신뢰할 수 있는 가정 내 사용을 목표로 합니다. 다중 사용자 계정,
+권한 관리, 사용량 제한과 테넌트 격리는 제공하지 않습니다.
 
-> Compatibility note: internal identifiers containing `noveldesk` remain unchanged so existing libraries, backups,
-> sync data, credentials, queues, and Compose volumes continue to work. New user-facing names and downloaded filenames
-> use Moya/`moya-*`.
+## 무엇을 할 수 있나요?
 
-> Moya currently targets a trusted individual or household deployment. It does not provide multi-user accounts,
-> roles, quotas, or tenant isolation for running a public service.
+- 표지, 컬렉션, 최근 읽은 책과 진행률을 함께 보여 주는 책장
+- TXT·Markdown·DRM 없는 EPUB 2/3 읽기
+- PDF와 ZIP/CBZ·RAR/CBR·7z/CB7 이미지 만화 읽기
+- 본문 검색, 목차, 북마크, 하이라이트, 메모와 독서 통계
+- PDF 원문 텍스트와 OCR 보조, 검색·선택·주석·TTS
+- 연속 스크롤, 페이지 보기, 양면 보기와 우→좌 만화 진행
+- 시스템 음성, 선택형 서버 TTS, 캐시와 전역 미니 플레이어
+- 원본 파일 다운로드, 백업·복원과 개인 서버 동기화
+- 선택형 AI 화자 분석과 등장인물별 음성 설정
 
-## Features
+브라우저 화면은 외부 AI/TTS 서비스에 직접 요청하지 않습니다. 외부 provider를 사용할 때는 서버 worker 또는
+네이티브 보안 adapter를 거칩니다.
 
-- Library management with covers, collections, reading progress, recent books, and source-file download
-- Chapter navigation, full-text search, bookmarks, highlights, notes, and reading statistics
-- Reflowable TXT and EPUB reader with scroll/page layouts and TTS sentence highlighting
-- Fixed-document PDF and comic viewer with continuous pages, zoom, rotation, spreads, and right-to-left reading
-- PDF native text with OCR fallback, search, selection, annotations, and TTS
-- ZIP/CBZ, RAR/CBR, and 7z/CB7 image archive support
-- System speech plus optional hosted TTS caching and a global mini player
-- Exact backup/restore, self-host synchronization, and optional AI speaker analysis
+## 지원 형식
 
-## Supported formats
-
-| Format | Reading mode | Notes |
+| 형식 | 보기 방식 | 주요 지원 |
 | --- | --- | --- |
-| TXT / Markdown | Reflowable reader | Chapter parsing, search, annotations, statistics, TTS |
-| DRM-free EPUB 2/3 | Reflowable reader | TOC, cover and images, ruby/language spans, footnotes, TTS |
-| PDF | Fixed-document viewer | Range loading, native text/OCR, search, annotations, TTS |
-| ZIP / CBZ | Comic viewer | Natural page order, covers, single/spread and LTR/RTL modes |
-| RAR / CBR | Comic viewer | Single-volume RAR4/RAR5 image archives |
-| 7z / CB7 | Comic viewer | Single-volume image archives |
+| TXT / Markdown | 가변형 Reader | 화 구분, 검색, 주석, 통계, TTS |
+| DRM 없는 EPUB 2/3 | 가변형 Reader | 목차, 표지·이미지, ruby, 언어 span, 각주, TTS |
+| PDF | 고정 문서 Viewer | 연속 보기, 확대, 텍스트/OCR, 검색, 주석, TTS |
+| ZIP / CBZ | 만화 Viewer | 자연순 정렬, 표지, 단면·양면, 좌→우·우→좌 |
+| RAR / CBR | 만화 Viewer | 단일 볼륨 RAR4/RAR5 이미지 archive |
+| 7z / CB7 | 만화 Viewer | 단일 볼륨 이미지 archive |
 
-Imported originals are stored unchanged in MinIO. Original-file download streams the stored bytes without
-re-encoding or repackaging them.
+DRM이 적용된 EPUB/PDF는 지원하지 않습니다. 가져온 원본은 변환하거나 다시 압축하지 않고 그대로 보관합니다.
 
-## Docker Compose quick start
+## 플랫폼별 현재 상태
 
-Requirements:
+| 플랫폼 | 현재 상태 | 설치 가능 여부 |
+| --- | --- | --- |
+| 웹·개인 서버 | 공개 소스, Ubuntu CI와 Docker 이미지 빌드 통과 | **현재 권장 경로** |
+| Windows 데스크톱 | Tauri 앱, NSIS release build와 실행 smoke 완료 | 공개 installer·네이티브 소스 미제공 |
+| Android | ARM64/x86_64 debug APK와 Android 15 emulator alpha | signed APK/AAB 미제공, 일반 설치 권장 안 함 |
+| 브라우저 로컬 개발 | IndexedDB 기반 Reader와 system TTS | 개발 서버로 실행 가능 |
 
-- Docker Engine or Docker Desktop
-- Docker Compose v2
-- At least 8 GB of host memory recommended; 12–16 GB when using the optional local TTS model
+## 가장 빠른 설치: Ubuntu + Docker Compose
 
-Clone the repository and create the local environment file:
+### 1. 준비 사항
+
+권장 서버 환경은 다음과 같습니다.
+
+- x86-64 Ubuntu 22.04 또는 24.04
+- Docker Engine과 Docker Compose v2
+- Git
+- 메모리 8GB 이상
+- 로컬 한국어 TTS까지 사용할 경우 메모리 12~16GB 권장
+- 책과 TTS cache를 저장할 충분한 디스크 공간
+
+Docker가 준비됐는지 확인합니다.
 
 ```bash
-git clone https://github.com/<owner>/<repository>.git moya-reader
+docker version
+docker compose version
+```
+
+`docker version`에서 Server 정보가 나오지 않으면 Docker Engine을 먼저 시작해야 합니다.
+
+### 2. 저장소 받기
+
+```bash
+git clone https://github.com/west-truth/moya-reader.git
 cd moya-reader
 cp .env.example .env
 ```
 
-PowerShell:
+Windows PowerShell에서 서버 구성을 시험할 때는 다음 명령을 사용합니다.
 
 ```powershell
+git clone https://github.com/west-truth/moya-reader.git
+Set-Location moya-reader
 Copy-Item .env.example .env
 ```
 
-For persistent use, change the PostgreSQL and MinIO passwords in `.env` first. `POSTGRES_PASSWORD` must match the
-password inside `DATABASE_URL`; `MINIO_ROOT_*` and `S3_*` credentials must also stay aligned.
+### 3. 비밀번호 설정
 
-Validate and start the stack:
+개인 PC에서 잠깐 시험하는 경우 기본값으로 시작할 수 있지만, 계속 사용할 서버라면 `.env`의 비밀번호를 반드시
+바꾸십시오. 같은 비밀번호를 사용하는 항목은 서로 일치해야 합니다.
+
+```dotenv
+POSTGRES_PASSWORD=충분히-긴-비밀번호
+DATABASE_URL=postgres://noveldesk:충분히-긴-비밀번호@postgres:5432/noveldesk
+
+MINIO_ROOT_USER=minio
+MINIO_ROOT_PASSWORD=다른-긴-비밀번호
+S3_ACCESS_KEY_ID=minio
+S3_SECRET_ACCESS_KEY=다른-긴-비밀번호
+```
+
+`POSTGRES_PASSWORD`는 `DATABASE_URL` 안의 비밀번호와 같아야 합니다. `MINIO_ROOT_*`와 `S3_*`도 같은 계정을
+가리켜야 합니다. `.env`는 Git에 올리지 마십시오.
+
+### 4. 실행
 
 ```bash
 docker compose config --quiet
@@ -74,88 +114,56 @@ docker compose up -d --build
 docker compose ps
 ```
 
-Open `http://127.0.0.1:8080`. Health endpoints are available through the web proxy:
+브라우저에서 다음 주소를 엽니다.
+
+```text
+http://127.0.0.1:8080
+```
+
+다른 PC에 설치했다면 기본 설정은 서버 자신의 `127.0.0.1`에만 열립니다. 외부 접속 방법은 아래
+[외부에서 접속하기](#외부에서-접속하기)를 참고하십시오.
+
+상태 확인:
 
 ```bash
 curl http://127.0.0.1:8080/health
 curl http://127.0.0.1:8080/ready
+docker compose logs --tail=100 api worker
 ```
 
-The Korean first-run guide is in
-[docs/operations/docker-compose-guide-ko.md](docs/operations/docker-compose-guide-ko.md). The more detailed operational
-boundary is documented in
-[docs/operations/docker-compose-deployment.md](docs/operations/docker-compose-deployment.md).
+### 5. 처음 사용하기
 
-## Default security boundary
+1. 화면의 **가져오기**를 눌러 TXT, EPUB, PDF 또는 만화 archive를 선택합니다.
+2. 가져오기 미리보기에서 제목, 형식과 파일이 맞는지 확인한 뒤 책장에 추가합니다.
+3. 책장에서 표지나 제목을 선택해 읽기를 시작합니다.
+4. TXT·EPUB은 목차, 본문 검색, 글꼴·간격, 페이지/스크롤 보기와 TTS를 사용할 수 있습니다.
+5. PDF·만화는 페이지 이동, 연속 보기, 확대/축소, 양면 보기와 우→좌 진행을 설정할 수 있습니다.
+6. 북마크·하이라이트·메모와 읽던 위치는 자동 저장됩니다.
+7. 책 정보 화면의 **원본 다운로드**로 서버에 보관된 원본 파일을 다시 받을 수 있습니다.
 
-The base `compose.yaml` is intentionally local-only:
+AI 분석과 외부 TTS는 필수가 아닙니다. 처음에는 기본 Reader와 시스템 음성만 사용하고, 필요할 때 설정에서
+provider를 연결하는 편이 간단합니다.
 
-- Web UI binds to `127.0.0.1:8080`.
-- MinIO Console binds to `127.0.0.1:9001`.
-- API, PostgreSQL, Redis, MinIO API, and the optional TTS sidecar publish no host ports.
-- `.env` and files under `secrets/vertex/` are excluded from Git and the Docker build context.
-- Passwords in `.env.example` are development defaults and must be changed for persistent operation.
-
-Novel files are not encrypted by the application. Use host access controls and disk/volume encryption when needed.
-
-## Internet access
-
-External access requires a TLS-terminating reverse proxy such as Caddy, nginx, or Traefik. Set a long bearer token and
-the exact public HTTPS origin in `.env`:
+### 6. 중지와 재시작
 
 ```bash
-openssl rand -hex 32
+docker compose stop
+docker compose start
 ```
 
-```dotenv
-READER_AUTH_TOKEN=<long-random-token>
-CORS_ALLOWED_ORIGINS=https://reader.example.com
-```
-
-Start with the fail-closed public override:
+구성을 다시 만들려면 다음 명령을 사용합니다.
 
 ```bash
-docker compose -f compose.yaml -f compose.public.yaml config --quiet
-docker compose -f compose.yaml -f compose.public.yaml up -d --build
+docker compose down
+docker compose up -d
 ```
 
-Minimal Caddy example:
+> `docker compose down -v`는 사용하지 마십시오. `-v`는 PostgreSQL, MinIO와 다른 named volume까지 삭제하여
+> 책장과 서버 데이터가 사라질 수 있습니다.
 
-```caddyfile
-reader.example.com {
-    reverse_proxy 127.0.0.1:8080
-}
-```
+## 업데이트
 
-Keep `WEB_BIND_ADDRESS=127.0.0.1` when the reverse proxy runs on the same host. Do not expose ports 8080, 9001,
-PostgreSQL, Redis, MinIO API, or the TTS service directly. `compose.public.yaml` activates server authentication but does
-not provision TLS or a reverse proxy.
-
-## Optional local Korean TTS
-
-The local override adds a CPU-based MeloTTS Korean sidecar inside the Compose network:
-
-```bash
-docker compose -f compose.yaml -f compose.local-tts.yaml config --quiet
-docker compose -f compose.yaml -f compose.local-tts.yaml up -d --build
-docker compose -f compose.yaml -f compose.local-tts.yaml logs -f tts-model
-```
-
-The first start downloads the model and can take several minutes. Model data is cached in the `local-tts-models` named
-volume, and `tts-model:9010` remains internal to Compose.
-
-To combine public access and local TTS:
-
-```bash
-docker compose -f compose.yaml -f compose.public.yaml -f compose.local-tts.yaml up -d --build
-```
-
-The included override is specifically pinned for MeloTTS Korean on CPU. Replacing the model id alone does not install a
-different engine; an alternative service must implement the expected `/voices` and `/synthesize` contract.
-
-## Updating
-
-Back up application data first, then reuse the same Compose file combination used at startup:
+업데이트 전에는 백업을 준비한 뒤, 처음 실행할 때 사용한 Compose 파일 조합을 그대로 사용합니다.
 
 ```bash
 git pull --ff-only
@@ -165,27 +173,139 @@ docker compose ps
 docker compose logs --tail=100 api worker
 ```
 
-For a persistent server, deploy a reviewed release tag instead of automatically following every `main` commit. Database
-migrations run when the API starts.
+장기간 운영하는 서버는 `main`을 자동 추적하기보다 확인된 release tag 또는 commit을 고정하는 편이 안전합니다.
+데이터베이스 migration은 API가 시작할 때 실행됩니다.
 
-## Backup boundary
+## 백업
 
-An application backup archive is not a complete Docker disaster-recovery backup. Preserve these together:
+앱에서 만드는 백업 파일만으로 Docker 서버 전체를 복구할 수 있는 것은 아닙니다. 다음 항목을 함께 보관하십시오.
 
-| Target | Contents |
+| 대상 | 들어 있는 데이터 |
 | --- | --- |
-| PostgreSQL | Library, reading position, annotations, sync and job state |
-| `minio-data` | Original files, document assets, and hosted TTS audio |
-| `server-data` | Upload state and the generated provider-secret encryption key |
-| `.env` | Passwords, bearer token, endpoints, and explicit encryption settings |
-| `redis-data` | Durable queued-job AOF; recommended |
-| `local-tts-models` | Re-downloadable local model cache; optional |
+| PostgreSQL / `postgres-data` | 책장, 읽던 위치, 주석, 동기화와 작업 상태 |
+| `minio-data` | 원본 파일, 문서 asset과 서버 TTS audio |
+| `server-data` | 업로드 상태와 provider secret 암호화 key |
+| `.env` | 비밀번호, bearer token과 endpoint 설정 |
+| `redis-data` | 대기 중인 worker 작업 |
+| `local-tts-models` | 다시 받을 수 있는 로컬 TTS model cache |
 
-Do not use `docker compose down -v` as a normal stop command. The `-v` option deletes named volumes and server data.
+백업·복구와 장애 확인 절차는 [Docker Compose 한국어 가이드](docs/operations/docker-compose-guide-ko.md)에 더 자세히
+정리되어 있습니다.
 
-## Development checks
+## 외부에서 접속하기
 
-The hosted source workspace uses Node.js 22 and pnpm 11:
+기본 Compose는 안전을 위해 웹 UI와 MinIO Console을 `127.0.0.1`에만 엽니다. 인터넷이나 다른 기기에서
+접속하려면 HTTPS reverse proxy가 필요합니다.
+
+먼저 긴 token을 만듭니다.
+
+```bash
+openssl rand -hex 32
+```
+
+`.env`에 token과 실제 HTTPS 주소를 설정합니다.
+
+```dotenv
+READER_AUTH_TOKEN=위에서-만든-긴-token
+CORS_ALLOWED_ORIGINS=https://reader.example.com
+```
+
+외부 공개용 override를 함께 실행합니다.
+
+```bash
+docker compose -f compose.yaml -f compose.public.yaml config --quiet
+docker compose -f compose.yaml -f compose.public.yaml up -d --build
+```
+
+Caddy 예시:
+
+```caddyfile
+reader.example.com {
+    reverse_proxy 127.0.0.1:8080
+}
+```
+
+reverse proxy가 같은 서버에서 실행된다면 `WEB_BIND_ADDRESS=127.0.0.1`을 유지하십시오. PostgreSQL, Redis,
+MinIO API, TTS 서비스 포트를 인터넷에 직접 열면 안 됩니다. `compose.public.yaml`은 인증 경계를 켜지만 HTTPS
+인증서를 대신 발급하지는 않습니다.
+
+## 선택 기능: 로컬 한국어 TTS
+
+CPU 기반 MeloTTS 한국어 서비스를 Compose 내부에 추가할 수 있습니다.
+
+```bash
+docker compose -f compose.yaml -f compose.local-tts.yaml config --quiet
+docker compose -f compose.yaml -f compose.local-tts.yaml up -d --build
+docker compose -f compose.yaml -f compose.local-tts.yaml logs -f tts-model
+```
+
+첫 실행에서는 model을 다운로드하므로 몇 분 이상 걸릴 수 있습니다. model은 `local-tts-models` volume에
+cache되며 TTS 서비스 포트는 외부에 공개되지 않습니다.
+
+외부 접속과 로컬 TTS를 함께 사용할 때:
+
+```bash
+docker compose \
+  -f compose.yaml \
+  -f compose.public.yaml \
+  -f compose.local-tts.yaml \
+  up -d --build
+```
+
+이 override는 MeloTTS 한국어 CPU 구성을 위한 것입니다. 다른 엔진을 사용하려면 `/voices`와 `/synthesize`
+계약을 구현한 별도 서비스를 연결해야 합니다.
+
+## Windows 데스크톱 앱
+
+개발본의 Windows 앱은 같은 React Reader를 Tauri v2 shell에 넣은 구조입니다. 로컬 파일 접근, OS secure store,
+네이티브 provider/TTS 경계가 구현되어 있고 optimized release 실행 파일과 NSIS installer build·실행 smoke를
+통과했습니다.
+
+다만 **현재 공개 저장소에는 `src-tauri`와 NSIS installer가 없습니다.** 따라서 이 저장소를 clone한 뒤
+`pnpm tauri:build`를 실행하는 방식은 아직 사용할 수 없습니다. 공식 installer가 GitHub Releases에 올라오기
+전까지는 웹 서버 설치를 사용하십시오.
+
+네이티브 소스가 공개될 때의 개발자 build 기준은 다음과 같습니다.
+
+- Windows 10/11과 WebView2
+- Node.js 22, pnpm 11
+- Rust stable MSVC toolchain
+- Visual Studio C++ Build Tools
+- `pnpm install` 후 `pnpm tauri:dev` 또는 `pnpm tauri:build`
+- NSIS 결과물: `src-tauri/target/release/bundle/nsis/`
+
+정식 installer를 제공하게 되면 [GitHub Releases](https://github.com/west-truth/moya-reader/releases)를 설치 기준
+경로로 사용합니다.
+
+## Android 앱
+
+Android 앱도 별도 UI를 새로 만든 것이 아니라 같은 React Reader를 Tauri Android WebView에 넣고 Android 전용
+파일 선택, back/lifecycle, Keystore, system TTS와 Media Session adapter를 연결한 구조입니다.
+
+현재 개발본은 다음 단계까지 도달했습니다.
+
+- ARM64와 x86_64 production-asset debug APK build
+- Android 15 Pixel 5 emulator cold launch
+- 모바일 safe area와 책장 표시
+- Storage Access Framework picker 진입
+- picker → import sheet → Library 뒤로가기 흐름
+- Android Keystore credential 경계와 system/server/local TTS adapter
+
+하지만 물리 ARM64 기기에서의 실제 파일 import·재실행 지속성, signed APK/AAB, 영구 package identifier,
+release signing과 업데이트 검증은 아직 끝나지 않았습니다. 따라서 현재 상태는 **emulator alpha**이며 일반
+사용자에게 debug APK 설치를 권장하지 않습니다.
+
+또한 이 공개 저장소에는 현재 Android Gradle project가 포함되어 있지 않으므로 여기서 APK를 build할 수 없습니다.
+정식 signed APK가 준비되면 GitHub Releases를 통해 배포하고, Play Store 배포 여부는 별도로 결정합니다.
+
+## 개발용 웹 실행
+
+서버 없이 브라우저의 IndexedDB에 책을 보관하는 로컬 Reader를 개발 모드로 실행할 수 있습니다.
+
+준비물:
+
+- Node.js 22
+- pnpm 11
 
 ```bash
 corepack enable
@@ -193,45 +313,62 @@ pnpm install --frozen-lockfile
 pnpm dev
 ```
 
-Useful commands:
+브라우저에서 `http://127.0.0.1:1420`을 엽니다. 이 모드는 개발용이며 외부 AI/TTS key를 브라우저에 직접
+저장하거나 호출하지 않습니다.
+
+주요 검사 명령:
 
 ```bash
 pnpm typecheck
 pnpm test
 pnpm build
-pnpm server:build
 pnpm check:server:production
 pnpm check
 ```
 
-The canonical hosted/server target is Ubuntu-compatible Linux x64 with glibc. GitHub Actions runs on Ubuntu 24.04,
-and the Node build/runtime container stages use Debian Bookworm slim so native production dependencies resolve to the
-same Linux/glibc family. The committed production-license inventory must therefore be generated on Ubuntu or WSL2
-Ubuntu with `pnpm licenses:generate`. A Windows `pnpm check` still verifies all platform-neutral dependencies and the
-licenses of the locally installed Windows native variants, but it cannot overwrite the canonical Linux inventory.
+서버와 라이선스 인벤토리의 기준 환경은 Linux x64 glibc입니다. 인벤토리 생성은 Ubuntu 또는 WSL2 Ubuntu에서
+`pnpm licenses:generate`로 수행합니다. Windows에서는 Linux 기준본을 덮어쓰지 않고 플랫폼 중립 의존성을
+검증합니다.
 
-`pnpm test` runs the focused parser/import/health/source-download deployment suite. The broader development repository
-maintains additional platform and research-path tests that are outside this hosted deployment snapshot.
+## 문제가 생겼을 때
 
-Provider smoke commands may use credentials and incur external service costs. They are not part of `pnpm check` and
-should only be run intentionally.
+서비스 상태와 최근 log를 먼저 확인합니다.
 
-## Known limitations
+```bash
+docker compose ps
+docker compose logs --tail=200 web api worker postgres redis minio
+curl http://127.0.0.1:8080/ready
+```
 
-- Authentication uses one shared bearer token intended for personal self-hosting.
-- DRM-protected EPUB and PDF files are not supported.
-- RAR/7z support focuses on single-volume archives; very large, solid, or encrypted archives need representative testing.
-- OCR accuracy and runtime depend on scan quality, language data, and available memory.
-- The included local TTS sidecar is Korean MeloTTS on CPU and can be slower than hosted commercial providers.
-- Internet-facing operation still requires HTTPS, a host firewall, access control, monitoring, and tested backups.
+자주 확인할 항목:
 
-## License and redistribution status
+- API가 시작되지 않음: `POSTGRES_PASSWORD`와 `DATABASE_URL`의 비밀번호가 같은지 확인
+- 파일 저장 실패: `MINIO_ROOT_*`와 `S3_*`가 서로 같은 계정인지 확인
+- 외부 접속 실패: reverse proxy, HTTPS, `READER_AUTH_TOKEN`, `CORS_ALLOWED_ORIGINS` 확인
+- TTS가 준비되지 않음: `docker compose ... logs -f tts-model`로 model 다운로드 상태 확인
+- 업데이트 후 이상: `docker compose up -d --build --remove-orphans` 실행 후 API/worker log 확인
 
-Moya source code in this repository is licensed under the
-[Apache License 2.0](LICENSE). Third-party libraries, WebAssembly components, and optional model software remain under
-their own terms; see [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) and `third_party/licenses/`.
+더 자세한 문서:
 
-This repository is ready for source publication and local source builds. The stricter binary redistribution gate
-(`pnpm check:licenses:release`) intentionally remains blocked until the outstanding corresponding-source, container,
-and artifact-notice work recorded in `third_party/license-release-policy.json` is complete. Do not treat the ordinary
-source check as approval to publish official prebuilt images or installers.
+- [처음 설치부터 업데이트·백업까지](docs/operations/docker-compose-guide-ko.md)
+- [Docker Compose 기술 운영 문서](docs/operations/docker-compose-deployment.md)
+- [Hosted provider 운영 경계](docs/operations/hosted-provider-admission.md)
+
+## 현재 제한 사항
+
+- 인증은 개인용 단일 bearer token 방식입니다.
+- DRM이 적용된 EPUB/PDF는 지원하지 않습니다.
+- RAR/7z는 단일 볼륨 중심이며 매우 큰 solid archive와 암호화 archive는 추가 검증이 필요합니다.
+- OCR 정확도와 처리 시간은 스캔 품질, 언어 data와 서버 자원에 따라 달라집니다.
+- CPU MeloTTS는 상용 cloud TTS보다 느릴 수 있습니다.
+- 인터넷 공개 운영에는 HTTPS, 방화벽, 접근 통제, monitoring과 복구가 검증된 backup이 필요합니다.
+- 데스크톱 installer와 signed Android package는 아직 공개 배포되지 않았습니다.
+
+## 라이선스
+
+모야 소스 코드는 [Apache License 2.0](LICENSE)으로 공개됩니다. 사용 중인 라이브러리, WebAssembly 구성요소와
+선택형 model은 각자의 라이선스를 따릅니다. 자세한 내용은 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)와
+`third_party/licenses/`를 확인하십시오.
+
+현재 저장소는 소스 공개와 로컬 소스 build를 위한 단계입니다. 공식 prebuilt container·desktop installer·APK의
+재배포 조건은 아직 별도 정리 중이므로 일반 소스 검사를 공식 binary 배포 승인으로 해석하면 안 됩니다.
