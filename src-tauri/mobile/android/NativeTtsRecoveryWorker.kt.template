@@ -1,0 +1,162 @@
+package __NOVELDESK_ANDROID_PACKAGE__
+
+import android.content.Context
+import androidx.work.BackoffPolicy
+import androidx.work.Constraints
+import androidx.work.Data
+import androidx.work.ExistingWorkPolicy
+import androidx.work.NetworkType
+import androidx.work.OneTimeWorkRequest
+import androidx.work.WorkManager
+import androidx.work.WorkRequest
+import androidx.work.Worker
+import androidx.work.WorkerParameters
+import org.json.JSONObject
+import java.io.File
+import java.util.concurrent.TimeUnit
+
+internal object NativeTtsRecoveryScheduler {
+  private const val UNIQUE_WORK_PREFIX = "noveldesk-native-tts-recovery-v2"
+
+  fun schedule(context: Context, network: String, charging: String) {
+    val normalizedNetwork = if (network == "unmetered") "unmetered" else "any"
+    val normalizedCharging = if (charging == "required") "required" else "any"
+    val uniqueWork = "$UNIQUE_WORK_PREFIX-$normalizedNetwork-$normalizedCharging"
+    val constraints = Constraints.Builder()
+      .setRequiredNetworkType(
+        if (normalizedNetwork == "unmetered") NetworkType.UNMETERED else NetworkType.CONNECTED,
+      )
+      .setRequiresCharging(normalizedCharging == "required")
+      .setRequiresBatteryNotLow(true)
+      .setRequiresStorageNotLow(true)
+      .build()
+    val request = OneTimeWorkRequest.Builder(NativeTtsRecoveryWorker::class.java)
+      .setConstraints(constraints)
+      .setInputData(
+        Data.Builder()
+          .putString(NativeTtsRecoveryWorker.INPUT_NETWORK, normalizedNetwork)
+          .putString(NativeTtsRecoveryWorker.INPUT_CHARGING, normalizedCharging)
+          .build(),
+      )
+      .setInitialDelay(5, TimeUnit.MINUTES)
+      .setBackoffCriteria(
+        BackoffPolicy.EXPONENTIAL,
+        WorkRequest.MIN_BACKOFF_MILLIS,
+        TimeUnit.MILLISECONDS,
+      )
+      .addTag(uniqueWork)
+      .build()
+    WorkManager.getInstance(context).enqueueUniqueWork(uniqueWork, ExistingWorkPolicy.KEEP, request)
+  }
+}
+
+class NativeTtsRecoveryWorker(
+  appContext: Context,
+  workerParameters: WorkerParameters,
+) : Worker(appContext, workerParameters) {
+  override fun doWork(): Result {
+    val scheduledNetwork = inputData.getString(INPUT_NETWORK) ?: "any"
+    val scheduledCharging = inputData.getString(INPUT_CHARGING) ?: "any"
+    val directory = File(applicationContext.filesDir, JOB_DIRECTORY)
+    val manifests = directory.listFiles { file -> file.isFile && file.extension == "json" }
+      ?.sortedBy { it.name }
+      .orEmpty()
+    if (manifests.isEmpty()) return Result.success()
+
+    val now = System.currentTimeMillis()
+    var needsRetry = false
+    var executed = 0
+    for (file in manifests) {
+      val job = parseJob(file) ?: continue
+      if (!job.matchesPolicy(scheduledNetwork, scheduledCharging)) continue
+      if (job.state == "failed") continue
+      if (!job.isDue(now)) {
+        needsRetry = true
+        continue
+      }
+      if (executed >= MAX_JOBS_PER_RUN) {
+        needsRetry = true
+        continue
+      }
+      val secret = ProviderSecretStore.get(applicationContext, job.secretAccount).orEmpty()
+      val outcome = try {
+        runNativeTtsJob(applicationContext.filesDir.absolutePath, job.operationId, secret)
+      } catch (_: Throwable) {
+        OUTCOME_RETRY
+      }
+      executed += 1
+      if (outcome == OUTCOME_RETRY || outcome == OUTCOME_NOT_DUE || outcome == OUTCOME_INTERNAL) {
+        needsRetry = true
+      }
+    }
+    if (!needsRetry) return Result.success()
+    return if (runAttemptCount < MAX_WORK_ATTEMPTS) Result.retry() else Result.failure()
+  }
+
+  private fun parseJob(file: File): PendingJob? {
+    return try {
+      val body = JSONObject(file.readText(Charsets.UTF_8))
+      val request = body.optJSONObject("request") ?: body
+      val synthesis = request.getJSONObject("synthesis")
+      val recoveryPolicy = request.optJSONObject("recoveryPolicy")
+      val providerId = synthesis.getString("providerId")
+      val secretName = when (providerId) {
+        "openai-tts", "elevenlabs" -> "api_key"
+        "local-endpoint" -> "endpoint_url"
+        else -> return null
+      }
+      PendingJob(
+        operationId = request.getString("operationId"),
+        state = body.optString("state", "running"),
+        updatedAtMs = body.optLong("updatedAtMs", file.lastModified()),
+        nextAttemptAtMs = if (body.has("nextAttemptAtMs") && !body.isNull("nextAttemptAtMs")) {
+          body.getLong("nextAttemptAtMs")
+        } else {
+          null
+        },
+        network = if (recoveryPolicy?.optString("network") == "unmetered") "unmetered" else "any",
+        charging = if (recoveryPolicy?.optString("charging") == "required") "required" else "any",
+        secretAccount = "tts_synthesis:$providerId:$secretName",
+      )
+    } catch (_: Exception) {
+      null
+    }
+  }
+
+  private external fun runNativeTtsJob(appDataPath: String, operationId: String, secret: String): Int
+
+  private data class PendingJob(
+    val operationId: String,
+    val state: String,
+    val updatedAtMs: Long,
+    val nextAttemptAtMs: Long?,
+    val network: String,
+    val charging: String,
+    val secretAccount: String,
+  ) {
+    fun matchesPolicy(scheduledNetwork: String, scheduledCharging: String): Boolean =
+      network == scheduledNetwork && charging == scheduledCharging
+
+    fun isDue(now: Long): Boolean = when (state) {
+      "retry_wait" -> nextAttemptAtMs == null || nextAttemptAtMs <= now
+      "running" -> now - updatedAtMs >= STALE_RUNNING_AGE_MS
+      else -> false
+    }
+  }
+
+  companion object {
+    const val INPUT_NETWORK = "recovery_network"
+    const val INPUT_CHARGING = "recovery_charging"
+    private const val JOB_DIRECTORY = "native-tts-jobs-v1"
+    private const val STALE_RUNNING_AGE_MS = 5 * 60 * 1_000L
+    private const val MAX_JOBS_PER_RUN = 3
+    private const val MAX_WORK_ATTEMPTS = 10
+    private const val OUTCOME_RETRY = 1
+    private const val OUTCOME_NOT_DUE = 3
+    private const val OUTCOME_INTERNAL = 4
+
+    init {
+      System.loadLibrary("noveldesk_reader_lib")
+    }
+  }
+}

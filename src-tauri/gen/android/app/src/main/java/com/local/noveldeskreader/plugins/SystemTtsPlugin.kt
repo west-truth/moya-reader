@@ -1,0 +1,579 @@
+package com.local.noveldeskreader.plugins
+
+import android.app.Activity
+import android.content.BroadcastReceiver
+import android.content.Context
+import android.content.Intent
+import android.content.IntentFilter
+import android.media.AudioAttributes
+import android.media.AudioFocusRequest
+import android.media.AudioManager
+import android.os.Build
+import android.os.Bundle
+import android.speech.tts.TextToSpeech
+import android.speech.tts.UtteranceProgressListener
+import androidx.appcompat.app.AppCompatActivity
+import androidx.core.content.ContextCompat
+import app.tauri.annotation.Command
+import app.tauri.annotation.InvokeArg
+import app.tauri.annotation.TauriPlugin
+import app.tauri.plugin.Invoke
+import app.tauri.plugin.JSObject
+import app.tauri.plugin.Plugin
+import java.util.Locale
+import java.util.concurrent.ConcurrentHashMap
+import java.io.RandomAccessFile
+import org.json.JSONObject
+import com.local.noveldeskreader.NovelDeskPlaybackService
+
+private const val TTS_PLAYBACK_EVENT = "noveldesk://android/system-tts"
+
+@InvokeArg
+class SystemTtsSpeakArgs {
+  lateinit var utteranceId: String
+  lateinit var text: String
+  var rate: Float = 1f
+  var pitch: Float = 1f
+  var volume: Float = 1f
+  var voiceId: String? = null
+  var title: String? = null
+  var album: String? = null
+  var artist: String? = null
+  var trackingJson: String? = null
+  var pauseAfterMs: Int = 0
+}
+
+@InvokeArg
+class SystemTtsSpeakBatchArgs {
+  var items: Array<SystemTtsSpeakArgs> = emptyArray()
+}
+
+private data class SpeechRequest(
+  val utteranceId: String,
+  val text: String,
+  val rate: Float,
+  val pitch: Float,
+  val volume: Float,
+  val voiceId: String?,
+  val title: String?,
+  val album: String?,
+  val artist: String?,
+  val trackingJson: String?,
+  val pauseAfterMs: Int,
+  val outputFile: java.io.File,
+)
+
+@TauriPlugin
+class SystemTtsPlugin(private val activity: Activity) : Plugin(activity), TextToSpeech.OnInitListener {
+  private var engine: TextToSpeech? = null
+  private var initialized = false
+  private var initializationError: String? = null
+  private var activeRequest: SpeechRequest? = null
+  private var pendingBatch: List<SpeechRequest> = emptyList()
+  private var paused = false
+  private var pausedForAudioFocus = false
+  private val ignoredStopUtterances = ConcurrentHashMap.newKeySet<String>()
+  private val audioManager by lazy { checkNotNull(activity.getSystemService(AudioManager::class.java)) }
+  private var audioFocusRequest: AudioFocusRequest? = null
+  private val synthesizingUtterances = ConcurrentHashMap.newKeySet<String>()
+
+  private val playbackReceiver = object : BroadcastReceiver() {
+    override fun onReceive(context: Context?, intent: Intent?) {
+      if (intent?.action != NovelDeskPlaybackService.ACTION_PLAYBACK_EVENT) return
+      val utteranceId = intent.getStringExtra(NovelDeskPlaybackService.EXTRA_UTTERANCE_ID) ?: return
+      val phase = intent.getStringExtra(NovelDeskPlaybackService.EXTRA_PHASE) ?: return
+      val message = intent.getStringExtra(NovelDeskPlaybackService.EXTRA_MESSAGE)
+      if (phase == "start") activeRequest = pendingBatch.firstOrNull { it.utteranceId == utteranceId }
+      if (phase == "end" || phase == "error" || phase == "stopped") {
+        if (activeRequest?.utteranceId == utteranceId) activeRequest = null
+        pendingBatch = pendingBatch.filterNot { it.utteranceId == utteranceId }
+        paused = false
+        pausedForAudioFocus = false
+      }
+      publishPlayback(utteranceId, phase, message)
+    }
+  }
+
+  private val audioFocusListener = AudioManager.OnAudioFocusChangeListener { change ->
+    activity.runOnUiThread {
+      when (change) {
+        AudioManager.AUDIOFOCUS_GAIN -> resumeAfterAudioFocus()
+        AudioManager.AUDIOFOCUS_LOSS_TRANSIENT,
+        AudioManager.AUDIOFOCUS_LOSS_TRANSIENT_CAN_DUCK -> pauseForAudioFocus()
+        AudioManager.AUDIOFOCUS_LOSS -> stopForAudioFocusLoss()
+      }
+    }
+  }
+
+  init {
+    ContextCompat.registerReceiver(
+      activity,
+      playbackReceiver,
+      IntentFilter(NovelDeskPlaybackService.ACTION_PLAYBACK_EVENT),
+      ContextCompat.RECEIVER_NOT_EXPORTED,
+    )
+    activity.runOnUiThread {
+      engine = TextToSpeech(activity.applicationContext, this)
+      engine?.setOnUtteranceProgressListener(playbackListener)
+    }
+  }
+
+  private val playbackListener = object : UtteranceProgressListener() {
+    override fun onStart(utteranceId: String) {
+      if (!synthesizingUtterances.contains(utteranceId)) publishPlayback(utteranceId, "start")
+    }
+
+    override fun onDone(utteranceId: String) {
+      if (synthesizingUtterances.remove(utteranceId)) {
+        val request = pendingBatch.firstOrNull { it.utteranceId == utteranceId }
+        if (request != null && pendingBatch.all { !synthesizingUtterances.contains(it.utteranceId) && it.outputFile.isFile }) {
+          try {
+            pendingBatch.forEach { appendTrailingSilence(it.outputFile, it.pauseAfterMs) }
+            NovelDeskPlaybackService.playFiles(
+              activity.applicationContext,
+              pendingBatch.map {
+                NovelDeskPlaybackService.PlaybackFile(
+                  utteranceId = it.utteranceId,
+                  file = it.outputFile,
+                  title = it.title,
+                  album = it.album,
+                  artist = it.artist,
+                  volume = it.volume,
+                  trackingJson = it.trackingJson,
+                )
+              },
+            )
+          } catch (error: Exception) {
+              activeRequest = null
+            pendingBatch.forEach { it.outputFile.delete() }
+            pendingBatch = emptyList()
+            publishPlayback(utteranceId, "error", error.message ?: "Android background playback could not start.")
+          }
+        }
+        return
+      }
+      ignoredStopUtterances.remove(utteranceId)
+      if (activeRequest?.utteranceId == utteranceId) {
+        activeRequest = null
+        paused = false
+        pausedForAudioFocus = false
+        abandonAudioFocus()
+      }
+      publishPlayback(utteranceId, "end")
+    }
+
+    @Deprecated("Deprecated by Android")
+    override fun onError(utteranceId: String) {
+      onError(utteranceId, TextToSpeech.ERROR)
+    }
+
+    override fun onError(utteranceId: String, errorCode: Int) {
+      synthesizingUtterances.remove(utteranceId)
+      ignoredStopUtterances.remove(utteranceId)
+      if (activeRequest?.utteranceId == utteranceId) {
+        activeRequest = null
+        paused = false
+        pausedForAudioFocus = false
+        abandonAudioFocus()
+      }
+      pendingBatch.forEach { it.outputFile.delete() }
+      pendingBatch = emptyList()
+      publishPlayback(utteranceId, "error", "Android system TTS error: $errorCode")
+    }
+
+    override fun onStop(utteranceId: String, interrupted: Boolean) {
+      if (!ignoredStopUtterances.remove(utteranceId)) publishPlayback(utteranceId, "stopped")
+    }
+  }
+
+  override fun onInit(status: Int) {
+    initialized = status == TextToSpeech.SUCCESS
+    initializationError = if (initialized) null else "Android system TTS could not be initialized."
+    if (initialized) engine?.language = Locale.KOREAN
+  }
+
+  @Command
+  fun getStatus(invoke: Invoke) {
+    val voices = if (initialized) engine?.voices.orEmpty() else emptySet()
+    val playback = NovelDeskPlaybackService.playbackSnapshot(activity.applicationContext)
+    invoke.resolve(
+      JSObject().apply {
+        put("supported", initializationError == null)
+        put("canSpeak", initialized)
+        put("voicesAvailable", voices.isNotEmpty())
+        put("voiceCount", voices.size)
+        put(
+          "playback",
+          JSObject().apply {
+            put("active", playback.active)
+            put("playing", playback.playing)
+            put("paused", playback.paused)
+            put("utteranceId", playback.utteranceId)
+            put("itemIndex", playback.itemIndex)
+            put("positionMs", playback.positionMs)
+            put("itemCount", playback.itemCount)
+            put("updatedAtMs", playback.updatedAtMs)
+            put("trackingJson", playback.trackingJson)
+          },
+        )
+        put(
+          "message",
+          initializationError
+            ?: if (initialized) "Android 시스템 TTS를 사용할 수 있습니다."
+            else "Android 시스템 TTS를 준비하고 있습니다.",
+        )
+      },
+    )
+  }
+
+  @Command
+  fun listVoices(invoke: Invoke) {
+    val voices = if (initialized) engine?.voices.orEmpty() else emptySet()
+    val rows = voices
+      .sortedWith(compareBy({ it.locale.toLanguageTag() }, { it.name }))
+      .map { voice ->
+        mapOf(
+          "id" to voice.name,
+          "label" to "${voice.name} (${voice.locale.toLanguageTag()})",
+          "lang" to voice.locale.toLanguageTag(),
+        )
+      }
+    invoke.resolveObject(mapOf("voices" to rows))
+  }
+
+  @Command
+  fun speak(invoke: Invoke) {
+    try {
+      val args = invoke.parseArgs(SystemTtsSpeakArgs::class.java)
+      scheduleBatch(listOf(validateRequest(args)))
+      invoke.resolve()
+    } catch (error: Exception) {
+      invoke.reject(error.message ?: "Android system TTS could not start playback.", error)
+    }
+  }
+
+  @Command
+  fun speakBatch(invoke: Invoke) {
+    try {
+      val args = invoke.parseArgs(SystemTtsSpeakBatchArgs::class.java)
+      require(args.items.isNotEmpty()) { "Android system TTS playlist is empty." }
+      require(args.items.size <= 512) { "Android system TTS playlist exceeds 512 items." }
+      scheduleBatch(args.items.map(::validateRequest))
+      invoke.resolve()
+    } catch (error: Exception) {
+      invoke.reject(error.message ?: "Android system TTS playlist could not start.", error)
+    }
+  }
+
+  @Command
+  fun pause(invoke: Invoke) {
+    val playback = NovelDeskPlaybackService.playbackSnapshot(activity.applicationContext)
+    if (playback.active && !playback.paused) {
+      paused = true
+      pausedForAudioFocus = false
+      NovelDeskPlaybackService.pause(activity.applicationContext)
+    }
+    invoke.resolve()
+  }
+
+  @Command
+  fun resume(invoke: Invoke) {
+    try {
+      val playback = NovelDeskPlaybackService.playbackSnapshot(activity.applicationContext)
+      if (playback.active && playback.paused) {
+        paused = false
+        pausedForAudioFocus = false
+        NovelDeskPlaybackService.resume(activity.applicationContext)
+      }
+      invoke.resolve()
+    } catch (error: Exception) {
+      invoke.reject(error.message ?: "Android system TTS could not resume playback.", error)
+    }
+  }
+
+  @Command
+  fun stop(invoke: Invoke) {
+    val utteranceId = activeRequest?.utteranceId
+    activeRequest = null
+    pendingBatch.forEach { it.outputFile.delete() }
+    pendingBatch = emptyList()
+    paused = false
+    pausedForAudioFocus = false
+    engine?.stop()
+    synthesizingUtterances.clear()
+    NovelDeskPlaybackService.stop(activity.applicationContext)
+    if (utteranceId != null) publishPlayback(utteranceId, "stopped")
+    invoke.resolve()
+  }
+
+  override fun onDestroy(activity: AppCompatActivity) {
+    activeRequest = null
+    pendingBatch = emptyList()
+    paused = false
+    pausedForAudioFocus = false
+    engine?.stop()
+    engine?.shutdown()
+    activity.unregisterReceiver(playbackReceiver)
+    abandonAudioFocus()
+    engine = null
+    initialized = false
+  }
+
+  private fun validateRequest(args: SystemTtsSpeakArgs): SpeechRequest {
+    val utteranceId = args.utteranceId.trim()
+    val text = args.text.trim()
+    require(utteranceId.isNotEmpty()) { "Android system TTS utterance id is required." }
+    require(text.isNotEmpty()) { "Android system TTS text is required." }
+    require(text.length <= TextToSpeech.getMaxSpeechInputLength()) {
+      "Android system TTS text exceeds the platform utterance limit."
+    }
+    return SpeechRequest(
+      utteranceId = utteranceId,
+      text = text,
+      rate = args.rate.coerceIn(0.1f, 2f),
+      pitch = args.pitch.coerceIn(0.5f, 2f),
+      volume = args.volume.coerceIn(0f, 1f),
+      voiceId = args.voiceId?.trim()?.takeIf { it.isNotEmpty() },
+      title = args.title?.trim()?.takeIf { it.isNotEmpty() },
+      album = args.album?.trim()?.takeIf { it.isNotEmpty() },
+      artist = args.artist?.trim()?.takeIf { it.isNotEmpty() },
+      trackingJson = validateTrackingJson(args.trackingJson),
+      pauseAfterMs = args.pauseAfterMs.coerceIn(0, 5_000),
+      outputFile = java.io.File(
+        java.io.File(activity.cacheDir, "tts-playback").apply { mkdirs() },
+        "$utteranceId.wav",
+      ),
+    )
+  }
+
+  private fun validateTrackingJson(value: String?): String? {
+    val normalized = value?.trim()?.takeIf { it.isNotEmpty() } ?: return null
+    require(normalized.length <= 4_096) { "Android TTS playback anchor is too large." }
+    val row = JSONObject(normalized)
+    val allowed = setOf(
+      "kind",
+      "bookId",
+      "chapterId",
+      "blockId",
+      "blockIndex",
+      "pageIndex",
+      "textRevisionId",
+      "startOffset",
+      "endOffset",
+      "queueItemFingerprint",
+    )
+    require(row.keys().asSequence().all { it in allowed }) {
+      "Android TTS playback anchor contains unsupported fields."
+    }
+    require(row.optString("kind") == "reflowable_text" || row.optString("kind") == "fixed_text") {
+      "Android TTS playback anchor kind is invalid."
+    }
+    return row.toString()
+  }
+
+  private fun scheduleBatch(requests: List<SpeechRequest>) {
+    val currentEngine = requireEngine()
+    pendingBatch.forEach { previous ->
+      if (requests.none { it.utteranceId == previous.utteranceId }) publishPlayback(previous.utteranceId, "stopped")
+      ignoredStopUtterances.add(previous.utteranceId)
+      previous.outputFile.delete()
+    }
+    engine?.stop()
+    NovelDeskPlaybackService.stop(activity.applicationContext)
+    pendingBatch = requests
+    activeRequest = requests.firstOrNull()
+    synthesizingUtterances.clear()
+    paused = false
+    pausedForAudioFocus = false
+    requests.forEach { request ->
+      synthesizingUtterances.add(request.utteranceId)
+      if (speak(currentEngine, request) != TextToSpeech.SUCCESS) {
+        synthesizingUtterances.clear()
+        pendingBatch.forEach { it.outputFile.delete() }
+        pendingBatch = emptyList()
+        activeRequest = null
+        throw IllegalStateException("Android system TTS could not synthesize the playback queue.")
+      }
+    }
+  }
+
+  private fun requireEngine(): TextToSpeech {
+    check(initialized) { initializationError ?: "Android system TTS is still initializing." }
+    return checkNotNull(engine) { "Android system TTS is unavailable." }
+  }
+
+  private fun speak(tts: TextToSpeech, request: SpeechRequest): Int {
+    tts.setSpeechRate(request.rate)
+    tts.setPitch(request.pitch)
+    val selectedVoice = request.voiceId?.let { voiceId -> tts.voices?.firstOrNull { it.name == voiceId } }
+      ?: tts.voices?.firstOrNull { it.locale.language == Locale.KOREAN.language }
+    if (selectedVoice != null) tts.voice = selectedVoice else tts.language = Locale.KOREAN
+    val params = Bundle().apply { putFloat(TextToSpeech.Engine.KEY_PARAM_VOLUME, request.volume) }
+    request.outputFile.delete()
+    return tts.synthesizeToFile(request.text, params, request.outputFile, request.utteranceId)
+  }
+
+  private fun appendTrailingSilence(file: java.io.File, durationMs: Int) {
+    if (durationMs <= 0) return
+    try {
+      RandomAccessFile(file, "rw").use { wav ->
+        if (wav.length() < 44 || wav.readAscii(0, 4) != "RIFF" || wav.readAscii(8, 4) != "WAVE") return
+        var offset = 12L
+        var byteRate = 0
+        var blockAlign = 0
+        var dataSizeOffset = -1L
+        var dataStart = -1L
+        var dataSize = 0
+        while (offset + 8 <= wav.length()) {
+          val chunkId = wav.readAscii(offset, 4)
+          val chunkSize = wav.readLittleEndianInt(offset + 4)
+          if (chunkSize < 0) return
+          val chunkData = offset + 8
+          if (chunkId == "fmt " && chunkSize >= 16) {
+            byteRate = wav.readLittleEndianInt(chunkData + 8)
+            blockAlign = wav.readLittleEndianShort(chunkData + 12)
+          } else if (chunkId == "data") {
+            dataSizeOffset = offset + 4
+            dataStart = chunkData
+            dataSize = chunkSize
+            break
+          }
+          offset = chunkData + chunkSize + (chunkSize and 1)
+        }
+        if (byteRate <= 0 || blockAlign <= 0 || dataStart < 0 || dataSizeOffset < 0) return
+        val dataEnd = dataStart + dataSize
+        if (dataEnd != wav.length()) return
+        val requestedBytes = (byteRate.toLong() * durationMs.coerceIn(0, 5_000) / 1_000L)
+        val silenceBytes = (requestedBytes / blockAlign * blockAlign).coerceAtMost(Int.MAX_VALUE.toLong()).toInt()
+        if (silenceBytes <= 0 || dataSize > Int.MAX_VALUE - silenceBytes) return
+        wav.seek(dataEnd)
+        var remaining = silenceBytes
+        val zeros = ByteArray(64 * 1024)
+        while (remaining > 0) {
+          val count = minOf(remaining, zeros.size)
+          wav.write(zeros, 0, count)
+          remaining -= count
+        }
+        wav.writeLittleEndianInt(dataSizeOffset, dataSize + silenceBytes)
+        wav.writeLittleEndianInt(4, (wav.length() - 8).coerceAtMost(Int.MAX_VALUE.toLong()).toInt())
+      }
+    } catch (_: Exception) {
+      // Gap padding is best-effort; a valid synthesized item is still playable without it.
+    }
+  }
+
+  private fun RandomAccessFile.readAscii(offset: Long, length: Int): String {
+    val bytes = ByteArray(length)
+    seek(offset)
+    readFully(bytes)
+    return String(bytes, Charsets.US_ASCII)
+  }
+
+  private fun RandomAccessFile.readLittleEndianInt(offset: Long): Int {
+    seek(offset)
+    return Integer.reverseBytes(readInt())
+  }
+
+  private fun RandomAccessFile.readLittleEndianShort(offset: Long): Int {
+    seek(offset)
+    val low = readUnsignedByte()
+    val high = readUnsignedByte()
+    return low or (high shl 8)
+  }
+
+  private fun RandomAccessFile.writeLittleEndianInt(offset: Long, value: Int) {
+    seek(offset)
+    writeInt(Integer.reverseBytes(value))
+  }
+
+  private fun requestAudioFocus(): Boolean {
+    val result = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+      val request = audioFocusRequest ?: AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN)
+        .setAudioAttributes(
+          AudioAttributes.Builder()
+            .setUsage(AudioAttributes.USAGE_MEDIA)
+            .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
+            .build(),
+        )
+        .setOnAudioFocusChangeListener(audioFocusListener)
+        .setWillPauseWhenDucked(true)
+        .build()
+        .also { audioFocusRequest = it }
+      audioManager.requestAudioFocus(request)
+    } else {
+      @Suppress("DEPRECATION")
+      audioManager.requestAudioFocus(
+        audioFocusListener,
+        AudioManager.STREAM_MUSIC,
+        AudioManager.AUDIOFOCUS_GAIN,
+      )
+    }
+    return result == AudioManager.AUDIOFOCUS_REQUEST_GRANTED
+  }
+
+  private fun abandonAudioFocus() {
+    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+      audioFocusRequest?.let(audioManager::abandonAudioFocusRequest)
+    } else {
+      @Suppress("DEPRECATION")
+      audioManager.abandonAudioFocus(audioFocusListener)
+    }
+  }
+
+  private fun pauseForAudioFocus() {
+    val request = activeRequest ?: return
+    if (paused || pausedForAudioFocus) return
+    pausedForAudioFocus = true
+    ignoredStopUtterances.add(request.utteranceId)
+    engine?.stop()
+  }
+
+  private fun resumeAfterAudioFocus() {
+    val request = activeRequest ?: return
+    if (!pausedForAudioFocus || paused) return
+    pausedForAudioFocus = false
+    if (speak(requireEngine(), request) != TextToSpeech.SUCCESS) {
+      activeRequest = null
+      abandonAudioFocus()
+      publishPlayback(request.utteranceId, "error", "Android 시스템 TTS가 오디오 포커스 복귀 후 재생을 재개하지 못했습니다.")
+    }
+  }
+
+  private fun stopForAudioFocusLoss() {
+    val request = activeRequest ?: return
+    if (paused) return
+    activeRequest = null
+    paused = false
+    pausedForAudioFocus = false
+    ignoredStopUtterances.add(request.utteranceId)
+    engine?.stop()
+    abandonAudioFocus()
+    publishPlayback(request.utteranceId, "error", "다른 앱이 오디오 재생을 시작해 시스템 TTS를 중지했습니다.")
+  }
+
+  private fun publishPlayback(utteranceId: String, phase: String, message: String? = null) {
+    activity.runOnUiThread {
+      val playback = NovelDeskPlaybackService.playbackSnapshot(activity.applicationContext)
+      val payload = JSObject().apply {
+        put("utteranceId", utteranceId)
+        put("phase", phase)
+        if (message != null) put("message", message)
+        put(
+          "playback",
+          JSObject().apply {
+            put("active", playback.active)
+            put("playing", playback.playing)
+            put("paused", playback.paused)
+            put("utteranceId", playback.utteranceId)
+            put("itemIndex", playback.itemIndex)
+            put("positionMs", playback.positionMs)
+            put("itemCount", playback.itemCount)
+            put("updatedAtMs", playback.updatedAtMs)
+            put("trackingJson", playback.trackingJson)
+          },
+        )
+      }
+      trigger(TTS_PLAYBACK_EVENT, payload)
+    }
+  }
+}

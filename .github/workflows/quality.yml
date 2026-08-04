@@ -25,7 +25,8 @@ jobs:
           node-version: 22
           cache: pnpm
       - run: pnpm install --frozen-lockfile
-      - run: pnpm check
+      - run: pnpm check:web-server
+      - run: pnpm check:mobile-readiness
       - run: docker compose config --quiet
       - run: docker compose -f compose.yaml -f compose.local-tts.yaml config --quiet
       - run: docker compose -f compose.yaml -f compose.public.yaml config --quiet
@@ -35,3 +36,24 @@ jobs:
       - name: Build hosted images
         if: github.event_name != 'pull_request'
         run: docker compose build web api worker
+
+  windows-native-source:
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - uses: pnpm/action-setup@v6
+        with:
+          version: 11.7.0
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: pnpm
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy,rustfmt
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm check:rust
+      - run: pnpm check:native-source

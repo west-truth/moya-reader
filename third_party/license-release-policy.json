@@ -29,6 +29,7 @@
   "releaseBlockers": [
     "7z-wasm-corresponding-source-and-relink-offer",
     "libarchive-wasm-binary-license-and-source-capture",
+    "cargo-and-android-dependency-inventory",
     "container-and-python-dependency-inventory",
     "release-artifact-notice-inspection"
   ]
