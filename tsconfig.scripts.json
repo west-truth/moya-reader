@@ -1,0 +1,10 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "target": "ES2022",
+    "lib": ["ES2022", "DOM"],
+    "moduleResolution": "Bundler",
+    "types": ["node"]
+  },
+  "include": ["scripts/**/*.ts", "src/domain/**/*.ts", "src/providers/**/*.ts", "src/repositories/reader-defaults.ts"]
+}

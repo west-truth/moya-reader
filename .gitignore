@@ -7,6 +7,9 @@ dist/
 # Hosted server build output
 apps/server/dist/
 
+# Native build output
+src-tauri/target/
+
 # Local runtime/cache files
 .DS_Store
 Thumbs.db
@@ -20,8 +23,36 @@ __pycache__/
 !.env.example
 vertex env/
 vertex env/**
-secrets/vertex/*
+secrets/**
+!secrets/
+!secrets/vertex/
 !secrets/vertex/.gitkeep
+*.pem
+*.key
+*service-account*.json
+credentials*.json
+google-services.json
+
+# Signing material and packaged release artifacts
+*.keystore
+*.jks
+*.p12
+*.pfx
+*.mobileprovision
+*.apk
+*.aab
+*.ipa
+*.exe
+*.msi
+*.msix
+*.dmg
+*.pkg
+*.AppImage
+*.deb
+*.rpm
+key.properties
+keystore.properties
+local.properties
 
 # Local hosted data and credentials
 .codex-provider-pg/
@@ -32,7 +63,7 @@ coverage/
 screenshots/
 fixtures/generated/
 
-# Development-repository material must never enter this deployment repository
+# Private corpora, generated evidence and internal review material
 AGENTS.md
 artifacts/
 handoff/
@@ -41,3 +72,14 @@ test_novel/
 smart-novel-reader-codex-pack/
 speaker-review-studio/
 ui-reference/
+scripts/speaker-labeling-lab/
+scripts/speaker-pilot/
+scripts/test-novel-*.ts
+docs/0722_review/
+docs/pro_review/
+docs/pro_review0713/
+docs/project/
+docs/refactoring/
+docs/design/ui-redesign-reference/
+docs/design/ui-redesign-prototype/
+docs/design/ui-redesign-references/

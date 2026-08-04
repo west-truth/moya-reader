@@ -3,12 +3,11 @@
 모야(Moya)는 TXT·EPUB·PDF와 이미지 만화를 한곳에서 보관하고 읽는 개인용 뷰어입니다. 책장, 읽던 위치,
 검색, 북마크, 하이라이트, 메모, 통계와 TTS를 지원하며 Docker Compose를 이용해 개인 서버에 설치할 수 있습니다.
 
-> **현재 공개 범위**
+> **저장소 공개 범위**
 >
-> 이 저장소에는 바로 실행 가능한 **웹 앱·서버·Docker Compose 소스**가 들어 있습니다. Tauri 데스크톱과
-> Android 앱은 개발본에 구현되어 있지만, 현재 이 공개 저장소에는 네이티브 프로젝트와 정식 설치 파일이
-> 포함되어 있지 않습니다. 따라서 지금 GitHub에서 일반 사용자가 설치할 수 있는 공식 경로는 Docker 기반
-> 웹 서버입니다. 데스크톱과 Android의 정확한 상태는 아래에서 별도로 설명합니다.
+> 이 저장소에는 React 웹 앱, 개인 서버, Tauri 데스크톱과 Android 프로젝트를 포함한 **모야 전체 제품
+> 소스**가 들어 있습니다. 현재 바로 배포할 수 있는 권장 경로는 Docker 기반 웹 서버입니다. 데스크톱과
+> Android는 소스에서 개발자 빌드할 수 있지만, 서명된 공식 installer·APK/AAB는 아직 제공하지 않습니다.
 
 모야는 공개 SaaS가 아니라 한 사람 또는 신뢰할 수 있는 가정 내 사용을 목표로 합니다. 다중 사용자 계정,
 권한 관리, 사용량 제한과 테넌트 격리는 제공하지 않습니다.
@@ -46,9 +45,12 @@ DRM이 적용된 EPUB/PDF는 지원하지 않습니다. 가져온 원본은 변�
 | 플랫폼 | 현재 상태 | 설치 가능 여부 |
 | --- | --- | --- |
 | 웹·개인 서버 | 공개 소스, Ubuntu CI와 Docker 이미지 빌드 통과 | **현재 권장 경로** |
-| Windows 데스크톱 | Tauri 앱, NSIS release build와 실행 smoke 완료 | 공개 installer·네이티브 소스 미제공 |
-| Android | ARM64/x86_64 debug APK와 Android 15 emulator alpha | signed APK/AAB 미제공, 일반 설치 권장 안 함 |
+| Windows 데스크톱 | Tauri 소스 공개, NSIS release build와 실행 smoke 완료 | 소스 빌드 가능, 공식 installer 미제공 |
+| Android | Gradle/Tauri 소스 공개, ARM64/x86_64 emulator alpha | debug 개발자 빌드 가능, signed APK/AAB 미제공 |
 | 브라우저 로컬 개발 | IndexedDB 기반 Reader와 system TTS | 개발 서버로 실행 가능 |
+
+저장소에는 제품 소스와 재현 가능한 개발 검사를 포함합니다. `target/`, Gradle build 출력, APK/AAB, installer,
+keystore, 실제 provider credential, 개인 소설 corpus와 내부 리뷰 자료는 포함하지 않습니다.
 
 ## 가장 빠른 설치: Ubuntu + Docker Compose
 
@@ -257,15 +259,11 @@ docker compose \
 
 ## Windows 데스크톱 앱
 
-개발본의 Windows 앱은 같은 React Reader를 Tauri v2 shell에 넣은 구조입니다. 로컬 파일 접근, OS secure store,
+Windows 앱은 같은 React Reader를 Tauri v2 shell에 넣은 구조입니다. 로컬 파일 접근, OS secure store,
 네이티브 provider/TTS 경계가 구현되어 있고 optimized release 실행 파일과 NSIS installer build·실행 smoke를
 통과했습니다.
 
-다만 **현재 공개 저장소에는 `src-tauri`와 NSIS installer가 없습니다.** 따라서 이 저장소를 clone한 뒤
-`pnpm tauri:build`를 실행하는 방식은 아직 사용할 수 없습니다. 공식 installer가 GitHub Releases에 올라오기
-전까지는 웹 서버 설치를 사용하십시오.
-
-네이티브 소스가 공개될 때의 개발자 build 기준은 다음과 같습니다.
+`src-tauri/` 소스는 이 저장소에 포함되어 있습니다. 개발자 build 기준은 다음과 같습니다.
 
 - Windows 10/11과 WebView2
 - Node.js 22, pnpm 11
@@ -273,6 +271,19 @@ docker compose \
 - Visual Studio C++ Build Tools
 - `pnpm install` 후 `pnpm tauri:dev` 또는 `pnpm tauri:build`
 - NSIS 결과물: `src-tauri/target/release/bundle/nsis/`
+
+```powershell
+corepack enable
+pnpm install --frozen-lockfile
+pnpm check:desktop
+pnpm tauri:dev
+
+# 로컬 NSIS installer 생성
+pnpm tauri:build
+```
+
+빌드된 installer와 `src-tauri/target/`은 Git에 포함되지 않습니다. 공식 서명 installer가 GitHub Releases에
+올라오기 전까지 일반 사용자는 웹 서버 설치를 권장합니다.
 
 정식 installer를 제공하게 되면 [GitHub Releases](https://github.com/west-truth/moya-reader/releases)를 설치 기준
 경로로 사용합니다.
@@ -282,7 +293,7 @@ docker compose \
 Android 앱도 별도 UI를 새로 만든 것이 아니라 같은 React Reader를 Tauri Android WebView에 넣고 Android 전용
 파일 선택, back/lifecycle, Keystore, system TTS와 Media Session adapter를 연결한 구조입니다.
 
-현재 개발본은 다음 단계까지 도달했습니다.
+현재 Android 소스는 다음 단계까지 도달했습니다.
 
 - ARM64와 x86_64 production-asset debug APK build
 - Android 15 Pixel 5 emulator cold launch
@@ -295,8 +306,29 @@ Android 앱도 별도 UI를 새로 만든 것이 아니라 같은 React Reader�
 release signing과 업데이트 검증은 아직 끝나지 않았습니다. 따라서 현재 상태는 **emulator alpha**이며 일반
 사용자에게 debug APK 설치를 권장하지 않습니다.
 
-또한 이 공개 저장소에는 현재 Android Gradle project가 포함되어 있지 않으므로 여기서 APK를 build할 수 없습니다.
-정식 signed APK가 준비되면 GitHub Releases를 통해 배포하고, Play Store 배포 여부는 별도로 결정합니다.
+Android Gradle project는 `src-tauri/gen/android/`에 포함되어 있습니다. 개발자 debug build에는 JDK 21,
+Android SDK 36, Android NDK와 Rust Android target이 필요합니다.
+
+```bash
+corepack enable
+pnpm install --frozen-lockfile
+rustup target add aarch64-linux-android x86_64-linux-android
+
+# 환경 확인
+pnpm check:mobile-readiness
+
+# clean clone에서 Tauri가 사용하는 동적 Gradle 파일 생성
+pnpm tauri:android:init
+
+# ARM64 실기기용 또는 x86_64 emulator용 debug package
+pnpm tauri:android:build:arm64-debug
+pnpm tauri:android:build:x86_64-debug
+```
+
+`JAVA_HOME`, `ANDROID_HOME` 또는 `ANDROID_SDK_ROOT`가 설정되어 있어야 합니다. 필요하면 `NDK_HOME`도 지정합니다.
+생성된 APK와 Gradle build 출력은 Git에서 제외됩니다. 현재 identifier `com.local.noveldeskreader`는 호환성과
+개발을 위한 임시 식별자이므로 첫 signed release 전에 확정해야 합니다. 자세한 준비 과정은
+[네이티브 빌드 가이드](docs/platforms/native-build-guide-ko.md)를 참고하십시오.
 
 ## 개발용 웹 실행
 
@@ -323,7 +355,10 @@ pnpm typecheck
 pnpm test
 pnpm build
 pnpm check:server:production
-pnpm check
+pnpm check:web-server       # 웹·서버 전체 소스 검사
+pnpm check:desktop          # Web build + Tauri Rust compile
+pnpm check:mobile-readiness # Android source/toolchain readiness
+pnpm check                  # 웹·서버와 Rust 전체 검사
 ```
 
 서버와 라이선스 인벤토리의 기준 환경은 Linux x64 glibc입니다. 인벤토리 생성은 Ubuntu 또는 WSL2 Ubuntu에서
@@ -353,6 +388,7 @@ curl http://127.0.0.1:8080/ready
 - [처음 설치부터 업데이트·백업까지](docs/operations/docker-compose-guide-ko.md)
 - [Docker Compose 기술 운영 문서](docs/operations/docker-compose-deployment.md)
 - [Hosted provider 운영 경계](docs/operations/hosted-provider-admission.md)
+- [Windows·Android 네이티브 빌드 가이드](docs/platforms/native-build-guide-ko.md)
 
 ## 현재 제한 사항
 
