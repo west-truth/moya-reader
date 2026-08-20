@@ -56,6 +56,55 @@ describe('RemoteApiClient auth headers', () => {
     expect(init.headers).not.toHaveProperty('Authorization');
   });
 
+  it('does not set a JSON content type on the bodyless upload completion request', async () => {
+    const fetchMock = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) =>
+      jsonResponse({ jobId: 'job_1', statusUrl: '/api/import-jobs/job_1' }),
+    );
+    vi.stubGlobal('fetch', fetchMock);
+    const client = new RemoteApiClient('/api', { getAuthToken: () => 'reader-token' });
+
+    await expect(client.completeUpload('upload_1')).resolves.toEqual({
+      jobId: 'job_1',
+      statusUrl: '/api/import-jobs/job_1',
+    });
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      '/api/uploads/upload_1/complete',
+      expect.objectContaining({ method: 'POST' }),
+    );
+    const init = fetchMock.mock.calls[0]?.[1] ?? {};
+    expect(init.body).toBeUndefined();
+    expect(init.headers).toEqual({ Authorization: 'Bearer reader-token' });
+  });
+
+  it('keeps the JSON content type when a JSON request body is present', async () => {
+    const fetchMock = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) =>
+      jsonResponse({ uploadId: 'upload_1', chunkUrlTemplate: '/api/uploads/upload_1/chunks/{chunkIndex}' }),
+    );
+    vi.stubGlobal('fetch', fetchMock);
+    const client = new RemoteApiClient('/api');
+
+    await client.initUpload({
+      fileName: 'novel.txt',
+      sizeBytes: 12,
+      contentType: 'text/plain',
+      encoding: 'utf-8',
+      totalChunks: 1,
+    });
+
+    const init = fetchMock.mock.calls[0]?.[1] ?? {};
+    expect(init.headers).toEqual({ 'Content-Type': 'application/json' });
+    expect(init.body).toBe(
+      JSON.stringify({
+        fileName: 'novel.txt',
+        sizeBytes: 12,
+        contentType: 'text/plain',
+        encoding: 'utf-8',
+        totalChunks: 1,
+      }),
+    );
+  });
+
   it('maps server sync revision metadata when present', () => {
     expect(
       mapServerSyncEvent({

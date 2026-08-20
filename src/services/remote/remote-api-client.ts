@@ -547,9 +547,7 @@ export class RemoteApiClient {
     const response = await fetch(`${this.baseUrl}${path}`, {
       ...init,
       headers: {
-        ...(init.body instanceof Blob || init.body instanceof ArrayBuffer
-          ? {}
-          : { 'Content-Type': 'application/json' }),
+        ...(typeof init.body === 'string' && init.body.length > 0 ? { 'Content-Type': 'application/json' } : {}),
         ...(authToken ? { Authorization: `Bearer ${authToken}` } : {}),
         ...init.headers,
       },
