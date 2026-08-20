@@ -1529,6 +1529,7 @@ export class RemoteApiClient {
     message?: string;
     book_id?: string;
     error_message?: string;
+    updated_at?: string;
   }> {
     return this.request(`/import-jobs/${encodeURIComponent(jobId)}`, { signal });
   }

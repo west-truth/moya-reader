@@ -20,6 +20,7 @@ import {
 } from './observability/index.js';
 
 const corsMethods = ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'] as const;
+const uploadPruneIntervalMs = 6 * 60 * 60 * 1000;
 const corsHeaders = [
   'content-type',
   'authorization',
@@ -56,6 +57,15 @@ function preflightAllowed(requestedMethod: string | undefined, requestedHeaders:
   );
 }
 
+function sameOriginHost(origin: string, host: string | undefined): boolean {
+  if (!host) return false;
+  try {
+    return new URL(origin).host.toLowerCase() === host.trim().toLowerCase();
+  } catch {
+    return false;
+  }
+}
+
 export function registerCorsPolicy(app: FastifyInstance, config: ServerConfig): void {
   const allowedOrigins = new Set(corsAllowedOrigins(config));
 
@@ -64,7 +74,10 @@ export function registerCorsPolicy(app: FastifyInstance, config: ServerConfig): 
     if (!origin) return;
 
     reply.header('Vary', 'Origin');
-    if (!allowedOrigins.has(origin)) {
+    // Same-origin browser traffic is not CORS and must keep working when the
+    // self-host is reached through a private DNS name or reverse proxy. Exact
+    // allowlisting remains mandatory for genuinely cross-origin clients.
+    if (!allowedOrigins.has(origin) && !sameOriginHost(origin, request.headers.host)) {
       return reply.code(403).send({ error: 'cors_origin_denied' });
     }
 
@@ -128,7 +141,28 @@ export async function buildServer(config: ServerConfig): Promise<FastifyInstance
     logger.info('stale_upload_sessions_pruned', { prunedCount: pruneResult.prunedCount });
   }
 
+  let uploadPrunePromise: Promise<void> | undefined;
+  const runScheduledUploadPrune = () => {
+    if (uploadPrunePromise) return;
+    uploadPrunePromise = pruneStaleUploadSessions(pool, config)
+      .then((result) => {
+        if (result.prunedCount) logger.info('stale_upload_sessions_pruned', { prunedCount: result.prunedCount });
+      })
+      .catch((error) => {
+        logger.warn('stale_upload_session_prune_failed', {
+          errorName: error instanceof Error ? error.name : 'UnknownError',
+        });
+      })
+      .finally(() => {
+        uploadPrunePromise = undefined;
+      });
+  };
+  const uploadPruneTimer = setInterval(runScheduledUploadPrune, uploadPruneIntervalMs);
+  uploadPruneTimer.unref();
+
   app.addHook('onClose', async () => {
+    clearInterval(uploadPruneTimer);
+    await uploadPrunePromise;
     await providerQueue.close();
     await importQueue.close();
     await pool.end();
@@ -142,6 +176,7 @@ export async function buildServer(config: ServerConfig): Promise<FastifyInstance
   await registerHealthRoutes(app, pool, {
     queue: importQueue,
     checkObjectStorage: () => ensureBucket(objectStorage, config.s3.bucket),
+    checkWorker: () => metrics.assertWorkerHeartbeatFresh(),
   });
   await registerUploadRoutes(app, pool, config, importQueue);
   await registerBookRoutes(app, pool, config);

@@ -123,7 +123,9 @@ export function ImportDialog({ controller }: ImportDialogProps) {
                     <span>
                       {conflict.kind === 'same_source'
                         ? `같은 원본의 “${conflict.existingBook.title}”이 이미 있습니다.`
-                        : `같은 파일명의 “${conflict.existingBook.title}”이 있지만 내용은 다릅니다.`}
+                        : conflict.sourceHash
+                          ? `같은 파일명의 “${conflict.existingBook.title}”이 있지만 내용은 다릅니다.`
+                          : `같은 파일명의 “${conflict.existingBook.title}”이 이미 있습니다.`}
                     </span>
                   </div>
                   <select

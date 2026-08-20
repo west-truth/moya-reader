@@ -24,6 +24,7 @@ const dryRun = hasArg('--dry-run');
 const keepBook = hasArg('--keep-book') || process.env.HOSTED_SMOKE_KEEP_BOOK === '1';
 const webBaseUrl = trimTrailingSlash(argValue('--web-url', process.env.HOSTED_WEB_URL ?? 'http://127.0.0.1:8080'));
 const apiBaseUrl = trimTrailingSlash(argValue('--api-url', process.env.HOSTED_API_URL ?? joinUrl(webBaseUrl, '/api')));
+const browserOrigin = argValue('--origin', process.env.HOSTED_SMOKE_ORIGIN ?? new URL(webBaseUrl).origin);
 const timeoutMs = Number(argValue('--timeout-ms', process.env.HOSTED_SMOKE_TIMEOUT_MS ?? '120000'));
 const authToken = argValue(
   '--auth-token',
@@ -52,9 +53,11 @@ const uploadChunkBytes = Math.max(
 const totalChunks = Math.max(1, Math.ceil(sampleBytes.byteLength / uploadChunkBytes));
 const syncPageLimit = 500;
 const maxSyncPages = 1000;
+let negotiatedSyncContract;
 
 function authHeaders(extra = {}) {
   return {
+    ...(browserOrigin ? { Origin: browserOrigin } : {}),
     ...(authToken ? { Authorization: `Bearer ${authToken}` } : {}),
     ...extra,
   };
@@ -99,6 +102,32 @@ async function request(path, options = {}) {
   return body;
 }
 
+async function waitForReadiness() {
+  const startedAt = Date.now();
+  let lastResult = 'no response';
+  const readyUrl = joinUrl(webBaseUrl, '/ready');
+  while (Date.now() - startedAt < timeoutMs) {
+    try {
+      const response = await fetch(readyUrl, {
+        headers: browserOrigin ? { Origin: browserOrigin } : undefined,
+      });
+      const text = await response.text();
+      let body;
+      try {
+        body = text ? JSON.parse(text) : undefined;
+      } catch {
+        body = undefined;
+      }
+      if (response.ok && body?.ok === true) return body;
+      lastResult = `${response.status}: ${text || response.statusText}`;
+    } catch (error) {
+      lastResult = error instanceof Error ? error.message : String(error);
+    }
+    await new Promise((resolve) => setTimeout(resolve, 500));
+  }
+  throw new Error(`readiness did not become healthy within ${timeoutMs}ms (${lastResult})`);
+}
+
 function syncEvents(response) {
   assert(Array.isArray(response.events), 'sync pull did not return an events array');
   return response.events;
@@ -130,10 +159,55 @@ function assertSyncEvent(events, type, predicate) {
   assert(hasSyncEvent(events, type, predicate), `sync pull did not include expected ${type} event`);
 }
 
+async function negotiateAuthenticatedSyncContract() {
+  const capabilities = await request('/sync/capabilities');
+  const supportedContracts = Array.isArray(capabilities.supportedContracts) ? capabilities.supportedContracts : [];
+  const contract = supportedContracts.find((candidate) => Number(candidate?.contractVersion) === 2);
+  assert(contract, 'authenticated sync capabilities do not include contract v2');
+  assert(typeof contract.idContract === 'string' && contract.idContract, 'sync v2 idContract is missing');
+  assert(typeof contract.hashContract === 'string' && contract.hashContract, 'sync v2 hashContract is missing');
+  negotiatedSyncContract = {
+    contractVersion: 2,
+    idContract: contract.idContract,
+    hashContract: contract.hashContract,
+  };
+  console.log('ok authenticated API probe and sync v2 negotiation');
+}
+
+async function verifyProtectedApiBoundary() {
+  if (!authToken) return;
+  const publicReady = await fetch(joinUrl(webBaseUrl, '/ready'), {
+    headers: browserOrigin ? { Origin: browserOrigin } : undefined,
+  });
+  assert(publicReady.ok, `public readiness without a token returned ${publicReady.status}`);
+  const endpoint = joinUrl(apiBaseUrl, '/sync/capabilities');
+  const unauthenticated = await fetch(endpoint, { headers: browserOrigin ? { Origin: browserOrigin } : undefined });
+  assert(
+    unauthenticated.status === 401,
+    `protected API without a token returned ${unauthenticated.status}, expected 401`,
+  );
+  const wrongToken = await fetch(endpoint, {
+    headers: authHeaders({ Authorization: `Bearer ${authToken}-wrong` }),
+  });
+  assert(wrongToken.status === 401, `protected API with a wrong token returned ${wrongToken.status}, expected 401`);
+  console.log('ok readiness is public and protected API rejects missing and incorrect bearer tokens');
+}
+
+function syncPullPath(since) {
+  assert(negotiatedSyncContract, 'sync contract must be negotiated before pulling events');
+  const query = new URLSearchParams({
+    since: String(since),
+    contractVersion: String(negotiatedSyncContract.contractVersion),
+    idContract: negotiatedSyncContract.idContract,
+    hashContract: negotiatedSyncContract.hashContract,
+  });
+  return `/sync?${query.toString()}`;
+}
+
 async function syncCursorAtEnd() {
   let cursor = 0;
   for (let page = 0; page < maxSyncPages; page += 1) {
-    const response = await request(`/sync?since=${encodeURIComponent(String(cursor))}`);
+    const response = await request(syncPullPath(cursor));
     const events = syncEvents(response);
     const nextCursor = syncCursor(response, cursor);
     if (!events.length || nextCursor === cursor) return cursor;
@@ -147,7 +221,7 @@ async function pullSyncEventsSince(cursor) {
   let currentCursor = cursor;
   const allEvents = [];
   for (let page = 0; page < maxSyncPages; page += 1) {
-    const response = await request(`/sync?since=${encodeURIComponent(String(currentCursor))}`);
+    const response = await request(syncPullPath(currentCursor));
     const events = syncEvents(response);
     const nextCursor = syncCursor(response, currentCursor);
     allEvents.push(...events);
@@ -172,7 +246,7 @@ async function waitForImport(jobId) {
 }
 
 async function run() {
-  console.log(`Hosted smoke target: web=${webBaseUrl} api=${apiBaseUrl}`);
+  console.log(`Hosted smoke target: web=${webBaseUrl} api=${apiBaseUrl} origin=${browserOrigin}`);
   if (dryRun) {
     console.log('Dry run only; no network requests were made.');
     return;
@@ -184,12 +258,16 @@ async function run() {
   assert(html.includes('<div id="root"></div>'), 'web root did not look like the Vite app shell');
   console.log('ok web root served app shell');
 
-  const ready = await request(joinUrl(webBaseUrl, '/ready'));
+  const ready = await waitForReadiness();
   assert(ready.ok === true, 'readiness endpoint did not return ok=true');
   assert(ready.components?.database?.ok === true, 'readiness database check failed');
   assert(ready.components?.queue?.ok === true, 'readiness queue check failed');
   assert(ready.components?.objectStorage?.ok === true, 'readiness object storage check failed');
-  console.log('ok readiness reports database, queue, and object storage');
+  assert(ready.components?.worker?.ok === true, 'readiness worker heartbeat check failed');
+  console.log('ok readiness reports database, queue, object storage, and worker');
+
+  await verifyProtectedApiBoundary();
+  await negotiateAuthenticatedSyncContract();
 
   const beforeBooks = await request('/books');
   assert(Array.isArray(beforeBooks.books), 'GET /books did not return a books array');

@@ -1,4 +1,4 @@
-import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { access, mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
@@ -357,7 +357,9 @@ describe('server import service', () => {
       '',
       '두 번째 본문입니다. single 모드에서는 같은 장에 남아야 합니다.',
     ].join('\n');
-    const chunkPath = path.join(tempDir, '00000000.part');
+    const uploadDir = path.join(tempDir, 'uploads', 'upload_single');
+    await mkdir(uploadDir, { recursive: true });
+    const chunkPath = path.join(uploadDir, '00000000.part');
     await writeFile(chunkPath, Buffer.from(text));
 
     let objectParams: unknown[] | undefined;
@@ -418,12 +420,17 @@ describe('server import service', () => {
       connect: vi.fn(async () => client),
     };
 
+    let uploadDirectoryRemoved: boolean | undefined;
     try {
       await processImportJob(
         pool as unknown as Parameters<typeof processImportJob>[0],
-        testConfig(),
+        { ...testConfig(), dataDir: tempDir },
         'job_single',
         'upload_single',
+      );
+      uploadDirectoryRemoved = await access(uploadDir).then(
+        () => false,
+        () => true,
       );
     } finally {
       await rm(tempDir, { recursive: true, force: true });
@@ -461,6 +468,65 @@ describe('server import service', () => {
     );
     expect(JSON.parse(String(syncEventParams?.[6])).payloadHash).toMatch(/^sha256:[0-9a-f]{64}$/);
     expect(client.query).toHaveBeenCalledWith('commit');
+    expect(client.query).toHaveBeenCalledWith('delete from upload_chunks where upload_id = $1', ['upload_single']);
+    expect(uploadDirectoryRemoved).toBe(true);
     expect(client.release).toHaveBeenCalledTimes(1);
+  });
+
+  it('keeps an import queued while BullMQ still has retry attempts remaining', async () => {
+    const queries: Array<{ sql: string; params?: unknown[] }> = [];
+    const pool = {
+      query: vi.fn(async (sql: string, params?: unknown[]) => {
+        queries.push({ sql, params });
+        if (sql.includes('select * from upload_sessions')) return { rows: [] };
+        return { rows: [], rowCount: 0 };
+      }),
+    } as unknown as Parameters<typeof processImportJob>[0];
+
+    await expect(
+      processImportJob(pool, testConfig(), 'job_retrying', 'upload_missing', {
+        attemptNumber: 1,
+        maxAttempts: 3,
+        finalAttempt: false,
+      }),
+    ).rejects.toThrow('Upload session not found');
+
+    const retryProgress = queries.find(
+      ({ sql, params }) => sql.includes('update import_jobs') && params?.includes('queued'),
+    );
+    expect(retryProgress?.params).toEqual(
+      expect.arrayContaining(['queued', '서버 가져오기를 재시도합니다. (1/3 실패)', 'job_retrying']),
+    );
+    expect(queries.some(({ sql }) => sql.includes("update upload_sessions set status = 'failed'"))).toBe(false);
+  });
+
+  it('marks the upload session failed only after the final BullMQ attempt', async () => {
+    const queries: Array<{ sql: string; params?: unknown[] }> = [];
+    const pool = {
+      query: vi.fn(async (sql: string, params?: unknown[]) => {
+        queries.push({ sql, params });
+        if (sql.includes('select * from upload_sessions')) return { rows: [] };
+        return { rows: [], rowCount: 0 };
+      }),
+    } as unknown as Parameters<typeof processImportJob>[0];
+
+    await expect(
+      processImportJob(pool, testConfig(), 'job_failed', 'upload_missing', {
+        attemptNumber: 3,
+        maxAttempts: 3,
+        finalAttempt: true,
+      }),
+    ).rejects.toThrow('Upload session not found');
+
+    expect(queries).toContainEqual({
+      sql: "update upload_sessions set status = 'failed', updated_at = now() where id = $1 and status <> 'imported'",
+      params: ['upload_missing'],
+    });
+    const failedProgress = queries.find(
+      ({ sql, params }) => sql.includes('update import_jobs') && params?.includes('failed'),
+    );
+    expect(failedProgress?.params).toEqual(
+      expect.arrayContaining(['failed', '서버 가져오기에 실패했습니다.', 'job_failed']),
+    );
   });
 });

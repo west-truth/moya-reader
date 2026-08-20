@@ -32,10 +32,8 @@ jobs:
       - run: docker compose -f compose.yaml -f compose.public.yaml config --quiet
         env:
           READER_AUTH_TOKEN: ci-config-check-only
-          CORS_ALLOWED_ORIGINS: https://reader.example.test
-      - name: Build hosted images
-        if: github.event_name != 'pull_request'
-        run: docker compose build web api worker
+      - name: Protected Compose import E2E
+        run: pnpm check:hosted:e2e -- --public --project-name moya-ci-${{ github.run_id }}-${{ github.run_attempt }}
 
   windows-native-source:
     runs-on: windows-latest

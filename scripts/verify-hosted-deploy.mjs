@@ -18,6 +18,7 @@ const files = {
   webDockerfile: read('deploy/web.Dockerfile'),
   serverDockerfile: read('deploy/server.Dockerfile'),
   nginx: read('deploy/nginx.conf'),
+  hostNginxExample: read('deploy/host-nginx.example.conf'),
   envExample: read('.env.example'),
   packageJson: read('package.json'),
   serverSchema: read('apps/server/src/db/schema.sql'),
@@ -25,7 +26,9 @@ const files = {
   liveSmoke: read('scripts/hosted-live-smoke.mjs'),
   aiWorkflowSmoke: read('scripts/hosted-ai-workflow-smoke.mjs'),
   serverIndex: read('apps/server/src/index.ts'),
+  server: read('apps/server/src/server.ts'),
   serverQueue: read('apps/server/src/queue.ts'),
+  serverUploadImport: read('src/services/import/server-upload-import-service.ts'),
 };
 
 const checks = [];
@@ -98,7 +101,7 @@ check('api uses deploy/server.Dockerfile', includes(api, 'dockerfile: deploy/ser
 check('api starts compiled server artifact', matches(api, /command:\s*\[['"]node['"],\s*['"]dist\/index\.js['"]\]/));
 check('api is not directly published to the host', !matches(api, /^ {4}ports:/m));
 check('api documents loopback proxy as the only host ingress', includes(api, 'Deliberately no ports'));
-check('api healthcheck uses /ready', includes(api, "fetch('http://127.0.0.1:8787/ready')"));
+check('api container healthcheck uses bootstrap-safe /health', includes(api, "fetch('http://127.0.0.1:8787/health')"));
 for (const dependency of ['postgres', 'redis', 'minio']) {
   check(
     `api waits for healthy ${dependency}`,
@@ -119,12 +122,12 @@ check('api restarts unless stopped', includes(api, 'restart: unless-stopped'));
 check('api has a bounded graceful stop window', includes(api, 'stop_grace_period: 60s'));
 
 for (const key of [
-  'DATABASE_URL: ${DATABASE_URL:-postgres://noveldesk:noveldesk@postgres:5432/noveldesk}',
+  'DATABASE_URL: ${DATABASE_URL:-postgres://${POSTGRES_USER:-noveldesk}:${POSTGRES_PASSWORD:-noveldesk}@postgres:5432/${POSTGRES_DB:-noveldesk}}',
   'REDIS_URL: ${REDIS_URL:-redis://redis:6379}',
   'S3_ENDPOINT: ${S3_ENDPOINT:-http://minio:9000}',
   'S3_BUCKET: ${S3_BUCKET:-noveldesk-uploads}',
-  'S3_ACCESS_KEY_ID: ${S3_ACCESS_KEY_ID:-minio}',
-  'S3_SECRET_ACCESS_KEY: ${S3_SECRET_ACCESS_KEY:-minio-password}',
+  'S3_ACCESS_KEY_ID: ${S3_ACCESS_KEY_ID:-${MINIO_ROOT_USER:-minio}}',
+  'S3_SECRET_ACCESS_KEY: ${S3_SECRET_ACCESS_KEY:-${MINIO_ROOT_PASSWORD:-minio-password}}',
   'S3_FORCE_PATH_STYLE: ${S3_FORCE_PATH_STYLE:-true}',
   'SERVER_DATA_DIR: /data/server',
   'LOCAL_TTS_ALLOWED_HOSTS: ${LOCAL_TTS_ALLOWED_HOSTS:-}',
@@ -186,11 +189,14 @@ for (const ignoredPath of [
   'smart-novel-reader-codex-pack/',
   'ui-reference/',
   'fixtures/generated/',
-  'src-tauri/target',
-  'src-tauri/gen',
 ]) {
   check(`.dockerignore excludes ${ignoredPath}`, includes(files.dockerignore, ignoredPath));
 }
+check(
+  '.dockerignore excludes native build trees',
+  includes(files.dockerignore, 'src-tauri/') ||
+    (includes(files.dockerignore, 'src-tauri/target') && includes(files.dockerignore, 'src-tauri/gen')),
+);
 
 check('web Dockerfile builds remote backend', includes(files.webDockerfile, 'ENV VITE_READER_BACKEND=remote'));
 check('web Dockerfile points API base to /api', includes(files.webDockerfile, 'ENV VITE_API_BASE_URL=/api'));
@@ -205,7 +211,10 @@ check(
   includes(files.webDockerfile, 'COPY --from=build /app/dist /usr/share/nginx/html'),
 );
 
-check('server Dockerfile uses a build stage', includes(files.serverDockerfile, 'FROM node:22-alpine AS build'));
+check(
+  'server Dockerfile uses a Debian Bookworm build stage',
+  includes(files.serverDockerfile, 'FROM node:22-bookworm-slim AS build'),
+);
 check(
   'server Dockerfile installs and copies shared workspaces',
   includes(files.serverDockerfile, 'COPY packages/contracts/package.json packages/contracts/package.json') &&
@@ -221,7 +230,10 @@ check(
   'server Dockerfile deploys production dependencies only',
   includes(files.serverDockerfile, 'deploy --prod /opt/server'),
 );
-check('server Dockerfile uses a runtime stage', includes(files.serverDockerfile, 'FROM node:22-alpine AS runtime'));
+check(
+  'server Dockerfile uses a Debian Bookworm runtime stage',
+  includes(files.serverDockerfile, 'FROM node:22-bookworm-slim AS runtime'),
+);
 check('server Dockerfile exposes API port', includes(files.serverDockerfile, 'EXPOSE 8787'));
 check(
   'server Dockerfile default command starts compiled server',
@@ -261,11 +273,21 @@ check(
   includes(files.composePublic, 'READER_AUTH_TOKEN: ${READER_AUTH_TOKEN:?'),
 );
 check(
-  'public override requires the public CORS origin',
-  includes(files.composePublic, 'CORS_ALLOWED_ORIGINS: ${CORS_ALLOWED_ORIGINS:?'),
+  'public override keeps same-origin CORS configuration optional',
+  !includes(files.composePublic, 'CORS_ALLOWED_ORIGINS: ${CORS_ALLOWED_ORIGINS:?'),
 );
 check('API installs graceful signal handlers', includes(files.serverIndex, "process.once('SIGTERM'"));
 check('worker queue recovers stale imports', includes(files.serverQueue, 'recoverStaleImportJobs'));
+check('API readiness includes worker heartbeat', includes(files.server, 'metrics.assertWorkerHeartbeatFresh()'));
+check(
+  'same-origin self-host browser traffic is accepted',
+  includes(files.server, 'sameOriginHost(origin, request.headers.host)'),
+);
+check('stale upload cleanup runs periodically', includes(files.server, 'uploadPruneIntervalMs'));
+check(
+  'browser upload chunks remain below common 1 MiB proxy defaults',
+  includes(files.serverUploadImport, 'DEFAULT_SERVER_UPLOAD_CHUNK_BYTES = 512 * 1024'),
+);
 
 check('nginx proxies /api to api service', includes(files.nginx, 'proxy_pass http://api:8787/api/;'));
 check('nginx proxies /health', includes(files.nginx, 'proxy_pass http://api:8787/health;'));
@@ -273,6 +295,28 @@ check('nginx proxies /ready', includes(files.nginx, 'proxy_pass http://api:8787/
 check('nginx serves SPA fallback', includes(files.nginx, 'try_files $uri $uri/ /index.html;'));
 check('nginx gives backups a separate 512 MiB request boundary', includes(files.nginx, 'client_max_body_size 512m;'));
 check('nginx streams backup request bodies upstream', includes(files.nginx, 'proxy_request_buffering off;'));
+check(
+  'nginx streams ordinary API uploads upstream',
+  includes(blockAfter(files.nginx, '  location /api/ {'), 'proxy_request_buffering off;'),
+);
+check('nginx preserves an outer TLS proxy protocol', includes(files.nginx, '$moya_forwarded_proto'));
+check(
+  'host nginx example proxies only to loopback web ingress',
+  includes(files.hostNginxExample, 'proxy_pass http://127.0.0.1:8080;'),
+);
+check(
+  'host nginx example permits ordinary upload chunks',
+  includes(files.hostNginxExample, 'client_max_body_size 32m;'),
+);
+check(
+  'host nginx example permits backup archives separately',
+  includes(files.hostNginxExample, 'client_max_body_size 512m;'),
+);
+check(
+  'host nginx example streams upload requests',
+  includes(files.hostNginxExample, 'location ^~ /api/uploads/') &&
+    includes(files.hostNginxExample, 'proxy_request_buffering off;'),
+);
 check(
   'nginx upload body limit is at least one configured chunk',
   (() => {
@@ -380,10 +424,10 @@ check(
   'hosted live smoke verifies chunk status',
   [
     'const expectedChunkIndexes = Array.from({ length: totalChunks }',
-    'assert(uploadStatus.totalChunks === totalChunks',
-    "assert(uploadStatus.chapterSplitMode === 'mixed'",
-    'assert(uploadStatus.uploadedBytes === sampleBytes.byteLength',
-    'assert(arraysEqual(receivedChunkIndexes, expectedChunkIndexes)',
+    'uploadStatus.totalChunks === totalChunks',
+    "uploadStatus.chapterSplitMode === 'mixed'",
+    'uploadStatus.uploadedBytes === sampleBytes.byteLength',
+    'arraysEqual(receivedChunkIndexes, expectedChunkIndexes)',
     'assert(missingChunkIndexes.length === 0',
     'assert(uploadStatus.complete === true',
   ].every((needle) => includes(files.liveSmoke, needle)),
@@ -400,10 +444,20 @@ check(
 check('hosted e2e runs static hosted verification', includes(files.hostedE2E, "run('pnpm', ['check:hosted'])"));
 check(
   'hosted e2e validates compose config',
-  includes(files.hostedE2E, "run('docker', ['compose', 'config', '--quiet'])"),
+  includes(files.hostedE2E, "dockerComposeArgs(projectName, composeFiles, ['config', '--quiet'])"),
 );
-check('hosted e2e starts compose stack', includes(files.hostedE2E, "['up', ...(skipBuild ? [] : ['--build']), '-d']"));
+check(
+  'hosted e2e starts compose stack',
+  includes(files.hostedE2E, "'up'") && includes(files.hostedE2E, "...(skipBuild ? [] : ['--build'])"),
+);
 check('hosted e2e runs live smoke script', includes(files.hostedE2E, "'scripts/hosted-live-smoke.mjs'"));
+check('hosted e2e supports the protected public override', includes(files.hostedE2E, "hasArg('--public')"));
+check('hosted live smoke verifies the bearer boundary', includes(files.liveSmoke, 'verifyProtectedApiBoundary'));
+check(
+  'hosted live smoke verifies worker readiness',
+  includes(files.liveSmoke, 'readiness worker heartbeat check failed'),
+);
+check('hosted live smoke waits for full readiness', includes(files.liveSmoke, 'waitForReadiness'));
 check(
   'hosted e2e can include AI workflow smoke script',
   includes(files.hostedE2E, "'scripts/hosted-ai-workflow-smoke.mjs'") &&

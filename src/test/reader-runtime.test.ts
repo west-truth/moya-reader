@@ -80,8 +80,25 @@ describe('reader runtime connected server settings', () => {
     expect(store.has(SYNC_API_BASE_URL_STORAGE_KEY)).toBe(false);
   });
 
-  it('tests readiness without returning or storing secrets', async () => {
-    const fetchMock = vi.fn(async () => new Response(JSON.stringify({ ready: true }), { status: 200 }));
+  it('tests readiness and the protected sync API without returning or storing secrets', async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            ok: true,
+            service: 'noveldesk-server',
+            components: { database: { ok: true }, queue: { ok: true }, objectStorage: { ok: true } },
+          }),
+          { status: 200 },
+        ),
+      )
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({ contractVersion: 2, idContract: 'v2-sha256-128', hashContract: 'v2-sha256-tagged' }),
+          { status: 200 },
+        ),
+      );
     vi.stubGlobal('fetch', fetchMock);
 
     const result = await testSyncApiConnection('http://localhost:3000', 'reader-token');
@@ -90,11 +107,46 @@ describe('reader runtime connected server settings', () => {
       ok: true,
       normalizedBaseUrl: 'http://localhost:3000/api',
       status: 200,
-      message: '서버 readiness 확인에 성공했습니다.',
+      message: '서버 readiness와 Bearer 인증 확인에 성공했습니다.',
     });
-    expect(fetchMock).toHaveBeenCalledWith('http://localhost:3000/api/ready', {
+    expect(fetchMock).toHaveBeenNthCalledWith(1, 'http://localhost:3000/api/ready', {
       headers: { Authorization: 'Bearer reader-token' },
     });
+    expect(fetchMock).toHaveBeenNthCalledWith(2, 'http://localhost:3000/api/sync/capabilities', {
+      headers: { Authorization: 'Bearer reader-token' },
+    });
+  });
+
+  it('does not report a public readiness response as an authenticated connection', async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify({ ok: true }), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ error: 'unauthorized' }), { status: 401 }));
+    vi.stubGlobal('fetch', fetchMock);
+
+    const result = await testSyncApiConnection('https://reader.example', 'wrong-token');
+
+    expect(result).toEqual({
+      ok: false,
+      normalizedBaseUrl: 'https://reader.example/api',
+      status: 401,
+      message: 'Bearer token이 없거나 서버에 설정된 token과 일치하지 않습니다.',
+    });
+  });
+
+  it('rejects a successful non-Moya readiness response', async () => {
+    const fetchMock = vi.fn(async () => new Response('<html>not the API</html>', { status: 200 }));
+    vi.stubGlobal('fetch', fetchMock);
+
+    const result = await testSyncApiConnection('https://reader.example', 'reader-token');
+
+    expect(result).toEqual({
+      ok: false,
+      normalizedBaseUrl: 'https://reader.example/api',
+      status: 200,
+      message: '서버가 올바른 모야 readiness 응답을 반환하지 않았습니다.',
+    });
+    expect(fetchMock).toHaveBeenCalledOnce();
   });
 
   it('creates local connected services from a stored self-host API URL', () => {

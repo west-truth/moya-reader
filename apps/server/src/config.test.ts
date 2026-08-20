@@ -72,4 +72,21 @@ describe('server security config', () => {
   it.each(['-1', '1.5', 'many', '9007199254740992'])('rejects invalid provider admission limit %s', (value) => {
     expect(() => loadConfig({ PROVIDER_MAX_ATTEMPTS_PER_MINUTE: value })).toThrow(/PROVIDER_MAX_ATTEMPTS_PER_MINUTE/);
   });
+
+  it.each([
+    ['PORT', '0'],
+    ['PORT', '65536'],
+    ['MAX_CHUNK_BYTES', '-1'],
+    ['MAX_CHUNK_BYTES', '1.5'],
+    ['MAX_UPLOAD_BYTES', 'many'],
+    ['STALE_UPLOAD_MAX_AGE_MS', '-1'],
+  ])('rejects invalid bounded server setting %s=%s', (key, value) => {
+    expect(() => loadConfig({ [key]: value })).toThrow(new RegExp(key));
+  });
+
+  it('accepts an explicit zero only for stale upload cleanup', () => {
+    const config = loadConfig({ STALE_UPLOAD_MAX_AGE_MS: '0' });
+
+    expect(config.staleUploadMaxAgeMs).toBe(0);
+  });
 });

@@ -46,12 +46,12 @@ export async function pruneStaleUploadSessions(
         update upload_sessions
         set status = $1,
             updated_at = now()
-        where status = $2
+        where status = any($2::text[])
           and updated_at < $3::timestamptz
           and ($4::text is null or user_id = $4)
         returning id
       `,
-      ['expired', 'uploading', cutoff, options.userId ?? null],
+      ['expired', ['uploading', 'failed', 'imported', 'cancelled'], cutoff, options.userId ?? null],
     );
     uploadIds = expired.rows.map((row) => row.id);
     if (uploadIds.length) {

@@ -1,7 +1,7 @@
 # 모야 Docker Compose 배포 가이드
 
 Status: current
-Last verified: 2026-08-04
+Last verified: 2026-08-20
 
 ## 권장 서버 환경
 
@@ -23,8 +23,8 @@ Debian/glibc 계열을 사용한다.
 | --------------------------- | ----------------------------------------- | ---------------------------------------- |
 | 한 컴퓨터에서만 사용        | `compose.yaml`                            | 처음 설치, 개인용 테스트                 |
 | 서버와 로컬 한국어 TTS 사용 | `compose.yaml` + `compose.local-tts.yaml` | 외부 TTS 비용 없이 CPU 음성 합성을 쓸 때 |
-| 인터넷에서 접속             | `compose.yaml` + `compose.public.yaml`    | 개인 서버, 동일 호스트의 HTTPS 프록시 뒤 |
-| 인터넷 접속과 로컬 TTS 사용 | 위 세 파일 모두                           | 개인 서버와 CPU TTS를 함께 운영할 때     |
+| WireGuard/LAN/인터넷 접속   | `compose.yaml` + `compose.public.yaml`    | 개인 서버, 동일 호스트의 HTTPS 프록시 뒤 |
+| 외부 접속과 로컬 TTS 사용   | 위 세 파일 모두                           | 개인 서버와 CPU TTS를 함께 운영할 때     |
 
 처음에는 기본 구성으로 정상 실행을 확인한 다음 TTS나 외부 공개를 추가하는 편이 가장 쉽다.
 
@@ -90,22 +90,26 @@ cp .env.example .env
 
 ### 개인 컴퓨터에서 먼저 시험할 때
 
-처음 로컬 실행만 확인하려면 기본값으로 시작할 수 있다. 그래도 장기간 사용할 서버라면 아래 자격증명은
-반드시 바꾸는 것이 좋다.
+처음 로컬 실행만 확인하려면 기본값으로 시작할 수 있다. 장기간 사용할 서버에서 내부 자격증명을 바꿀 때는
+아래처럼 PostgreSQL과 MinIO 쪽 값만 바꾸면 된다.
 
 ```dotenv
+POSTGRES_USER=noveldesk
 POSTGRES_PASSWORD=충분히긴영문숫자비밀번호
-DATABASE_URL=postgres://noveldesk:충분히긴영문숫자비밀번호@postgres:5432/noveldesk
+POSTGRES_DB=noveldesk
+DATABASE_URL=
 
 MINIO_ROOT_USER=noveldesk-storage
 MINIO_ROOT_PASSWORD=충분히긴영문숫자비밀번호
-S3_ACCESS_KEY_ID=noveldesk-storage
-S3_SECRET_ACCESS_KEY=충분히긴영문숫자비밀번호
+S3_ACCESS_KEY_ID=
+S3_SECRET_ACCESS_KEY=
 ```
 
-`POSTGRES_PASSWORD`는 `DATABASE_URL` 안의 비밀번호와 같아야 한다. MinIO의 사용자/비밀번호도 각각
-`S3_ACCESS_KEY_ID`와 `S3_SECRET_ACCESS_KEY`에 같은 값을 넣는다. URL 예약문자 인코딩을 피하려면
-PostgreSQL 비밀번호에는 긴 영문과 숫자 조합을 사용하는 것이 간단하다.
+`DATABASE_URL`이 비어 있으면 Compose가 `POSTGRES_*` 값으로 내부 접속 주소를 만든다. `S3_ACCESS_KEY_ID`와
+`S3_SECRET_ACCESS_KEY`가 비어 있으면 각각 `MINIO_ROOT_USER`, `MINIO_ROOT_PASSWORD`를 그대로 사용한다.
+따라서 같은 비밀번호를 두 군데에 중복 입력해 서로 어긋나게 만들 필요가 없다. 외부 PostgreSQL이나 S3를
+사용할 때만 `DATABASE_URL` 또는 `S3_*`를 직접 채운다. URL 인코딩 문제를 피하려면 내부 PostgreSQL
+비밀번호에는 긴 영문과 숫자 조합을 쓰는 것이 간단하다.
 
 Provider API 키를 UI에 저장할 계획이라면 `PROVIDER_SECRET_ENCRYPTION_KEY`도 고정하는 편이 복구하기
 쉽다. PowerShell에서는 다음 명령으로 32바이트 키를 만들 수 있다.
@@ -160,8 +164,10 @@ curl http://127.0.0.1:8080/health
 curl http://127.0.0.1:8080/ready
 ```
 
-Windows에서 `curl` 사용이 불편하면 브라우저에서 두 주소를 직접 열어도 된다. `/ready`가 성공하고
-`docker compose ps`에서 주요 서비스가 `healthy` 또는 `running`이면 기본 서버가 준비된 것이다.
+Windows에서 `curl` 사용이 불편하면 브라우저에서 두 주소를 직접 열어도 된다. `/health`는 API 프로세스와
+데이터베이스의 기본 생존 상태를, `/ready`는 데이터베이스·Redis queue·MinIO·worker heartbeat를 함께
+확인한다. `/ready`가 성공하고 `docker compose ps`에서 주요 서비스가 `healthy` 또는 `running`이면 파일
+가져오기까지 받을 준비가 된 것이다.
 
 ### 서버에 올린 원본 소설 다운로드
 
@@ -214,15 +220,21 @@ MELOTTS_LANGUAGE=KR
 모델이 자동 설치되는 것은 아니다. 다른 모델을 사용하려면 동일한 `/voices`, `/synthesize` 계약을 구현한
 별도 이미지로 `tts-model` 서비스를 교체하면 된다.
 
-## 5. 인터넷에서 접속하도록 공개하기
+## 5. WireGuard, LAN 또는 인터넷에서 접속하기
 
-기본 구성은 안전을 위해 loopback에만 열린다. 외부 공개 시에는 다음 조건을 모두 만족해야 한다.
+기본 구성은 안전을 위해 loopback에만 열린다. WireGuard/LAN/인터넷 중 어느 경로든 다른 기기에서 접속하게
+할 때는 다음 조건을 적용한다.
 
-1. 도메인의 DNS가 서버를 가리킨다.
-2. Caddy, nginx 또는 Traefik이 HTTPS를 종료한다.
-3. 긴 `READER_AUTH_TOKEN`을 설정한다.
-4. 정확한 공개 HTTPS origin을 `CORS_ALLOWED_ORIGINS`에 설정한다.
-5. `compose.public.yaml`을 함께 사용한다.
+1. Caddy, nginx 또는 Traefik이 HTTPS를 종료한다.
+2. 긴 `READER_AUTH_TOKEN`을 설정한다.
+3. `compose.public.yaml`을 함께 사용한다.
+4. 인터넷 공개라면 도메인 DNS와 80/443 방화벽을 구성한다.
+
+WireGuard 전용이면 공개 DNS나 인터넷 443 개방은 필요 없다. nginx의 `listen`을 서버의 WireGuard 주소로
+제한하거나 방화벽에서 `wg0`로 들어오는 443만 허용한다. 예를 들어 WireGuard 주소가 `10.20.0.1`이면 예제의
+`listen 443 ssl http2`를 `listen 10.20.0.1:443 ssl http2`로 바꿀 수 있다. 원격 브라우저의 secure-context
+기능을 유지하려면 WireGuard 안에서도 신뢰할 수 있는 내부 인증서나 정상 도메인 인증서를 사용하는 편이
+좋다.
 
 토큰 생성 예시:
 
@@ -242,11 +254,18 @@ Linux/macOS:
 openssl rand -hex 32
 ```
 
-`.env`에 결과와 도메인을 입력한다.
+`.env`에 결과를 입력한다.
 
 ```dotenv
 READER_AUTH_TOKEN=생성한긴토큰
-CORS_ALLOWED_ORIGINS=https://reader.example.com
+```
+
+웹 화면과 `/api`가 같은 nginx 주소를 사용하면 same-origin이므로 `CORS_ALLOWED_ORIGINS`를 별도로 설정할
+필요가 없다. 별도로 호스팅한 웹 앱이나 다른 브라우저 origin에서 API를 직접 호출할 때만 정확한 origin을
+쉼표로 구분해 추가한다. 경로나 와일드카드는 넣지 않는다.
+
+```dotenv
+CORS_ALLOWED_ORIGINS=https://별도-web.example.com,http://10.20.0.2:1420
 ```
 
 외부 공개 구성을 확인하고 시작한다.
@@ -270,11 +289,30 @@ reader.example.com {
 }
 ```
 
-`WEB_BIND_ADDRESS=127.0.0.1`은 그대로 유지한다. 외부 방화벽에는 HTTPS용 443과 인증서 발급에 필요한
-80만 열고, 8080, 9001, PostgreSQL, Redis, MinIO API, TTS 포트는 공개하지 않는다.
+Ubuntu host nginx를 사용한다면 저장소의 `deploy/host-nginx.example.conf`를 기준으로 기존 server block에
+병합한다. 이 예제에는 업로드 청크, 큰 백업, 긴 import 응답을 위한 body limit·timeout·buffering 설정이
+포함되어 있다.
 
-처음 웹 화면을 연 뒤 모야의 서버 연결/동기화 설정에 `.env`와 같은 Bearer 토큰을 저장한다. 토큰이
-없거나 다르면 API 요청은 `401 Unauthorized`가 된다.
+```bash
+sudo cp deploy/host-nginx.example.conf /etc/nginx/sites-available/moya
+sudo nano /etc/nginx/sites-available/moya   # 도메인과 인증서 경로 수정
+sudo ln -s /etc/nginx/sites-available/moya /etc/nginx/sites-enabled/moya
+sudo nginx -t
+sudo systemctl reload nginx
+```
+
+이미 같은 이름의 설정이나 symlink가 있다면 새로 만들지 말고 기존 파일을 편집한다. 최소한 일반 요청은
+`client_max_body_size 32m`, 백업 경로는 `512m`, `/api/uploads/`와 `/api/backups/`는
+`proxy_request_buffering off`가 적용되어야 한다. nginx는 `127.0.0.1:8080`만 프록시하고 Compose의
+`WEB_BIND_ADDRESS=127.0.0.1`은 그대로 둔다.
+
+`WEB_BIND_ADDRESS=127.0.0.1`은 그대로 유지한다. 인터넷 공개일 때만 HTTPS용 443과 인증서 발급에 필요한
+80을 외부에 열고, WireGuard 전용이면 해당 포트를 VPN interface로 제한한다. 어느 경우에도 8080, 9001,
+PostgreSQL, Redis, MinIO API, TTS 포트는 직접 공개하지 않는다.
+
+처음 웹 화면을 연 뒤 모야의 서버 연결/동기화 설정에 `.env`와 같은 Bearer 토큰을 저장한다. 연결 테스트는
+공개 `/ready`뿐 아니라 보호된 sync API도 확인한다. 토큰을 저장하면 최초 401로 실패했던 책장도 자동으로
+다시 불러온다.
 
 ## 6. 평상시 운영 명령
 
@@ -374,8 +412,9 @@ docker compose logs --tail=200 postgres minio redis
 docker compose logs --tail=200 api
 ```
 
-자주 발생하는 원인은 `POSTGRES_PASSWORD`와 `DATABASE_URL` 불일치, MinIO와 S3 자격증명 불일치,
-손상되거나 누락된 `.env`다.
+현재 Compose에서는 비어 있는 `DATABASE_URL`과 `S3_*`를 각각 `POSTGRES_*`, `MINIO_ROOT_*`에서 자동으로
+만든다. 직접 외부 주소나 S3 자격증명을 넣었다면 오타·URL 인코딩·접근 권한을 확인하고, 그 외에는 손상되거나
+누락된 `.env`와 의존 서비스 로그를 확인한다.
 
 ### 로컬 TTS가 오랫동안 starting 상태
 
@@ -391,18 +430,52 @@ docker compose -f compose.yaml -f compose.local-tts.yaml ps
 ### 웹에서 `401 Unauthorized`
 
 public override를 사용한다면 모야 서버 연결 설정에 저장한 토큰과 `.env`의 `READER_AUTH_TOKEN`이
-같은지 확인한다. 토큰을 URL이나 CORS origin에 넣으면 안 된다.
+같은지 확인한다. 토큰을 URL이나 CORS origin에 넣으면 안 된다. 보호된 API를 직접 확인하려면 다음 명령을
+사용한다.
+
+```bash
+curl -H "Authorization: Bearer $READER_AUTH_TOKEN" https://moya.example.com/api/sync/capabilities
+```
+
+### 웹에서 `403 cors_origin_denied`
+
+같은 도메인의 모야 웹에서 `/api`를 호출하는 기본 구성은 자동 허용된다. 별도 origin의 웹 앱에서 API를
+호출한다면 그 브라우저 주소를 scheme과 port까지 정확히 `CORS_ALLOWED_ORIGINS`에 추가하고 컨테이너를 다시
+생성한다.
+
+### 파일 가져오기에서 `413` 또는 요청 크기 오류
+
+호스트 nginx 설정에 `client_max_body_size`가 없으면 nginx 기본 1 MiB 제한에서 차단될 수 있다. 최신 웹은
+512 KiB 청크를 사용하지만, 기존 클라이언트와 백업까지 고려해 `deploy/host-nginx.example.conf`의 32 MiB /
+512 MiB 경계를 적용한다. 413 요청은 API에 도달하지 않으므로 `docker compose logs api`가 비어 있을 수 있다.
 
 ### 파일 가져오기가 중간에 멈춤
 
-worker 로그를 확인한다.
+먼저 `/ready`의 `components.worker`와 worker 로그를 확인한다.
 
 ```bash
+curl https://moya.example.com/ready
 docker compose logs --tail=300 worker
 ```
 
-현재 worker는 오래된 `processing` 가져오기 작업을 기본 5분 후 다시 큐에 넣는다. 같은 파일을 즉시 여러
-번 다시 올리기 전에 worker와 저장소 상태가 회복되는지 먼저 확인한다.
+worker heartbeat가 없거나 오래됐으면 `/ready`가 503을 반환한다. 웹도 90초 동안 작업 상태가 전혀 바뀌지
+않으면 무한 대기하지 않고 worker 점검 메시지를 표시한다. worker는 오래된 `processing` 작업을 기본 5분 후
+다시 큐에 넣으므로, 같은 파일을 즉시 여러 번 올리기 전에 worker와 저장소 상태가 회복되는지 확인한다.
+
+실행 중인 전체 경로를 실제 파일로 점검하려면 저장소 루트에서 다음 smoke를 사용할 수 있다.
+
+```bash
+HOSTED_WEB_URL=https://moya.example.com \
+HOSTED_API_AUTH_TOKEN="$READER_AUTH_TOKEN" \
+pnpm check:hosted:live
+```
+
+별도의 검증용 Compose stack을 만들었다가 데이터 volume까지 자동 정리하는 개발/릴리스 게이트는 다음과 같다.
+운영 stack 이름과 volume에는 손대지 않는다.
+
+```bash
+pnpm check:hosted:e2e -- --public
+```
 
 ### 디스크 사용량 확인
 

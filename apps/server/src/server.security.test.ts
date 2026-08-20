@@ -65,6 +65,22 @@ describe('server CORS policy', () => {
     await app.close();
   });
 
+  it('allows a browser request whose Origin matches the self-host Host header', async () => {
+    const app = await corsApp();
+    const response = await app.inject({
+      method: 'GET',
+      url: '/api/books',
+      headers: {
+        host: 'moya.wireguard.internal',
+        origin: 'https://moya.wireguard.internal',
+      },
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.headers['access-control-allow-origin']).toBe('https://moya.wireguard.internal');
+    await app.close();
+  });
+
   it('answers valid preflight requests and rejects unsupported headers', async () => {
     const app = await corsApp();
     const allowed = await app.inject({

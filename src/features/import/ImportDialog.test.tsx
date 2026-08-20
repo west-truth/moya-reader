@@ -103,4 +103,25 @@ describe('ImportDialog', () => {
     expect(markup).toContain('중단된 서버 업로드');
     expect(markup).toContain('중단본.txt');
   });
+
+  it('labels failed progress as a failure instead of an active import', () => {
+    const markup = renderToStaticMarkup(
+      <ImportDialog
+        controller={controller({
+          progress: {
+            jobId: 'job-failed',
+            status: 'failed',
+            bytesRead: 0,
+            totalBytes: 2048,
+            chaptersDetected: 0,
+            paragraphsWritten: 0,
+            message: 'Bearer token을 다시 확인하세요.',
+          },
+        })}
+      />,
+    );
+
+    expect(markup).toContain('가져오기 실패');
+    expect(markup).not.toContain('가져오는 중');
+  });
 });

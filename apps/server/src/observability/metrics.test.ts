@@ -48,6 +48,12 @@ describe('observability metrics', () => {
     const metrics = createMetrics(backend, () => now, 60_000);
 
     await metrics.processHeartbeat();
+    await expect(metrics.assertWorkerHeartbeatFresh()).resolves.toBeUndefined();
+    expect(await metrics.workerProcessHeartbeatStatus()).toEqual({
+      recordedAt: 100_000,
+      ageMs: 0,
+      stale: false,
+    });
     let output = await metrics.renderPrometheus([]);
     expect(output).toContain('noveldesk_worker_process_heartbeat_age_seconds 0.000');
     expect(output).toContain('noveldesk_worker_process_heartbeat_stale 0');
@@ -55,9 +61,22 @@ describe('observability metrics', () => {
     expect(output).not.toContain('worker="provider"');
 
     now += 60_001;
+    await expect(metrics.assertWorkerHeartbeatFresh()).rejects.toThrow('worker heartbeat is stale');
+    expect(await metrics.workerProcessHeartbeatStatus()).toEqual({
+      recordedAt: 100_000,
+      ageMs: 60_001,
+      stale: true,
+    });
     output = await metrics.renderPrometheus([]);
     expect(output).toContain('noveldesk_worker_process_heartbeat_age_seconds 60.001');
     expect(output).toContain('noveldesk_worker_process_heartbeat_stale 1');
+  });
+
+  it('rejects readiness when the worker heartbeat has never been written', async () => {
+    const metrics = createMetrics(new MemoryMetricsBackend(), () => 10_000);
+
+    expect(await metrics.workerProcessHeartbeatStatus()).toEqual({ stale: true });
+    await expect(metrics.assertWorkerHeartbeatFresh()).rejects.toThrow('worker heartbeat is missing');
   });
 
   it('keeps the metrics endpoint behind configured self-host authentication', async () => {

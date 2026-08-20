@@ -135,6 +135,76 @@ export interface SyncApiConnectionTestResult {
   message: string;
 }
 
+type ConnectionResponseBody = Record<string, unknown>;
+
+async function readConnectionResponseBody(response: Response): Promise<unknown> {
+  const text = await response.text();
+  if (!text) return undefined;
+  try {
+    return JSON.parse(text) as unknown;
+  } catch {
+    return text;
+  }
+}
+
+function connectionResponseDetail(body: unknown): string | undefined {
+  if (typeof body === 'string') return body.trim() || undefined;
+  if (!body || typeof body !== 'object' || Array.isArray(body)) return undefined;
+  const record = body as ConnectionResponseBody;
+  for (const value of [record.message, record.error]) {
+    if (typeof value === 'string' && value.trim()) return value.trim();
+  }
+  return undefined;
+}
+
+function connectionFailureMessage(status: number, body: unknown, phase: 'readiness' | 'authentication'): string {
+  const detail = connectionResponseDetail(body);
+  if (status === 401) return 'Bearer token이 없거나 서버에 설정된 token과 일치하지 않습니다.';
+  if (status === 403) {
+    return detail === 'cors_origin_denied'
+      ? '서버가 현재 웹 주소의 요청을 거부했습니다. CORS_ALLOWED_ORIGINS를 확인하세요.'
+      : '서버가 요청을 거부했습니다. Bearer token과 CORS 설정을 확인하세요.';
+  }
+  if (status === 404) {
+    return phase === 'authentication'
+      ? '모야 동기화 API를 찾지 못했습니다. 서버 주소와 서버 버전을 확인하세요.'
+      : '모야 readiness API를 찾지 못했습니다. 서버 주소를 확인하세요.';
+  }
+  if (status === 413) return 'reverse proxy의 요청 크기 제한 때문에 서버 확인에 실패했습니다.';
+  if (status === 502 || status === 503 || status === 504) {
+    return '서버의 API, 데이터베이스, queue 또는 object storage가 준비되지 않았습니다.';
+  }
+  return detail || `서버 응답 ${status}`;
+}
+
+function validReadinessBody(body: unknown): body is ConnectionResponseBody {
+  if (!body || typeof body !== 'object' || Array.isArray(body)) return false;
+  const record = body as ConnectionResponseBody;
+  if (record.ok !== true) return false;
+  if (record.components === undefined) return true;
+  if (!record.components || typeof record.components !== 'object' || Array.isArray(record.components)) return false;
+  return Object.values(record.components as ConnectionResponseBody).every((component) =>
+    Boolean(
+      component &&
+      typeof component === 'object' &&
+      !Array.isArray(component) &&
+      (component as ConnectionResponseBody).ok === true,
+    ),
+  );
+}
+
+function validSyncCapabilitiesBody(body: unknown): body is ConnectionResponseBody {
+  if (!body || typeof body !== 'object' || Array.isArray(body)) return false;
+  const record = body as ConnectionResponseBody;
+  return (
+    (record.contractVersion === 1 || record.contractVersion === 2) &&
+    typeof record.idContract === 'string' &&
+    Boolean(record.idContract.trim()) &&
+    typeof record.hashContract === 'string' &&
+    Boolean(record.hashContract.trim())
+  );
+}
+
 export async function testSyncApiConnection(baseUrl: string, authToken?: string): Promise<SyncApiConnectionTestResult> {
   const normalizedBaseUrl = normalizeSyncApiBaseUrl(baseUrl);
   if (!normalizedBaseUrl) {
@@ -146,29 +216,62 @@ export async function testSyncApiConnection(baseUrl: string, authToken?: string)
   }
 
   try {
-    const response = await fetch(`${normalizedBaseUrl}/ready`, {
-      headers: authToken?.trim() ? { Authorization: `Bearer ${authToken.trim()}` } : undefined,
-    });
-    if (!response.ok) {
-      const message = await response.text();
+    const headers = authToken?.trim() ? { Authorization: `Bearer ${authToken.trim()}` } : undefined;
+    const readinessResponse = await fetch(`${normalizedBaseUrl}/ready`, { headers });
+    const readinessBody = await readConnectionResponseBody(readinessResponse);
+    if (!readinessResponse.ok) {
       return {
         ok: false,
         normalizedBaseUrl,
-        status: response.status,
-        message: message || response.statusText || `서버 응답 ${response.status}`,
+        status: readinessResponse.status,
+        message: connectionFailureMessage(readinessResponse.status, readinessBody, 'readiness'),
+      };
+    }
+    if (!validReadinessBody(readinessBody)) {
+      return {
+        ok: false,
+        normalizedBaseUrl,
+        status: readinessResponse.status,
+        message: '서버가 올바른 모야 readiness 응답을 반환하지 않았습니다.',
+      };
+    }
+
+    const authenticationResponse = await fetch(`${normalizedBaseUrl}/sync/capabilities`, {
+      headers,
+    });
+    const authenticationBody = await readConnectionResponseBody(authenticationResponse);
+    if (!authenticationResponse.ok) {
+      return {
+        ok: false,
+        normalizedBaseUrl,
+        status: authenticationResponse.status,
+        message: connectionFailureMessage(authenticationResponse.status, authenticationBody, 'authentication'),
+      };
+    }
+    if (!validSyncCapabilitiesBody(authenticationBody)) {
+      return {
+        ok: false,
+        normalizedBaseUrl,
+        status: authenticationResponse.status,
+        message: '서버 인증 응답이 모야 동기화 API 형식과 일치하지 않습니다.',
       };
     }
     return {
       ok: true,
       normalizedBaseUrl,
-      status: response.status,
-      message: '서버 readiness 확인에 성공했습니다.',
+      status: authenticationResponse.status,
+      message: '서버 readiness와 Bearer 인증 확인에 성공했습니다.',
     };
   } catch (error) {
     return {
       ok: false,
       normalizedBaseUrl,
-      message: error instanceof Error ? error.message : String(error),
+      message:
+        error instanceof TypeError
+          ? '서버에 연결하지 못했습니다. 주소, HTTPS reverse proxy와 CORS 설정을 확인하세요.'
+          : error instanceof Error
+            ? error.message
+            : String(error),
     };
   }
 }
