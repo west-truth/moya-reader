@@ -449,6 +449,17 @@ curl -H "Authorization: Bearer $READER_AUTH_TOKEN" https://moya.example.com/api/
 512 KiB 청크를 사용하지만, 기존 클라이언트와 백업까지 고려해 `deploy/host-nginx.example.conf`의 32 MiB /
 512 MiB 경계를 적용한다. 413 요청은 API에 도달하지 않으므로 `docker compose logs api`가 비어 있을 수 있다.
 
+### 업로드가 100%에서 `Body cannot be empty when content-type is set to 'application/json'`으로 실패
+
+이 메시지는 파일 내용이나 인코딩 오류가 아니라, 구버전 Web 클라이언트가 body 없는 import-complete POST에
+JSON Content-Type을 붙이던 문제다. 최신 `main`을 받고 Web image를 반드시 다시 빌드한다. 이미 전송된
+resumable upload session은 보존 기간 안이면 같은 파일 재시도 시 이어서 완료할 수 있다.
+
+```bash
+git pull --ff-only
+docker compose -f compose.yaml -f compose.public.yaml up -d --build --remove-orphans
+```
+
 ### 파일 가져오기가 중간에 멈춤
 
 먼저 `/ready`의 `components.worker`와 worker 로그를 확인한다.

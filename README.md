@@ -394,6 +394,7 @@ curl http://127.0.0.1:8080/ready
 - 파일 저장 실패: 외부 S3 값을 직접 설정했다면 `S3_*` endpoint와 자격증명 확인
 - 연결은 되지만 API가 401: 웹 동기화 패널의 Bearer token과 `.env`의 `READER_AUTH_TOKEN` 비교
 - 가져오기가 413: host nginx의 `client_max_body_size`와 `deploy/host-nginx.example.conf` 확인
+- 업로드 100% 뒤 `Body cannot be empty...`: 최신 `main`을 pull하고 Web image까지 `--build`로 다시 생성
 - 가져오기가 멈춤: `/ready`의 `components.worker`와 `docker compose logs worker` 확인
 - 외부 접속 실패: reverse proxy, HTTPS, token, 그리고 cross-origin일 때만 `CORS_ALLOWED_ORIGINS` 확인
 - TTS가 준비되지 않음: `docker compose ... logs -f tts-model`로 model 다운로드 상태 확인
