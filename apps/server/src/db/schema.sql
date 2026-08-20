@@ -184,6 +184,7 @@ create table if not exists upload_sessions (
   encoding text not null default 'auto',
   chapter_split_mode text not null default 'auto',
   client_hash_hint text,
+  source_content_hash text,
   client_book_id text,
   status text not null default 'uploading',
   total_chunks integer,
@@ -213,6 +214,9 @@ create table if not exists import_jobs (
   message text,
   book_id text,
   error_message text,
+  cancel_requested_at timestamptz,
+  queue_generation bigint not null default 0,
+  active_queue_job_id text,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );
@@ -225,6 +229,25 @@ alter table import_jobs add column if not exists paragraphs_written integer not 
 alter table import_jobs add column if not exists message text;
 alter table upload_sessions add column if not exists client_book_id text;
 alter table upload_sessions add column if not exists chapter_split_mode text not null default 'auto';
+alter table upload_sessions add column if not exists source_content_hash text;
+alter table import_jobs add column if not exists cancel_requested_at timestamptz;
+alter table import_jobs add column if not exists queue_generation bigint not null default 0;
+alter table import_jobs add column if not exists active_queue_job_id text;
+
+create table if not exists object_delete_outbox (
+  id bigserial primary key,
+  storage_key text not null unique,
+  reason text not null,
+  status text not null default 'pending' check (status in ('pending', 'processing', 'retry')),
+  attempts integer not null default 0 check (attempts >= 0),
+  next_attempt_at timestamptz not null default now(),
+  last_error text,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+create index if not exists idx_object_delete_outbox_ready
+  on object_delete_outbox(next_attempt_at, id)
+  where status in ('pending', 'retry');
 alter table library_books add column if not exists analysis_status text not null default 'not_analyzed';
 alter table bookmarks add column if not exists updated_at timestamptz not null default now();
 alter table bookmarks add column if not exists deleted_at timestamptz;

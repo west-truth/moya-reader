@@ -4,12 +4,15 @@ import {
   DEFAULT_SERVER_UPLOAD_CHUNK_BYTES,
   RemoteUploadSessionStore,
   ServerImportActivityTimeoutError,
+  ServerImportCancelledError,
+  ServerImportResponseTimeoutError,
   ServerUploadImportService,
   StoredUploadSession,
   StoredUploadSessionEntry,
 } from '../services/import/server-upload-import-service';
 
 const now = '2026-07-05T00:00:00.000Z';
+const sourceContentHash = 'sha256:bef57ec7f53a6d40beb640a780a639c83bc29ac8a9816f1fc6c5c6dcd93c4721';
 
 function uploadStatus(receivedChunkIndexes: number[], uploadedBytes: number): RemoteUploadStatus {
   const allChunks = [0, 1, 2];
@@ -25,6 +28,7 @@ function uploadStatus(receivedChunkIndexes: number[], uploadedBytes: number): Re
     receivedChunkIndexes,
     missingChunkIndexes: allChunks.filter((chunkIndex) => !receivedChunkIndexes.includes(chunkIndex)),
     complete: receivedChunkIndexes.length === allChunks.length,
+    sourceContentHash,
   };
 }
 
@@ -61,6 +65,7 @@ function storedSession(uploadId = 'upload_1'): StoredUploadSession {
     encoding: 'utf-8',
     chunkBytes: 2,
     totalChunks: 3,
+    sourceContentHash,
     createdAt: now,
     updatedAt: now,
   };
@@ -126,6 +131,7 @@ describe('ServerUploadImportService', () => {
       size: DEFAULT_SERVER_UPLOAD_CHUNK_BYTES + 1,
       lastModified: 1,
       type: 'text/plain',
+      slice: (start: number, end: number) => new Blob([new Uint8Array(Math.max(0, end - start))]),
     } as File;
     const service = new ServerUploadImportService(client as unknown as RemoteApiClient, undefined, 3, store);
 
@@ -189,6 +195,7 @@ describe('ServerUploadImportService', () => {
         clientBookId: 'novel_local_attach',
         chapterSplitMode: 'mixed',
         totalChunks: 1,
+        sourceContentHash,
       }),
       expect.any(AbortSignal),
     );
@@ -198,6 +205,7 @@ describe('ServerUploadImportService', () => {
         uploadId: 'upload_1',
         chapterSplitMode: 'mixed',
         clientBookId: 'novel_local_attach',
+        sourceContentHash,
       }),
     );
   });
@@ -210,7 +218,14 @@ describe('ServerUploadImportService', () => {
     };
     const client = {
       initUpload: vi.fn(async () => ({ uploadId: 'upload_1', chunkUrlTemplate: '/chunks/{chunkIndex}' })),
-      getUpload: vi.fn(async () => uploadStatus([], 0)),
+      getUpload: vi.fn(async (_uploadId: string, signal: AbortSignal) => {
+        await new Promise((_resolve, reject) => {
+          signal.addEventListener('abort', () => reject(new DOMException('Import cancelled', 'AbortError')), {
+            once: true,
+          });
+        });
+        return uploadStatus([], 0);
+      }),
       putUploadChunk: vi.fn(),
       completeUpload: vi.fn(),
       getImportJob: vi.fn(),
@@ -220,6 +235,7 @@ describe('ServerUploadImportService', () => {
     const service = new ServerUploadImportService(client as unknown as RemoteApiClient, 2, 3, store);
     const controller = service.importFile({ file: makeFile(), encoding: 'utf-8' }, vi.fn());
 
+    await vi.waitFor(() => expect(client.getUpload).toHaveBeenCalled());
     controller.cancel();
 
     await expect(controller.promise).rejects.toMatchObject({ name: 'AbortError' });
@@ -227,6 +243,69 @@ describe('ServerUploadImportService', () => {
     expect(store.remove).toHaveBeenCalledWith(expect.any(String));
     expect(client.putUploadChunk).not.toHaveBeenCalled();
     expect(client.completeUpload).not.toHaveBeenCalled();
+  });
+
+  it('cancels a server job when abort races with a committed upload completion response', async () => {
+    const store: RemoteUploadSessionStore = {
+      read: vi.fn(() => undefined),
+      write: vi.fn(),
+      remove: vi.fn(),
+    };
+    const client = {
+      initUpload: vi.fn(async () => ({ uploadId: 'upload_1', chunkUrlTemplate: '/chunks/{chunkIndex}' })),
+      getUpload: vi.fn(async () => uploadStatus([0, 1, 2], 6)),
+      putUploadChunk: vi.fn(),
+      completeUpload: vi.fn(async (_uploadId: string, signal: AbortSignal) => {
+        await new Promise((_resolve, reject) => {
+          signal.addEventListener('abort', () => reject(new DOMException('Import cancelled', 'AbortError')), {
+            once: true,
+          });
+        });
+        return { jobId: 'job_committed', statusUrl: '/jobs/job_committed' };
+      }),
+      cancelUpload: vi.fn(async () => ({ ok: true as const, cancellationState: 'cancelled' as const })),
+    };
+    const service = new ServerUploadImportService(client as unknown as RemoteApiClient, 2, 3, store);
+    const controller = service.importFile({ file: makeFile(), encoding: 'utf-8' }, vi.fn());
+
+    await vi.waitFor(() => expect(client.completeUpload).toHaveBeenCalled());
+    controller.cancel();
+
+    await expect(controller.promise).rejects.toMatchObject({ name: 'AbortError' });
+    expect(client.cancelUpload).toHaveBeenCalledWith('upload_1');
+    expect(store.remove).toHaveBeenCalledWith(expect.any(String));
+  });
+
+  it('requests cancellation and clears local resume metadata while the import job is processing', async () => {
+    const store: RemoteUploadSessionStore = {
+      read: vi.fn(() => undefined),
+      write: vi.fn(),
+      remove: vi.fn(),
+    };
+    const client = {
+      initUpload: vi.fn(async () => ({ uploadId: 'upload_1', chunkUrlTemplate: '/chunks/{chunkIndex}' })),
+      getUpload: vi.fn(async () => uploadStatus([0, 1, 2], 6)),
+      putUploadChunk: vi.fn(),
+      completeUpload: vi.fn(async () => ({ jobId: 'job_processing', statusUrl: '/jobs/job_processing' })),
+      getImportJob: vi.fn(async (_jobId: string, signal: AbortSignal) => {
+        await new Promise((_resolve, reject) => {
+          signal.addEventListener('abort', () => reject(new DOMException('Import cancelled', 'AbortError')), {
+            once: true,
+          });
+        });
+        throw new Error('unreachable');
+      }),
+      cancelUpload: vi.fn(async () => ({ ok: true as const, cancellationState: 'requested' as const })),
+    };
+    const service = new ServerUploadImportService(client as unknown as RemoteApiClient, 2, 3, store);
+    const controller = service.importFile({ file: makeFile(), encoding: 'utf-8' }, vi.fn());
+
+    await vi.waitFor(() => expect(client.getImportJob).toHaveBeenCalled());
+    controller.cancel();
+
+    await expect(controller.promise).rejects.toMatchObject({ name: 'AbortError' });
+    expect(client.cancelUpload).toHaveBeenCalledWith('upload_1');
+    expect(store.remove).toHaveBeenCalledWith(expect.any(String));
   });
 
   it('uses upload status to avoid resending a chunk that reached the server before a failed response', async () => {
@@ -329,6 +408,41 @@ describe('ServerUploadImportService', () => {
     expect(store.remove).toHaveBeenCalledWith(expect.any(String));
     expect(progress).toHaveBeenCalledWith(
       expect.objectContaining({ message: '이전 서버 업로드를 이어서 진행합니다.' }),
+    );
+  });
+
+  it('does not mix files that share name, size, and mtime but have different source bytes', async () => {
+    const oldFile = makeFile();
+    const replacement = new File(['abcdeg'], 'novel.txt', {
+      type: 'text/plain',
+      lastModified: oldFile.lastModified,
+    });
+    const store: RemoteUploadSessionStore = {
+      read: vi.fn(() => storedSession('upload_old')),
+      write: vi.fn(),
+      remove: vi.fn(),
+    };
+    const client = {
+      getUpload: vi
+        .fn()
+        .mockResolvedValueOnce({ ...uploadStatus([0], 2), uploadId: 'upload_old' })
+        .mockRejectedValueOnce(new Error('stop after new initialization')),
+      initUpload: vi.fn(async () => ({ uploadId: 'upload_new', chunkUrlTemplate: '/chunks/{chunkIndex}' })),
+    };
+    const service = new ServerUploadImportService(client as unknown as RemoteApiClient, 2, 3, store);
+
+    await expect(service.importFile({ file: replacement, encoding: 'utf-8' }, vi.fn()).promise).rejects.toThrow(
+      'stop after new initialization',
+    );
+
+    expect(store.remove).toHaveBeenCalled();
+    expect(client.initUpload).toHaveBeenCalledWith(
+      expect.objectContaining({
+        fileName: 'novel.txt',
+        sizeBytes: 6,
+        sourceContentHash: expect.not.stringMatching(sourceContentHash),
+      }),
+      expect.any(AbortSignal),
     );
   });
 
@@ -482,6 +596,74 @@ describe('ServerUploadImportService', () => {
     expect(store.remove).toHaveBeenCalledWith(expect.any(String));
   });
 
+  it('terminates an externally cancelled resumed job immediately and clears resume metadata', async () => {
+    const store: RemoteUploadSessionStore = {
+      read: vi.fn(() => storedSession('upload_old')),
+      write: vi.fn(),
+      remove: vi.fn(),
+    };
+    const client = {
+      initUpload: vi.fn(),
+      getUpload: vi.fn(async () => ({
+        ...uploadStatus([0, 1, 2], 6),
+        uploadId: 'upload_old',
+        status: 'queued',
+        importJobId: 'job_external',
+        importJobStatus: 'processing',
+        importJobStage: 'writing',
+      })),
+      getImportJob: vi.fn(async () => ({
+        id: 'job_external',
+        upload_id: 'upload_old',
+        status: 'cancelled' as const,
+        stage: 'cancelled' as const,
+        message: 'cancelled elsewhere',
+      })),
+    };
+    const service = new ServerUploadImportService(client as unknown as RemoteApiClient, 2, 3, store, 90_000);
+
+    await expect(service.importFile({ file: makeFile(), encoding: 'utf-8' }, vi.fn()).promise).rejects.toBeInstanceOf(
+      ServerImportCancelledError,
+    );
+
+    expect(client.initUpload).not.toHaveBeenCalled();
+    expect(client.getImportJob).toHaveBeenCalledTimes(1);
+    expect(store.remove).toHaveBeenCalledWith(expect.any(String));
+  });
+
+  it.each([
+    { status: 'cancelled', importJobStatus: 'cancelled', importJobStage: 'cancelled' },
+    { status: 'queued', importJobStatus: 'cancelled', importJobStage: 'writing' },
+  ])('never resumes a terminal cancelled upload session %#', async (cancelledStatus) => {
+    const store: RemoteUploadSessionStore = {
+      read: vi.fn(() => storedSession('upload_old')),
+      write: vi.fn(),
+      remove: vi.fn(),
+    };
+    const client = {
+      getUpload: vi
+        .fn()
+        .mockResolvedValueOnce({
+          ...uploadStatus([0, 1, 2], 6),
+          uploadId: 'upload_old',
+          importJobId: 'job_cancelled',
+          ...cancelledStatus,
+        })
+        .mockRejectedValueOnce(new Error('stop after replacement initialization')),
+      initUpload: vi.fn(async () => ({ uploadId: 'upload_new', chunkUrlTemplate: '/chunks/{chunkIndex}' })),
+      getImportJob: vi.fn(),
+    };
+    const service = new ServerUploadImportService(client as unknown as RemoteApiClient, 2, 3, store);
+
+    await expect(service.importFile({ file: makeFile(), encoding: 'utf-8' }, vi.fn()).promise).rejects.toThrow(
+      'stop after replacement initialization',
+    );
+
+    expect(store.remove).toHaveBeenCalled();
+    expect(client.initUpload).toHaveBeenCalledTimes(1);
+    expect(client.getImportJob).not.toHaveBeenCalled();
+  });
+
   it('uses the import job from upload status when the complete response is lost after queueing', async () => {
     const store: RemoteUploadSessionStore = {
       read: vi.fn(() => undefined),
@@ -632,7 +814,8 @@ describe('ServerUploadImportService', () => {
           paragraphs_written: 0,
           message: 'queued',
           book_id: null,
-          updated_at: '2026-07-06T00:00:00.000Z',
+          // Server heartbeats must not masquerade as actual import progress.
+          updated_at: new Date(Date.now()).toISOString(),
         })),
         getBookManifest: vi.fn(),
       };
@@ -647,6 +830,35 @@ describe('ServerUploadImportService', () => {
 
       await timeoutExpectation;
       expect(client.getImportJob).toHaveBeenCalledTimes(3);
+      expect(store.remove).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('separates an unanswered status request from a job with no progress', async () => {
+    vi.restoreAllMocks();
+    vi.useFakeTimers({ now: new Date('2026-07-06T00:00:00.000Z') });
+    try {
+      const store: RemoteUploadSessionStore = {
+        read: vi.fn(() => undefined),
+        write: vi.fn(),
+        remove: vi.fn(),
+      };
+      const client = {
+        initUpload: vi.fn(async () => ({ uploadId: 'upload_1', chunkUrlTemplate: '/chunks/{chunkIndex}' })),
+        getUpload: vi.fn(async () => uploadStatus([0, 1, 2], 6)),
+        putUploadChunk: vi.fn(),
+        completeUpload: vi.fn(async () => ({ jobId: 'job_unanswered', statusUrl: '/jobs/job_unanswered' })),
+        getImportJob: vi.fn(() => new Promise(() => undefined)),
+      };
+      const service = new ServerUploadImportService(client as unknown as RemoteApiClient, 2, 3, store, 90_000, 1_000);
+      const importPromise = service.importFile({ file: makeFile(), encoding: 'utf-8' }, vi.fn()).promise;
+      const timeoutExpectation = expect(importPromise).rejects.toBeInstanceOf(ServerImportResponseTimeoutError);
+
+      await vi.waitFor(() => expect(client.getImportJob).toHaveBeenCalledTimes(1));
+      await vi.advanceTimersByTimeAsync(1_000);
+      await timeoutExpectation;
       expect(store.remove).not.toHaveBeenCalled();
     } finally {
       vi.useRealTimers();

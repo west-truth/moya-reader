@@ -1,4 +1,7 @@
 import Fastify from 'fastify';
+import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import os from 'node:os';
+import path from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { Queue } from 'bullmq';
 import pg from 'pg';
@@ -30,6 +33,9 @@ function testConfig(): ServerConfig {
 
 function appWithUploads(pool: pg.Pool, queue: Queue) {
   const app = Fastify({ logger: false });
+  app.addContentTypeParser('application/octet-stream', { parseAs: 'buffer' }, (_request, body, done) =>
+    done(null, body),
+  );
   return registerUploadRoutes(app, pool, testConfig(), queue).then(() => app);
 }
 
@@ -101,23 +107,25 @@ describe('upload routes', () => {
   it('requeues queued import jobs when hosted clients poll job status', async () => {
     const pool = {
       query: vi.fn(async (sql: string, params?: unknown[]) => {
-        expect(sql).toContain('from import_jobs');
-        expect(params).toEqual(['job_1']);
-        return {
-          rows: [
-            {
-              id: 'job_1',
-              upload_id: 'upload_1',
-              status: 'queued',
-              stage: 'queued',
-              bytes_read: 12,
-              total_bytes: 12,
-              chapters_detected: 0,
-              paragraphs_written: 0,
-              message: 'queued',
-            },
-          ],
-        };
+        if (sql.includes('from import_jobs') && sql.includes('where id = $1'))
+          return {
+            rows: [
+              {
+                id: 'job_1',
+                upload_id: 'upload_1',
+                status: 'queued',
+                stage: 'queued',
+                bytes_read: 12,
+                total_bytes: 12,
+                chapters_detected: 0,
+                paragraphs_written: 0,
+                message: 'queued',
+              },
+            ],
+          };
+        if (sql.startsWith('select active_queue_job_id')) return { rows: [{ active_queue_job_id: null }] };
+        if (sql.startsWith('update import_jobs')) return { rows: [{ id: 'job_1' }], rowCount: 1 };
+        throw new Error(`unexpected query: ${sql} ${String(params)}`);
       }),
     } as unknown as pg.Pool;
     const queue = {
@@ -132,7 +140,7 @@ describe('upload routes', () => {
     expect(queue.add).toHaveBeenCalledWith(
       'import-upload',
       { jobId: 'job_1', uploadId: 'upload_1' },
-      { jobId: 'job_1' },
+      { jobId: expect.stringMatching(/^import_attempt_/) },
     );
 
     await app.close();
@@ -181,6 +189,7 @@ describe('upload routes', () => {
           'hash_hint',
           'novel_local_1',
           3,
+          undefined,
         ]);
         return { rows: [] };
       }),
@@ -261,7 +270,51 @@ describe('upload routes', () => {
     await app.close();
   });
 
-  it('enqueues completed uploads with the database import job id as the BullMQ job id', async () => {
+  it('rejects upload chunk plans that cannot fit the declared bytes', async () => {
+    const pool = { query: vi.fn() } as unknown as pg.Pool;
+    const app = await appWithUploads(pool, { add: vi.fn() } as unknown as Queue);
+
+    const response = await app.inject({
+      method: 'POST',
+      url: '/api/uploads/init',
+      payload: { fileName: 'bad.txt', sizeBytes: 12, totalChunks: 13 },
+    });
+
+    expect(response.statusCode).toBe(400);
+    expect(response.json().error).toContain('cannot exceed sizeBytes');
+    expect(pool.query).not.toHaveBeenCalled();
+    await app.close();
+  });
+
+  it('rejects a replacement chunk when cumulative accepted bytes exceed the declared size', async () => {
+    const client = {
+      query: vi.fn(async (sql: string) => {
+        if (sql === 'begin' || sql === 'rollback') return { rows: [] };
+        if (sql.includes('from upload_sessions') && sql.includes('for update')) {
+          return { rows: [{ id: 'upload_1', size_bytes: '10', status: 'uploading', total_chunks: 2 }] };
+        }
+        if (sql.includes('accepted_bytes')) return { rows: [{ accepted_bytes: '4' }] };
+        throw new Error(`unexpected query: ${sql}`);
+      }),
+      release: vi.fn(),
+    };
+    const pool = { connect: vi.fn(async () => client) } as unknown as pg.Pool;
+    const app = await appWithUploads(pool, { add: vi.fn() } as unknown as Queue);
+
+    const response = await app.inject({
+      method: 'PUT',
+      url: '/api/uploads/upload_1/chunks/1',
+      headers: { 'content-type': 'application/octet-stream' },
+      payload: Buffer.alloc(8),
+    });
+
+    expect(response.statusCode).toBe(413);
+    expect(response.json()).toMatchObject({ sizeBytes: 10, acceptedBytes: 12 });
+    expect(client.query).toHaveBeenCalledWith('rollback');
+    await app.close();
+  });
+
+  it('enqueues completed uploads with an attempt-specific BullMQ job id', async () => {
     const committedImportJobIds: string[] = [];
     const client = {
       query: vi.fn(async (sql: string, params?: unknown[]) => {
@@ -289,6 +342,11 @@ describe('upload routes', () => {
     };
     const pool = {
       connect: vi.fn(async () => client),
+      query: vi.fn(async (sql: string) => {
+        if (sql.startsWith('select active_queue_job_id')) return { rows: [{ active_queue_job_id: null }] };
+        if (sql.startsWith('update import_jobs')) return { rows: [{ id: committedImportJobIds[0] }], rowCount: 1 };
+        throw new Error(`unexpected pool query: ${sql}`);
+      }),
     } as unknown as pg.Pool;
     const queue = {
       add: vi.fn(async (_name: string, _data: unknown, options?: { jobId?: string }) => ({ id: options?.jobId })),
@@ -304,12 +362,84 @@ describe('upload routes', () => {
     expect(queue.add).toHaveBeenCalledWith(
       'import-upload',
       { jobId: body.jobId, uploadId: 'upload_1' },
-      { jobId: body.jobId },
+      { jobId: expect.stringMatching(/^import_attempt_/) },
     );
     expect(client.query).toHaveBeenCalledWith('commit');
     expect(client.release).toHaveBeenCalledTimes(1);
 
     await app.close();
+  });
+
+  it('returns the existing import job when upload completion is retried', async () => {
+    const client = {
+      query: vi.fn(async (sql: string) => {
+        if (sql === 'begin' || sql === 'commit') return { rows: [] };
+        if (sql.includes('from upload_sessions')) {
+          return { rows: [{ id: 'upload_1', size_bytes: '12', status: 'queued', total_chunks: 3 }] };
+        }
+        if (sql.includes('from import_jobs')) return { rows: [{ id: 'job_existing', status: 'queued' }] };
+        throw new Error(`unexpected query: ${sql}`);
+      }),
+      release: vi.fn(),
+    };
+    const pool = {
+      connect: vi.fn(async () => client),
+      query: vi.fn(async () => ({ rows: [{ active_queue_job_id: 'import_attempt_existing' }] })),
+    } as unknown as pg.Pool;
+    const queue = {
+      getJob: vi.fn(async () => ({ getState: vi.fn(async () => 'waiting') })),
+      add: vi.fn(),
+    } as unknown as Queue;
+    const app = await appWithUploads(pool, queue);
+
+    const response = await app.inject({ method: 'POST', url: '/api/uploads/upload_1/complete' });
+
+    expect(response.statusCode).toBe(202);
+    expect(response.json()).toMatchObject({ jobId: 'job_existing', idempotent: true });
+    expect(queue.add).not.toHaveBeenCalled();
+    await app.close();
+  });
+
+  it('rejects completion when assembled bytes do not match sourceContentHash', async () => {
+    const tempDir = await mkdtemp(path.join(os.tmpdir(), 'moya-upload-hash-'));
+    const chunkPath = path.join(tempDir, '00000000.part');
+    const bytes = Buffer.from('hello');
+    await writeFile(chunkPath, bytes);
+    const client = {
+      query: vi.fn(async (sql: string) => {
+        if (sql === 'begin' || sql === 'rollback') return { rows: [] };
+        if (sql.includes('from upload_sessions')) {
+          return {
+            rows: [
+              {
+                id: 'upload_hash',
+                size_bytes: String(bytes.length),
+                status: 'uploading',
+                total_chunks: 1,
+                source_content_hash: `sha256:${'0'.repeat(64)}`,
+              },
+            ],
+          };
+        }
+        if (sql.includes('from upload_chunks')) {
+          return { rows: [{ chunk_index: 0, size_bytes: bytes.length, storage_path: chunkPath }] };
+        }
+        throw new Error(`unexpected query: ${sql}`);
+      }),
+      release: vi.fn(),
+    };
+    const pool = { connect: vi.fn(async () => client) } as unknown as pg.Pool;
+    const queue = { add: vi.fn() } as unknown as Queue;
+    const app = await appWithUploads(pool, queue);
+    try {
+      const response = await app.inject({ method: 'POST', url: '/api/uploads/upload_hash/complete' });
+      expect(response.statusCode).toBe(409);
+      expect(response.json()).toMatchObject({ code: 'source_content_hash_mismatch' });
+      expect(queue.add).not.toHaveBeenCalled();
+    } finally {
+      await app.close();
+      await rm(tempDir, { recursive: true, force: true });
+    }
   });
 
   it('cancels uploading sessions and clears accepted chunks before import is queued', async () => {
@@ -338,6 +468,7 @@ describe('upload routes', () => {
           expect(params).toEqual(['upload_1']);
           return { rows: [] };
         }
+        if (sql.startsWith('update import_jobs')) return { rows: [], rowCount: 0 };
         if (sql.startsWith('update upload_sessions set status')) {
           expect(params).toEqual(['cancelled', 'upload_1']);
           return { rows: [] };
@@ -392,10 +523,10 @@ describe('upload routes', () => {
     await app.close();
   });
 
-  it('does not cancel uploads that are already queued for import', async () => {
+  it('cancels uploads that are already queued for import', async () => {
     const client = {
       query: vi.fn(async (sql: string) => {
-        if (sql === 'begin' || sql === 'rollback') return { rows: [] };
+        if (sql === 'begin' || sql === 'commit' || sql === 'rollback') return { rows: [] };
         if (sql.includes('from upload_sessions') && sql.includes('for update')) {
           return {
             rows: [
@@ -408,6 +539,13 @@ describe('upload routes', () => {
             ],
           };
         }
+        if (sql.includes('select status from import_jobs')) return { rows: [{ status: 'queued' }] };
+        if (sql.startsWith('update import_jobs')) return { rows: [], rowCount: 1 };
+        if (sql.startsWith('update upload_sessions set status')) return { rows: [] };
+        if (sql.startsWith('delete from upload_chunks')) return { rows: [] };
+        if (sql.includes('from upload_sessions'))
+          return { rows: [{ id: 'upload_1', size_bytes: '12', status: 'cancelled', total_chunks: 3 }] };
+        if (sql.includes('from upload_chunks') || sql.includes('from import_jobs')) return { rows: [] };
         throw new Error(`unexpected client query: ${sql}`);
       }),
       release: vi.fn(),
@@ -420,11 +558,43 @@ describe('upload routes', () => {
 
     const response = await app.inject({ method: 'DELETE', url: '/api/uploads/upload_1' });
 
-    expect(response.statusCode).toBe(409);
-    expect(response.json()).toEqual({ error: 'upload session is queued' });
-    expect(client.query).toHaveBeenCalledWith('rollback');
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toMatchObject({ ok: true, cancellationState: 'cancelled' });
+    expect(client.query).toHaveBeenCalledWith('commit');
     expect(client.release).toHaveBeenCalledTimes(1);
 
+    await app.close();
+  });
+
+  it('requests cancellation without deleting chunks underneath a processing worker', async () => {
+    const client = {
+      query: vi.fn(async (sql: string) => {
+        if (sql === 'begin' || sql === 'commit' || sql === 'rollback') return { rows: [] };
+        if (sql.includes('from upload_sessions') && sql.includes('for update')) {
+          return { rows: [{ id: 'upload_1', size_bytes: '12', status: 'queued', total_chunks: 1 }] };
+        }
+        if (sql.includes('select status from import_jobs')) return { rows: [{ status: 'processing' }] };
+        if (sql.startsWith('update import_jobs')) return { rows: [], rowCount: 1 };
+        if (sql.startsWith('update upload_sessions set status')) return { rows: [] };
+        if (sql.includes('from upload_sessions')) {
+          return { rows: [{ id: 'upload_1', size_bytes: '12', status: 'cancelled', total_chunks: 1 }] };
+        }
+        if (sql.includes('from upload_chunks')) return { rows: [{ chunk_index: 0, size_bytes: 12 }] };
+        if (sql.includes('from import_jobs')) {
+          return { rows: [{ id: 'job_1', status: 'cancelled', stage: 'cancelled', cancel_requested_at: new Date() }] };
+        }
+        throw new Error(`unexpected client query: ${sql}`);
+      }),
+      release: vi.fn(),
+    };
+    const pool = { connect: vi.fn(async () => client) } as unknown as pg.Pool;
+    const app = await appWithUploads(pool, { add: vi.fn() } as unknown as Queue);
+
+    const response = await app.inject({ method: 'DELETE', url: '/api/uploads/upload_1' });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toMatchObject({ ok: true, cancellationState: 'requested' });
+    expect(client.query.mock.calls.some(([sql]) => String(sql).startsWith('delete from upload_chunks'))).toBe(false);
     await app.close();
   });
 

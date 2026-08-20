@@ -3,12 +3,15 @@ import type { Novel } from '../../domain/types';
 import { sha256 } from '../../domain/hash';
 import type { ToastTone } from '../../shared/ui/ToastHost';
 import type { ImportProgress, ImportService } from '../../services/import/import-service';
+import { hashBlobInChunks } from '../../services/import/chunked-file-reader';
 import {
   DEFAULT_LIBRARY_FOLDER_FILTER,
   libraryFolderEntryId,
   libraryFolderEntrySignature,
+  libraryFolderFormatForName,
   type LibraryFolderCandidate,
   type LibraryFolderFilter,
+  type LibraryFolderSourceEntry,
   type LinkedLibraryFolder,
   type PlatformLibraryFolderIo,
   type StoredLibraryFolderEntry,
@@ -96,6 +99,72 @@ function importedEntry(
   };
 }
 
+function sameQuickIdentity(source: LibraryFolderSourceEntry, stored: StoredLibraryFolderEntry): boolean {
+  return source.byteLength === stored.byteLength && source.lastModified === stored.lastModified;
+}
+
+function extension(fileName: string): string {
+  return fileName.split('.').pop()?.toLocaleLowerCase() ?? '';
+}
+
+function eligibleForFolder(folder: LinkedLibraryFolder, source: LibraryFolderSourceEntry): boolean {
+  const format = libraryFolderFormatForName(source.fileName);
+  if (!format || !folder.filter.formats.includes(format)) return false;
+  if (folder.filter.minBytes !== undefined && source.byteLength < folder.filter.minBytes) return false;
+  if (folder.filter.maxBytes !== undefined && source.byteLength > folder.filter.maxBytes) return false;
+  return true;
+}
+
+export async function enrichScannedLibraryFolderEntries(input: {
+  readonly folder: LinkedLibraryFolder;
+  readonly sourceEntries: readonly LibraryFolderSourceEntry[];
+  readonly storedEntries: readonly StoredLibraryFolderEntry[];
+  readonly io: Pick<PlatformLibraryFolderIo, 'readFile'>;
+}): Promise<LibraryFolderSourceEntry[]> {
+  const storedByKey = new Map(input.storedEntries.map((entry) => [entry.sourceKey, entry]));
+  const sourceKeys = new Set(input.sourceEntries.map((entry) => entry.sourceKey));
+  const missingWithHash = input.storedEntries.filter(
+    (entry) => !sourceKeys.has(entry.sourceKey) && entry.bookId && entry.contentHash,
+  );
+  const enriched: LibraryFolderSourceEntry[] = [];
+
+  for (const source of input.sourceEntries) {
+    if (source.contentHash || !eligibleForFolder(input.folder, source)) {
+      enriched.push(source);
+      continue;
+    }
+    const stored = storedByKey.get(source.sourceKey);
+    const verifiesSameMetadata = Boolean(stored?.bookId && sameQuickIdentity(source, stored));
+    const verifiesPossibleRename =
+      !stored &&
+      missingWithHash.some(
+        (missing) =>
+          missing.byteLength === source.byteLength && extension(missing.fileName) === extension(source.fileName),
+      );
+    if (!verifiesSameMetadata && !verifiesPossibleRename) {
+      enriched.push(source);
+      continue;
+    }
+
+    try {
+      const file = await input.io.readFile(input.folder, source);
+      enriched.push({
+        ...source,
+        byteLength: file.size,
+        lastModified: typeof file.lastModified === 'number' ? file.lastModified : source.lastModified,
+        contentHash: await hashBlobInChunks(file),
+        readError: undefined,
+      });
+    } catch (error) {
+      enriched.push({
+        ...source,
+        readError: error instanceof Error ? error.message : '파일 내용을 확인하지 못했습니다.',
+      });
+    }
+  }
+  return enriched;
+}
+
 export function useLibraryFolderController(options: UseLibraryFolderControllerOptions): LibraryFolderController {
   const optionsRef = useRef(options);
   optionsRef.current = options;
@@ -144,7 +213,19 @@ export function useLibraryFolderController(options: UseLibraryFolderControllerOp
           optionsRef.current.state.listEntries(folder.id),
           optionsRef.current.listNovels(),
         ]);
-        const reconciled = reconcileLibraryFolderScan({ folder, sourceEntries, storedEntries, novels, scannedAt });
+        const fingerprintedEntries = await enrichScannedLibraryFolderEntries({
+          folder,
+          sourceEntries,
+          storedEntries,
+          io: optionsRef.current.io,
+        });
+        const reconciled = reconcileLibraryFolderScan({
+          folder,
+          sourceEntries: fingerprintedEntries,
+          storedEntries,
+          novels,
+          scannedAt,
+        });
         await optionsRef.current.state.saveEntries(reconciled.observedEntries);
         await Promise.all(reconciled.retiredEntryIds.map((id) => optionsRef.current.state.deleteEntry(id)));
         const updated: LinkedLibraryFolder = {

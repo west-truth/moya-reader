@@ -93,4 +93,86 @@ describe('reconcileLibraryFolderScan', () => {
     expect(result.candidates[0]).toMatchObject({ status: 'unchanged', bookId: 'book-1' });
     expect(result.retiredEntryIds).toEqual(['folder-1::old.txt']);
   });
+
+  it('uses an exact content fingerprint when metadata alone would hide a replacement', () => {
+    const result = reconcileLibraryFolderScan({
+      folder,
+      sourceEntries: [
+        {
+          sourceKey: 'old.txt',
+          relativePath: 'old.txt',
+          fileName: 'old.txt',
+          byteLength: 100,
+          lastModified: 10,
+          contentHash: 'sha256:new-bytes',
+        },
+      ],
+      storedEntries: [stored({ contentHash: 'sha256:old-bytes' })],
+      novels: [novel('book-1', 'old.txt')],
+      scannedAt: '2026-08-01T01:00:00.000Z',
+    });
+
+    expect(result.candidates[0]).toMatchObject({ status: 'changed', bookId: 'book-1' });
+  });
+
+  it('does not guess a rename when multiple new files share the same weak metadata identity', () => {
+    const result = reconcileLibraryFolderScan({
+      folder,
+      sourceEntries: [
+        { sourceKey: 'a.txt', relativePath: 'a.txt', fileName: 'a.txt', byteLength: 100, lastModified: 10 },
+        { sourceKey: 'b.txt', relativePath: 'b.txt', fileName: 'b.txt', byteLength: 100, lastModified: 10 },
+      ],
+      storedEntries: [stored()],
+      novels: [novel('book-1', 'old.txt')],
+      scannedAt: '2026-08-01T01:00:00.000Z',
+    });
+
+    expect(result.retiredEntryIds).toEqual([]);
+    expect(result.candidates.filter((candidate) => candidate.status === 'new')).toHaveLength(2);
+    expect(result.candidates).toEqual(expect.arrayContaining([expect.objectContaining({ status: 'missing' })]));
+  });
+
+  it('matches a rename by exact content hash even when mtime changed', () => {
+    const result = reconcileLibraryFolderScan({
+      folder,
+      sourceEntries: [
+        {
+          sourceKey: 'renamed.txt',
+          relativePath: 'renamed.txt',
+          fileName: 'renamed.txt',
+          byteLength: 100,
+          lastModified: 999,
+          contentHash: 'sha256:same-source',
+        },
+      ],
+      storedEntries: [stored({ contentHash: 'sha256:same-source' })],
+      novels: [novel('book-1', 'old.txt')],
+      scannedAt: '2026-08-01T01:00:00.000Z',
+    });
+
+    expect(result.candidates[0]).toMatchObject({ status: 'unchanged', bookId: 'book-1' });
+    expect(result.retiredEntryIds).toEqual(['folder-1::old.txt']);
+  });
+
+  it('surfaces a per-file fingerprint failure without converting it into an actionable import', () => {
+    const result = reconcileLibraryFolderScan({
+      folder,
+      sourceEntries: [
+        {
+          sourceKey: 'old.txt',
+          relativePath: 'old.txt',
+          fileName: 'old.txt',
+          byteLength: 100,
+          lastModified: 10,
+          readError: 'permission revoked',
+        },
+      ],
+      storedEntries: [stored()],
+      novels: [novel('book-1', 'old.txt')],
+      scannedAt: '2026-08-01T01:00:00.000Z',
+    });
+
+    expect(result.candidates[0]).toMatchObject({ status: 'failed', selected: false, readError: 'permission revoked' });
+    expect(result.observedEntries[0]).toMatchObject({ status: 'linked', readError: 'permission revoked' });
+  });
 });

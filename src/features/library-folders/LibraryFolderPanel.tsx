@@ -35,6 +35,8 @@ function statusLabel(status: LibraryFolderCandidateStatus): string {
       return '최신';
     case 'missing':
       return '원본 없음';
+    case 'failed':
+      return '확인 실패';
     case 'below-minimum':
       return '최소 용량 미만';
     case 'above-maximum':
@@ -47,7 +49,7 @@ function statusLabel(status: LibraryFolderCandidateStatus): string {
 function statusTone(status: LibraryFolderCandidateStatus): string {
   if (status === 'new') return 'new';
   if (status === 'changed' || status === 'update-existing') return 'changed';
-  if (status === 'missing') return 'missing';
+  if (status === 'missing' || status === 'failed') return 'missing';
   if (status === 'unchanged') return 'current';
   return 'muted';
 }
@@ -293,6 +295,7 @@ export default function LibraryFolderPanel({ controller }: LibraryFolderPanelPro
                         <strong>{candidate.fileName}</strong>
                         <small>{candidate.relativePath}</small>
                         {candidate.existingBookTitle && <em>연결 대상: {candidate.existingBookTitle}</em>}
+                        {candidate.readError && <em>{candidate.readError}</em>}
                       </span>
                       <span className="library-folder-file-size">{formatBytes(candidate.byteLength)}</span>
                       <span className={`library-folder-status ${statusTone(candidate.status)}`}>

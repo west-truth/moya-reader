@@ -5,6 +5,8 @@ import {
   createHostedBackupStream,
   HOSTED_BACKUP_FORMAT,
   HOSTED_BACKUP_VERSION,
+  MAX_HOSTED_BACKUP_ENTRIES,
+  MAX_HOSTED_BACKUP_UNCOMPRESSED_BYTES,
   parseHostedBackupArchive,
   type HostedBackupSnapshot,
   type HostedBookObjectRow,
@@ -208,5 +210,60 @@ describe('hosted backup archive', () => {
     const consumption = collect(streamed.readable).catch(() => new Uint8Array());
     await expect(streamed.completion).rejects.toThrow('integrity check failed');
     await consumption;
+  });
+
+  it('rejects exports whose declared size cannot be accepted by restore', () => {
+    const object: HostedBookObjectRow = {
+      id: 'object_oversized',
+      raw_text_hash: hash(Buffer.alloc(0)),
+      storage_key: 'object',
+      file_name: 'book.bin',
+      content_type: 'application/octet-stream',
+      size_bytes: MAX_HOSTED_BACKUP_UNCOMPRESSED_BYTES,
+      created_at: '2026-07-13T00:00:00.000Z',
+    };
+    expect(() =>
+      createHostedBackupStream(
+        {
+          tables: new Map([
+            ['library_books', []],
+            ['reader_settings', []],
+          ]),
+          objects: [object],
+          books: [],
+          exportedAt: '2026-07-13T00:00:00.000Z',
+          appVersion: '0.1.0',
+        },
+        async () => Buffer.alloc(0),
+      ),
+    ).toThrow('too large to restore');
+  });
+
+  it('counts manifest.json when enforcing the restore entry limit', () => {
+    const objectCount = MAX_HOSTED_BACKUP_ENTRIES - 3;
+    const objects = Array.from({ length: objectCount }, (_, index): HostedBookObjectRow => ({
+      id: `object_${index}`,
+      raw_text_hash: hash(Buffer.alloc(0)),
+      storage_key: `object_${index}`,
+      file_name: 'book.bin',
+      content_type: 'application/octet-stream',
+      size_bytes: 0,
+      created_at: '2026-07-13T00:00:00.000Z',
+    }));
+    expect(() =>
+      createHostedBackupStream(
+        {
+          tables: new Map([
+            ['library_books', []],
+            ['reader_settings', []],
+          ]),
+          objects,
+          books: [],
+          exportedAt: '2026-07-13T00:00:00.000Z',
+          appVersion: '0.1.0',
+        },
+        async () => Buffer.alloc(0),
+      ),
+    ).toThrow('entry count is outside');
   });
 });

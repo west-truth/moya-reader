@@ -7,9 +7,6 @@ services:
       TTS_LOCAL_ENDPOINT_URL: http://tts-model:9010/synthesize
       TTS_LOCAL_ENDPOINT_VOICE_ID: ${TTS_LOCAL_ENDPOINT_VOICE_ID:-KR}
       LOCAL_TTS_ALLOWED_HOSTS: tts-model
-    depends_on:
-      tts-model:
-        condition: service_healthy
 
   worker:
     environment:
@@ -19,9 +16,6 @@ services:
       TTS_LOCAL_ENDPOINT_URL: http://tts-model:9010/synthesize
       TTS_LOCAL_ENDPOINT_VOICE_ID: ${TTS_LOCAL_ENDPOINT_VOICE_ID:-KR}
       LOCAL_TTS_ALLOWED_HOSTS: tts-model
-    depends_on:
-      tts-model:
-        condition: service_healthy
 
   tts-model:
     build:

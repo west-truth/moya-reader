@@ -29,6 +29,8 @@ const files = {
   server: read('apps/server/src/server.ts'),
   serverQueue: read('apps/server/src/queue.ts'),
   serverUploadImport: read('src/services/import/server-upload-import-service.ts'),
+  composeGuideKo: read('docs/operations/docker-compose-guide-ko.md'),
+  composeDeployment: read('docs/operations/docker-compose-deployment.md'),
 };
 
 const checks = [];
@@ -262,6 +264,25 @@ check(
   'local TTS allowlists only its service name',
   (files.composeLocalTTS.match(/LOCAL_TTS_ALLOWED_HOSTS: tts-model/g) ?? []).length === 2,
 );
+check(
+  'local TTS remains an optional degraded dependency',
+  !includes(files.composeLocalTTS, 'condition: service_healthy'),
+);
+for (const [name, guide] of [
+  ['Korean Compose guide', files.composeGuideKo],
+  ['technical Compose guide', files.composeDeployment],
+]) {
+  check(
+    `${name} starts core before building optional TTS`,
+    includes(guide, 'docker compose up -d --build') &&
+      includes(guide, 'compose.local-tts.yaml build tts-model') &&
+      includes(guide, 'compose.local-tts.yaml up -d --no-build'),
+  );
+  check(
+    `${name} does not advertise a combined optional TTS build`,
+    !includes(guide, 'compose.local-tts.yaml up -d --build'),
+  );
+}
 check('local TTS Dockerfile pins MeloTTS source', includes(files.localTTSDockerfile, 'ARG MELOTTS_COMMIT='));
 check('local TTS Dockerfile runs as non-root', includes(files.localTTSDockerfile, 'USER localtts'));
 check('local TTS adapter implements voices', includes(files.localTTSServer, 'if self.path == "/voices"'));
@@ -273,8 +294,32 @@ check(
   includes(files.composePublic, 'READER_AUTH_TOKEN: ${READER_AUTH_TOKEN:?'),
 );
 check(
+  'public override requires a PostgreSQL password for API and database',
+  (files.composePublic.match(/POSTGRES_PASSWORD:\s*\$\{POSTGRES_PASSWORD:\?/g) ?? []).length >= 1 &&
+    includes(files.composePublic, '${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD before public deployment}'),
+);
+check(
+  'public override requires MinIO credentials',
+  includes(files.composePublic, 'MINIO_ROOT_USER: ${MINIO_ROOT_USER:?') &&
+    includes(files.composePublic, 'MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:?'),
+);
+check(
+  'public API storage credentials derive from the required MinIO credentials',
+  includes(files.composePublic, 'S3_ACCESS_KEY_ID: ${S3_ACCESS_KEY_ID:-${MINIO_ROOT_USER:?') &&
+    includes(files.composePublic, 'S3_SECRET_ACCESS_KEY: ${S3_SECRET_ACCESS_KEY:-${MINIO_ROOT_PASSWORD:?'),
+);
+check(
   'public override keeps same-origin CORS configuration optional',
   !includes(files.composePublic, 'CORS_ALLOWED_ORIGINS: ${CORS_ALLOWED_ORIGINS:?'),
+);
+check(
+  'public hosted E2E supplies isolated PostgreSQL credentials',
+  includes(files.hostedE2E, "process.env.POSTGRES_PASSWORD = 'moya-e2e-postgres-password'"),
+);
+check(
+  'public hosted E2E supplies isolated MinIO credentials',
+  includes(files.hostedE2E, "process.env.MINIO_ROOT_USER = 'moya-e2e-storage'") &&
+    includes(files.hostedE2E, "process.env.MINIO_ROOT_PASSWORD = 'moya-e2e-storage-password'"),
 );
 check('API installs graceful signal handlers', includes(files.serverIndex, "process.once('SIGTERM'"));
 check('worker queue recovers stale imports', includes(files.serverQueue, 'recoverStaleImportJobs'));
@@ -328,6 +373,7 @@ check(
 );
 
 for (const key of [
+  'COMPOSE_PROJECT_NAME',
   'DATABASE_URL',
   'REDIS_URL',
   'S3_ENDPOINT',

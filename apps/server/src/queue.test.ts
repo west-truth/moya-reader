@@ -25,18 +25,51 @@ describe('import queue helpers', () => {
     });
   });
 
-  it('uses the database import job id as the BullMQ job id', async () => {
+  it('uses an attempt-specific BullMQ id and persists its execution fence', async () => {
+    const pool = {
+      query: vi.fn(async (sql: string) => {
+        if (sql.startsWith('select active_queue_job_id')) return { rows: [{ active_queue_job_id: null }] };
+        return { rowCount: 1, rows: [{ id: 'job_1' }] };
+      }),
+    } as unknown as pg.Pool;
     const queue = {
       add: vi.fn(async (_name: string, _data: unknown, options?: { jobId?: string }) => ({ id: options?.jobId })),
     } as unknown as Queue;
 
-    await expect(enqueueImportJob(queue, 'job_1', 'upload_1')).resolves.toBe('job_1');
+    await expect(enqueueImportJob(pool, queue, 'job_1', 'upload_1')).resolves.toMatch(/^import_attempt_/);
 
     expect(queue.add).toHaveBeenCalledWith(
       'import-upload',
       { jobId: 'job_1', uploadId: 'upload_1' },
-      { jobId: 'job_1' },
+      { jobId: expect.stringMatching(/^import_attempt_[a-f0-9]{32}$/) },
     );
+  });
+
+  it('supersedes a retained terminal BullMQ delivery with a new fenced attempt id', async () => {
+    const updates: unknown[][] = [];
+    const pool = {
+      query: vi.fn(async (sql: string, params?: unknown[]) => {
+        if (sql.startsWith('select active_queue_job_id')) {
+          return { rows: [{ active_queue_job_id: 'import_attempt_retained' }] };
+        }
+        if (sql.includes('set active_queue_job_id = null')) return { rows: [], rowCount: 1 };
+        if (sql.includes('queue_generation = queue_generation + 1')) {
+          updates.push(params ?? []);
+          return { rows: [{ id: 'job_1' }], rowCount: 1 };
+        }
+        throw new Error(`unexpected query: ${sql}`);
+      }),
+    } as unknown as pg.Pool;
+    const queue = {
+      getJob: vi.fn(async () => ({ getState: vi.fn(async () => 'completed') })),
+      add: vi.fn(async (_name: string, _data: unknown, options?: { jobId?: string }) => ({ id: options?.jobId })),
+    } as unknown as Queue;
+
+    const published = await enqueueImportJob(pool, queue, 'job_1', 'upload_1');
+
+    expect(published).toMatch(/^import_attempt_/);
+    expect(published).not.toBe('import_attempt_retained');
+    expect(updates[0]?.[2]).toBe(published);
   });
 
   it('requeues queued database import jobs on worker startup', async () => {
@@ -59,13 +92,13 @@ describe('import queue helpers', () => {
       1,
       'import-upload',
       { jobId: 'job_1', uploadId: 'upload_1' },
-      { jobId: 'job_1' },
+      { jobId: expect.stringMatching(/^import_attempt_/) },
     );
     expect(queue.add).toHaveBeenNthCalledWith(
       2,
       'import-upload',
       { jobId: 'job_2', uploadId: 'upload_2' },
-      { jobId: 'job_2' },
+      { jobId: expect.stringMatching(/^import_attempt_/) },
     );
   });
 
@@ -86,7 +119,7 @@ describe('import queue helpers', () => {
     expect(queue.add).toHaveBeenCalledWith(
       'import-upload',
       { jobId: 'job_stale', uploadId: 'upload_stale' },
-      { jobId: 'job_stale' },
+      { jobId: expect.stringMatching(/^import_attempt_/) },
     );
   });
 

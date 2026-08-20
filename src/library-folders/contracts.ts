@@ -30,6 +30,10 @@ export interface LibraryFolderSourceEntry {
   readonly mimeType?: string;
   readonly byteLength: number;
   readonly lastModified: number;
+  /** Optional hash of the exact file bytes. Prefer `sha256:<lowercase hex>`. */
+  readonly contentHash?: string;
+  /** Per-file read/hash failure captured without aborting the whole folder scan. */
+  readonly readError?: string;
 }
 
 export type LibraryFolderEntryStatus = 'linked' | 'missing' | 'failed';
@@ -39,7 +43,6 @@ export interface StoredLibraryFolderEntry extends LibraryFolderSourceEntry {
   readonly folderId: string;
   readonly signature: string;
   readonly bookId?: string;
-  readonly contentHash?: string;
   readonly status: LibraryFolderEntryStatus;
   readonly firstSeenAt: string;
   readonly lastSeenAt: string;
@@ -48,7 +51,15 @@ export interface StoredLibraryFolderEntry extends LibraryFolderSourceEntry {
 }
 
 export type LibraryFolderCandidateStatus =
-  'new' | 'changed' | 'unchanged' | 'missing' | 'update-existing' | 'unsupported' | 'below-minimum' | 'above-maximum';
+  | 'new'
+  | 'changed'
+  | 'unchanged'
+  | 'missing'
+  | 'update-existing'
+  | 'failed'
+  | 'unsupported'
+  | 'below-minimum'
+  | 'above-maximum';
 
 export interface LibraryFolderCandidate extends LibraryFolderSourceEntry {
   readonly id: string;
@@ -101,5 +112,7 @@ export function libraryFolderEntryId(folderId: string, sourceKey: string): strin
 }
 
 export function libraryFolderEntrySignature(entry: LibraryFolderSourceEntry): string {
-  return `${entry.sourceKey}\u0000${entry.byteLength}\u0000${entry.lastModified}`;
+  return [entry.sourceKey, entry.byteLength, entry.lastModified, entry.contentHash?.trim().toLocaleLowerCase() ?? '']
+    .map(String)
+    .join('\u0000');
 }

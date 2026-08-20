@@ -1,4 +1,5 @@
 import { Job, Queue, Worker } from 'bullmq';
+import { randomUUID } from 'node:crypto';
 import pg from 'pg';
 import type { ProviderJobAdmissionLimits, ServerConfig } from './config.js';
 import {
@@ -16,9 +17,10 @@ export interface ImportQueueAttempt {
   readonly attemptNumber: number;
   readonly maxAttempts: number;
   readonly finalAttempt: boolean;
+  readonly executionId?: string;
 }
 
-export function importQueueAttempt(job: Pick<Job, 'attemptsMade' | 'opts'>): ImportQueueAttempt {
+export function importQueueAttempt(job: Pick<Job, 'attemptsMade' | 'opts'>, executionId?: string): ImportQueueAttempt {
   const configuredAttempts = Number(job.opts.attempts ?? 1);
   const maxAttempts = Number.isSafeInteger(configuredAttempts) && configuredAttempts > 0 ? configuredAttempts : 1;
   const attemptNumber = Math.max(1, job.attemptsMade + 1);
@@ -26,6 +28,7 @@ export function importQueueAttempt(job: Pick<Job, 'attemptsMade' | 'opts'>): Imp
     attemptNumber,
     maxAttempts,
     finalAttempt: attemptNumber >= maxAttempts,
+    ...(executionId ? { executionId } : {}),
   };
 }
 
@@ -56,8 +59,52 @@ export function createImportQueue(config: ServerConfig): Queue {
   });
 }
 
-export function enqueueImportJob(queue: Queue, jobId: string, uploadId: string): Promise<unknown> {
-  return queue.add('import-upload', { jobId, uploadId }, { jobId }).then((job) => job.id);
+async function importQueueJobState(queue: Queue, bullmqJobId: string): Promise<string | undefined> {
+  if (typeof queue.getJob !== 'function') return undefined;
+  const queuedJob = await queue.getJob(bullmqJobId);
+  return queuedJob ? queuedJob.getState() : 'missing';
+}
+
+export async function enqueueImportJob(pool: pg.Pool, queue: Queue, jobId: string, uploadId: string): Promise<unknown> {
+  const current = await pool.query<{ active_queue_job_id?: string | null }>(
+    `select active_queue_job_id from import_jobs
+      where id = $1 and upload_id = $2 and status = 'queued' and cancel_requested_at is null`,
+    [jobId, uploadId],
+  );
+  const activeQueueJobId = current.rows[0]?.active_queue_job_id?.trim();
+  if (activeQueueJobId) {
+    const state = await importQueueJobState(queue, activeQueueJobId);
+    if (state && !['missing', 'completed', 'failed'].includes(state)) return activeQueueJobId;
+    await pool.query(
+      `update import_jobs set active_queue_job_id = null, updated_at = now()
+        where id = $1 and status = 'queued' and active_queue_job_id = $2`,
+      [jobId, activeQueueJobId],
+    );
+  }
+
+  const bullmqJobId = `import_attempt_${randomUUID().replaceAll('-', '')}`;
+  const claimed = await pool.query(
+    `update import_jobs
+        set queue_generation = queue_generation + 1,
+            active_queue_job_id = $3,
+            updated_at = now()
+      where id = $1 and upload_id = $2 and status = 'queued'
+        and cancel_requested_at is null and active_queue_job_id is null
+      returning id`,
+    [jobId, uploadId, bullmqJobId],
+  );
+  if ((claimed.rowCount ?? claimed.rows.length) === 0) return activeQueueJobId;
+  try {
+    const job = await queue.add('import-upload', { jobId, uploadId }, { jobId: bullmqJobId });
+    return job.id;
+  } catch (error) {
+    await pool.query(
+      `update import_jobs set active_queue_job_id = null, updated_at = now()
+        where id = $1 and status = 'queued' and active_queue_job_id = $2`,
+      [jobId, bullmqJobId],
+    );
+    throw error;
+  }
 }
 
 interface ProviderQueueJobData {
@@ -95,7 +142,7 @@ export async function requeuePendingImportJobs(pool: pg.Pool, queue: Queue): Pro
     `,
   );
   for (const row of result.rows) {
-    await enqueueImportJob(queue, row.id, row.upload_id);
+    await enqueueImportJob(pool, queue, row.id, row.upload_id);
   }
   return result.rowCount ?? result.rows.length;
 }
@@ -119,6 +166,7 @@ export async function recoverStaleImportJobs(
           stage = 'queued',
           message = 'Interrupted import was returned to the queue.',
           error_message = null,
+          active_queue_job_id = null,
           updated_at = now()
       from upload_sessions upload
       where job.upload_id = upload.id
@@ -130,7 +178,7 @@ export async function recoverStaleImportJobs(
     [safeStaleMs],
   );
   for (const row of result.rows) {
-    await enqueueImportJob(queue, row.id, row.upload_id);
+    await enqueueImportJob(pool, queue, row.id, row.upload_id);
   }
   return result.rowCount ?? result.rows.length;
 }
@@ -477,7 +525,7 @@ export function createImportWorker(
     async (job) => {
       const jobId = String(job.data.jobId);
       const uploadId = String(job.data.uploadId);
-      await processor(jobId, uploadId, importQueueAttempt(job));
+      await processor(jobId, uploadId, importQueueAttempt(job, String(job.id)));
     },
     {
       connection: redisConnectionOptions(config),

@@ -53,7 +53,18 @@ async function main() {
   if (publicMode && !authToken.trim()) {
     authToken = 'moya-hosted-e2e-token';
   }
-  if (publicMode) process.env.READER_AUTH_TOKEN = authToken.trim();
+  if (publicMode) {
+    process.env.READER_AUTH_TOKEN = authToken.trim();
+    if (!process.env.POSTGRES_PASSWORD?.trim()) {
+      process.env.POSTGRES_PASSWORD = 'moya-e2e-postgres-password';
+    }
+    if (!process.env.MINIO_ROOT_USER?.trim()) {
+      process.env.MINIO_ROOT_USER = 'moya-e2e-storage';
+    }
+    if (!process.env.MINIO_ROOT_PASSWORD?.trim()) {
+      process.env.MINIO_ROOT_PASSWORD = 'moya-e2e-storage-password';
+    }
+  }
   const composeFiles = ['compose.yaml', ...(publicMode ? ['compose.public.yaml'] : [])];
 
   run('pnpm', ['check:hosted']);

@@ -47,6 +47,49 @@ function coverMetadata(row: JsonRecord): BookAssetMetadata {
   };
 }
 
+export class RemoteSourceRangeResponseError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'RemoteSourceRangeResponseError';
+  }
+}
+
+function assertValidRangeResponse(
+  response: { blob: Blob; headers: Headers; status: number },
+  start: number,
+  end: number,
+  sourceByteLength: number,
+): void {
+  const expectedLength = end - start;
+  if (response.status !== 206) {
+    throw new RemoteSourceRangeResponseError(`Expected HTTP 206 for source range, received ${response.status}.`);
+  }
+  const contentRange = response.headers.get('content-range');
+  const match = /^bytes (\d+)-(\d+)\/(\d+|\*)$/i.exec(contentRange?.trim() ?? '');
+  const actualStart = match ? Number(match[1]) : Number.NaN;
+  const actualEnd = match ? Number(match[2]) : Number.NaN;
+  const actualTotal = match?.[3] === '*' ? undefined : Number(match?.[3]);
+  if (
+    !match ||
+    actualStart !== start ||
+    actualEnd !== end - 1 ||
+    (sourceByteLength > 0 && actualTotal !== sourceByteLength)
+  ) {
+    throw new RemoteSourceRangeResponseError(
+      `Invalid Content-Range for source bytes ${start}-${end - 1}: ${contentRange ?? 'missing'}.`,
+    );
+  }
+  const contentLength = response.headers.get('content-length');
+  if (contentLength !== null && Number(contentLength) !== expectedLength) {
+    throw new RemoteSourceRangeResponseError(`Invalid Content-Length for source range: ${contentLength}.`);
+  }
+  if (response.blob.size !== expectedLength) {
+    throw new RemoteSourceRangeResponseError(
+      `Source range body length mismatch: expected ${expectedLength}, received ${response.blob.size}.`,
+    );
+  }
+}
+
 export class RemoteBookAssetRepository implements BookAssetRepository {
   constructor(private readonly client: RemoteApiClient) {}
 
@@ -72,6 +115,7 @@ export class RemoteBookAssetRepository implements BookAssetRepository {
         const end = Math.min(metadata.byteLength, Math.max(start, Math.floor(endExclusive)));
         if (end <= start) return new Uint8Array();
         const response = await this.client.getBookSourceRange(bookId, start, end, signal);
+        assertValidRangeResponse(response, start, end, metadata.byteLength);
         return new Uint8Array(await response.blob.arrayBuffer());
       },
       close: async () => {

@@ -30,6 +30,18 @@ const corsHeaders = [
   'x-backup-conflict-resolutions',
   'x-source-file-name',
   'x-source-content-type',
+  'range',
+  'if-range',
+  'x-expected-metadata-revision',
+  'x-cover-file-name',
+  'x-cover-content-type',
+  'x-cover-content-hash',
+  'x-cover-width',
+  'x-cover-height',
+  'x-cover-fit',
+  'x-cover-position-x',
+  'x-cover-position-y',
+  'x-cover-provenance',
   'x-font-content-type',
   'x-font-content-hash',
   'x-font-family',
@@ -93,9 +105,12 @@ export function registerCorsPolicy(app: FastifyInstance, config: ServerConfig): 
     reply.header('Access-Control-Allow-Methods', corsMethods.join(','));
     reply.header(
       'Access-Control-Allow-Headers',
-      'Content-Type,Authorization,X-Request-Id,X-Correlation-Id,X-Backup-Default-Resolution,X-Backup-Conflict-Resolutions,X-Source-File-Name,X-Source-Content-Type,X-Font-Content-Type,X-Font-Content-Hash,X-Font-Family,X-Font-File-Name,X-Font-Style,X-Font-Weight,X-Font-License-Note',
+      'Content-Type,Authorization,Range,If-Range,X-Request-Id,X-Correlation-Id,X-Backup-Default-Resolution,X-Backup-Conflict-Resolutions,X-Source-File-Name,X-Source-Content-Type,X-Expected-Metadata-Revision,X-Cover-File-Name,X-Cover-Content-Type,X-Cover-Content-Hash,X-Cover-Width,X-Cover-Height,X-Cover-Fit,X-Cover-Position-X,X-Cover-Position-Y,X-Cover-Provenance,X-Font-Content-Type,X-Font-Content-Hash,X-Font-Family,X-Font-File-Name,X-Font-Style,X-Font-Weight,X-Font-License-Note',
     );
-    reply.header('Access-Control-Expose-Headers', 'X-Request-Id,X-Correlation-Id,X-Asset-Id,X-Asset-File-Name,ETag');
+    reply.header(
+      'Access-Control-Expose-Headers',
+      'X-Request-Id,X-Correlation-Id,X-Asset-Id,X-Asset-Kind,X-Asset-File-Name,X-Page-Index,X-Source-File-Name,X-Source-Content-Hash,Accept-Ranges,Content-Range,Content-Length,Content-Disposition,ETag',
+    );
     reply.header('Access-Control-Max-Age', '600');
   });
 

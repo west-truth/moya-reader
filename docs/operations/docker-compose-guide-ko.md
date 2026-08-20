@@ -88,10 +88,20 @@ cp .env.example .env
 이후 `.env`를 텍스트 편집기로 연다. `.env`는 비밀번호와 API 키가 들어갈 수 있으므로 Git에 커밋하면
 안 된다.
 
+`COMPOSE_PROJECT_NAME`은 PostgreSQL·Redis·MinIO 등의 named volume 이름을 결정한다. 새 설치는 예제의
+`moya-reader`를 그대로 유지한다. 이미 실행 중인 설치는 폴더를 옮기거나 `-p` 옵션을 바꾸기 전에
+`docker compose ls`에서 현재 project 이름을 확인하고, 그 이름을 `.env`의 `COMPOSE_PROJECT_NAME`에 적은
+뒤에 이동한다. 이 값이 바뀌면 기존 volume이 삭제되는 것은 아니지만 새 빈 volume으로 부팅되어 데이터가
+사라진 것처럼 보일 수 있다.
+
 ### 개인 컴퓨터에서 먼저 시험할 때
 
-처음 로컬 실행만 확인하려면 기본값으로 시작할 수 있다. 장기간 사용할 서버에서 내부 자격증명을 바꿀 때는
-아래처럼 PostgreSQL과 MinIO 쪽 값만 바꾸면 된다.
+처음 로컬 실행만 확인하려면 기본값으로 시작할 수 있다. 장기간 사용할 서버라면 **첫 기동 전에** 아래처럼
+PostgreSQL과 MinIO 내부 자격증명을 정한다.
+
+`.env.example`은 실수로 공개용 개발 자격증명을 재사용하지 않도록 이 세 비밀번호/사용자 값을 비워 둔다.
+기본 loopback Compose는 빈 값에 개발용 fallback을 적용하지만, `compose.public.yaml`은 값이 없으면 시작 전에
+실패한다.
 
 ```dotenv
 POSTGRES_USER=noveldesk
@@ -110,6 +120,29 @@ S3_SECRET_ACCESS_KEY=
 따라서 같은 비밀번호를 두 군데에 중복 입력해 서로 어긋나게 만들 필요가 없다. 외부 PostgreSQL이나 S3를
 사용할 때만 `DATABASE_URL` 또는 `S3_*`를 직접 채운다. URL 인코딩 문제를 피하려면 내부 PostgreSQL
 비밀번호에는 긴 영문과 숫자 조합을 쓰는 것이 간단하다.
+
+PostgreSQL volume이 이미 초기화된 뒤에는 `.env`의 `POSTGRES_USER`, `POSTGRES_PASSWORD`, `POSTGRES_DB`만
+바꾸면 안 된다. PostgreSQL 컨테이너의 초기화 변수는 빈 data directory에만 적용되므로, 기존 DB 계정은
+그대로인데 API만 새 비밀번호로 접속해 중단된다. 운영 중 비밀번호를 교체할 때는 먼저 DB 안의 계정
+비밀번호를 `psql`로 변경하고, 그 다음 `.env`를 같은 값으로 바꾼 뒤 API와 worker를 다시 생성한다. 실행 전
+volume snapshot 또는 `pg_dump`를 남기고, `docker compose logs api postgres`에서 새 접속이 성공했는지
+확인한다. 데이터가 있는 상태에서 이 문제를 해결하려고 `docker compose down -v`를 사용하면 안 된다.
+
+예를 들어 현재 DB 사용자가 `noveldesk`라면 다음처럼 컨테이너 안의 `psql`에서 대화형 비밀번호 변경을
+실행한다. 새 비밀번호가 shell history에 남지 않는 방식이다.
+
+```bash
+docker compose exec postgres psql -U noveldesk -d noveldesk
+```
+
+`psql` prompt에서 `\password noveldesk`를 실행하고 두 번 입력한 뒤 `\q`로 나온다. 이어서 `.env`의
+`POSTGRES_PASSWORD`를 같은 값으로 바꾸고 다음 순서로 확인한다.
+
+```bash
+docker compose up -d --force-recreate api worker
+docker compose logs --tail=100 api
+curl http://127.0.0.1:8080/ready
+```
 
 Provider API 키를 UI에 저장할 계획이라면 `PROVIDER_SECRET_ENCRYPTION_KEY`도 고정하는 편이 복구하기
 쉽다. PowerShell에서는 다음 명령으로 32바이트 키를 만들 수 있다.
@@ -189,16 +222,25 @@ Windows에서 `curl` 사용이 불편하면 브라우저에서 두 주소를 직
 만든 MeloTTS Korean CPU 레퍼런스 구현이다. 상용 음성 품질을 보장하는 모델 선택 기능과는 구분해야
 한다.
 
-기본 서버를 중지할 필요 없이 다음 명령으로 구성을 적용한다.
+선택 모델의 source/Python 빌드가 실패해도 서재 서버를 사용할 수 있도록 한 번에 모두 빌드하지 않는다.
+핵심 서버를 먼저 시작하고, `tts-model` 이미지만 별도로 빌드한 뒤 성공했을 때 override 환경을 적용한다.
 
 ```bash
 docker compose -f compose.yaml -f compose.local-tts.yaml config --quiet
-docker compose -f compose.yaml -f compose.local-tts.yaml up -d --build
+docker compose up -d --build
+docker compose -f compose.yaml -f compose.local-tts.yaml build tts-model
+docker compose -f compose.yaml -f compose.local-tts.yaml up -d --no-build
 docker compose -f compose.yaml -f compose.local-tts.yaml logs -f tts-model
 ```
 
+두 번째 명령이 실패해도 첫 번째 명령으로 시작한 Web/API/worker는 계속 동작한다. 원인을 고쳐 모델 build를
+다시 실행한 뒤에만 세 번째 명령을 실행한다.
+
 첫 실행에서는 모델을 내려받으므로 준비에 몇 분 이상 걸릴 수 있다. 다운로드한 모델은
-`local-tts-models` volume에 남아서 다음 시작에 재사용된다.
+`local-tts-models` volume에 남아서 다음 시작에 재사용된다. `tts-model`은 선택형 degraded dependency라서
+모델 다운로드나 health check가 실패해도 API와 worker는 먼저 시작하며, 책장·Reader·TXT/EPUB/PDF 가져오기는
+계속 사용할 수 있다. 모델이 준비되기 전 TTS 요청만 명시적으로 실패하므로 `tts-model` 로그를 확인한 뒤
+다시 실행하면 된다.
 
 이 override를 사용하면 API와 worker의 기본 TTS provider가 `local-endpoint`로 바뀌며, 두 서비스는
 Compose DNS 이름을 사용해 다음 내부 주소로 연결한다.
@@ -227,8 +269,9 @@ MELOTTS_LANGUAGE=KR
 
 1. Caddy, nginx 또는 Traefik이 HTTPS를 종료한다.
 2. 긴 `READER_AUTH_TOKEN`을 설정한다.
-3. `compose.public.yaml`을 함께 사용한다.
-4. 인터넷 공개라면 도메인 DNS와 80/443 방화벽을 구성한다.
+3. 첫 기동 전에 `POSTGRES_PASSWORD`, `MINIO_ROOT_USER`, `MINIO_ROOT_PASSWORD`를 개발 기본값이 아닌 값으로 정한다.
+4. `compose.public.yaml`을 함께 사용한다.
+5. 인터넷 공개라면 도메인 DNS와 80/443 방화벽을 구성한다.
 
 WireGuard 전용이면 공개 DNS나 인터넷 443 개방은 필요 없다. nginx의 `listen`을 서버의 WireGuard 주소로
 제한하거나 방화벽에서 `wg0`로 들어오는 443만 허용한다. 예를 들어 WireGuard 주소가 `10.20.0.1`이면 예제의
@@ -258,7 +301,15 @@ openssl rand -hex 32
 
 ```dotenv
 READER_AUTH_TOKEN=생성한긴토큰
+POSTGRES_PASSWORD=충분히긴영문숫자비밀번호
+MINIO_ROOT_USER=noveldesk-storage
+MINIO_ROOT_PASSWORD=충분히긴별도영문숫자비밀번호
 ```
+
+public override는 위 저장소 자격증명도 required interpolation으로 검사한다. 비어 있으면 Compose가
+컨테이너를 만들기 전에 멈춘다. 기존 volume을 public override로 전환할 때는 새 값을 임의로 만들지 말고
+현재 PostgreSQL/MinIO가 실제로 사용하는 값을 먼저 적는다. PostgreSQL 비밀번호를 바꿀 때는 앞의 DB 내부
+변경 절차를 따른다.
 
 웹 화면과 `/api`가 같은 nginx 주소를 사용하면 same-origin이므로 `CORS_ALLOWED_ORIGINS`를 별도로 설정할
 필요가 없다. 별도로 호스팅한 웹 앱이나 다른 브라우저 origin에서 API를 직접 호출할 때만 정확한 origin을
@@ -275,10 +326,12 @@ docker compose -f compose.yaml -f compose.public.yaml config --quiet
 docker compose -f compose.yaml -f compose.public.yaml up -d --build
 ```
 
-로컬 TTS도 함께 사용한다면 다음처럼 세 파일을 모두 적용한다.
+로컬 TTS도 함께 사용한다면 public 핵심 서버를 먼저 시작하고 모델 build를 분리한다.
 
 ```bash
-docker compose -f compose.yaml -f compose.public.yaml -f compose.local-tts.yaml up -d --build
+docker compose -f compose.yaml -f compose.public.yaml up -d --build
+docker compose -f compose.yaml -f compose.public.yaml -f compose.local-tts.yaml build tts-model
+docker compose -f compose.yaml -f compose.public.yaml -f compose.local-tts.yaml up -d --no-build
 ```
 
 같은 서버에 Caddy를 직접 설치한 경우의 최소 개념 예시는 다음과 같다.
@@ -511,7 +564,9 @@ docker compose ps
 로컬 TTS 포함:
 
 ```bash
-docker compose -f compose.yaml -f compose.local-tts.yaml up -d --build
+docker compose up -d --build
+docker compose -f compose.yaml -f compose.local-tts.yaml build tts-model
+docker compose -f compose.yaml -f compose.local-tts.yaml up -d --no-build
 ```
 
 외부 공개:
@@ -523,7 +578,9 @@ docker compose -f compose.yaml -f compose.public.yaml up -d --build
 외부 공개와 로컬 TTS:
 
 ```bash
-docker compose -f compose.yaml -f compose.public.yaml -f compose.local-tts.yaml up -d --build
+docker compose -f compose.yaml -f compose.public.yaml up -d --build
+docker compose -f compose.yaml -f compose.public.yaml -f compose.local-tts.yaml build tts-model
+docker compose -f compose.yaml -f compose.public.yaml -f compose.local-tts.yaml up -d --no-build
 ```
 
 상세한 데이터 경계, 장애 복구 범위와 운영 검증 항목은
