@@ -1,5 +1,5 @@
 import react from '@vitejs/plugin-react';
-import { defineConfig } from 'vitest/config';
+import { configDefaults, defineConfig } from 'vitest/config';
 import { readFileSync } from 'node:fs';
 import type { Plugin } from 'vite';
 
@@ -34,5 +34,8 @@ export default defineConfig({
   envPrefix: ['VITE_', 'TAURI_'],
   worker: {
     format: 'es',
+  },
+  test: {
+    exclude: [...configDefaults.exclude, 'handoff/**'],
   },
 });

@@ -1,7 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { RemoteApiClient, RemoteApiError, RemoteUploadStatus } from '../services/remote/remote-api-client';
 import {
+  DEFAULT_SERVER_UPLOAD_CHUNK_BYTES,
   RemoteUploadSessionStore,
+  ServerImportActivityTimeoutError,
   ServerUploadImportService,
   StoredUploadSession,
   StoredUploadSessionEntry,
@@ -105,6 +107,36 @@ describe('ServerUploadImportService', () => {
     await service.forgetStoredUploadSession('fresh-key');
     expect(client.cancelUpload).toHaveBeenCalledWith('upload_fresh');
     expect(store.remove).toHaveBeenCalledWith('fresh-key');
+  });
+
+  it('uses 512 KiB chunks by default to stay below common reverse proxy request limits', async () => {
+    const store: RemoteUploadSessionStore = {
+      read: vi.fn(() => undefined),
+      write: vi.fn(),
+      remove: vi.fn(),
+    };
+    const client = {
+      initUpload: vi.fn(async () => ({ uploadId: 'upload_1', chunkUrlTemplate: '/chunks/{chunkIndex}' })),
+      getUpload: vi.fn(async () => {
+        throw new Error('stop after initialization');
+      }),
+    };
+    const file = {
+      name: 'large.txt',
+      size: DEFAULT_SERVER_UPLOAD_CHUNK_BYTES + 1,
+      lastModified: 1,
+      type: 'text/plain',
+    } as File;
+    const service = new ServerUploadImportService(client as unknown as RemoteApiClient, undefined, 3, store);
+
+    await expect(service.importFile({ file, encoding: 'utf-8' }, vi.fn()).promise).rejects.toThrow(
+      'stop after initialization',
+    );
+
+    expect(client.initUpload).toHaveBeenCalledWith(
+      expect.objectContaining({ totalChunks: 2, sizeBytes: DEFAULT_SERVER_UPLOAD_CHUNK_BYTES + 1 }),
+      expect.any(AbortSignal),
+    );
   });
 
   it('passes a client book id through upload initialization and resume metadata', async () => {
@@ -570,6 +602,52 @@ describe('ServerUploadImportService', () => {
       });
       expect(client.getImportJob).toHaveBeenCalledTimes(3);
       expect(store.remove).toHaveBeenCalledWith(expect.any(String));
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('stops polling an import job that shows no activity and keeps its resumable session', async () => {
+    vi.restoreAllMocks();
+    vi.useFakeTimers({ now: new Date('2026-07-06T00:00:00.000Z') });
+    try {
+      const store: RemoteUploadSessionStore = {
+        read: vi.fn(() => undefined),
+        write: vi.fn(),
+        remove: vi.fn(),
+      };
+      const client = {
+        initUpload: vi.fn(async () => ({ uploadId: 'upload_1', chunkUrlTemplate: '/chunks/{chunkIndex}' })),
+        getUpload: vi.fn(async () => uploadStatus([0, 1, 2], 6)),
+        putUploadChunk: vi.fn(),
+        completeUpload: vi.fn(async () => ({ jobId: 'job_stalled', statusUrl: '/import-jobs/job_stalled' })),
+        getImportJob: vi.fn(async () => ({
+          id: 'job_stalled',
+          upload_id: 'upload_1',
+          status: 'queued' as const,
+          stage: 'queued' as const,
+          bytes_read: 6,
+          total_bytes: 6,
+          chapters_detected: 0,
+          paragraphs_written: 0,
+          message: 'queued',
+          book_id: null,
+          updated_at: '2026-07-06T00:00:00.000Z',
+        })),
+        getBookManifest: vi.fn(),
+      };
+      const service = new ServerUploadImportService(client as unknown as RemoteApiClient, 2, 3, store, 1_400);
+      const importPromise = service.importFile({ file: makeFile(), encoding: 'utf-8' }, vi.fn()).promise;
+      const timeoutExpectation = expect(importPromise).rejects.toBeInstanceOf(ServerImportActivityTimeoutError);
+
+      await vi.waitFor(() => expect(client.getImportJob).toHaveBeenCalledTimes(1));
+      await vi.advanceTimersByTimeAsync(700);
+      await vi.waitFor(() => expect(client.getImportJob).toHaveBeenCalledTimes(2));
+      await vi.advanceTimersByTimeAsync(700);
+
+      await timeoutExpectation;
+      expect(client.getImportJob).toHaveBeenCalledTimes(3);
+      expect(store.remove).not.toHaveBeenCalled();
     } finally {
       vi.useRealTimers();
     }

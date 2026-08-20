@@ -50,6 +50,12 @@ export interface ProviderJobMetricInput {
   readonly errorCategory?: ProviderErrorCategory;
 }
 
+export interface WorkerProcessHeartbeatStatus {
+  readonly recordedAt?: number;
+  readonly ageMs?: number;
+  readonly stale: boolean;
+}
+
 export class ObservabilityMetrics {
   constructor(
     private readonly backend: MetricsBackend,
@@ -62,6 +68,17 @@ export class ObservabilityMetrics {
     await this.bestEffort('worker_process_heartbeat_write_failed', () =>
       this.backend.hset(processHeartbeatKey, 'process', String(this.now())),
     );
+  }
+
+  async workerProcessHeartbeatStatus(): Promise<WorkerProcessHeartbeatStatus> {
+    const heartbeats = await this.backend.hgetall(processHeartbeatKey);
+    return workerProcessHeartbeatStatus(heartbeats, this.now(), this.staleHeartbeatMs);
+  }
+
+  async assertWorkerHeartbeatFresh(): Promise<void> {
+    const status = await this.workerProcessHeartbeatStatus();
+    if (status.recordedAt === undefined) throw new Error('worker heartbeat is missing');
+    if (status.stale) throw new Error('worker heartbeat is stale');
   }
 
   async observeProviderJob(input: ProviderJobMetricInput): Promise<void> {
@@ -124,14 +141,11 @@ export class ObservabilityMetrics {
   }
 
   private appendProcessHeartbeatMetrics(lines: string[], heartbeats: Record<string, string>): void {
-    const recordedAt = Number(heartbeats.process);
-    const ageMs = Number.isFinite(recordedAt) && recordedAt > 0 ? Math.max(0, this.now() - recordedAt) : NaN;
+    const status = workerProcessHeartbeatStatus(heartbeats, this.now(), this.staleHeartbeatMs);
     lines.push(
-      `noveldesk_worker_process_heartbeat_age_seconds ${Number.isFinite(ageMs) ? (ageMs / 1000).toFixed(3) : 'NaN'}`,
+      `noveldesk_worker_process_heartbeat_age_seconds ${status.ageMs === undefined ? 'NaN' : (status.ageMs / 1000).toFixed(3)}`,
     );
-    lines.push(
-      `noveldesk_worker_process_heartbeat_stale ${!Number.isFinite(ageMs) || ageMs > this.staleHeartbeatMs ? 1 : 0}`,
-    );
+    lines.push(`noveldesk_worker_process_heartbeat_stale ${status.stale ? 1 : 0}`);
   }
 
   private async bestEffort(event: string, operation: () => Promise<unknown>): Promise<void> {
@@ -141,6 +155,21 @@ export class ObservabilityMetrics {
       this.logger.warn(event, { errorName: error instanceof Error ? error.name : 'Error' });
     }
   }
+}
+
+function workerProcessHeartbeatStatus(
+  heartbeats: Record<string, string>,
+  now: number,
+  staleHeartbeatMs: number,
+): WorkerProcessHeartbeatStatus {
+  const recordedAt = Number(heartbeats.process);
+  if (!Number.isFinite(recordedAt) || recordedAt <= 0) return { stale: true };
+  const ageMs = Math.max(0, now - recordedAt);
+  return {
+    recordedAt,
+    ageMs,
+    stale: ageMs > staleHeartbeatMs,
+  };
 }
 
 export function metricsFromQueue(

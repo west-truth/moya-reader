@@ -1,7 +1,7 @@
 # Docker Compose deployment
 
-Status: implemented baseline
-Last verified: 2026-08-04
+Status: current
+Last verified: 2026-08-20
 
 This is the operational reference for the self-host web/API/worker stack. The default deployment is intentionally
 loopback-only. Public exposure requires the fail-closed override and a separate TLS-terminating reverse proxy.
@@ -40,9 +40,11 @@ Named volumes that must not be removed casually:
 - `server-data`
 - `local-tts-models` when the optional local TTS override is used
 
-`server-data` contains resumable upload chunks and, when `PROVIDER_SECRET_ENCRYPTION_KEY` is empty, the generated key
-that decrypts hosted provider secrets. Losing PostgreSQL or that encryption key can make stored provider credentials
-unrecoverable. `docker compose down -v` is therefore a destructive reset command, not an ordinary stop command.
+`server-data` contains active resumable upload chunks and, when `PROVIDER_SECRET_ENCRYPTION_KEY` is empty, the generated
+key that decrypts hosted provider secrets. Successful imports delete their temporary chunks immediately. Failed upload
+chunks are retained only for the configured stale-session window and pruned periodically. Losing PostgreSQL or the
+encryption key can make stored provider credentials unrecoverable. `docker compose down -v` is therefore a destructive
+reset command, not an ordinary stop command.
 
 ## Local loopback startup
 
@@ -57,13 +59,19 @@ docker compose ps
 The web entry is `http://127.0.0.1:8080`. MinIO Console remains loopback-only at
 `http://127.0.0.1:9001`. API, PostgreSQL and Redis have no host ports.
 
-When changing the internal PostgreSQL password, update both `POSTGRES_PASSWORD` and the password encoded in
-`DATABASE_URL`. Likewise, `MINIO_ROOT_USER`/`MINIO_ROOT_PASSWORD` must stay aligned with
-`S3_ACCESS_KEY_ID`/`S3_SECRET_ACCESS_KEY` unless Moya is pointed at a separate S3 service.
+Leave `DATABASE_URL` empty to derive it from `POSTGRES_USER`, `POSTGRES_PASSWORD`, and `POSTGRES_DB`. Leave
+`S3_ACCESS_KEY_ID`/`S3_SECRET_ACCESS_KEY` empty to derive them from `MINIO_ROOT_USER`/`MINIO_ROOT_PASSWORD`. This keeps
+the application and its bundled storage services on one credential source. Set the direct URL or S3 values only when
+using external infrastructure.
 
 All long-running services use `restart: unless-stopped`, bounded json-file logs and explicit memory limits. API and
 worker receive a graceful stop window. Redis uses AOF with `appendfsync everysec`. Import jobs update a database
 heartbeat every 30 seconds; a worker returns `processing` imports older than `IMPORT_RUNNING_STALE_MS` to BullMQ.
+Intermediate BullMQ attempts remain queued/retrying in PostgreSQL and only the final attempt becomes failed.
+
+`/health` is the API container bootstrap check. `/ready` is the client/operator readiness check and requires database,
+Redis queue, object storage, and a fresh worker heartbeat. This separation lets the worker start without a dependency
+cycle while preventing uploads from looking ready when no process can consume them.
 
 ## Optional Korean local TTS
 
@@ -98,22 +106,30 @@ source commit but does not redistribute the downloaded model in the default web/
 
 ## Public HTTPS deployment
 
-Do not expose the base stack by merely changing `WEB_BIND_ADDRESS`. Set a long random token and the exact public HTTPS
-origin, then use the public override behind Caddy, nginx, Traefik or another TLS proxy on the same host:
+Do not expose the base stack by merely changing `WEB_BIND_ADDRESS`. Set a long random token, then use the public
+override behind Caddy, nginx, Traefik or another TLS proxy on the same host:
 
 Set these values in `.env`:
 
 ```dotenv
 READER_AUTH_TOKEN=<long-random-token>
-CORS_ALLOWED_ORIGINS=https://reader.example.com
 ```
 
 Then run `docker compose -f compose.yaml -f compose.public.yaml config --quiet` followed by
 `docker compose -f compose.yaml -f compose.public.yaml up -d --build`.
 
 The public override sets `SERVER_EXPOSURE=external` and uses required-variable interpolation, so Compose fails before
-startup when the token or CORS origin is absent. Keep `WEB_BIND_ADDRESS=127.0.0.1` when the TLS reverse proxy runs on
-the same host. Save the same bearer token in the Moya sync/server connection panel.
+startup when the token is absent. A web UI and `/api` served from the same host are accepted as same-origin without a
+CORS entry. Set `CORS_ALLOWED_ORIGINS` only for an actual cross-origin browser client. Keep
+`WEB_BIND_ADDRESS=127.0.0.1` when the TLS reverse proxy runs on the same host. Save the same bearer token in the Moya
+sync/server connection panel; saving it retries a failed first bootstrap automatically.
+
+The Ubuntu host nginx reference is [`deploy/host-nginx.example.conf`](../../deploy/host-nginx.example.conf). It proxies
+only to `127.0.0.1:8080`, allows 32 MiB ordinary requests and 512 MiB backup archives, disables request buffering for
+uploads/backups, and preserves the public scheme. Replace its domain and certificate paths, validate with `nginx -t`,
+then reload nginx. Moya browser uploads use 512 KiB chunks so they remain below nginx's usual 1 MiB default as well.
+For WireGuard-only access, bind nginx to the server's WireGuard address or allow 443 only on `wg0`; do not publish
+Compose port 8080 or the storage/database ports to the VPN or public interfaces.
 
 To combine public deployment and local TTS, apply both overrides in order:
 
@@ -160,11 +176,21 @@ Static/config checks:
 pnpm check:hosted
 docker compose config --quiet
 docker compose -f compose.yaml -f compose.local-tts.yaml config --quiet
+pnpm check:hosted:e2e -- --public
 ```
 
-The ordinary hosted E2E still covers TXT multi-chunk import and mock AI workflow. It does not prove MeloTTS image
-build/model download, real synthesis, restart during a large PDF/archive import, or a full 512 MiB backup restore. Keep
-those as practical deployment checks on the target host.
+Live check against a running protected instance:
+
+```bash
+HOSTED_WEB_URL=https://moya.example.com \
+HOSTED_API_AUTH_TOKEN="$READER_AUTH_TOKEN" \
+pnpm check:hosted:live
+```
+
+The hosted live smoke validates protected sync capability negotiation, TXT multi-chunk upload/import, manifest/page and
+search reads, reader mutations, sync events, and cleanup. The ordinary hosted E2E also covers the mock AI workflow. It
+does not prove MeloTTS model download/real synthesis, restart during a large PDF/archive import, the operator's outer
+nginx configuration, or a full 512 MiB backup restore. Keep those as practical checks on the target host.
 
 The Library linked-folder feature remains client-owned. A browser/Desktop/Android client scans its selected directory
 and uploads changes. Mounting a host novel directory into the server container does not create a server-side watcher.

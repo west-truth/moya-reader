@@ -46,7 +46,7 @@ describe('upload cleanup', () => {
     await Promise.all(tempDirs.splice(0).map((dir) => rm(dir, { recursive: true, force: true })));
   });
 
-  it('expires stale uploading sessions, clears chunks, and removes upload directories', async () => {
+  it('expires stale active and terminal sessions, clears chunks, and removes upload directories', async () => {
     const dataDir = await mkdtemp(path.join(os.tmpdir(), 'noveldesk-upload-cleanup-'));
     tempDirs.push(dataDir);
     await mkdir(path.join(dataDir, 'uploads', 'upload_old'), { recursive: true });
@@ -58,7 +58,13 @@ describe('upload cleanup', () => {
       query: vi.fn(async (sql: string, params?: unknown[]) => {
         if (sql === 'begin' || sql === 'commit' || sql === 'rollback') return { rows: [] };
         if (sql.includes('update upload_sessions')) {
-          expect(params).toEqual(['expired', 'uploading', '2026-07-05T00:00:09.000Z', null]);
+          expect(params).toEqual([
+            'expired',
+            ['uploading', 'failed', 'imported', 'cancelled'],
+            '2026-07-05T00:00:09.000Z',
+            null,
+          ]);
+          expect(sql).toContain('status = any($2::text[])');
           return { rows: [{ id: 'upload_old' }, { id: 'upload_older' }], rowCount: 2 };
         }
         if (sql.includes('delete from upload_chunks')) {

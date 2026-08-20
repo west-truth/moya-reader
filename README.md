@@ -29,25 +29,25 @@
 
 ## 지원 형식
 
-| 형식 | 보기 방식 | 주요 지원 |
-| --- | --- | --- |
-| TXT / Markdown | 가변형 Reader | 화 구분, 검색, 주석, 통계, TTS |
-| DRM 없는 EPUB 2/3 | 가변형 Reader | 목차, 표지·이미지, ruby, 언어 span, 각주, TTS |
-| PDF | 고정 문서 Viewer | 연속 보기, 확대, 텍스트/OCR, 검색, 주석, TTS |
-| ZIP / CBZ | 만화 Viewer | 자연순 정렬, 표지, 단면·양면, 좌→우·우→좌 |
-| RAR / CBR | 만화 Viewer | 단일 볼륨 RAR4/RAR5 이미지 archive |
-| 7z / CB7 | 만화 Viewer | 단일 볼륨 이미지 archive |
+| 형식              | 보기 방식        | 주요 지원                                     |
+| ----------------- | ---------------- | --------------------------------------------- |
+| TXT / Markdown    | 가변형 Reader    | 화 구분, 검색, 주석, 통계, TTS                |
+| DRM 없는 EPUB 2/3 | 가변형 Reader    | 목차, 표지·이미지, ruby, 언어 span, 각주, TTS |
+| PDF               | 고정 문서 Viewer | 연속 보기, 확대, 텍스트/OCR, 검색, 주석, TTS  |
+| ZIP / CBZ         | 만화 Viewer      | 자연순 정렬, 표지, 단면·양면, 좌→우·우→좌     |
+| RAR / CBR         | 만화 Viewer      | 단일 볼륨 RAR4/RAR5 이미지 archive            |
+| 7z / CB7          | 만화 Viewer      | 단일 볼륨 이미지 archive                      |
 
 DRM이 적용된 EPUB/PDF는 지원하지 않습니다. 가져온 원본은 변환하거나 다시 압축하지 않고 그대로 보관합니다.
 
 ## 플랫폼별 현재 상태
 
-| 플랫폼 | 현재 상태 | 설치 가능 여부 |
-| --- | --- | --- |
-| 웹·개인 서버 | 공개 소스, Ubuntu CI와 Docker 이미지 빌드 통과 | **현재 권장 경로** |
-| Windows 데스크톱 | Tauri 소스 공개, NSIS release build와 실행 smoke 완료 | 소스 빌드 가능, 공식 installer 미제공 |
-| Android | Gradle/Tauri 소스 공개, ARM64/x86_64 emulator alpha | debug 개발자 빌드 가능, signed APK/AAB 미제공 |
-| 브라우저 로컬 개발 | IndexedDB 기반 Reader와 system TTS | 개발 서버로 실행 가능 |
+| 플랫폼             | 현재 상태                                             | 설치 가능 여부                                |
+| ------------------ | ----------------------------------------------------- | --------------------------------------------- |
+| 웹·개인 서버       | 공개 소스, Ubuntu CI와 Docker 이미지 빌드 통과        | **현재 권장 경로**                            |
+| Windows 데스크톱   | Tauri 소스 공개, NSIS release build와 실행 smoke 완료 | 소스 빌드 가능, 공식 installer 미제공         |
+| Android            | Gradle/Tauri 소스 공개, ARM64/x86_64 emulator alpha   | debug 개발자 빌드 가능, signed APK/AAB 미제공 |
+| 브라우저 로컬 개발 | IndexedDB 기반 Reader와 system TTS                    | 개발 서버로 실행 가능                         |
 
 저장소에는 제품 소스와 재현 가능한 개발 검사를 포함합니다. `target/`, Gradle build 출력, APK/AAB, installer,
 keystore, 실제 provider credential, 개인 소설 corpus와 내부 리뷰 자료는 포함하지 않습니다.
@@ -93,20 +93,21 @@ Copy-Item .env.example .env
 ### 3. 비밀번호 설정
 
 개인 PC에서 잠깐 시험하는 경우 기본값으로 시작할 수 있지만, 계속 사용할 서버라면 `.env`의 비밀번호를 반드시
-바꾸십시오. 같은 비밀번호를 사용하는 항목은 서로 일치해야 합니다.
+바꾸십시오. 내부 PostgreSQL과 MinIO를 쓸 때는 다음처럼 각 서비스의 기준값만 바꾸면 됩니다.
 
 ```dotenv
 POSTGRES_PASSWORD=충분히-긴-비밀번호
-DATABASE_URL=postgres://noveldesk:충분히-긴-비밀번호@postgres:5432/noveldesk
+DATABASE_URL=
 
 MINIO_ROOT_USER=minio
 MINIO_ROOT_PASSWORD=다른-긴-비밀번호
-S3_ACCESS_KEY_ID=minio
-S3_SECRET_ACCESS_KEY=다른-긴-비밀번호
+S3_ACCESS_KEY_ID=
+S3_SECRET_ACCESS_KEY=
 ```
 
-`POSTGRES_PASSWORD`는 `DATABASE_URL` 안의 비밀번호와 같아야 합니다. `MINIO_ROOT_*`와 `S3_*`도 같은 계정을
-가리켜야 합니다. `.env`는 Git에 올리지 마십시오.
+빈 `DATABASE_URL`은 `POSTGRES_*`에서, 빈 `S3_*`는 `MINIO_ROOT_*`에서 자동으로 파생되므로 같은 비밀번호를
+중복 입력하다 어긋날 일이 없습니다. 외부 PostgreSQL/S3를 사용할 때만 직접 채우십시오. `.env`는 Git에
+올리지 마십시오.
 
 ### 4. 실행
 
@@ -123,7 +124,7 @@ http://127.0.0.1:8080
 ```
 
 다른 PC에 설치했다면 기본 설정은 서버 자신의 `127.0.0.1`에만 열립니다. 외부 접속 방법은 아래
-[외부에서 접속하기](#외부에서-접속하기)를 참고하십시오.
+[WireGuard·LAN·인터넷에서 접속하기](#wireguardlan인터넷에서-접속하기)를 참고하십시오.
 
 상태 확인:
 
@@ -132,6 +133,9 @@ curl http://127.0.0.1:8080/health
 curl http://127.0.0.1:8080/ready
 docker compose logs --tail=100 api worker
 ```
+
+`/health`는 API와 데이터베이스의 기본 생존 상태를, `/ready`는 Redis queue·MinIO·worker heartbeat까지 함께
+확인합니다. 파일 가져오기를 시작하기 전에는 `/ready`가 `ok: true`인지 확인하십시오.
 
 ### 5. 처음 사용하기
 
@@ -182,22 +186,22 @@ docker compose logs --tail=100 api worker
 
 앱에서 만드는 백업 파일만으로 Docker 서버 전체를 복구할 수 있는 것은 아닙니다. 다음 항목을 함께 보관하십시오.
 
-| 대상 | 들어 있는 데이터 |
-| --- | --- |
+| 대상                         | 들어 있는 데이터                          |
+| ---------------------------- | ----------------------------------------- |
 | PostgreSQL / `postgres-data` | 책장, 읽던 위치, 주석, 동기화와 작업 상태 |
-| `minio-data` | 원본 파일, 문서 asset과 서버 TTS audio |
-| `server-data` | 업로드 상태와 provider secret 암호화 key |
-| `.env` | 비밀번호, bearer token과 endpoint 설정 |
-| `redis-data` | 대기 중인 worker 작업 |
-| `local-tts-models` | 다시 받을 수 있는 로컬 TTS model cache |
+| `minio-data`                 | 원본 파일, 문서 asset과 서버 TTS audio    |
+| `server-data`                | 업로드 상태와 provider secret 암호화 key  |
+| `.env`                       | 비밀번호, bearer token과 endpoint 설정    |
+| `redis-data`                 | 대기 중인 worker 작업                     |
+| `local-tts-models`           | 다시 받을 수 있는 로컬 TTS model cache    |
 
 백업·복구와 장애 확인 절차는 [Docker Compose 한국어 가이드](docs/operations/docker-compose-guide-ko.md)에 더 자세히
 정리되어 있습니다.
 
-## 외부에서 접속하기
+## WireGuard·LAN·인터넷에서 접속하기
 
-기본 Compose는 안전을 위해 웹 UI와 MinIO Console을 `127.0.0.1`에만 엽니다. 인터넷이나 다른 기기에서
-접속하려면 HTTPS reverse proxy가 필요합니다.
+기본 Compose는 안전을 위해 웹 UI와 MinIO Console을 `127.0.0.1`에만 엽니다. WireGuard, LAN 또는 인터넷의
+다른 기기에서 접속하려면 HTTPS reverse proxy를 사용하고 public override로 Bearer 인증을 켭니다.
 
 먼저 긴 token을 만듭니다.
 
@@ -205,12 +209,15 @@ docker compose logs --tail=100 api worker
 openssl rand -hex 32
 ```
 
-`.env`에 token과 실제 HTTPS 주소를 설정합니다.
+`.env`에 token을 설정합니다.
 
 ```dotenv
 READER_AUTH_TOKEN=위에서-만든-긴-token
-CORS_ALLOWED_ORIGINS=https://reader.example.com
 ```
+
+모야 웹과 `/api`가 같은 nginx 주소에서 제공되면 same-origin이므로 CORS 설정은 필요 없습니다. 별도로 호스팅한
+웹 앱이 API를 직접 호출할 때만 `CORS_ALLOWED_ORIGINS=https://별도-web.example.com`처럼 정확한 origin을
+추가합니다.
 
 외부 공개용 override를 함께 실행합니다.
 
@@ -227,9 +234,15 @@ reader.example.com {
 }
 ```
 
+Ubuntu nginx를 사용한다면 [`deploy/host-nginx.example.conf`](deploy/host-nginx.example.conf)의 도메인과
+인증서 경로를 바꿔 사용하십시오. 이 예제에는 업로드/백업 body limit, 긴 작업 timeout과 request buffering
+설정이 포함돼 있습니다. WireGuard 전용이면 nginx의 443 listen을 WireGuard 주소로 제한하거나 방화벽에서
+`wg0`만 허용하면 됩니다.
+
 reverse proxy가 같은 서버에서 실행된다면 `WEB_BIND_ADDRESS=127.0.0.1`을 유지하십시오. PostgreSQL, Redis,
-MinIO API, TTS 서비스 포트를 인터넷에 직접 열면 안 됩니다. `compose.public.yaml`은 인증 경계를 켜지만 HTTPS
-인증서를 대신 발급하지는 않습니다.
+MinIO API, TTS 서비스 포트를 직접 열면 안 됩니다. 처음 웹 화면을 열면 동기화 패널에 같은 Bearer token을
+저장하십시오. 연결 검사는 공개 `/ready`와 보호된 sync API를 모두 확인하며, token 저장 뒤 실패한 책장은
+자동으로 다시 불러옵니다.
 
 ## 선택 기능: 로컬 한국어 TTS
 
@@ -377,9 +390,12 @@ curl http://127.0.0.1:8080/ready
 
 자주 확인할 항목:
 
-- API가 시작되지 않음: `POSTGRES_PASSWORD`와 `DATABASE_URL`의 비밀번호가 같은지 확인
-- 파일 저장 실패: `MINIO_ROOT_*`와 `S3_*`가 서로 같은 계정인지 확인
-- 외부 접속 실패: reverse proxy, HTTPS, `READER_AUTH_TOKEN`, `CORS_ALLOWED_ORIGINS` 확인
+- API가 시작되지 않음: 외부 DB URL을 직접 설정했다면 `DATABASE_URL`과 PostgreSQL 자격증명 확인
+- 파일 저장 실패: 외부 S3 값을 직접 설정했다면 `S3_*` endpoint와 자격증명 확인
+- 연결은 되지만 API가 401: 웹 동기화 패널의 Bearer token과 `.env`의 `READER_AUTH_TOKEN` 비교
+- 가져오기가 413: host nginx의 `client_max_body_size`와 `deploy/host-nginx.example.conf` 확인
+- 가져오기가 멈춤: `/ready`의 `components.worker`와 `docker compose logs worker` 확인
+- 외부 접속 실패: reverse proxy, HTTPS, token, 그리고 cross-origin일 때만 `CORS_ALLOWED_ORIGINS` 확인
 - TTS가 준비되지 않음: `docker compose ... logs -f tts-model`로 model 다운로드 상태 확인
 - 업데이트 후 이상: `docker compose up -d --build --remove-orphans` 실행 후 API/worker log 확인
 

@@ -1,11 +1,17 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { ChapterSplitMode, EncodingMode, Novel } from '../../domain/types';
-import { sha256 } from '../../domain/hash';
-import { ArchiveImportError, type ImportProgress, type ImportService } from '../../services/import/import-service';
+import type { ImportProgress, ImportService } from '../../services/import/import-service';
 import type { PlatformDocumentIo } from '../../platform/document-io';
 import type { StoredUploadSessionEntry } from '../../services/import/server-upload-import-service';
 import type { ToastTone } from '../../shared/ui/ToastHost';
 import { type ImportBatchState, ImportRunCancellation, runImportBatch } from './import-controller';
+import {
+  importFileKey,
+  inspectImportDuplicates,
+  type ImportDuplicateConflict,
+  type ImportDuplicatePolicy,
+} from './import-duplicate-inspection';
+import { importFailureMessage } from './import-failure-message';
 import { completedImportNotice, oversizedImportNotice, selectSupportedImportFiles } from './import-notice-policy';
 import { type ImportDropTarget, useImportDropTarget } from './useImportDropTarget';
 import { type ImportPreviewFactory, type ImportPreviewState, useImportPreview } from './useImportPreview';
@@ -23,16 +29,7 @@ export interface UseImportControllerOptions {
   previewFactory?: ImportPreviewFactory;
 }
 
-export type ImportDuplicatePolicy = 'open_existing' | 'skip' | 'copy' | 'replace' | 'new';
-
-export interface ImportDuplicateConflict {
-  readonly fileKey: string;
-  readonly fileName: string;
-  readonly kind: 'same_source' | 'same_name';
-  readonly existingBook: Novel;
-  readonly sourceHash: string;
-  readonly policy: ImportDuplicatePolicy;
-}
+export type { ImportDuplicateConflict, ImportDuplicatePolicy } from './import-duplicate-inspection';
 
 export interface ImportFeatureController {
   isOpen: boolean;
@@ -63,35 +60,6 @@ export interface ImportFeatureController {
   setDuplicatePolicy(fileKey: string, policy: ImportDuplicatePolicy): void;
   setArchivePassword(password: string): void;
   forgetUploadSession(key: string): Promise<void>;
-}
-
-function importFileKey(file: File): string {
-  return `${file.name}:${file.size}:${file.lastModified}`;
-}
-
-async function inspectImportDuplicates(
-  files: readonly File[],
-  novels: readonly Novel[],
-): Promise<ImportDuplicateConflict[]> {
-  const conflicts: ImportDuplicateConflict[] = [];
-  for (const file of files) {
-    const sourceHash = await sha256(await file.arrayBuffer());
-    const sameSource = novels.find((novel) => novel.rawTextHash.toLowerCase() === sourceHash.toLowerCase());
-    const sameName = novels.find(
-      (novel) => novel.sourceFileName?.trim().toLocaleLowerCase() === file.name.trim().toLocaleLowerCase(),
-    );
-    const existingBook = sameSource ?? sameName;
-    if (!existingBook) continue;
-    conflicts.push({
-      fileKey: importFileKey(file),
-      fileName: file.name,
-      kind: sameSource ? 'same_source' : 'same_name',
-      existingBook,
-      sourceHash,
-      policy: sameSource ? 'open_existing' : 'new',
-    });
-  }
-  return conflicts;
 }
 
 export function useImportController(options: UseImportControllerOptions): ImportFeatureController {
@@ -296,8 +264,7 @@ export function useImportController(options: UseImportControllerOptions): Import
             },
             onFileFailed: (file, error) => {
               if (runGenerationRef.current !== generation) return;
-              const detail =
-                error instanceof ArchiveImportError ? error.message : `"${file.name}"을(를) 가져오지 못했습니다.`;
+              const detail = importFailureMessage(file.name, error);
               setProgress((current) =>
                 current
                   ? {
@@ -307,7 +274,7 @@ export function useImportController(options: UseImportControllerOptions): Import
                     }
                   : current,
               );
-              if (error instanceof ArchiveImportError) optionsRef.current.notify(detail, 'warning');
+              optionsRef.current.notify(detail, 'danger');
             },
             onCancelled: () => {
               if (runGenerationRef.current !== generation) return;
@@ -332,9 +299,10 @@ export function useImportController(options: UseImportControllerOptions): Import
         optionsRef.current.notify(completionNotice.message, completionNotice.tone);
         if (!outcome.aborted && outcome.failed === 0) setIsOpen(false);
         lastImportFailedRef.current = outcome.failed > 0 || outcome.aborted;
-        resetDelay = supportedFiles.length > 1 || outcome.failed > 0 || outcome.aborted ? 1400 : 400;
+        resetDelay = outcome.failed > 0 || outcome.aborted ? 12_000 : supportedFiles.length > 1 ? 1400 : 400;
       } catch {
         if (mountedRef.current && runGenerationRef.current === generation) {
+          lastImportFailedRef.current = true;
           setProgress((current) =>
             current
               ? {
@@ -345,7 +313,7 @@ export function useImportController(options: UseImportControllerOptions): Import
               : current,
           );
           optionsRef.current.notify('가져온 책 목록을 새로고침하지 못했습니다.', 'danger');
-          resetDelay = 1400;
+          resetDelay = 12_000;
         }
       } finally {
         if (mountedRef.current && runGenerationRef.current === generation) {

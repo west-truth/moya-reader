@@ -28,7 +28,7 @@ describe('health routes', () => {
     await app.close();
   });
 
-  it('reports readiness for database, queue, and object storage dependencies', async () => {
+  it('reports readiness for database, queue, object storage, and the worker heartbeat', async () => {
     const pool = {
       query: vi.fn(async () => ({ rows: [] })),
     } as unknown as pg.Pool;
@@ -36,7 +36,8 @@ describe('health routes', () => {
       getJobCounts: vi.fn(async () => ({ waiting: 0, active: 0, delayed: 0, failed: 0 })),
     };
     const checkObjectStorage = vi.fn(async () => undefined);
-    const app = await appWithHealth(pool, { queue, checkObjectStorage });
+    const checkWorker = vi.fn(async () => undefined);
+    const app = await appWithHealth(pool, { queue, checkObjectStorage, checkWorker });
 
     const response = await app.inject({ method: 'GET', url: '/api/ready' });
 
@@ -48,11 +49,13 @@ describe('health routes', () => {
         database: { ok: true },
         queue: { ok: true },
         objectStorage: { ok: true },
+        worker: { ok: true },
       },
     });
     expect(pool.query).toHaveBeenCalledWith('select 1');
     expect(queue.getJobCounts).toHaveBeenCalledWith('waiting', 'active', 'delayed', 'failed');
     expect(checkObjectStorage).toHaveBeenCalledTimes(1);
+    expect(checkWorker).toHaveBeenCalledTimes(1);
     await app.close();
   });
 
@@ -76,6 +79,29 @@ describe('health routes', () => {
       components: {
         database: { ok: true },
         queue: { ok: false, error: 'redis unavailable' },
+      },
+    });
+    await app.close();
+  });
+
+  it('returns 503 readiness when the worker heartbeat is missing or stale', async () => {
+    const pool = {
+      query: vi.fn(async () => ({ rows: [] })),
+    } as unknown as pg.Pool;
+    const app = await appWithHealth(pool, {
+      checkWorker: vi.fn(async () => {
+        throw new Error('worker heartbeat is stale');
+      }),
+    });
+
+    const response = await app.inject({ method: 'GET', url: '/ready' });
+
+    expect(response.statusCode).toBe(503);
+    expect(response.json()).toMatchObject({
+      ok: false,
+      components: {
+        database: { ok: true },
+        worker: { ok: false, error: 'worker heartbeat is stale' },
       },
     });
     await app.close();

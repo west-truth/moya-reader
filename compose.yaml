@@ -5,13 +5,13 @@ x-service-logging: &service-logging
     max-file: ${LOG_MAX_FILES:-5}
 
 x-server-common-environment: &server-common-environment
-  DATABASE_URL: ${DATABASE_URL:-postgres://noveldesk:noveldesk@postgres:5432/noveldesk}
+  DATABASE_URL: ${DATABASE_URL:-postgres://${POSTGRES_USER:-noveldesk}:${POSTGRES_PASSWORD:-noveldesk}@postgres:5432/${POSTGRES_DB:-noveldesk}}
   REDIS_URL: ${REDIS_URL:-redis://redis:6379}
   S3_ENDPOINT: ${S3_ENDPOINT:-http://minio:9000}
   S3_REGION: ${S3_REGION:-us-east-1}
   S3_BUCKET: ${S3_BUCKET:-noveldesk-uploads}
-  S3_ACCESS_KEY_ID: ${S3_ACCESS_KEY_ID:-minio}
-  S3_SECRET_ACCESS_KEY: ${S3_SECRET_ACCESS_KEY:-minio-password}
+  S3_ACCESS_KEY_ID: ${S3_ACCESS_KEY_ID:-${MINIO_ROOT_USER:-minio}}
+  S3_SECRET_ACCESS_KEY: ${S3_SECRET_ACCESS_KEY:-${MINIO_ROOT_PASSWORD:-minio-password}}
   S3_FORCE_PATH_STYLE: ${S3_FORCE_PATH_STYLE:-true}
   SERVER_DATA_DIR: /data/server
   DEFAULT_USER_ID: ${DEFAULT_USER_ID:-user_dev}
@@ -155,7 +155,7 @@ services:
           'CMD',
           'node',
           '-e',
-          "fetch('http://127.0.0.1:8787/ready').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))",
+          "fetch('http://127.0.0.1:8787/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))",
         ]
       interval: 10s
       timeout: 5s

@@ -89,6 +89,7 @@ function reasoningPolicy(
       .toLowerCase()
       .replace(/^models\//, '');
     return normalizedModelId.startsWith('gemini-3.1-pro') ||
+      normalizedModelId.startsWith('gemini-3.7-flash') ||
       (normalizedModelId.startsWith('gemini-3.6-flash') && taskKind === 'speaker_escalation')
       ? 'low'
       : 'minimal';

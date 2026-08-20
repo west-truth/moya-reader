@@ -66,6 +66,19 @@ function nonNegativeIntegerFromEnv(env: NodeJS.ProcessEnv, key: string, fallback
   return parsed;
 }
 
+function positiveIntegerFromEnv(
+  env: NodeJS.ProcessEnv,
+  key: string,
+  fallback: number,
+  maximum = Number.MAX_SAFE_INTEGER,
+): number {
+  const parsed = nonNegativeIntegerFromEnv(env, key, fallback);
+  if (parsed <= 0 || parsed > maximum) {
+    throw new Error(`${key} must be a positive integer no greater than ${maximum}`);
+  }
+  return parsed;
+}
+
 function isLoopbackHost(host: string): boolean {
   const normalized = host
     .trim()
@@ -149,13 +162,13 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): ServerConfig {
   const host = env.HOST ?? '127.0.0.1';
   return {
     host,
-    port: Number.parseInt(env.PORT ?? '8787', 10),
+    port: positiveIntegerFromEnv(env, 'PORT', 8787, 65_535),
     databaseUrl: env.DATABASE_URL ?? 'postgres://noveldesk:noveldesk@127.0.0.1:5432/noveldesk',
     redisUrl: env.REDIS_URL ?? 'redis://127.0.0.1:6379',
     dataDir: path.resolve(env.SERVER_DATA_DIR ?? '.server-data'),
-    maxChunkBytes: Number.parseInt(env.MAX_CHUNK_BYTES ?? `${16 * 1024 * 1024}`, 10),
-    maxUploadBytes: Number.parseInt(env.MAX_UPLOAD_BYTES ?? `${500 * 1024 * 1024}`, 10),
-    staleUploadMaxAgeMs: Number.parseInt(env.STALE_UPLOAD_MAX_AGE_MS ?? `${7 * 24 * 60 * 60 * 1000}`, 10),
+    maxChunkBytes: positiveIntegerFromEnv(env, 'MAX_CHUNK_BYTES', 16 * 1024 * 1024),
+    maxUploadBytes: positiveIntegerFromEnv(env, 'MAX_UPLOAD_BYTES', 500 * 1024 * 1024),
+    staleUploadMaxAgeMs: nonNegativeIntegerFromEnv(env, 'STALE_UPLOAD_MAX_AGE_MS', 7 * 24 * 60 * 60 * 1000),
     runMigrationsOnStart: boolFromEnv(env.RUN_MIGRATIONS_ON_START, true),
     defaultUserId: env.DEFAULT_USER_ID ?? 'user_dev',
     providerJobAdmission: {

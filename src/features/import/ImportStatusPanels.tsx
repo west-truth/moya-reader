@@ -74,7 +74,15 @@ export function ImportProgressPanel({ controller }: { controller: ImportFeatureC
   return (
     <div className="import-progress">
       <div className="setting-line">
-        <h3>{progress?.status === 'ready' ? '가져오기 완료' : '가져오는 중'}</h3>
+        <h3>
+          {progress?.status === 'ready'
+            ? '가져오기 완료'
+            : progress?.status === 'failed'
+              ? '가져오기 실패'
+              : progress?.status === 'cancelling'
+                ? '취소하는 중'
+                : '가져오는 중'}
+        </h3>
         <span>{progress ? `${percent}%` : '-'}</span>
       </div>
       {batch && (

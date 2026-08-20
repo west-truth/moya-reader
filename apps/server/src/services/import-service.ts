@@ -19,6 +19,7 @@ import type {
 import { integrityHash, persistentId128 } from '@noveldesk/text-core/hash';
 import { paragraphPageId, parsedChapterId, parsedParagraphId } from '@noveldesk/text-core/identity/parser';
 import { validateUploadCompleteness } from './upload-validation.js';
+import { removeUploadDirectory } from './upload-cleanup.js';
 import { finalizeBookReplacement, prepareBookReplacement } from './book-revision/service.js';
 
 const PARAGRAPHS_PER_PAGE = 120;
@@ -64,6 +65,18 @@ interface ImportJobProgressPatch {
   bookId?: string;
   errorMessage?: string | null;
 }
+
+export interface ImportExecutionAttempt {
+  readonly attemptNumber: number;
+  readonly maxAttempts: number;
+  readonly finalAttempt: boolean;
+}
+
+const SINGLE_IMPORT_ATTEMPT: ImportExecutionAttempt = {
+  attemptNumber: 1,
+  maxAttempts: 1,
+  finalAttempt: true,
+};
 
 const IMPORT_JOB_HEARTBEAT_MS = 30_000;
 
@@ -529,11 +542,13 @@ export async function processImportJob(
   config: ServerConfig,
   jobId: string,
   uploadId: string,
+  attempt: ImportExecutionAttempt = SINGLE_IMPORT_ATTEMPT,
 ): Promise<void> {
   await updateImportJobProgress(pool, jobId, {
     status: 'processing',
     stage: 'reading',
     message: '업로드 조각을 검증하고 조립하는 중입니다.',
+    errorMessage: null,
   });
 
   const heartbeat = setInterval(() => {
@@ -613,6 +628,7 @@ export async function processImportJob(
     buffer = undefined;
 
     const client = await pool.connect();
+    let importCommitted = false;
     try {
       await client.query('begin');
       await client.query(
@@ -788,6 +804,7 @@ export async function processImportJob(
         'imported',
         uploadId,
       ]);
+      await client.query('delete from upload_chunks where upload_id = $1', [uploadId]);
       await updateImportJobProgress(client, jobId, {
         status: 'done',
         stage: 'ready',
@@ -800,20 +817,35 @@ export async function processImportJob(
         errorMessage: null,
       });
       await client.query('commit');
+      importCommitted = true;
     } catch (error) {
       await client.query('rollback');
       throw error;
     } finally {
       client.release();
     }
+    if (importCommitted) await removeUploadDirectory(config, uploadId);
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
-    await updateImportJobProgress(pool, jobId, {
-      status: 'failed',
-      stage: 'failed',
-      message: '서버 가져오기에 실패했습니다.',
-      errorMessage: message,
-    });
+    if (attempt.finalAttempt) {
+      await pool.query(
+        "update upload_sessions set status = 'failed', updated_at = now() where id = $1 and status <> 'imported'",
+        [uploadId],
+      );
+      await updateImportJobProgress(pool, jobId, {
+        status: 'failed',
+        stage: 'failed',
+        message: '서버 가져오기에 실패했습니다.',
+        errorMessage: message,
+      });
+    } else {
+      await updateImportJobProgress(pool, jobId, {
+        status: 'queued',
+        stage: 'queued',
+        message: `서버 가져오기를 재시도합니다. (${attempt.attemptNumber}/${attempt.maxAttempts} 실패)`,
+        errorMessage: message,
+      });
+    }
     throw error;
   } finally {
     clearInterval(heartbeat);

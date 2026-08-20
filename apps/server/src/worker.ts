@@ -130,8 +130,8 @@ providerRecoveryTimer.unref();
 const ttsMaintenanceTimer = setInterval(() => void runTTSCacheMaintenance(), 5 * 60_000);
 ttsMaintenanceTimer.unref();
 
-const importWorker = createImportWorker(config, async (jobId, uploadId) => {
-  await observeImportJobExecution(logger, jobId, () => processImportJob(pool, config, jobId, uploadId));
+const importWorker = createImportWorker(config, async (jobId, uploadId, attempt) => {
+  await observeImportJobExecution(logger, jobId, () => processImportJob(pool, config, jobId, uploadId, attempt));
 });
 const providerWorker = createProviderWorker(config, async (jobId, attempt) => {
   await observeProviderJobExecution(pool, metrics, logger, { jobId, attemptId: attempt.attemptId }, async () => {

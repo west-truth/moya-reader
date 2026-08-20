@@ -34,8 +34,8 @@ function run(command, commandArgs, options = {}) {
   return result;
 }
 
-function dockerComposeArgs(projectName, extraArgs) {
-  return ['compose', '-p', projectName, ...extraArgs];
+function dockerComposeArgs(projectName, composeFiles, extraArgs) {
+  return ['compose', ...composeFiles.flatMap((file) => ['-f', file]), '-p', projectName, ...extraArgs];
 }
 
 async function main() {
@@ -43,15 +43,21 @@ async function main() {
   const keepStack = hasArg('--keep-stack');
   const keepData = hasArg('--keep-data');
   const skipBuild = hasArg('--skip-build');
+  const publicMode = hasArg('--public') || process.env.HOSTED_E2E_PUBLIC === '1';
   const includeAIWorkflow = hasArg('--include-ai-workflow') || process.env.HOSTED_E2E_INCLUDE_AI_WORKFLOW === '1';
   const projectName = argValue('--project-name', process.env.HOSTED_E2E_PROJECT ?? 'noveldesk-e2e');
   const webUrl = argValue('--web-url', process.env.HOSTED_WEB_URL ?? 'http://127.0.0.1:8080');
   const apiUrl = argValue('--api-url', process.env.HOSTED_API_URL ?? `${webUrl.replace(/\/+$/, '')}/api`);
   const timeoutMs = argValue('--timeout-ms', process.env.HOSTED_SMOKE_TIMEOUT_MS ?? '120000');
-  const authToken = argValue('--auth-token', process.env.HOSTED_API_AUTH_TOKEN ?? process.env.READER_AUTH_TOKEN ?? '');
+  let authToken = argValue('--auth-token', process.env.HOSTED_API_AUTH_TOKEN ?? process.env.READER_AUTH_TOKEN ?? '');
+  if (publicMode && !authToken.trim()) {
+    authToken = 'moya-hosted-e2e-token';
+  }
+  if (publicMode) process.env.READER_AUTH_TOKEN = authToken.trim();
+  const composeFiles = ['compose.yaml', ...(publicMode ? ['compose.public.yaml'] : [])];
 
   run('pnpm', ['check:hosted']);
-  run('docker', ['compose', 'config', '--quiet']);
+  run('docker', dockerComposeArgs(projectName, composeFiles, ['config', '--quiet']));
 
   if (dryRun) {
     console.log('\nDry run passed. Docker daemon actions and live smoke were skipped.');
@@ -67,7 +73,7 @@ async function main() {
     );
   }
 
-  const upArgs = dockerComposeArgs(projectName, ['up', ...(skipBuild ? [] : ['--build']), '-d']);
+  const upArgs = dockerComposeArgs(projectName, composeFiles, ['up', ...(skipBuild ? [] : ['--build']), '-d']);
   run('docker', upArgs);
 
   try {
@@ -104,7 +110,7 @@ async function main() {
     if (keepStack) {
       console.log(`\nKeeping Docker Compose stack '${projectName}' running.`);
     } else {
-      run('docker', dockerComposeArgs(projectName, ['down', ...(keepData ? [] : ['--volumes'])]));
+      run('docker', dockerComposeArgs(projectName, composeFiles, ['down', ...(keepData ? [] : ['--volumes'])]));
     }
   }
 }

@@ -21,7 +21,7 @@ export async function maintainTTSCache(
   await pool.query(
     `update tts_render_items_v2 item
      set lifecycle_state = case
-       when job.status = 'failed' and job.outcome_state = 'outcome_unknown' then 'unknown'
+       when job.status = 'failed' and attempt.outcome_state = 'outcome_unknown' then 'unknown'
        when job.status = 'failed' then 'failed'
        when job.status = 'cancelled' then 'cancelled'
        when job.status = 'running' then 'running'
@@ -29,11 +29,12 @@ export async function maintainTTSCache(
      end,
      updated_at = now()
      from provider_jobs job
+     left join provider_job_attempts attempt on attempt.id = job.current_attempt_id
      where item.provider_job_id = job.id
        and item.lifecycle_state not in ('succeeded', 'cache_hit', 'stale', 'corrupt')
        and job.status in ('queued', 'running', 'failed', 'cancelled')
        and item.lifecycle_state is distinct from case
-         when job.status = 'failed' and job.outcome_state = 'outcome_unknown' then 'unknown'
+         when job.status = 'failed' and attempt.outcome_state = 'outcome_unknown' then 'unknown'
          when job.status = 'failed' then 'failed'
          when job.status = 'cancelled' then 'cancelled'
          when job.status = 'running' then 'running'

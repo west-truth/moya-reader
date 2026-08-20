@@ -1485,19 +1485,6 @@ export default function App() {
     [commitAiTtsSyncMutation, readerRepository, segments, showToast, syncFlushing],
   );
 
-  const saveApiAuthToken = useCallback(async () => {
-    const normalized = apiAuthTokenDraft.trim();
-    try {
-      await saveStoredApiAuthToken(normalized);
-      setApiAuthTokenConfigured(Boolean(normalized));
-      if (apiAuthTokenUsesAndroidKeystore()) setApiAuthTokenDraft('');
-      showToast(normalized ? '서버 인증 토큰을 저장했습니다.' : '서버 인증 토큰을 지웠습니다.', 'success');
-      void retrySyncNow();
-    } catch (error) {
-      showToast(error instanceof Error ? error.message : '서버 인증 토큰을 안전하게 저장하지 못했습니다.', 'danger');
-    }
-  }, [apiAuthTokenDraft, retrySyncNow, showToast]);
-
   const saveSyncApiBaseUrl = useCallback(() => {
     const normalized = saveStoredSyncApiBaseUrl(syncApiBaseUrlDraft);
     setSyncApiBaseUrlDraft(normalized);
@@ -1593,6 +1580,23 @@ export default function App() {
       });
     }
   });
+
+  const saveApiAuthToken = useCallback(async () => {
+    const normalized = apiAuthTokenDraft.trim();
+    try {
+      await saveStoredApiAuthToken(normalized);
+      setApiAuthTokenConfigured(Boolean(normalized));
+      if (apiAuthTokenUsesAndroidKeystore()) setApiAuthTokenDraft('');
+      showToast(normalized ? '서버 인증 토큰을 저장했습니다.' : '서버 인증 토큰을 지웠습니다.', 'success');
+      if (readerRuntime.mode === 'remote') {
+        retryAppBootstrap();
+      } else {
+        void retrySyncNow();
+      }
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : '서버 인증 토큰을 안전하게 저장하지 못했습니다.', 'danger');
+    }
+  }, [apiAuthTokenDraft, readerRuntime.mode, retryAppBootstrap, retrySyncNow, showToast]);
 
   useEffect(() => {
     if (!providerApiClient && !isDesktopProviderRuntime) return;

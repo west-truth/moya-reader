@@ -15,7 +15,9 @@ describe('TTS cache maintenance', () => {
     const result = await maintainTTSCache({ query } as never, { s3: {} } as never, { deleteAudioObject: remove });
     expect(result).toEqual({ markedStale: 2, deleted: 1, failed: 0 });
     expect(remove).toHaveBeenCalledWith('tts/cache_1.mp3');
-    expect(String(query.mock.calls[0][0])).toContain("job.outcome_state = 'outcome_unknown'");
+    expect(String(query.mock.calls[0][0])).toContain('left join provider_job_attempts attempt');
+    expect(String(query.mock.calls[0][0])).toContain("attempt.outcome_state = 'outcome_unknown'");
+    expect(String(query.mock.calls[0][0])).not.toContain('job.outcome_state');
     expect(String(query.mock.calls[1][0])).toContain('voice_catalog_entries');
     expect(String(query.mock.calls[2][0])).toContain("then 'corrupt' else 'stale'");
     expect(String(query.mock.calls[3][0])).toContain("then 'audio_cache_ready'");

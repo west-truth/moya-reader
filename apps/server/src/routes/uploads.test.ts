@@ -434,7 +434,7 @@ describe('upload routes', () => {
         if (sql === 'begin' || sql === 'commit' || sql === 'rollback') return { rows: [] };
         if (sql.includes('update upload_sessions')) {
           expect(params?.[0]).toBe('expired');
-          expect(params?.[1]).toBe('uploading');
+          expect(params?.[1]).toEqual(['uploading', 'failed', 'imported', 'cancelled']);
           expect(typeof params?.[2]).toBe('string');
           expect(params?.[3]).toBe('user_test');
           return { rows: [{ id: 'upload_old' }], rowCount: 1 };

@@ -5,6 +5,7 @@ import pg from 'pg';
 export interface ReadinessChecks {
   queue?: Pick<Queue, 'getJobCounts'>;
   checkObjectStorage?: () => Promise<void>;
+  checkWorker?: () => Promise<void>;
 }
 
 interface ComponentStatus {
@@ -57,6 +58,10 @@ export async function registerHealthRoutes(
 
     if (checks.checkObjectStorage) {
       components.objectStorage = await componentStatus(checks.checkObjectStorage);
+    }
+
+    if (checks.checkWorker) {
+      components.worker = await componentStatus(checks.checkWorker);
     }
 
     const ok = Object.values(components).every((component) => component.ok);

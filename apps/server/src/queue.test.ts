@@ -5,12 +5,26 @@ import { DEFAULT_PROVIDER_JOB_ADMISSION_LIMITS } from './config.js';
 import {
   enqueueImportJob,
   enqueueProviderJob,
+  importQueueAttempt,
   recoverStaleImportJobs,
   requeuePendingImportJobs,
   requeuePendingProviderJobs,
 } from './queue.js';
 
 describe('import queue helpers', () => {
+  it('exposes BullMQ retry metadata without marking intermediate attempts terminal', () => {
+    expect(importQueueAttempt({ attemptsMade: 0, opts: { attempts: 3 } })).toEqual({
+      attemptNumber: 1,
+      maxAttempts: 3,
+      finalAttempt: false,
+    });
+    expect(importQueueAttempt({ attemptsMade: 2, opts: { attempts: 3 } })).toEqual({
+      attemptNumber: 3,
+      maxAttempts: 3,
+      finalAttempt: true,
+    });
+  });
+
   it('uses the database import job id as the BullMQ job id', async () => {
     const queue = {
       add: vi.fn(async (_name: string, _data: unknown, options?: { jobId?: string }) => ({ id: options?.jobId })),

@@ -1,8 +1,9 @@
 # Apply this override only behind a TLS-terminating reverse proxy on the same host.
-# Required-variable interpolation makes accidental unauthenticated public exposure fail closed.
+# Required token interpolation makes accidental unauthenticated public exposure fail closed.
+# Same-origin browser requests are accepted automatically. Set CORS_ALLOWED_ORIGINS
+# only when a separate web/desktop origin calls this API cross-origin.
 services:
   api:
     environment:
       SERVER_EXPOSURE: external
       READER_AUTH_TOKEN: ${READER_AUTH_TOKEN:?Set READER_AUTH_TOKEN before public deployment}
-      CORS_ALLOWED_ORIGINS: ${CORS_ALLOWED_ORIGINS:?Set CORS_ALLOWED_ORIGINS to the public HTTPS origin}

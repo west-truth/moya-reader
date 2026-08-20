@@ -1,4 +1,4 @@
-import { Queue, Worker } from 'bullmq';
+import { Job, Queue, Worker } from 'bullmq';
 import pg from 'pg';
 import type { ProviderJobAdmissionLimits, ServerConfig } from './config.js';
 import {
@@ -11,6 +11,23 @@ export type { ProviderQueueAttempt } from './services/provider-job-admission/ind
 
 export const IMPORT_QUEUE_NAME = 'noveldesk-import';
 export const PROVIDER_QUEUE_NAME = 'noveldesk-provider';
+
+export interface ImportQueueAttempt {
+  readonly attemptNumber: number;
+  readonly maxAttempts: number;
+  readonly finalAttempt: boolean;
+}
+
+export function importQueueAttempt(job: Pick<Job, 'attemptsMade' | 'opts'>): ImportQueueAttempt {
+  const configuredAttempts = Number(job.opts.attempts ?? 1);
+  const maxAttempts = Number.isSafeInteger(configuredAttempts) && configuredAttempts > 0 ? configuredAttempts : 1;
+  const attemptNumber = Math.max(1, job.attemptsMade + 1);
+  return {
+    attemptNumber,
+    maxAttempts,
+    finalAttempt: attemptNumber >= maxAttempts,
+  };
+}
 
 function redisConnectionOptions(config: ServerConfig) {
   const url = new URL(config.redisUrl);
@@ -453,14 +470,14 @@ export async function requeuePendingProviderJobs(
 
 export function createImportWorker(
   config: ServerConfig,
-  processor: (jobId: string, uploadId: string) => Promise<void>,
+  processor: (jobId: string, uploadId: string, attempt: ImportQueueAttempt) => Promise<void>,
 ): Worker {
   return new Worker(
     IMPORT_QUEUE_NAME,
     async (job) => {
       const jobId = String(job.data.jobId);
       const uploadId = String(job.data.uploadId);
-      await processor(jobId, uploadId);
+      await processor(jobId, uploadId, importQueueAttempt(job));
     },
     {
       connection: redisConnectionOptions(config),
