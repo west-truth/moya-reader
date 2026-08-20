@@ -236,6 +236,9 @@ describe('book catalog routes', () => {
     const client = {
       query: vi.fn(async (sql: string) => {
         queries.push(sql);
+        if (sql.includes('select storage_key from book_assets')) {
+          return { rows: [{ storage_key: 'user/book/page-1' }] };
+        }
         if (sql.includes('delete from library_books')) {
           return { rows: [{ id: 'book_1', object_id: 'object_1', metadata_revision: 4 }] };
         }
@@ -256,6 +259,7 @@ describe('book catalog routes', () => {
     expect(response.statusCode).toBe(200);
     expect(queries[1]).toContain('deleted_at is not null');
     expect(queries.some((sql) => sql.includes('delete from book_objects'))).toBe(true);
+    expect(queries.some((sql) => sql.includes('insert into object_delete_outbox'))).toBe(true);
     expect(queries.at(-1)).toBe('commit');
     await app.close();
   });

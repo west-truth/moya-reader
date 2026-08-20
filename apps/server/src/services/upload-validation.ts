@@ -15,6 +15,7 @@ export interface UploadProgressSummary {
   uploadedBytes: number;
   receivedChunkIndexes: number[];
   missingChunkIndexes: number[];
+  missingChunkIndexesTruncated: boolean;
   complete: boolean;
 }
 
@@ -30,9 +31,14 @@ export interface UploadCompletenessError {
   expectedChunks: number;
   uploadedBytes: number;
   missingChunkIndexes: number[];
+  missingChunkIndexesTruncated: boolean;
 }
 
 export type UploadCompletenessResult = UploadCompletenessOk | UploadCompletenessError;
+
+/** Hard stop independent of operator configuration, so status/missing-list work stays bounded. */
+export const MAX_UPLOAD_CHUNKS = 65_536;
+export const MAX_REPORTED_MISSING_CHUNKS = 256;
 
 export function positiveInteger(value: unknown): number | undefined {
   const parsed = typeof value === 'number' ? value : Number(value);
@@ -46,8 +52,35 @@ export function nonNegativeInteger(value: unknown): number | undefined {
 
 export function validateChunkIndex(chunkIndex: number, totalChunks?: number | null): string | undefined {
   if (!Number.isSafeInteger(chunkIndex) || chunkIndex < 0) return 'chunkIndex must be a non-negative integer';
+  if (chunkIndex >= MAX_UPLOAD_CHUNKS) {
+    return `chunkIndex ${chunkIndex} exceeds the maximum supported chunk index ${MAX_UPLOAD_CHUNKS - 1}`;
+  }
   if (totalChunks !== null && totalChunks !== undefined && chunkIndex >= totalChunks) {
     return `chunkIndex ${chunkIndex} is outside declared totalChunks ${totalChunks}`;
+  }
+  return undefined;
+}
+
+export function validateUploadChunkPlan(input: {
+  sizeBytes: number;
+  totalChunks?: number | null;
+  maxChunkBytes: number;
+}): string | undefined {
+  if (input.totalChunks === null || input.totalChunks === undefined) return undefined;
+  if (!Number.isSafeInteger(input.totalChunks) || input.totalChunks <= 0) {
+    return 'totalChunks must be a positive integer when provided';
+  }
+  if (input.totalChunks > MAX_UPLOAD_CHUNKS) {
+    return `totalChunks ${input.totalChunks} exceeds the maximum supported chunk count ${MAX_UPLOAD_CHUNKS}`;
+  }
+  if (input.totalChunks > input.sizeBytes) {
+    return 'totalChunks cannot exceed sizeBytes because empty chunks are not accepted';
+  }
+  if (Number.isSafeInteger(input.maxChunkBytes) && input.maxChunkBytes > 0) {
+    const minimumChunks = Math.ceil(input.sizeBytes / input.maxChunkBytes);
+    if (input.totalChunks < minimumChunks) {
+      return `totalChunks ${input.totalChunks} cannot carry sizeBytes ${input.sizeBytes} with maxChunkBytes ${input.maxChunkBytes}`;
+    }
   }
   return undefined;
 }
@@ -62,14 +95,16 @@ export function validateUploadSize(sizeBytes: number, maxUploadBytes: number): s
 
 export function summarizeUploadProgress(input: UploadCompletenessInput): UploadProgressSummary {
   const expectedBytes = input.expectedBytes;
-  const expectedChunks = input.totalChunks ?? (input.chunks.length ? Math.max(...input.chunks.map((chunk) => chunk.chunkIndex)) + 1 : 0);
+  const expectedChunks =
+    input.totalChunks ?? (input.chunks.length ? Math.max(...input.chunks.map((chunk) => chunk.chunkIndex)) + 1 : 0);
   const uploadedBytes = input.chunks.reduce((sum, chunk) => sum + chunk.sizeBytes, 0);
   const receivedChunkIndexes = [...new Set(input.chunks.map((chunk) => chunk.chunkIndex))].sort((a, b) => a - b);
-  const received = new Set(receivedChunkIndexes);
+  const received = new Set(receivedChunkIndexes.filter((chunkIndex) => chunkIndex >= 0 && chunkIndex < expectedChunks));
   const missingChunkIndexes: number[] = [];
-  for (let index = 0; index < expectedChunks; index += 1) {
+  for (let index = 0; index < expectedChunks && missingChunkIndexes.length < MAX_REPORTED_MISSING_CHUNKS; index += 1) {
     if (!received.has(index)) missingChunkIndexes.push(index);
   }
+  const missingChunkCount = Math.max(0, expectedChunks - received.size);
 
   return {
     expectedBytes,
@@ -77,13 +112,14 @@ export function summarizeUploadProgress(input: UploadCompletenessInput): UploadP
     uploadedBytes,
     receivedChunkIndexes,
     missingChunkIndexes,
-    complete: expectedChunks > 0 && missingChunkIndexes.length === 0 && uploadedBytes === expectedBytes,
+    missingChunkIndexesTruncated: missingChunkCount > missingChunkIndexes.length,
+    complete: expectedChunks > 0 && missingChunkCount === 0 && uploadedBytes === expectedBytes,
   };
 }
 
 export function validateUploadCompleteness(input: UploadCompletenessInput): UploadCompletenessResult {
   const progress = summarizeUploadProgress(input);
-  const { expectedBytes, expectedChunks, uploadedBytes, missingChunkIndexes } = progress;
+  const { expectedBytes, expectedChunks, uploadedBytes, missingChunkIndexes, missingChunkIndexesTruncated } = progress;
   const invalidChunk = input.chunks.find(
     (chunk) =>
       !Number.isSafeInteger(chunk.chunkIndex) ||
@@ -100,6 +136,7 @@ export function validateUploadCompleteness(input: UploadCompletenessInput): Uplo
       expectedChunks,
       uploadedBytes,
       missingChunkIndexes,
+      missingChunkIndexesTruncated,
     };
   }
 
@@ -110,6 +147,7 @@ export function validateUploadCompleteness(input: UploadCompletenessInput): Uplo
       expectedChunks,
       uploadedBytes,
       missingChunkIndexes,
+      missingChunkIndexesTruncated,
     };
   }
 
@@ -120,6 +158,7 @@ export function validateUploadCompleteness(input: UploadCompletenessInput): Uplo
       expectedChunks,
       uploadedBytes,
       missingChunkIndexes,
+      missingChunkIndexesTruncated,
     };
   }
 
@@ -130,6 +169,7 @@ export function validateUploadCompleteness(input: UploadCompletenessInput): Uplo
       expectedChunks,
       uploadedBytes,
       missingChunkIndexes,
+      missingChunkIndexesTruncated,
     };
   }
 

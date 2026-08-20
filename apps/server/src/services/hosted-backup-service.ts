@@ -2,7 +2,12 @@ import { randomUUID } from 'node:crypto';
 import pg from 'pg';
 import type { ServerConfig } from '../config.js';
 import { createEmptyVoiceCastingState } from '../../../../src/providers/voice-casting/state';
-import { createS3Client, deleteObject, getObjectBuffer, putRawBookObject } from './object-storage.js';
+import { createS3Client, getObjectBuffer, putRawBookObject } from './object-storage.js';
+import {
+  enqueueObjectDeletions,
+  releaseObjectDeletionReservations,
+  reserveObjectDeletions,
+} from './object-delete-outbox.js';
 import {
   createHostedBackupStream,
   HOSTED_BACKUP_BOOK_TABLES,
@@ -42,6 +47,11 @@ export interface HostedBackupRestoreResult {
   readonly skippedBooks: number;
   readonly copiedBooks: number;
   readonly restoredEntries: number;
+}
+
+interface SupersededRestoreObjects {
+  readonly storageKeys: Set<string>;
+  readonly sourceObjects: Map<string, string>;
 }
 
 const APP_VERSION = '0.1.0';
@@ -172,7 +182,12 @@ async function snapshotHostedData(pool: pg.Pool, userId: string) {
       const result =
         bookIds.length === 0
           ? { rows: [] }
-          : await client.query(`select * from ${quoteIdentifier(table)} where book_id = any($1::text[])`, [bookIds]);
+          : await client.query(
+              `select * from ${quoteIdentifier(table)} where book_id = any($1::text[])${
+                table === 'book_assets' ? " and status = 'active'" : ''
+              }`,
+              [bookIds],
+            );
       tables.set(table, result.rows);
     }
     for (const table of HOSTED_BACKUP_GLOBAL_TABLES) {
@@ -311,11 +326,14 @@ function sourceObjectsById(objects: readonly HostedBookObjectRow[]): Map<string,
 }
 
 async function restoreSourceObjects(
+  pool: pg.Pool,
   client: pg.PoolClient,
   config: ServerConfig,
   parsed: Awaited<ReturnType<typeof parseHostedBackupArchive>>,
   requiredObjectIds: ReadonlySet<string>,
-  uploadedKeys: string[],
+  restorePrefix: string,
+  stagedKeys: string[],
+  publishedKeys: string[],
 ): Promise<ReadonlyMap<string, string>> {
   const sourceObjects = sourceObjectsById(parsed.objects);
   const objectIdMap = new Map<string, string>();
@@ -334,9 +352,10 @@ async function restoreSourceObjects(
     }
     const idConflict = await client.query('select 1 from book_objects where id = $1', [archivedObjectId]);
     const targetObjectId = idConflict.rows[0] ? `book_object_${randomUUID().replaceAll('-', '')}` : archivedObjectId;
-    const storageKey = `${config.defaultUserId}/${targetObjectId}/${object.file_name}`;
+    const storageKey = `${restorePrefix}/sources/${targetObjectId}/${object.file_name}`;
+    await reserveObjectDeletions(pool, [storageKey], 'backup_restore_staging');
+    stagedKeys.push(storageKey);
     await putRawBookObject(s3, config, storageKey, bytes, object.content_type);
-    uploadedKeys.push(storageKey);
     const inserted = await client.query(
       `insert into book_objects (id, raw_text_hash, storage_key, file_name, content_type, size_bytes, created_at)
        values ($1, $2, $3, $4, $5, $6, $7)
@@ -355,19 +374,23 @@ async function restoreSourceObjects(
     const actualId = String(inserted.rows[0].id);
     objectIdMap.set(archivedObjectId, actualId);
     if (String(inserted.rows[0].storage_key) !== storageKey) {
-      await deleteObject(s3, config, storageKey).catch(() => undefined);
-      uploadedKeys.splice(uploadedKeys.lastIndexOf(storageKey), 1);
+      await enqueueObjectDeletions(pool, [storageKey], 'backup_restore_deduplicated');
+    } else {
+      publishedKeys.push(storageKey);
     }
   }
   return objectIdMap;
 }
 
 async function restoreEmbeddedBookObjects(
+  pool: pg.Pool,
   config: ServerConfig,
   parsed: Awaited<ReturnType<typeof parseHostedBackupArchive>>,
   resolutions: ReadonlyMap<string, HostedBackupConflictResolution | undefined>,
   copyMaps: ReadonlyMap<string, ReadonlyMap<string, string>>,
-  uploadedKeys: string[],
+  restorePrefix: string,
+  stagedKeys: string[],
+  publishedKeys: string[],
 ): Promise<ReadonlyMap<string, string>> {
   const objects = sourceObjectsById(parsed.objects);
   const storageKeys = new Map<string, string>();
@@ -390,18 +413,23 @@ async function restoreEmbeddedBookObjects(
     const targetBookId = copyMap?.get(archivedBookId) ?? archivedBookId;
     const targetAssetId = copyMap?.get(archivedAssetId) ?? archivedAssetId;
     const folder = row.kind === 'cover' ? 'covers' : row.kind === 'document_page' ? 'pages' : 'epub';
-    const storageKey = `${config.defaultUserId}/${targetBookId}/${folder}/${targetAssetId}/${object.file_name}`;
+    const storageKey = `${restorePrefix}/books/${targetBookId}/${folder}/${targetAssetId}/${object.file_name}`;
+    await reserveObjectDeletions(pool, [storageKey], 'backup_restore_staging');
+    stagedKeys.push(storageKey);
     await putRawBookObject(s3, config, storageKey, bytes, object.content_type);
-    uploadedKeys.push(storageKey);
+    publishedKeys.push(storageKey);
     storageKeys.set(archivedAssetId, storageKey);
   }
   return storageKeys;
 }
 
 async function restoreUserFontObjects(
+  pool: pg.Pool,
   config: ServerConfig,
   parsed: Awaited<ReturnType<typeof parseHostedBackupArchive>>,
-  uploadedKeys: string[],
+  restorePrefix: string,
+  stagedKeys: string[],
+  publishedKeys: string[],
 ): Promise<ReadonlyMap<string, string>> {
   const objects = sourceObjectsById(parsed.objects);
   const storageKeys = new Map<string, string>();
@@ -413,12 +441,95 @@ async function restoreUserFontObjects(
     if (!object || object.asset_kind !== 'user_font' || !bytes) {
       throw new Error(`Backup user font is incomplete: ${id}`);
     }
-    const storageKey = `${config.defaultUserId}/fonts/${id}/${object.file_name}`;
+    const storageKey = `${restorePrefix}/fonts/${id}/${object.file_name}`;
+    await reserveObjectDeletions(pool, [storageKey], 'backup_restore_staging');
+    stagedKeys.push(storageKey);
     await putRawBookObject(s3, config, storageKey, bytes, object.content_type);
-    uploadedKeys.push(storageKey);
+    publishedKeys.push(storageKey);
     storageKeys.set(id, storageKey);
   }
   return storageKeys;
+}
+
+async function collectSupersededRestoreObjects(
+  client: pg.PoolClient,
+  userId: string,
+  replacedBookIds: readonly string[],
+  fontIds: readonly string[],
+): Promise<SupersededRestoreObjects> {
+  const storageKeys = new Set<string>();
+  const sourceObjects = new Map<string, string>();
+  if (replacedBookIds.length > 0) {
+    const assets = await client.query(
+      `select a.storage_key
+       from book_assets a
+       join library_books b on b.id = a.book_id
+       where b.user_id = $1 and b.id = any($2::text[]) and a.storage_key is not null`,
+      [userId, replacedBookIds],
+    );
+    for (const row of assets.rows) {
+      if (typeof row.storage_key === 'string' && row.storage_key) storageKeys.add(row.storage_key);
+    }
+    const sources = await client.query(
+      `select o.id, o.storage_key
+       from book_objects o
+       join library_books b on b.object_id = o.id
+       where b.user_id = $1 and b.id = any($2::text[])`,
+      [userId, replacedBookIds],
+    );
+    for (const row of sources.rows) {
+      if (typeof row.id === 'string' && typeof row.storage_key === 'string' && row.storage_key) {
+        sourceObjects.set(row.id, row.storage_key);
+      }
+    }
+  }
+  if (fontIds.length > 0) {
+    const fonts = await client.query(
+      `select storage_key from user_fonts where user_id = $1 and id = any($2::text[]) and storage_key is not null`,
+      [userId, fontIds],
+    );
+    for (const row of fonts.rows) {
+      if (typeof row.storage_key === 'string' && row.storage_key) storageKeys.add(row.storage_key);
+    }
+  }
+  return { storageKeys, sourceObjects };
+}
+
+async function enqueueSupersededRestoreObjects(
+  client: pg.PoolClient,
+  candidates: SupersededRestoreObjects,
+): Promise<void> {
+  const storageKeys = new Set(candidates.storageKeys);
+  for (const [objectId, storageKey] of candidates.sourceObjects) {
+    const removed = await client.query(
+      `delete from book_objects o
+       where o.id = $1
+         and not exists (select 1 from library_books b where b.object_id = o.id)
+       returning o.storage_key`,
+      [objectId],
+    );
+    if (removed.rows[0]?.storage_key === storageKey) storageKeys.add(storageKey);
+  }
+  await enqueueObjectDeletions(client, storageKeys, 'backup_restore_superseded');
+}
+
+async function finalizeRestoreReservations(client: pg.PoolClient, publishedKeys: readonly string[]): Promise<void> {
+  if (publishedKeys.length === 0) return;
+  const result = await client.query<{ storage_key: string }>(
+    `select storage_key from book_objects where storage_key = any($1::text[])
+     union
+     select storage_key from book_assets where storage_key = any($1::text[])
+     union
+     select storage_key from user_fonts where storage_key = any($1::text[])`,
+    [publishedKeys],
+  );
+  const referenced = new Set(result.rows.map((row) => row.storage_key));
+  const unreferenced = publishedKeys.filter((key) => !referenced.has(key));
+  await enqueueObjectDeletions(client, unreferenced, 'backup_restore_unreferenced');
+  await releaseObjectDeletionReservations(
+    client,
+    publishedKeys.filter((key) => referenced.has(key)),
+  );
 }
 
 export async function restoreHostedBackup(
@@ -431,12 +542,24 @@ export async function restoreHostedBackup(
   const books = bookRows(parsed);
   const bookIds = books.map((row) => String(row.id));
   const client = await pool.connect();
-  const uploadedKeys: string[] = [];
+  const stagedKeys: string[] = [];
+  const publishedKeys: string[] = [];
+  const restorePrefix = `${config.defaultUserId}/backup-restores/${randomUUID().replaceAll('-', '')}`;
   try {
     await client.query('begin');
     const existing = await existingBookTitles(client, config.defaultUserId, bookIds);
     const conflicts = new Set(existing.keys());
     const resolutions = new Map(bookIds.map((bookId) => [bookId, resolutionFor(bookId, conflicts, options)] as const));
+    const replacedBookIds = bookIds.filter((bookId) => resolutions.get(bookId) === 'replace');
+    const fontIds = (parsed.tables.get('user_fonts') ?? [])
+      .map((row) => row.id)
+      .filter((value): value is string => typeof value === 'string' && Boolean(value));
+    const supersededObjects = await collectSupersededRestoreObjects(
+      client,
+      config.defaultUserId,
+      replacedBookIds,
+      fontIds,
+    );
     const copyMaps = new Map<string, ReadonlyMap<string, string>>();
     for (const [bookId, resolution] of resolutions) {
       if (resolution === 'copy') copyMaps.set(bookId, copyIdMap(bookId, parsed.tables));
@@ -451,9 +574,34 @@ export async function restoreHostedBackup(
       if (resolutions.get(bookId) === 'skip') continue;
       if (typeof row.object_id === 'string' && row.object_id) requiredObjectIds.add(row.object_id);
     }
-    const objectIdMap = await restoreSourceObjects(client, config, parsed, requiredObjectIds, uploadedKeys);
-    const embeddedStorageKeys = await restoreEmbeddedBookObjects(config, parsed, resolutions, copyMaps, uploadedKeys);
-    const fontStorageKeys = await restoreUserFontObjects(config, parsed, uploadedKeys);
+    const objectIdMap = await restoreSourceObjects(
+      pool,
+      client,
+      config,
+      parsed,
+      requiredObjectIds,
+      restorePrefix,
+      stagedKeys,
+      publishedKeys,
+    );
+    const embeddedStorageKeys = await restoreEmbeddedBookObjects(
+      pool,
+      config,
+      parsed,
+      resolutions,
+      copyMaps,
+      restorePrefix,
+      stagedKeys,
+      publishedKeys,
+    );
+    const fontStorageKeys = await restoreUserFontObjects(
+      pool,
+      config,
+      parsed,
+      restorePrefix,
+      stagedKeys,
+      publishedKeys,
+    );
     const activeContentRevisions = new Map<string, string>();
     const activeCoverAssets = new Map<string, string>();
     let restoredEntries = 0;
@@ -463,6 +611,12 @@ export async function restoreHostedBackup(
       for (const original of rows) {
         const archivedBookId = rowBookId(table, original);
         if (archivedBookId && resolutions.get(archivedBookId) === 'skip') continue;
+        // Superseded assets are not reachable through the hosted reader and
+        // self-generated backups do not include their object bytes. Older
+        // archives may still contain those metadata rows, so ignore them
+        // instead of turning an otherwise valid restore into a missing-blob
+        // failure.
+        if (table === 'book_assets' && original.status !== 'active') continue;
         const copyMap = archivedBookId ? copyMaps.get(archivedBookId) : undefined;
         // Voice-casting artifact identities include book/content IDs in their fingerprints.
         // A copied book must rebuild them instead of persisting mechanically rekeyed artifacts.
@@ -517,6 +671,8 @@ export async function restoreHostedBackup(
         [coverAssetId, bookId, config.defaultUserId],
       );
     }
+    await enqueueSupersededRestoreObjects(client, supersededObjects);
+    await finalizeRestoreReservations(client, publishedKeys);
     await client.query('commit');
 
     const skippedBooks = Array.from(resolutions.values()).filter((value) => value === 'skip').length;
@@ -529,8 +685,7 @@ export async function restoreHostedBackup(
     };
   } catch (error) {
     await client.query('rollback').catch(() => undefined);
-    const s3 = uploadedKeys.length > 0 ? createS3Client(config) : undefined;
-    for (const key of uploadedKeys) await deleteObject(s3!, config, key).catch(() => undefined);
+    await enqueueObjectDeletions(pool, stagedKeys, 'backup_restore_failed').catch(() => undefined);
     throw error;
   } finally {
     client.release();

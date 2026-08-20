@@ -19,6 +19,7 @@ import {
 } from './services/book-ai-workflow-service.js';
 import { processProviderJob } from './services/provider-job-service.js';
 import { maintainTTSCache } from './services/tts-cache-maintenance.js';
+import { drainObjectDeleteOutbox } from './services/object-delete-outbox.js';
 import {
   createStructuredLogger,
   metricsFromQueue,
@@ -39,6 +40,7 @@ let reviewReconcilePromise: Promise<void> | undefined;
 let importRecoveryPromise: Promise<void> | undefined;
 let providerRecoveryPromise: Promise<void> | undefined;
 let ttsMaintenancePromise: Promise<void> | undefined;
+let objectDeletePromise: Promise<void> | undefined;
 
 function runReviewReconciler(): Promise<void> {
   if (reviewReconcilePromise) return reviewReconcilePromise;
@@ -111,6 +113,21 @@ function runTTSCacheMaintenance(): Promise<void> {
   return ttsMaintenancePromise;
 }
 
+function runObjectDeleteOutbox(): Promise<void> {
+  if (objectDeletePromise) return objectDeletePromise;
+  objectDeletePromise = drainObjectDeleteOutbox(pool, config)
+    .then((summary) => {
+      if (summary.deleted || summary.failed) logger.info('object_delete_outbox_drained', summary);
+    })
+    .catch((error) =>
+      logger.error('object_delete_outbox_error', { errorName: error instanceof Error ? error.name : 'UnknownError' }),
+    )
+    .finally(() => {
+      objectDeletePromise = undefined;
+    });
+  return objectDeletePromise;
+}
+
 const requeuedCount = await requeuePendingImportJobs(pool, importQueue);
 if (requeuedCount) logger.info('pending_import_jobs_requeued', { count: requeuedCount });
 await runImportRecovery();
@@ -121,6 +138,7 @@ if (reconciledWorkflowProviderCount)
   logger.info('terminal_workflow_provider_jobs_reconciled', { count: reconciledWorkflowProviderCount });
 await runReviewReconciler();
 await runTTSCacheMaintenance();
+await runObjectDeleteOutbox();
 const reviewReconcileTimer = setInterval(() => void runReviewReconciler(), 15_000);
 reviewReconcileTimer.unref();
 const importRecoveryTimer = setInterval(() => void runImportRecovery(), 60_000);
@@ -129,6 +147,8 @@ const providerRecoveryTimer = setInterval(() => void runProviderAttemptRecovery(
 providerRecoveryTimer.unref();
 const ttsMaintenanceTimer = setInterval(() => void runTTSCacheMaintenance(), 5 * 60_000);
 ttsMaintenanceTimer.unref();
+const objectDeleteTimer = setInterval(() => void runObjectDeleteOutbox(), 30_000);
+objectDeleteTimer.unref();
 
 const importWorker = createImportWorker(config, async (jobId, uploadId, attempt) => {
   await observeImportJobExecution(logger, jobId, () => processImportJob(pool, config, jobId, uploadId, attempt));
@@ -152,10 +172,12 @@ async function shutdown(): Promise<void> {
   clearInterval(importRecoveryTimer);
   clearInterval(providerRecoveryTimer);
   clearInterval(ttsMaintenanceTimer);
+  clearInterval(objectDeleteTimer);
   await reviewReconcilePromise;
   await importRecoveryPromise;
   await providerRecoveryPromise;
   await ttsMaintenancePromise;
+  await objectDeletePromise;
   heartbeat.stop();
   await providerWorker.close();
   await importWorker.close();

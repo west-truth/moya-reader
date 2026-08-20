@@ -89,7 +89,7 @@ export class RemoteSyncTransport {
 
   private capabilities(): Promise<CapabilityResolution> {
     if (this.capabilityPromise) return this.capabilityPromise;
-    this.capabilityPromise = (async () => {
+    const capabilityPromise = (async () => {
       try {
         return {
           capabilities: mapSyncCapabilities(await this.request<JsonRecord>('/sync/capabilities')),
@@ -107,7 +107,11 @@ export class RemoteSyncTransport {
         };
       }
     })();
-    return this.capabilityPromise;
+    this.capabilityPromise = capabilityPromise;
+    void capabilityPromise.catch(() => {
+      if (this.capabilityPromise === capabilityPromise) this.capabilityPromise = undefined;
+    });
+    return capabilityPromise;
   }
 
   async negotiateSyncContract(): Promise<NegotiatedSyncContract> {

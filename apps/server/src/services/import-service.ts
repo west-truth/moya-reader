@@ -1,10 +1,15 @@
 import { readFile } from 'node:fs/promises';
+import { randomUUID } from 'node:crypto';
 import pg from 'pg';
 import { ServerConfig } from '../config.js';
 import { createS3Client, putRawBookObject } from './object-storage.js';
 import { parseNovelFileForImport } from '@noveldesk/text-core/parser';
 import { materializeEpubImport, parseEpub } from '@noveldesk/epub-core';
-import { materializeImageArchiveImport, materializePdfImport, parseImageArchive } from '@noveldesk/fixed-document-core';
+import {
+  materializePdfImport,
+  materializeStreamingImageArchiveImport,
+  openImageArchiveStream,
+} from '@noveldesk/fixed-document-core';
 import type {
   Chapter,
   ChapterSplitMode,
@@ -13,6 +18,7 @@ import type {
   ParagraphPage,
   ParsedNovel,
   ParsedNovelImport,
+  ParsedNovelImportAsset,
   ParsedNovelImportChapter,
   ParsedNovelImportChapterSource,
 } from '@noveldesk/contracts';
@@ -21,6 +27,11 @@ import { paragraphPageId, parsedChapterId, parsedParagraphId } from '@noveldesk/
 import { validateUploadCompleteness } from './upload-validation.js';
 import { removeUploadDirectory } from './upload-cleanup.js';
 import { finalizeBookReplacement, prepareBookReplacement } from './book-revision/service.js';
+import {
+  enqueueObjectDeletions,
+  releaseObjectDeletionReservations,
+  reserveObjectDeletions,
+} from './object-delete-outbox.js';
 
 const PARAGRAPHS_PER_PAGE = 120;
 const SERVER_IMPORT_CHAPTER_BATCH_SIZE = 100;
@@ -36,6 +47,7 @@ interface UploadSessionRow {
   chapter_split_mode?: ChapterSplitMode;
   total_chunks: number | null;
   client_book_id?: string | null;
+  source_content_hash?: string | null;
 }
 
 interface UploadChunkRow {
@@ -44,7 +56,8 @@ interface UploadChunkRow {
   storage_path: string;
 }
 
-type ImportJobStage = 'queued' | 'reading' | 'decoding' | 'splitting_chapters' | 'writing' | 'ready' | 'failed';
+type ImportJobStage =
+  'queued' | 'reading' | 'decoding' | 'splitting_chapters' | 'writing' | 'ready' | 'failed' | 'cancelled';
 
 interface Queryable {
   query<T extends pg.QueryResultRow = pg.QueryResultRow>(text: string, values?: unknown[]): Promise<pg.QueryResult<T>>;
@@ -55,7 +68,7 @@ interface CommandQueryable {
 }
 
 interface ImportJobProgressPatch {
-  status?: 'queued' | 'processing' | 'done' | 'failed';
+  status?: 'queued' | 'processing' | 'done' | 'failed' | 'cancelled';
   stage?: ImportJobStage;
   bytesRead?: number;
   totalBytes?: number;
@@ -70,6 +83,7 @@ export interface ImportExecutionAttempt {
   readonly attemptNumber: number;
   readonly maxAttempts: number;
   readonly finalAttempt: boolean;
+  readonly executionId?: string;
 }
 
 const SINGLE_IMPORT_ATTEMPT: ImportExecutionAttempt = {
@@ -84,7 +98,8 @@ async function updateImportJobProgress(
   queryable: Queryable,
   jobId: string,
   patch: ImportJobProgressPatch,
-): Promise<void> {
+  executionId?: string,
+): Promise<boolean> {
   const assignments: string[] = [];
   const values: unknown[] = [];
   const setValue = (column: string, value: unknown) => {
@@ -103,13 +118,56 @@ async function updateImportJobProgress(
   if (patch.message !== undefined) setValue('message', patch.message);
   if (patch.bookId !== undefined) setValue('book_id', patch.bookId);
   if (patch.errorMessage !== undefined) setValue('error_message', patch.errorMessage);
-  if (!assignments.length) return;
+  if (!assignments.length) return true;
 
   values.push(jobId);
-  await queryable.query(
-    `update import_jobs set ${assignments.join(', ')}, updated_at = now() where id = $${values.length}`,
+  const jobParameter = values.length;
+  if (executionId) values.push(executionId);
+  const result = await queryable.query(
+    `update import_jobs set ${assignments.join(', ')}, updated_at = now()
+      where id = $${jobParameter}${
+        executionId
+          ? ` and active_queue_job_id = $${values.length} and cancel_requested_at is null and status <> 'cancelled'`
+          : ''
+      }`,
     values,
   );
+  const rowCount = (result as pg.QueryResult).rowCount;
+  return rowCount === undefined || rowCount === null || rowCount > 0;
+}
+
+class ImportExecutionStoppedError extends Error {
+  constructor(readonly reason: 'cancelled' | 'superseded') {
+    super(reason === 'cancelled' ? 'Import was cancelled' : 'Import execution was superseded');
+    this.name = 'ImportExecutionStoppedError';
+  }
+}
+
+async function claimImportExecution(pool: pg.Pool, jobId: string, executionId?: string): Promise<boolean> {
+  if (!executionId) return true;
+  const result = await pool.query(
+    `update import_jobs
+        set status = 'processing', stage = 'reading', message = '업로드 조각을 검증하고 조립하는 중입니다.',
+            error_message = null, updated_at = now()
+      where id = $1 and status = 'queued' and active_queue_job_id = $2 and cancel_requested_at is null
+      returning id`,
+    [jobId, executionId],
+  );
+  return (result.rowCount ?? result.rows.length) > 0;
+}
+
+async function assertImportExecutionActive(pool: pg.Pool, jobId: string, executionId?: string): Promise<void> {
+  if (!executionId) return;
+  const result = await pool.query<{
+    status: string;
+    cancel_requested_at?: string | null;
+    active_queue_job_id?: string | null;
+  }>('select status, cancel_requested_at, active_queue_job_id from import_jobs where id = $1', [jobId]);
+  const row = result.rows[0];
+  if (row?.cancel_requested_at || row?.status === 'cancelled') throw new ImportExecutionStoppedError('cancelled');
+  if (!row || row.active_queue_job_id !== executionId || row.status !== 'processing') {
+    throw new ImportExecutionStoppedError('superseded');
+  }
 }
 
 function chunked<T>(items: T[], size: number): T[][] {
@@ -544,32 +602,52 @@ export async function processImportJob(
   uploadId: string,
   attempt: ImportExecutionAttempt = SINGLE_IMPORT_ATTEMPT,
 ): Promise<void> {
-  await updateImportJobProgress(pool, jobId, {
-    status: 'processing',
-    stage: 'reading',
-    message: '업로드 조각을 검증하고 조립하는 중입니다.',
-    errorMessage: null,
-  });
+  if (!(await claimImportExecution(pool, jobId, attempt.executionId))) return;
+  if (!attempt.executionId) {
+    await updateImportJobProgress(pool, jobId, {
+      status: 'processing',
+      stage: 'reading',
+      message: '업로드 조각을 검증하고 조립하는 중입니다.',
+      errorMessage: null,
+    });
+  }
 
   const heartbeat = setInterval(() => {
     void pool
-      .query("update import_jobs set updated_at = now() where id = $1 and status = 'processing'", [jobId])
+      .query(
+        `update import_jobs set updated_at = now()
+          where id = $1 and status = 'processing'${attempt.executionId ? ' and active_queue_job_id = $2 and cancel_requested_at is null' : ''}`,
+        attempt.executionId ? [jobId, attempt.executionId] : [jobId],
+      )
       .catch(() => undefined);
   }, IMPORT_JOB_HEARTBEAT_MS);
   heartbeat.unref();
 
+  const uploadedObjectKeys: string[] = [];
+  let importCommitted = false;
   try {
+    await assertImportExecutionActive(pool, jobId, attempt.executionId);
     const { session, buffer: uploadBuffer } = await readUploadBuffer(pool, uploadId);
     let buffer: Buffer | undefined = uploadBuffer;
     const bytesRead = buffer.length;
     const totalBytes = Number(session.size_bytes);
-    await updateImportJobProgress(pool, jobId, {
-      status: 'processing',
-      stage: 'decoding',
-      bytesRead,
-      totalBytes,
-      message: '인코딩을 해석하고 본문을 정리하는 중입니다.',
-    });
+    const sourceContentHash = integrityHash(buffer);
+    if (session.source_content_hash && sourceContentHash !== session.source_content_hash) {
+      throw new Error('Uploaded source bytes do not match sourceContentHash');
+    }
+    await updateImportJobProgress(
+      pool,
+      jobId,
+      {
+        status: 'processing',
+        stage: 'decoding',
+        bytesRead,
+        totalBytes,
+        message: '인코딩을 해석하고 본문을 정리하는 중입니다.',
+      },
+      attempt.executionId,
+    );
+    await assertImportExecutionActive(pool, jobId, attempt.executionId);
     let arrayBuffer: ArrayBuffer | undefined = arrayBufferFromBuffer(buffer);
     let parsed: ParsedNovelImport;
     if (/\.epub$/i.test(session.file_name)) {
@@ -585,11 +663,11 @@ export async function processImportJob(
         clientBookId: session.client_book_id ?? undefined,
       });
     } else if (/\.(zip|cbz|rar|cbr|7z|cb7)$/i.test(session.file_name)) {
-      const sourceBytes = new Uint8Array(arrayBuffer);
-      parsed = materializeImageArchiveImport({
+      const document = await openImageArchiveStream(new Blob([arrayBuffer]), { fileName: session.file_name });
+      parsed = materializeStreamingImageArchiveImport({
         fileName: session.file_name,
-        sourceBytes,
-        document: await parseImageArchive(new Blob([sourceBytes]), { fileName: session.file_name }),
+        sourceContentHash,
+        document,
         clientBookId: session.client_book_id ?? undefined,
       });
     } else {
@@ -601,36 +679,56 @@ export async function processImportJob(
       );
     }
     arrayBuffer = undefined;
-    await updateImportJobProgress(pool, jobId, {
-      status: 'processing',
-      stage: 'writing',
-      bytesRead,
-      totalBytes,
-      chaptersDetected: parsed.chapters.length,
-      paragraphsWritten: 0,
-      message: '화와 문단을 저장하는 중입니다.',
-    });
+    await updateImportJobProgress(
+      pool,
+      jobId,
+      {
+        status: 'processing',
+        stage: 'writing',
+        bytesRead,
+        totalBytes,
+        chaptersDetected: parsed.chapters.length,
+        paragraphsWritten: 0,
+        message: '화와 문단을 저장하는 중입니다.',
+      },
+      attempt.executionId,
+    );
     const rawHash = parsed.novel.rawTextHash;
     const objectId = persistentId128('object', [rawHash]);
-    const storageKey = `${session.user_id}/${objectId}/${session.file_name}`;
+    const storageKey = `${session.user_id}/sources/${objectId}/${jobId}/${attempt.executionId ?? randomUUID()}/attempt-${attempt.attemptNumber}/${session.file_name}`;
     const s3Client = createS3Client(config);
 
+    await assertImportExecutionActive(pool, jobId, attempt.executionId);
+    await reserveObjectDeletions(pool, [storageKey], 'import_source_staging');
     await putRawBookObject(s3Client, config, storageKey, buffer, session.content_type);
-    for (const asset of parsed.embeddedAssets ?? []) {
-      await putRawBookObject(
-        s3Client,
-        config,
-        `${session.user_id}/${parsed.novel.id}/${asset.kind === 'document_page' ? 'pages' : 'epub'}/${asset.id}/${asset.fileName}`,
-        Buffer.from(asset.bytes),
-        asset.contentType,
-      );
-    }
+    uploadedObjectKeys.push(storageKey);
     buffer = undefined;
+    const storedAssets: Array<Omit<ParsedNovelImportAsset, 'bytes'> & { byteLength: number; storageKey: string }> = [];
+    const embeddedAssets = async function* (): AsyncGenerator<ParsedNovelImportAsset> {
+      for (const asset of parsed.embeddedAssets ?? []) yield asset;
+      if (parsed.consumeEmbeddedAssets) yield* parsed.consumeEmbeddedAssets();
+    };
+    for await (const asset of embeddedAssets()) {
+      await assertImportExecutionActive(pool, jobId, attempt.executionId);
+      const assetStorageKey = `${session.user_id}/${parsed.novel.id}/staged/${jobId}/${attempt.executionId ?? 'legacy'}/attempt-${attempt.attemptNumber}/${asset.id}/${asset.fileName}`;
+      await reserveObjectDeletions(pool, [assetStorageKey], 'import_asset_staging');
+      await putRawBookObject(s3Client, config, assetStorageKey, Buffer.from(asset.bytes), asset.contentType);
+      uploadedObjectKeys.push(assetStorageKey);
+      const { bytes: _releasedBytes, ...metadata } = asset;
+      storedAssets.push({ ...metadata, byteLength: asset.bytes.byteLength, storageKey: assetStorageKey });
+    }
+    arrayBuffer = undefined;
+    await assertImportExecutionActive(pool, jobId, attempt.executionId);
 
     const client = await pool.connect();
-    let importCommitted = false;
     try {
       await client.query('begin');
+      await client.query('select pg_advisory_xact_lock(hashtextextended($1, 0))', [rawHash]);
+      const previousSource = await client.query<{ storage_key: string }>(
+        'select storage_key from book_objects where raw_text_hash = $1 for update',
+        [rawHash],
+      );
+      const obsoleteSourceKeys = previousSource.rows.map((row) => row.storage_key).filter((key) => key !== storageKey);
       await client.query(
         `
           insert into book_objects (id, raw_text_hash, storage_key, file_name, content_type, size_bytes)
@@ -642,6 +740,10 @@ export async function processImportJob(
                 size_bytes = excluded.size_bytes
         `,
         [objectId, rawHash, storageKey, session.file_name, session.content_type, Number(session.size_bytes)],
+      );
+      const previousBookObject = await client.query<{ object_id?: string | null }>(
+        'select object_id from library_books where id = $1 and user_id = $2',
+        [parsed.novel.id, session.user_id],
       );
       const replacement = await prepareBookReplacement(client, {
         userId: session.user_id,
@@ -695,6 +797,16 @@ export async function processImportJob(
           parsed.novel.updatedAt,
         ],
       );
+      if (previousBookObject.rows[0]?.object_id && previousBookObject.rows[0].object_id !== objectId) {
+        const orphanedSource = await client.query<{ storage_key: string }>(
+          `delete from book_objects object
+            where object.id = $1
+              and not exists (select 1 from library_books book where book.object_id = object.id)
+            returning object.storage_key`,
+          [previousBookObject.rows[0].object_id],
+        );
+        obsoleteSourceKeys.push(...orphanedSource.rows.map((row) => row.storage_key));
+      }
       const activeCover = await client.query<{ provenance: string | null }>(
         `select asset.provenance
            from library_books book
@@ -703,35 +815,62 @@ export async function processImportJob(
         [parsed.novel.id, session.user_id],
       );
       const preserveUserCover = activeCover.rows[0]?.provenance === 'user_supplied';
-      await client.query(
-        `update book_assets set status = 'superseded'
+      const removedAssets = await client.query<{ storage_key: string }>(
+        `delete from book_assets
           where book_id = $1 and user_id = $2 and kind in ('epub_resource', 'document_page') and status = 'active'
-            and not (id = any($3::text[]))`,
+            and not (id = any($3::text[]))
+          returning storage_key`,
         [
           parsed.novel.id,
           session.user_id,
-          (parsed.embeddedAssets ?? [])
+          storedAssets
             .filter((asset) => asset.kind === 'epub_resource' || asset.kind === 'document_page')
             .map((asset) => asset.id),
         ],
       );
+      const replacedAssetIds = storedAssets.map((asset) => asset.id);
+      const replacedAssets = replacedAssetIds.length
+        ? await client.query<{ id: string; storage_key: string }>(
+            'select id, storage_key from book_assets where id = any($1::text[])',
+            [replacedAssetIds],
+          )
+        : { rows: [] as Array<{ id: string; storage_key: string }> };
+      const nextStorageById = new Map(storedAssets.map((asset) => [asset.id, asset.storageKey]));
+      const obsoleteAssetKeys = [
+        ...obsoleteSourceKeys,
+        ...removedAssets.rows.map((row) => row.storage_key),
+        ...replacedAssets.rows
+          .filter((row) => nextStorageById.get(row.id) !== row.storage_key)
+          .map((row) => row.storage_key),
+      ];
       if (!preserveUserCover) {
-        await client.query(
-          `update book_assets set status = 'superseded'
-            where book_id = $1 and user_id = $2 and kind = 'cover' and status = 'active'`,
+        const removedCovers = await client.query<{ storage_key: string }>(
+          `delete from book_assets
+            where book_id = $1 and user_id = $2 and kind = 'cover' and status = 'active'
+            returning storage_key`,
           [parsed.novel.id, session.user_id],
         );
+        obsoleteAssetKeys.push(...removedCovers.rows.map((row) => row.storage_key));
       }
-      for (const asset of parsed.embeddedAssets ?? []) {
-        const assetStorageKey = `${session.user_id}/${parsed.novel.id}/${asset.kind === 'document_page' ? 'pages' : 'epub'}/${asset.id}/${asset.fileName}`;
-        const assetStatus = asset.kind === 'cover' && preserveUserCover ? 'superseded' : 'active';
+      const staleAssets = await client.query<{ storage_key: string }>(
+        `delete from book_assets where book_id = $1 and user_id = $2 and status = 'superseded'
+          returning storage_key`,
+        [parsed.novel.id, session.user_id],
+      );
+      obsoleteAssetKeys.push(...staleAssets.rows.map((row) => row.storage_key));
+      const assetsToActivate = storedAssets.filter((asset) => !(asset.kind === 'cover' && preserveUserCover));
+      obsoleteAssetKeys.push(
+        ...storedAssets.filter((asset) => asset.kind === 'cover' && preserveUserCover).map((asset) => asset.storageKey),
+      );
+      for (const asset of assetsToActivate) {
         await client.query(
           `insert into book_assets (
              id, user_id, book_id, content_revision_id, kind, provenance, status, storage_key, file_name,
              content_type, byte_length, content_hash, page_index, created_at, activated_at
            ) values ($1, $2, $3, null, $4, $5, $6, $7, $8, $9, $10, $11, $12, now(), now())
            on conflict (id) do update set
-             status = excluded.status, storage_key = excluded.storage_key, content_type = excluded.content_type,
+             status = excluded.status, storage_key = excluded.storage_key, file_name = excluded.file_name,
+             provenance = excluded.provenance, content_type = excluded.content_type,
              byte_length = excluded.byte_length, content_hash = excluded.content_hash,
              page_index = excluded.page_index, activated_at = now()`,
           [
@@ -740,17 +879,17 @@ export async function processImportJob(
             parsed.novel.id,
             asset.kind,
             asset.provenance,
-            assetStatus,
-            assetStorageKey,
+            'active',
+            asset.storageKey,
             asset.fileName,
             asset.contentType,
-            asset.bytes.byteLength,
+            asset.byteLength,
             asset.contentHash,
             asset.pageIndex ?? null,
           ],
         );
       }
-      const cover = parsed.embeddedAssets?.find((asset) => asset.kind === 'cover');
+      const cover = assetsToActivate.find((asset) => asset.kind === 'cover');
       if (cover && !preserveUserCover) {
         await client.query(
           `update library_books set cover_asset_id = $1, cover_fit = 'contain', cover_position_x = 50,
@@ -765,13 +904,19 @@ export async function processImportJob(
       let paragraphsWritten = 0;
       for await (const pageBatch of iterateImportParagraphPageBatchesAsync(parsed, SERVER_IMPORT_PAGE_BATCH_SIZE)) {
         paragraphsWritten += await insertParagraphPageBatch(client, pageBatch);
-        await updateImportJobProgress(pool, jobId, {
-          status: 'processing',
-          stage: 'writing',
-          chaptersDetected: parsed.chapters.length,
-          paragraphsWritten,
-          message: `화와 문단을 저장하는 중입니다. ${paragraphsWritten.toLocaleString()} / ${parsed.novel.totalParagraphs.toLocaleString()} 문단`,
-        });
+        const progressUpdated = await updateImportJobProgress(
+          pool,
+          jobId,
+          {
+            status: 'processing',
+            stage: 'writing',
+            chaptersDetected: parsed.chapters.length,
+            paragraphsWritten,
+            message: `화와 문단을 저장하는 중입니다. ${paragraphsWritten.toLocaleString()} / ${parsed.novel.totalParagraphs.toLocaleString()} 문단`,
+          },
+          attempt.executionId,
+        );
+        if (attempt.executionId && !progressUpdated) throw new ImportExecutionStoppedError('cancelled');
       }
       if (replacement) await finalizeBookReplacement(client, replacement);
       const importPayload = { bookId: parsed.novel.id };
@@ -800,22 +945,40 @@ export async function processImportJob(
           parsed.novel.updatedAt,
         ],
       );
-      await client.query('update upload_sessions set status = $1, updated_at = now() where id = $2', [
-        'imported',
-        uploadId,
-      ]);
+      const activatedUpload = await client.query(
+        `update upload_sessions set status = 'imported', updated_at = now()
+          where id = $1 and status = 'queued'
+            and exists (
+              select 1 from import_jobs
+               where id = $2 and status = 'processing' and cancel_requested_at is null
+                 ${attempt.executionId ? 'and active_queue_job_id = $3' : ''}
+            )
+          returning id`,
+        attempt.executionId ? [uploadId, jobId, attempt.executionId] : [uploadId, jobId],
+      );
+      if (activatedUpload.rowCount === 0) {
+        throw new ImportExecutionStoppedError('cancelled');
+      }
       await client.query('delete from upload_chunks where upload_id = $1', [uploadId]);
-      await updateImportJobProgress(client, jobId, {
-        status: 'done',
-        stage: 'ready',
-        bytesRead,
-        totalBytes,
-        chaptersDetected: parsed.chapters.length,
-        paragraphsWritten: parsed.novel.totalParagraphs,
-        message: '서버 가져오기가 완료되었습니다.',
-        bookId: parsed.novel.id,
-        errorMessage: null,
-      });
+      const finalized = await updateImportJobProgress(
+        client,
+        jobId,
+        {
+          status: 'done',
+          stage: 'ready',
+          bytesRead,
+          totalBytes,
+          chaptersDetected: parsed.chapters.length,
+          paragraphsWritten: parsed.novel.totalParagraphs,
+          message: '서버 가져오기가 완료되었습니다.',
+          bookId: parsed.novel.id,
+          errorMessage: null,
+        },
+        attempt.executionId,
+      );
+      if (attempt.executionId && !finalized) throw new ImportExecutionStoppedError('cancelled');
+      await releaseObjectDeletionReservations(client, uploadedObjectKeys);
+      await enqueueObjectDeletions(client, obsoleteAssetKeys, 'replaced_import_object');
       await client.query('commit');
       importCommitted = true;
     } catch (error) {
@@ -826,25 +989,53 @@ export async function processImportJob(
     }
     if (importCommitted) await removeUploadDirectory(config, uploadId);
   } catch (error) {
+    if (!importCommitted && uploadedObjectKeys.length) {
+      await enqueueObjectDeletions(pool, uploadedObjectKeys, 'abandoned_import_object').catch(() => undefined);
+    }
+    let stopped = error instanceof ImportExecutionStoppedError ? error : undefined;
+    if (!stopped && attempt.executionId) {
+      try {
+        await assertImportExecutionActive(pool, jobId, attempt.executionId);
+      } catch (executionError) {
+        if (executionError instanceof ImportExecutionStoppedError) stopped = executionError;
+      }
+    }
+    if (stopped) {
+      if (stopped.reason === 'cancelled') {
+        await pool.query('delete from upload_chunks where upload_id = $1', [uploadId]).catch(() => undefined);
+        await removeUploadDirectory(config, uploadId);
+      }
+      return;
+    }
     const message = error instanceof Error ? error.message : String(error);
     if (attempt.finalAttempt) {
       await pool.query(
-        "update upload_sessions set status = 'failed', updated_at = now() where id = $1 and status <> 'imported'",
+        "update upload_sessions set status = 'failed', updated_at = now() where id = $1 and status not in ('imported', 'cancelled')",
         [uploadId],
       );
-      await updateImportJobProgress(pool, jobId, {
-        status: 'failed',
-        stage: 'failed',
-        message: '서버 가져오기에 실패했습니다.',
-        errorMessage: message,
-      });
+      await updateImportJobProgress(
+        pool,
+        jobId,
+        {
+          status: 'failed',
+          stage: 'failed',
+          message: '서버 가져오기에 실패했습니다.',
+          errorMessage: message,
+        },
+        attempt.executionId,
+      );
     } else {
-      await updateImportJobProgress(pool, jobId, {
-        status: 'queued',
-        stage: 'queued',
-        message: `서버 가져오기를 재시도합니다. (${attempt.attemptNumber}/${attempt.maxAttempts} 실패)`,
-        errorMessage: message,
-      });
+      await updateImportJobProgress(
+        pool,
+        jobId,
+        {
+          status: 'queued',
+          stage: 'queued',
+          message: `서버 가져오기를 재시도합니다. (${attempt.attemptNumber}/${attempt.maxAttempts} 실패)`,
+          errorMessage: message,
+        },
+        attempt.executionId,
+      );
     }
     throw error;
   } finally {

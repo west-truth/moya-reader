@@ -25,6 +25,8 @@ export interface RemoteUploadStatus {
   importJobId?: string;
   importJobStatus?: string;
   importJobStage?: string;
+  /** SHA-256 of the exact source bytes, used to prevent unsafe upload resume. */
+  sourceContentHash?: string;
 }
 
 export class RemoteApiError extends Error {
@@ -33,5 +35,12 @@ export class RemoteApiError extends Error {
     public readonly status: number,
   ) {
     super(message);
+  }
+}
+
+export class RemoteApiRequestTimeoutError extends Error {
+  constructor(public readonly timeoutMs: number) {
+    super(`The server did not respond within ${timeoutMs} ms.`);
+    this.name = 'RemoteApiRequestTimeoutError';
   }
 }

@@ -6,6 +6,7 @@ import { integrityHash, persistentId128 } from '@noveldesk/text-core/hash';
 import { paragraphPageId, parsedChapterId, parsedParagraphId } from '@noveldesk/text-core/identity/parser';
 import type { ParagraphPage, ParsedNovel, ParsedNovelImport } from '@noveldesk/contracts';
 import type { ServerConfig } from '../config.js';
+import { BlobWriter, Uint8ArrayReader, ZipWriter } from '@zip.js/zip.js';
 
 vi.mock('./object-storage.js', () => ({
   createS3Client: vi.fn(() => ({})),
@@ -186,6 +187,18 @@ function testConfig(): ServerConfig {
       forcePathStyle: true,
     },
   };
+}
+
+async function singlePageComicArchive(): Promise<Buffer> {
+  const png = Uint8Array.from(
+    Buffer.from(
+      'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Wl2ZQAAAABJRU5ErkJggg==',
+      'base64',
+    ),
+  );
+  const writer = new ZipWriter(new BlobWriter('application/zip'));
+  await writer.add('001.png', new Uint8ArrayReader(png));
+  return Buffer.from(await (await writer.close()).arrayBuffer());
 }
 
 describe('server import service', () => {
@@ -369,6 +382,7 @@ describe('server import service', () => {
     let pageInsertParams: unknown[] | undefined;
     let searchInsertParams: unknown[] | undefined;
     let syncEventParams: unknown[] | undefined;
+    let objectDeleteParams: unknown[] | undefined;
     const client = {
       query: vi.fn(async (sql: string, params?: unknown[]) => {
         if (sql === 'begin' || sql === 'commit' || sql === 'rollback') return { rows: [] };
@@ -381,6 +395,12 @@ describe('server import service', () => {
         if (sql.includes('insert into paragraph_pages')) pageInsertParams = params;
         if (sql.includes('insert into paragraph_search')) searchInsertParams = params;
         if (sql.includes('insert into sync_events')) syncEventParams = params;
+        if (sql.includes('select storage_key from book_objects')) {
+          return { rows: [{ storage_key: 'user_test/sources/old/server-single.txt' }], rowCount: 1 };
+        }
+        if (sql.includes('insert into object_delete_outbox')) objectDeleteParams = params;
+        if (sql.includes("update upload_sessions set status = 'imported'"))
+          return { rows: [{ id: 'upload_single' }], rowCount: 1 };
         return { rows: [], rowCount: 0 };
       }),
       release: vi.fn(),
@@ -442,6 +462,13 @@ describe('server import service', () => {
     expect(libraryBookSql).not.toContain('favorite = excluded.favorite');
     expect(objectParams?.[0]).toBe(persistentId128('object', [String(objectParams?.[1])]));
     expect(objectParams?.[1]).toBe(integrityHash(Buffer.from(text)));
+    expect(client.query).toHaveBeenCalledWith('select pg_advisory_xact_lock(hashtextextended($1, 0))', [
+      integrityHash(Buffer.from(text)),
+    ]);
+    expect(objectParams?.[2]).toMatch(
+      /^user_test\/sources\/object_[^/]+\/job_single\/[^/]+\/attempt-1\/server-single\.txt$/,
+    );
+    expect(objectDeleteParams?.[0]).toContain('user_test/sources/old/server-single.txt');
     expect(libraryBookParams?.[10]).toMatch(/^sha256:[0-9a-f]{64}$/);
     expect(chapterInsertParams).toBeDefined();
     expect(chapterInsertParams).toHaveLength(11);
@@ -500,6 +527,94 @@ describe('server import service', () => {
     expect(queries.some(({ sql }) => sql.includes("update upload_sessions set status = 'failed'"))).toBe(false);
   });
 
+  it('keeps a user cover while scheduling the incoming archive cover for durable cleanup', async () => {
+    const tempDir = await mkdtemp(path.join(os.tmpdir(), 'moya-import-cover-'));
+    const bytes = await singlePageComicArchive();
+    const uploadDir = path.join(tempDir, 'uploads', 'upload_cover');
+    const chunkPath = path.join(uploadDir, '00000000.part');
+    await mkdir(uploadDir, { recursive: true });
+    await writeFile(chunkPath, bytes);
+    const lifecycleQueries: Array<{ sql: string; params?: unknown[] }> = [];
+    const insertedAssetKinds: string[] = [];
+    const client = {
+      query: vi.fn(async (sql: string, params?: unknown[]) => {
+        lifecycleQueries.push({ sql, params });
+        if (sql === 'begin' || sql === 'commit' || sql === 'rollback') return { rows: [], rowCount: 1 };
+        if (sql.includes('select asset.provenance')) return { rows: [{ provenance: 'user_supplied' }], rowCount: 1 };
+        if (sql.includes('insert into book_assets')) insertedAssetKinds.push(String(params?.[3]));
+        if (sql.includes("update upload_sessions set status = 'imported'")) {
+          return { rows: [{ id: 'upload_cover' }], rowCount: 1 };
+        }
+        return { rows: [], rowCount: 1 };
+      }),
+      release: vi.fn(),
+    };
+    const pool = {
+      query: vi.fn(async (sql: string) => {
+        if (sql.includes('select * from upload_sessions')) {
+          return {
+            rows: [
+              {
+                id: 'upload_cover',
+                user_id: 'user_test',
+                file_name: 'comic.cbz',
+                size_bytes: String(bytes.length),
+                content_type: 'application/zip',
+                encoding: 'auto',
+                total_chunks: 1,
+              },
+            ],
+          };
+        }
+        if (sql.includes('from upload_chunks')) {
+          return { rows: [{ chunk_index: 0, size_bytes: bytes.length, storage_path: chunkPath }] };
+        }
+        return { rows: [], rowCount: 1 };
+      }),
+      connect: vi.fn(async () => client),
+    };
+    try {
+      await processImportJob(
+        pool as unknown as Parameters<typeof processImportJob>[0],
+        { ...testConfig(), dataDir: tempDir },
+        'job_cover',
+        'upload_cover',
+      );
+    } finally {
+      await rm(tempDir, { recursive: true, force: true });
+    }
+
+    expect(insertedAssetKinds).toEqual(['document_page']);
+    const releaseIndex = lifecycleQueries.findIndex(({ sql }) => sql.startsWith('delete from object_delete_outbox'));
+    const cleanupIndex = lifecycleQueries.findIndex(({ sql }) => sql.includes('insert into object_delete_outbox'));
+    expect(releaseIndex).toBeGreaterThanOrEqual(0);
+    expect(cleanupIndex).toBeGreaterThan(releaseIndex);
+    expect(lifecycleQueries[cleanupIndex]?.params?.[0]).toEqual([
+      expect.stringMatching(/\/staged\/job_cover\/legacy\/attempt-1\/[^/]+\/001\.png$/),
+    ]);
+  });
+
+  it('ignores a retained BullMQ delivery after its execution fence was superseded', async () => {
+    const pool = {
+      query: vi.fn(async (sql: string) => {
+        expect(sql).toContain("status = 'queued'");
+        expect(sql).toContain('active_queue_job_id = $2');
+        return { rows: [], rowCount: 0 };
+      }),
+    } as unknown as Parameters<typeof processImportJob>[0];
+
+    await expect(
+      processImportJob(pool, testConfig(), 'job_old', 'upload_old', {
+        attemptNumber: 1,
+        maxAttempts: 3,
+        finalAttempt: false,
+        executionId: 'import_attempt_old',
+      }),
+    ).resolves.toBeUndefined();
+
+    expect(pool.query).toHaveBeenCalledTimes(1);
+  });
+
   it('marks the upload session failed only after the final BullMQ attempt', async () => {
     const queries: Array<{ sql: string; params?: unknown[] }> = [];
     const pool = {
@@ -519,7 +634,7 @@ describe('server import service', () => {
     ).rejects.toThrow('Upload session not found');
 
     expect(queries).toContainEqual({
-      sql: "update upload_sessions set status = 'failed', updated_at = now() where id = $1 and status <> 'imported'",
+      sql: "update upload_sessions set status = 'failed', updated_at = now() where id = $1 and status not in ('imported', 'cancelled')",
       params: ['upload_missing'],
     });
     const failedProgress = queries.find(

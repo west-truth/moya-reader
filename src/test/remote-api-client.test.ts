@@ -5,6 +5,7 @@ import {
   mapServerTTSCacheItem,
   mapServerVoiceProfile,
   RemoteApiClient,
+  RemoteApiRequestTimeoutError,
 } from '../services/remote/remote-api-client';
 
 function jsonResponse(body: unknown): Response {
@@ -103,6 +104,40 @@ describe('RemoteApiClient auth headers', () => {
         totalChunks: 1,
       }),
     );
+  });
+
+  it('retries capability discovery after a transient failure instead of caching the rejection', async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(new Response('temporarily unavailable', { status: 503 }))
+      .mockResolvedValueOnce(
+        jsonResponse({
+          contractVersion: 1,
+          idContract: 'v1-legacy',
+          hashContract: 'v1-legacy',
+        }),
+      );
+    vi.stubGlobal('fetch', fetchMock);
+    const client = new RemoteApiClient('/api');
+
+    await expect(client.getSyncCapabilities()).rejects.toMatchObject({ status: 503 });
+    await expect(client.getSyncCapabilities()).resolves.toMatchObject({ contractVersion: 1 });
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it('aborts and classifies a request that never returns response headers', async () => {
+    const fetchMock = vi.fn(
+      (_input: RequestInfo | URL, init?: RequestInit) =>
+        new Promise<Response>((_resolve, reject) => {
+          init?.signal?.addEventListener('abort', () => reject(new DOMException('aborted', 'AbortError')), {
+            once: true,
+          });
+        }),
+    );
+    vi.stubGlobal('fetch', fetchMock);
+    const client = new RemoteApiClient('/api', { requestTimeoutMs: 5 });
+
+    await expect(client.listBooks()).rejects.toBeInstanceOf(RemoteApiRequestTimeoutError);
   });
 
   it('maps server sync revision metadata when present', () => {

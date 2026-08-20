@@ -59,10 +59,20 @@ docker compose ps
 The web entry is `http://127.0.0.1:8080`. MinIO Console remains loopback-only at
 `http://127.0.0.1:9001`. API, PostgreSQL and Redis have no host ports.
 
+Keep `COMPOSE_PROJECT_NAME` stable for the lifetime of an installation. New installations use `moya-reader`. An
+existing installation created under another directory/project name should record the value shown by
+`docker compose ls` in `.env` before moving the checkout or changing `-p`; otherwise Compose attaches new empty named
+volumes while the previous volumes remain under the old project prefix.
+
 Leave `DATABASE_URL` empty to derive it from `POSTGRES_USER`, `POSTGRES_PASSWORD`, and `POSTGRES_DB`. Leave
 `S3_ACCESS_KEY_ID`/`S3_SECRET_ACCESS_KEY` empty to derive them from `MINIO_ROOT_USER`/`MINIO_ROOT_PASSWORD`. This keeps
 the application and its bundled storage services on one credential source. Set the direct URL or S3 values only when
 using external infrastructure.
+
+`POSTGRES_*` initialization values apply only when the PostgreSQL data directory is empty. After a durable volume has
+been initialized, rotate the database role password inside PostgreSQL first, then change `.env` to the same value and
+recreate API/worker. Editing only `.env` leaves the old database role intact and makes API authentication fail. Never
+use `docker compose down -v` as a credential-rotation shortcut.
 
 All long-running services use `restart: unless-stopped`, bounded json-file logs and explicit memory limits. API and
 worker receive a graceful stop window. Redis uses AOF with `appendfsync everysec`. Import jobs update a database
@@ -75,17 +85,24 @@ cycle while preventing uploads from looking ready when no process can consume th
 
 ## Optional Korean local TTS
 
-Start the base stack with the MeloTTS override:
+Start the core stack first. Build the optional model separately, then apply the override only after that build succeeds:
 
 ```bash
 docker compose -f compose.yaml -f compose.local-tts.yaml config --quiet
-docker compose -f compose.yaml -f compose.local-tts.yaml up -d --build
+docker compose up -d --build
+docker compose -f compose.yaml -f compose.local-tts.yaml build tts-model
+docker compose -f compose.yaml -f compose.local-tts.yaml up -d --no-build
 docker compose -f compose.yaml -f compose.local-tts.yaml logs -f tts-model
 ```
 
+If the model-only build fails during a source clone, Python build or dependency installation, the Web/API/worker
+started by the first command remain available. Fix and retry that build before applying the override.
+
 The override builds the official MeloTTS source at the pinned `MELOTTS_COMMIT`, starts the Korean model on CPU and
 sets the hosted default TTS provider to `local-endpoint`. The first start downloads the Korean model into
-`local-tts-models`, so readiness can take several minutes. The service exposes no host port; API and worker call
+`local-tts-models`, so its own readiness can take several minutes. API and worker deliberately do not wait for this
+optional service: Library, Reader and document import remain available while TTS reports an unavailable endpoint and
+can be retried after `tts-model` becomes healthy. The service exposes no host port; API and worker call
 `http://tts-model:9010/synthesize`, while `/voices` returns the model speaker ids.
 
 Important settings:
@@ -113,14 +130,19 @@ Set these values in `.env`:
 
 ```dotenv
 READER_AUTH_TOKEN=<long-random-token>
+POSTGRES_PASSWORD=<long-random-database-password>
+MINIO_ROOT_USER=<non-default-storage-user>
+MINIO_ROOT_PASSWORD=<long-random-storage-password>
 ```
 
 Then run `docker compose -f compose.yaml -f compose.public.yaml config --quiet` followed by
 `docker compose -f compose.yaml -f compose.public.yaml up -d --build`.
 
 The public override sets `SERVER_EXPOSURE=external` and uses required-variable interpolation, so Compose fails before
-startup when the token is absent. A web UI and `/api` served from the same host are accepted as same-origin without a
-CORS entry. Set `CORS_ALLOWED_ORIGINS` only for an actual cross-origin browser client. Keep
+startup when the bearer token, PostgreSQL password or MinIO credentials are absent. The API derives its internal
+database and object-storage credentials from those same required values unless explicit external infrastructure values
+are supplied. A web UI and `/api` served from the same host are accepted as same-origin without a CORS entry. Set
+`CORS_ALLOWED_ORIGINS` only for an actual cross-origin browser client. Keep
 `WEB_BIND_ADDRESS=127.0.0.1` when the TLS reverse proxy runs on the same host. Save the same bearer token in the Moya
 sync/server connection panel; saving it retries a failed first bootstrap automatically.
 
@@ -131,10 +153,12 @@ then reload nginx. Moya browser uploads use 512 KiB chunks so they remain below 
 For WireGuard-only access, bind nginx to the server's WireGuard address or allow 443 only on `wg0`; do not publish
 Compose port 8080 or the storage/database ports to the VPN or public interfaces.
 
-To combine public deployment and local TTS, apply both overrides in order:
+To combine public deployment and local TTS, keep the same core-first boundary:
 
 ```bash
-docker compose -f compose.yaml -f compose.public.yaml -f compose.local-tts.yaml up -d --build
+docker compose -f compose.yaml -f compose.public.yaml up -d --build
+docker compose -f compose.yaml -f compose.public.yaml -f compose.local-tts.yaml build tts-model
+docker compose -f compose.yaml -f compose.public.yaml -f compose.local-tts.yaml up -d --no-build
 ```
 
 ## Vertex credentials

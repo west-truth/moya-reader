@@ -6,10 +6,12 @@ import {
   RemoteApiError,
   RemoteUploadStatus,
 } from '../remote/remote-api-client';
+import { hashBlobInChunks } from './chunked-file-reader';
 import { ImportController, ImportFileInput, ImportProgress, ImportResult, ImportService } from './import-service';
 
 export const DEFAULT_SERVER_UPLOAD_CHUNK_BYTES = 512 * 1024;
 export const DEFAULT_SERVER_IMPORT_ACTIVITY_TIMEOUT_MS = 90_000;
+export const DEFAULT_SERVER_IMPORT_RESPONSE_TIMEOUT_MS = 20_000;
 const DEFAULT_CHUNK_RETRIES = 3;
 const IMPORT_JOB_POLL_INTERVAL_MS = 700;
 const UPLOAD_SESSION_PREFIX = 'noveldesk.remoteUploadSession.';
@@ -24,6 +26,20 @@ export class ServerImportActivityTimeoutError extends Error {
   }
 }
 
+export class ServerImportResponseTimeoutError extends Error {
+  constructor(public readonly timeoutMs: number) {
+    super(`서버 가져오기 상태 요청이 ${timeoutMs}ms 안에 응답하지 않았습니다. 네트워크와 서버 상태를 확인해 주세요.`);
+    this.name = 'ServerImportResponseTimeoutError';
+  }
+}
+
+export class ServerImportCancelledError extends Error {
+  constructor() {
+    super('서버 가져오기 작업이 취소되었습니다.');
+    this.name = 'ServerImportCancelledError';
+  }
+}
+
 export interface StoredUploadSession {
   uploadId: string;
   fileName: string;
@@ -34,6 +50,7 @@ export interface StoredUploadSession {
   clientBookId?: string;
   chunkBytes: number;
   totalChunks: number;
+  sourceContentHash?: string;
   createdAt: string;
   updatedAt: string;
 }
@@ -67,6 +84,7 @@ function numberValue(value: unknown, fallback = 0): number {
 
 function importStatus(job: RemoteImportJob): ImportProgress['status'] {
   if (job.status === 'failed') return 'failed';
+  if (job.status === 'cancelled' || job.stage === 'cancelled') return 'cancelling';
   if (job.status === 'done') return 'ready';
   if (job.stage && importStages.includes(job.stage)) return job.stage;
   return job.status === 'queued' ? 'queued' : 'writing';
@@ -94,12 +112,15 @@ function importJobActivityFingerprint(job: RemoteImportJob): string {
     job.paragraphs_written,
     job.book_id,
     job.error_message,
-    job.updated_at,
   ]);
 }
 
 function wait(ms: number): Promise<void> {
   return new Promise((resolve) => globalThis.setTimeout(resolve, ms));
+}
+
+function isAbortError(error: unknown): error is Error {
+  return error instanceof Error && error.name === 'AbortError';
 }
 
 function receivedChunks(status: RemoteUploadStatus | undefined): Set<number> {
@@ -116,7 +137,12 @@ function fileLastModified(file: File): number {
   return typeof file.lastModified === 'number' ? file.lastModified : 0;
 }
 
-function uploadSessionKey(input: ImportFileInput, chunkBytes: number, totalChunks: number): string {
+function uploadSessionKey(
+  input: ImportFileInput,
+  chunkBytes: number,
+  totalChunks: number,
+  sourceContentHash: string,
+): string {
   const parts = [
     input.file.name,
     String(input.file.size),
@@ -125,6 +151,7 @@ function uploadSessionKey(input: ImportFileInput, chunkBytes: number, totalChunk
     input.chapterSplitMode ?? 'auto',
     String(chunkBytes),
     String(totalChunks),
+    sourceContentHash,
   ];
   if (input.clientBookId) parts.push(input.clientBookId);
   return parts.map((part) => encodeURIComponent(part)).join('|');
@@ -198,6 +225,7 @@ export class ServerUploadImportService implements ImportService {
     private readonly chunkRetries = DEFAULT_CHUNK_RETRIES,
     private readonly uploadSessionStore: RemoteUploadSessionStore = new BrowserRemoteUploadSessionStore(),
     private readonly importActivityTimeoutMs = DEFAULT_SERVER_IMPORT_ACTIVITY_TIMEOUT_MS,
+    private readonly importResponseTimeoutMs = DEFAULT_SERVER_IMPORT_RESPONSE_TIMEOUT_MS,
   ) {}
 
   importFile(input: ImportFileInput, onProgress: (progress: ImportProgress) => void): ImportController {
@@ -239,7 +267,6 @@ export class ServerUploadImportService implements ImportService {
   ): Promise<ImportResult> {
     let uploadSession:
       { uploadId: string; sessionKey: string; status?: RemoteUploadStatus; importJobId?: string } | undefined;
-    let importJobStarted = false;
     const totalChunks = Math.max(1, Math.ceil(input.file.size / this.chunkBytes));
     try {
       onProgress({
@@ -252,7 +279,27 @@ export class ServerUploadImportService implements ImportService {
         message: '서버 업로드를 준비하고 있습니다.',
       });
 
-      uploadSession = await this.prepareUploadSession(localJobId, input, totalChunks, signal, onProgress);
+      const sourceContentHash = await hashBlobInChunks(input.file, {
+        shouldCancel: () => signal.aborted,
+        onProgress: ({ bytesRead }) =>
+          onProgress({
+            jobId: localJobId,
+            status: 'reading',
+            bytesRead,
+            totalBytes: input.file.size,
+            chaptersDetected: 0,
+            paragraphsWritten: 0,
+            message: '재개 가능한 업로드를 위해 파일 무결성을 확인하고 있습니다.',
+          }),
+      });
+      uploadSession = await this.prepareUploadSession(
+        localJobId,
+        input,
+        totalChunks,
+        sourceContentHash,
+        signal,
+        onProgress,
+      );
 
       const job = uploadSession.importJobId
         ? { jobId: uploadSession.importJobId, statusUrl: `/api/import-jobs/${uploadSession.importJobId}` }
@@ -265,7 +312,6 @@ export class ServerUploadImportService implements ImportService {
             signal,
             onProgress,
           );
-      importJobStarted = true;
       onProgress({
         jobId: localJobId,
         status: 'writing',
@@ -280,9 +326,13 @@ export class ServerUploadImportService implements ImportService {
       let lastActivityAt = Date.now();
       while (true) {
         if (signal.aborted) throw new DOMException('Import cancelled', 'AbortError');
-        const remoteJob = await this.client.getImportJob(job.jobId, signal);
+        const remoteJob = await this.getImportJobWithResponseTimeout(job.jobId, signal);
         const serverProgress = importProgressFromJob(localJobId, input.file.size, remoteJob);
         onProgress(serverProgress);
+        if (remoteJob.status === 'cancelled' || remoteJob.stage === 'cancelled') {
+          this.uploadSessionStore.remove(uploadSession.sessionKey);
+          throw new ServerImportCancelledError();
+        }
         if (remoteJob.status === 'failed') {
           this.uploadSessionStore.remove(uploadSession.sessionKey);
           throw new Error(remoteJob.error_message ?? '서버 가져오기에 실패했습니다.');
@@ -323,7 +373,7 @@ export class ServerUploadImportService implements ImportService {
         await wait(Math.min(IMPORT_JOB_POLL_INTERVAL_MS, Math.max(1, this.importActivityTimeoutMs)));
       }
     } catch (error) {
-      if (error instanceof DOMException && error.name === 'AbortError' && uploadSession && !importJobStarted) {
+      if (isAbortError(error) && uploadSession) {
         await this.client.cancelUpload(uploadSession.uploadId).catch(() => undefined);
         this.uploadSessionStore.remove(uploadSession.sessionKey);
       }
@@ -395,10 +445,11 @@ export class ServerUploadImportService implements ImportService {
     localJobId: string,
     input: ImportFileInput,
     totalChunks: number,
+    sourceContentHash: string,
     signal: AbortSignal,
     onProgress: (progress: ImportProgress) => void,
   ): Promise<{ uploadId: string; sessionKey: string; status?: RemoteUploadStatus; importJobId?: string }> {
-    const sessionKey = uploadSessionKey(input, this.chunkBytes, totalChunks);
+    const sessionKey = uploadSessionKey(input, this.chunkBytes, totalChunks, sourceContentHash);
     const stored = this.uploadSessionStore.read(sessionKey);
 
     if (stored) {
@@ -407,7 +458,7 @@ export class ServerUploadImportService implements ImportService {
       } else {
         try {
           const status = await this.client.getUpload(stored.uploadId, signal);
-          if (this.canResumeStoredUpload(input, totalChunks, stored.uploadId, status)) {
+          if (this.canResumeStoredUpload(input, totalChunks, sourceContentHash, stored, status)) {
             this.uploadSessionStore.write(sessionKey, { ...stored, updatedAt: new Date().toISOString() });
             onProgress({
               jobId: localJobId,
@@ -420,7 +471,7 @@ export class ServerUploadImportService implements ImportService {
             });
             return { uploadId: stored.uploadId, sessionKey, status };
           }
-          if (this.canResumeImportJob(input, totalChunks, stored.uploadId, status)) {
+          if (this.canResumeImportJob(input, totalChunks, sourceContentHash, stored, status)) {
             this.uploadSessionStore.write(sessionKey, { ...stored, updatedAt: new Date().toISOString() });
             onProgress({
               jobId: localJobId,
@@ -449,6 +500,7 @@ export class ServerUploadImportService implements ImportService {
         chapterSplitMode: input.chapterSplitMode ?? 'auto',
         totalChunks,
         clientBookId: input.clientBookId,
+        sourceContentHash,
       },
       signal,
     );
@@ -463,6 +515,7 @@ export class ServerUploadImportService implements ImportService {
       clientBookId: input.clientBookId,
       chunkBytes: this.chunkBytes,
       totalChunks,
+      sourceContentHash,
       createdAt: now,
       updatedAt: now,
     });
@@ -472,12 +525,16 @@ export class ServerUploadImportService implements ImportService {
   private canResumeStoredUpload(
     input: ImportFileInput,
     totalChunks: number,
-    uploadId: string,
+    sourceContentHash: string,
+    stored: StoredUploadSession,
     status: RemoteUploadStatus,
   ): boolean {
     return (
       status.status === 'uploading' &&
-      status.uploadId === uploadId &&
+      status.uploadId === stored.uploadId &&
+      stored.sourceContentHash === sourceContentHash &&
+      status.sourceContentHash === sourceContentHash &&
+      status.fileName === input.file.name &&
       status.expectedBytes === input.file.size &&
       status.expectedChunks === totalChunks &&
       (status.totalChunks === undefined || status.totalChunks === null || status.totalChunks === totalChunks)
@@ -487,13 +544,20 @@ export class ServerUploadImportService implements ImportService {
   private canResumeImportJob(
     input: ImportFileInput,
     totalChunks: number,
-    uploadId: string,
+    sourceContentHash: string,
+    stored: StoredUploadSession,
     status: RemoteUploadStatus,
   ): status is RemoteUploadStatus & { importJobId: string } {
     return (
       status.status !== 'uploading' &&
-      status.uploadId === uploadId &&
+      status.status !== 'cancelled' &&
+      status.uploadId === stored.uploadId &&
       Boolean(status.importJobId) &&
+      status.importJobStatus !== 'cancelled' &&
+      status.importJobStage !== 'cancelled' &&
+      stored.sourceContentHash === sourceContentHash &&
+      status.sourceContentHash === sourceContentHash &&
+      status.fileName === input.file.name &&
       status.expectedBytes === input.file.size &&
       status.expectedChunks === totalChunks &&
       (status.totalChunks === undefined || status.totalChunks === null || status.totalChunks === totalChunks)
@@ -503,6 +567,40 @@ export class ServerUploadImportService implements ImportService {
   private isStoredSessionFresh(session: StoredUploadSession): boolean {
     const timestamp = Date.parse(session.updatedAt || session.createdAt);
     return Number.isFinite(timestamp) && Date.now() - timestamp <= MAX_STORED_UPLOAD_SESSION_AGE_MS;
+  }
+
+  private getImportJobWithResponseTimeout(jobId: string, signal: AbortSignal): Promise<RemoteImportJob> {
+    if (signal.aborted) return Promise.reject(new DOMException('Import cancelled', 'AbortError'));
+    const controller = new AbortController();
+    const timeoutMs = Math.max(1, this.importResponseTimeoutMs);
+
+    return new Promise<RemoteImportJob>((resolve, reject) => {
+      let settled = false;
+      const abortFromCaller = () => {
+        controller.abort(signal.reason);
+        finish(() => reject(new DOMException('Import cancelled', 'AbortError')));
+      };
+      const finish = (callback: () => void) => {
+        if (settled) return;
+        settled = true;
+        globalThis.clearTimeout(timer);
+        signal.removeEventListener('abort', abortFromCaller);
+        callback();
+      };
+      const timer = globalThis.setTimeout(() => {
+        controller.abort();
+        finish(() => reject(new ServerImportResponseTimeoutError(timeoutMs)));
+      }, timeoutMs);
+      signal.addEventListener('abort', abortFromCaller, { once: true });
+      if (signal.aborted) {
+        abortFromCaller();
+        return;
+      }
+      void this.client.getImportJob(jobId, controller.signal).then(
+        (job) => finish(() => resolve(job)),
+        (error) => finish(() => reject(signal.aborted ? new DOMException('Import cancelled', 'AbortError') : error)),
+      );
+    });
   }
 
   private async uploadChunkWithResume(

@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { RemoteApiClient } from '../services/remote/remote-api-client';
 import { RemoteApiError } from '../services/remote/remote-api-contracts';
-import { RemoteBookAssetRepository } from './remote-book-asset-repository';
+import { RemoteBookAssetRepository, RemoteSourceRangeResponseError } from './remote-book-asset-repository';
 import { RemoteLibraryCatalogRepository } from './remote-library-catalog-repository';
 
 describe('remote data safety repositories', () => {
@@ -22,10 +22,14 @@ describe('remote data safety repositories', () => {
           created_at: '2026-07-13T00:00:00.000Z',
         },
       })),
-      getBookSource: vi.fn(async () => ({ blob, headers: new Headers() })),
+      getBookSource: vi.fn(async () => ({ blob, headers: new Headers(), status: 200 })),
       getBookSourceRange: vi.fn(async (_bookId: string, start: number, end: number) => ({
         blob: blob.slice(start, end),
-        headers: new Headers({ 'content-range': `bytes ${start}-${end - 1}/${blob.size}` }),
+        headers: new Headers({
+          'content-range': `bytes ${start}-${end - 1}/${blob.size}`,
+          'content-length': String(end - start),
+        }),
+        status: 206,
       })),
     } as unknown as RemoteApiClient;
     const repository = new RemoteBookAssetRepository(client);
@@ -45,6 +49,51 @@ describe('remote data safety repositories', () => {
     const randomAccess = await repository.openSource('book_1');
     expect(new TextDecoder().decode(await randomAccess?.readRange(9, 15))).toBe('source');
     expect(client.getBookSourceRange).toHaveBeenCalledWith('book_1', 9, 15, undefined);
+  });
+
+  it('rejects a source range response that was downgraded to a full HTTP 200 body', async () => {
+    const blob = new Blob(['original source'], { type: 'application/pdf' });
+    const client = {
+      getBookSourceMetadata: vi.fn(async () => ({
+        source: {
+          id: 'object_1',
+          book_id: 'book_1',
+          file_name: 'book.pdf',
+          content_type: 'application/pdf',
+          size_bytes: blob.size,
+        },
+      })),
+      getBookSourceRange: vi.fn(async () => ({ blob, headers: new Headers(), status: 200 })),
+    } as unknown as RemoteApiClient;
+    const source = await new RemoteBookAssetRepository(client).openSource('book_1');
+
+    await expect(source.readRange(2, 5)).rejects.toBeInstanceOf(RemoteSourceRangeResponseError);
+  });
+
+  it('rejects truncated or misaddressed HTTP 206 source ranges', async () => {
+    const blob = new Blob(['original source'], { type: 'application/pdf' });
+    const client = {
+      getBookSourceMetadata: vi.fn(async () => ({
+        source: {
+          id: 'object_1',
+          book_id: 'book_1',
+          file_name: 'book.pdf',
+          content_type: 'application/pdf',
+          size_bytes: blob.size,
+        },
+      })),
+      getBookSourceRange: vi.fn(async () => ({
+        blob: blob.slice(2, 4),
+        headers: new Headers({
+          'content-range': `bytes 1-2/${blob.size}`,
+          'content-length': '2',
+        }),
+        status: 206,
+      })),
+    } as unknown as RemoteApiClient;
+    const source = await new RemoteBookAssetRepository(client).openSource('book_1');
+
+    await expect(source.readRange(2, 5)).rejects.toBeInstanceOf(RemoteSourceRangeResponseError);
   });
 
   it('uploads a user-reselected source through the hosted boundary', async () => {

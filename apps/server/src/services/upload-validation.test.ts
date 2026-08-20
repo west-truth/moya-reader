@@ -1,8 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import {
+  MAX_REPORTED_MISSING_CHUNKS,
+  MAX_UPLOAD_CHUNKS,
   summarizeUploadProgress,
   validateChunkIndex,
   validateUploadCompleteness,
+  validateUploadChunkPlan,
   validateUploadSize,
 } from './upload-validation.js';
 
@@ -60,6 +63,30 @@ describe('upload validation', () => {
     expect(validateChunkIndex(2, 2)).toContain('outside declared totalChunks');
   });
 
+  it('enforces absolute chunk bounds and a feasible declared chunk plan', () => {
+    expect(validateChunkIndex(MAX_UPLOAD_CHUNKS)).toContain('maximum supported');
+    expect(
+      validateUploadChunkPlan({
+        sizeBytes: MAX_UPLOAD_CHUNKS + 1,
+        totalChunks: MAX_UPLOAD_CHUNKS + 1,
+        maxChunkBytes: 1,
+      }),
+    ).toContain('maximum supported');
+    expect(validateUploadChunkPlan({ sizeBytes: 10, totalChunks: 11, maxChunkBytes: 10 })).toContain('cannot exceed');
+    expect(validateUploadChunkPlan({ sizeBytes: 11, totalChunks: 1, maxChunkBytes: 10 })).toContain('cannot carry');
+    expect(validateUploadChunkPlan({ sizeBytes: 11, totalChunks: 2, maxChunkBytes: 10 })).toBeUndefined();
+  });
+
+  it('bounds missing chunk details even for the largest accepted plan', () => {
+    const progress = summarizeUploadProgress({
+      expectedBytes: MAX_UPLOAD_CHUNKS,
+      totalChunks: MAX_UPLOAD_CHUNKS,
+      chunks: [],
+    });
+    expect(progress.missingChunkIndexes).toHaveLength(MAX_REPORTED_MISSING_CHUNKS);
+    expect(progress.missingChunkIndexesTruncated).toBe(true);
+  });
+
   it('rejects files over the configured upload size', () => {
     expect(validateUploadSize(100, 100)).toBeUndefined();
     expect(validateUploadSize(101, 100)).toContain('exceeds');
@@ -81,6 +108,7 @@ describe('upload validation', () => {
       uploadedBytes: 8,
       receivedChunkIndexes: [0, 2],
       missingChunkIndexes: [1, 3],
+      missingChunkIndexesTruncated: false,
       complete: false,
     });
   });

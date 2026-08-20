@@ -198,6 +198,9 @@ export function createHostedBackupStream(
   snapshot: HostedBackupSnapshot,
   loadObject: (object: HostedBookObjectRow) => Promise<Buffer>,
 ): HostedBackupStreamResult {
+  if (!snapshot.tables.has('library_books') || !snapshot.tables.has('reader_settings')) {
+    throw new Error('Hosted backup export requires the catalog and reader settings tables');
+  }
   for (const [table, rows] of snapshot.tables) assertSafeHostedTableRows(table, rows);
   const jsonEntries = Array.from(snapshot.tables, ([table, rows]) => serializedEntry(tablePath(table), rows));
   jsonEntries.push(serializedEntry(objectTablePath(), snapshot.objects));
@@ -231,6 +234,28 @@ export function createHostedBackupStream(
     assetBlobs,
     backend: 'hosted',
   };
+  const manifestText = JSON.stringify(manifest, null, 2);
+  const paths = new Set<string>();
+  let totalUncompressedBytes = Buffer.byteLength(manifestText);
+  for (const entry of entries) {
+    if (!safeArchivePath(entry.path) || paths.has(entry.path)) {
+      throw new Error(`Unsafe or duplicate hosted backup export path: ${entry.path}`);
+    }
+    if (!Number.isSafeInteger(entry.byteLength) || entry.byteLength < 0) {
+      throw new Error(`Hosted backup export entry size is invalid: ${entry.path}`);
+    }
+    paths.add(entry.path);
+    totalUncompressedBytes += entry.byteLength;
+  }
+  // The parser counts manifest.json as an archive entry, even though it is not
+  // listed inside manifest.entries. Reject snapshots that our own restore path
+  // would refuse before any response bytes are streamed to the caller.
+  if (entries.length + 1 > MAX_HOSTED_BACKUP_ENTRIES) {
+    throw new Error('Hosted backup export entry count is outside the supported range');
+  }
+  if (totalUncompressedBytes > MAX_HOSTED_BACKUP_UNCOMPRESSED_BYTES) {
+    throw new Error('Hosted backup export is too large to restore');
+  }
 
   let streamController: TransformStreamDefaultController<Uint8Array> | undefined;
   const stream = new TransformStream<Uint8Array, Uint8Array>({
@@ -250,7 +275,7 @@ export function createHostedBackupStream(
         }
         await zip.add(metadata.path, new Uint8ArrayReader(bytes));
       }
-      await zip.add('manifest.json', new TextReader(JSON.stringify(manifest, null, 2)));
+      await zip.add('manifest.json', new TextReader(manifestText));
       await zip.close();
     } catch (error) {
       streamController?.error(error);

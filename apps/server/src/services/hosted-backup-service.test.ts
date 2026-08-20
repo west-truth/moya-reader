@@ -24,6 +24,54 @@ async function collect(stream: ReadableStream<Uint8Array>): Promise<Uint8Array> 
 }
 
 describe('hosted backup restore', () => {
+  it('ignores superseded asset metadata from older archives when no object blob was exported', async () => {
+    const snapshot: HostedBackupSnapshot = {
+      tables: new Map([
+        [
+          'library_books',
+          [{ id: 'book_1', user_id: 'old_user', object_id: null, title: 'Book', cover_asset_id: null }],
+        ],
+        [
+          'book_assets',
+          [
+            {
+              id: 'cover_old',
+              user_id: 'old_user',
+              book_id: 'book_1',
+              kind: 'cover',
+              status: 'superseded',
+              storage_key: 'old/cover.webp',
+            },
+          ],
+        ],
+        ['reader_settings', []],
+      ]),
+      objects: [],
+      books: [{ id: 'book_1', format: 'txt', title: 'Book' }],
+      exportedAt: '2026-07-13T00:00:00.000Z',
+      appVersion: '0.1.0',
+    };
+    const streamed = createHostedBackupStream(snapshot, async () => Buffer.alloc(0));
+    const [archive] = await Promise.all([collect(streamed.readable), streamed.completion]);
+    const calls: string[] = [];
+    const client = {
+      query: vi.fn(async (sql: string) => {
+        calls.push(sql);
+        if (sql.includes('select id, title from library_books')) return { rows: [] };
+        return { rows: [] };
+      }),
+      release: vi.fn(),
+    };
+    const pool = { connect: vi.fn(async () => client) } as unknown as pg.Pool;
+
+    await expect(
+      restoreHostedBackup(pool, { defaultUserId: 'user_1', s3: {} } as ServerConfig, archive, {
+        defaultConflictResolution: 'replace',
+      }),
+    ).resolves.toMatchObject({ restoredBooks: 1 });
+    expect(calls.some((sql) => sql.includes('insert into "book_assets"'))).toBe(false);
+  });
+
   it('preserves user casting settings but invalidates derived assignments on restore', async () => {
     const snapshot: HostedBackupSnapshot = {
       tables: new Map([

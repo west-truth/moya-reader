@@ -53,7 +53,12 @@ import {
   type RemoteChapterListResponse,
   type RemotePageListResponse,
 } from './remote-book-snapshot';
-import { RemoteApiError, type RemoteMutationResult, type RemoteUploadStatus } from './remote-api-contracts';
+import {
+  RemoteApiError,
+  RemoteApiRequestTimeoutError,
+  type RemoteMutationResult,
+  type RemoteUploadStatus,
+} from './remote-api-contracts';
 import { RemoteBookTransport } from './remote-book-transport';
 import { RemoteSearchTransport } from './remote-search-transport';
 import { RemoteSyncTransport } from './remote-sync-transport';
@@ -80,7 +85,7 @@ export {
   mapServerReadingPosition,
   RemoteSnapshotRevisionMismatchError,
 } from './remote-book-snapshot';
-export { RemoteApiError, type RemoteUploadStatus } from './remote-api-contracts';
+export { RemoteApiError, RemoteApiRequestTimeoutError, type RemoteUploadStatus } from './remote-api-contracts';
 export { mapServerSyncEvent } from './remote-sync-transport';
 
 type JsonRecord = Record<string, unknown>;
@@ -117,6 +122,25 @@ export interface RemoteProviderSettingsResponse {
   readonly settings: RemoteProviderSettingsBundle;
   readonly catalog: RemoteProviderCatalog;
   readonly secretStatuses: ProviderSecretStatus[];
+}
+
+export type RemoteImportJobStatus = 'queued' | 'processing' | 'done' | 'failed' | 'cancelled';
+export type RemoteImportJobStage =
+  'queued' | 'reading' | 'decoding' | 'splitting_chapters' | 'writing' | 'ready' | 'failed' | 'cancelled';
+
+export interface RemoteImportJob {
+  id: string;
+  upload_id: string;
+  status: RemoteImportJobStatus;
+  stage?: RemoteImportJobStage;
+  bytes_read?: number | string;
+  total_bytes?: number | string;
+  chapters_detected?: number;
+  paragraphs_written?: number;
+  message?: string;
+  book_id?: string;
+  error_message?: string;
+  updated_at?: string;
 }
 
 export interface RemoteProviderSecretResponse {
@@ -525,7 +549,11 @@ export function mapProviderSettingsBundle(row: JsonRecord): RemoteProviderSettin
 
 export interface RemoteApiClientOptions {
   getAuthToken?: () => string | undefined;
+  requestTimeoutMs?: number;
 }
+
+export const DEFAULT_REMOTE_REQUEST_TIMEOUT_MS = 30_000;
+export const DEFAULT_REMOTE_LARGE_UPLOAD_TIMEOUT_MS = 15 * 60_000;
 
 export class RemoteApiClient {
   private readonly bookTransport: RemoteBookTransport;
@@ -542,16 +570,46 @@ export class RemoteApiClient {
     this.syncTransport = new RemoteSyncTransport({ request });
   }
 
-  async request<T>(path: string, init: RequestInit = {}): Promise<T> {
+  private async fetch(path: string, init: RequestInit, requestedTimeoutMs?: number): Promise<Response> {
+    const timeoutMs = Math.max(
+      1,
+      Math.floor(requestedTimeoutMs ?? this.options.requestTimeoutMs ?? DEFAULT_REMOTE_REQUEST_TIMEOUT_MS),
+    );
+    const controller = new AbortController();
+    const callerSignal = init.signal;
+    let timedOut = false;
+    const abortFromCaller = () => controller.abort(callerSignal?.reason);
+    if (callerSignal?.aborted) abortFromCaller();
+    else callerSignal?.addEventListener('abort', abortFromCaller, { once: true });
+    const timer = globalThis.setTimeout(() => {
+      timedOut = true;
+      controller.abort();
+    }, timeoutMs);
+    try {
+      return await fetch(`${this.baseUrl}${path}`, { ...init, signal: controller.signal });
+    } catch (error) {
+      if (timedOut && !callerSignal?.aborted) throw new RemoteApiRequestTimeoutError(timeoutMs);
+      throw error;
+    } finally {
+      globalThis.clearTimeout(timer);
+      callerSignal?.removeEventListener('abort', abortFromCaller);
+    }
+  }
+
+  async request<T>(path: string, init: RequestInit = {}, timeoutMs?: number): Promise<T> {
     const authToken = this.options.getAuthToken?.()?.trim();
-    const response = await fetch(`${this.baseUrl}${path}`, {
-      ...init,
-      headers: {
-        ...(typeof init.body === 'string' && init.body.length > 0 ? { 'Content-Type': 'application/json' } : {}),
-        ...(authToken ? { Authorization: `Bearer ${authToken}` } : {}),
-        ...init.headers,
+    const response = await this.fetch(
+      path,
+      {
+        ...init,
+        headers: {
+          ...(typeof init.body === 'string' && init.body.length > 0 ? { 'Content-Type': 'application/json' } : {}),
+          ...(authToken ? { Authorization: `Bearer ${authToken}` } : {}),
+          ...init.headers,
+        },
       },
-    });
+      timeoutMs,
+    );
     if (!response.ok) {
       const message = await response.text();
       throw new RemoteApiError(message || response.statusText, response.status);
@@ -560,9 +618,9 @@ export class RemoteApiClient {
     return response.json() as Promise<T>;
   }
 
-  async requestBlob(path: string, init: RequestInit = {}): Promise<{ blob: Blob; headers: Headers }> {
+  async requestBlob(path: string, init: RequestInit = {}): Promise<{ blob: Blob; headers: Headers; status: number }> {
     const authToken = this.options.getAuthToken?.()?.trim();
-    const response = await fetch(`${this.baseUrl}${path}`, {
+    const response = await this.fetch(path, {
       ...init,
       headers: {
         ...(authToken ? { Authorization: `Bearer ${authToken}` } : {}),
@@ -573,7 +631,7 @@ export class RemoteApiClient {
       const message = await response.text();
       throw new RemoteApiError(message || response.statusText, response.status);
     }
-    return { blob: await response.blob(), headers: response.headers };
+    return { blob: await response.blob(), headers: response.headers, status: response.status };
   }
 
   negotiateSyncContract(): Promise<NegotiatedSyncContract> {
@@ -596,7 +654,7 @@ export class RemoteApiClient {
     return this.request(`/books/${encodeURIComponent(bookId)}/source/metadata`);
   }
 
-  getBookSource(bookId: string): Promise<{ blob: Blob; headers: Headers }> {
+  getBookSource(bookId: string): Promise<{ blob: Blob; headers: Headers; status: number }> {
     return this.requestBlob(`/books/${encodeURIComponent(bookId)}/source`);
   }
 
@@ -621,7 +679,7 @@ export class RemoteApiClient {
     startInclusive: number,
     endExclusive: number,
     signal?: AbortSignal,
-  ): Promise<{ blob: Blob; headers: Headers }> {
+  ): Promise<{ blob: Blob; headers: Headers; status: number }> {
     return this.requestBlob(`/books/${encodeURIComponent(bookId)}/source`, {
       headers: { Range: `bytes=${startInclusive}-${Math.max(startInclusive, endExclusive - 1)}` },
       signal,
@@ -633,26 +691,30 @@ export class RemoteApiClient {
     source: Blob,
     metadata: { fileName: string; contentType: string },
   ): Promise<{ source: JsonRecord }> {
-    return this.request(`/books/${encodeURIComponent(bookId)}/source`, {
-      method: 'PUT',
-      body: source,
-      headers: {
-        'Content-Type': 'application/octet-stream',
-        'X-Source-File-Name': encodeURIComponent(metadata.fileName),
-        'X-Source-Content-Type': metadata.contentType || 'text/plain',
+    return this.request(
+      `/books/${encodeURIComponent(bookId)}/source`,
+      {
+        method: 'PUT',
+        body: source,
+        headers: {
+          'Content-Type': 'application/octet-stream',
+          'X-Source-File-Name': encodeURIComponent(metadata.fileName),
+          'X-Source-Content-Type': metadata.contentType || 'text/plain',
+        },
       },
-    });
+      DEFAULT_REMOTE_LARGE_UPLOAD_TIMEOUT_MS,
+    );
   }
 
   getBookCoverMetadata(bookId: string): Promise<{ cover: JsonRecord }> {
     return this.request(`/books/${encodeURIComponent(bookId)}/cover/metadata`);
   }
 
-  getBookCover(bookId: string): Promise<{ blob: Blob; headers: Headers }> {
+  getBookCover(bookId: string): Promise<{ blob: Blob; headers: Headers; status: number }> {
     return this.requestBlob(`/books/${encodeURIComponent(bookId)}/cover`);
   }
 
-  getBookResource(bookId: string, assetId: string): Promise<{ blob: Blob; headers: Headers }> {
+  getBookResource(bookId: string, assetId: string): Promise<{ blob: Blob; headers: Headers; status: number }> {
     return this.requestBlob(`/books/${encodeURIComponent(bookId)}/resources/${encodeURIComponent(assetId)}`);
   }
 
@@ -700,30 +762,38 @@ export class RemoteApiClient {
     });
   }
 
-  exportBackup(): Promise<{ blob: Blob; headers: Headers }> {
+  exportBackup(): Promise<{ blob: Blob; headers: Headers; status: number }> {
     return this.requestBlob('/backups/export');
   }
 
   inspectBackup(archive: Blob): Promise<BackupInspection> {
-    return this.request('/backups/inspect', {
-      method: 'POST',
-      body: archive,
-      headers: { 'Content-Type': 'application/zip' },
-    });
+    return this.request(
+      '/backups/inspect',
+      {
+        method: 'POST',
+        body: archive,
+        headers: { 'Content-Type': 'application/zip' },
+      },
+      DEFAULT_REMOTE_LARGE_UPLOAD_TIMEOUT_MS,
+    );
   }
 
   restoreBackup(archive: Blob, options: BackupRestoreOptions): Promise<BackupRestoreResult> {
-    return this.request('/backups/restore', {
-      method: 'POST',
-      body: archive,
-      headers: {
-        'Content-Type': 'application/zip',
-        'X-Backup-Default-Resolution': options.defaultConflictResolution,
-        ...(options.conflictResolutions
-          ? { 'X-Backup-Conflict-Resolutions': JSON.stringify(options.conflictResolutions) }
-          : {}),
+    return this.request(
+      '/backups/restore',
+      {
+        method: 'POST',
+        body: archive,
+        headers: {
+          'Content-Type': 'application/zip',
+          'X-Backup-Default-Resolution': options.defaultConflictResolution,
+          ...(options.conflictResolutions
+            ? { 'X-Backup-Conflict-Resolutions': JSON.stringify(options.conflictResolutions) }
+            : {}),
+        },
       },
-    });
+      DEFAULT_REMOTE_LARGE_UPLOAD_TIMEOUT_MS,
+    );
   }
 
   getChapterStructureEditor(bookId: string): Promise<{ editor: ChapterStructureEditorState }> {
@@ -1444,7 +1514,8 @@ export class RemoteApiClient {
 
   async fetchTTSCacheAudio(chapterId: string, cacheKey: string, signal?: AbortSignal): Promise<Blob> {
     const authToken = this.options.getAuthToken?.()?.trim();
-    const response = await fetch(this.ttsCacheAudioUrl(chapterId, cacheKey), {
+    const path = `/chapters/${encodeURIComponent(chapterId)}/tts-cache/${encodeURIComponent(cacheKey)}/audio`;
+    const response = await this.fetch(path, {
       signal,
       headers: authToken ? { Authorization: `Bearer ${authToken}` } : undefined,
     });
@@ -1480,6 +1551,7 @@ export class RemoteApiClient {
       chapterSplitMode?: ChapterSplitMode;
       totalChunks: number;
       clientBookId?: string;
+      sourceContentHash?: string;
     },
     signal?: AbortSignal,
   ): Promise<{ uploadId: string; chunkUrlTemplate: string }> {
@@ -1508,27 +1580,14 @@ export class RemoteApiClient {
     return this.request(`/uploads/${encodeURIComponent(uploadId)}/complete`, { method: 'POST', signal });
   }
 
-  cancelUpload(uploadId: string, signal?: AbortSignal): Promise<{ ok: true; upload?: RemoteUploadStatus }> {
+  cancelUpload(
+    uploadId: string,
+    signal?: AbortSignal,
+  ): Promise<{ ok: true; cancellationState?: 'requested' | 'cancelled'; upload?: RemoteUploadStatus }> {
     return this.request(`/uploads/${encodeURIComponent(uploadId)}`, { method: 'DELETE', signal });
   }
 
-  getImportJob(
-    jobId: string,
-    signal?: AbortSignal,
-  ): Promise<{
-    id: string;
-    upload_id: string;
-    status: 'queued' | 'processing' | 'done' | 'failed';
-    stage?: 'queued' | 'reading' | 'decoding' | 'splitting_chapters' | 'writing' | 'ready' | 'failed';
-    bytes_read?: number | string;
-    total_bytes?: number | string;
-    chapters_detected?: number;
-    paragraphs_written?: number;
-    message?: string;
-    book_id?: string;
-    error_message?: string;
-    updated_at?: string;
-  }> {
+  getImportJob(jobId: string, signal?: AbortSignal): Promise<RemoteImportJob> {
     return this.request(`/import-jobs/${encodeURIComponent(jobId)}`, { signal });
   }
 }

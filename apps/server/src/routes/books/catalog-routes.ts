@@ -6,6 +6,7 @@ import { integrityHash, persistentId128 } from '@noveldesk/text-core/hash';
 import { mapBookCatalogRows } from './row-mappers.js';
 import { validateBookPatchBody, type BookPatchBody } from './request-contracts.js';
 import { createServerRevision, insertServerSyncEvent } from './sync-event-repository.js';
+import { enqueueObjectDeletions } from '../../services/object-delete-outbox.js';
 
 interface LifecycleBody {
   expectedRevision?: number;
@@ -551,10 +552,21 @@ export async function registerBookCatalogRoutes(
     '/api/trash/books/:bookId',
     async (request, reply) => {
       const client = await pool.connect();
-      let objectToDelete: { storageKey: string } | undefined;
+      const storageKeys: string[] = [];
       try {
         await client.query('begin');
         const expected = expectedRevision(request, request.body);
+        const assets = await client.query<{ storage_key: string }>(
+          `select storage_key from book_assets
+            where book_id = $1 and user_id = $2
+              and exists (
+                select 1 from library_books
+                 where id = $1 and user_id = $2 and deleted_at is not null
+                   and ($3::bigint is null or metadata_revision = $3)
+              )`,
+          [request.params.bookId, config.defaultUserId, expected ?? null],
+        );
+        storageKeys.push(...assets.rows.map((row) => String(row.storage_key)));
         const result = await client.query(
           `
             delete from library_books
@@ -587,19 +599,15 @@ export async function registerBookCatalogRoutes(
             `,
             [result.rows[0].object_id],
           );
-          if (object.rows[0]) objectToDelete = { storageKey: String(object.rows[0].storage_key) };
+          if (object.rows[0]) storageKeys.push(String(object.rows[0].storage_key));
         }
+        await enqueueObjectDeletions(client, storageKeys, 'purged_book');
         await client.query('commit');
       } catch (error) {
         await client.query('rollback');
         throw error;
       } finally {
         client.release();
-      }
-      if (objectToDelete) {
-        await deleteObject(createS3Client(config), config, objectToDelete.storageKey).catch((error) => {
-          app.log.warn({ error, storageKey: objectToDelete?.storageKey }, 'failed to remove purged source object');
-        });
       }
       return { ok: true };
     },
@@ -611,6 +619,14 @@ export async function registerBookCatalogRoutes(
     let purged: number | undefined;
     try {
       await client.query('begin');
+      const assets = await client.query<{ storage_key: string }>(
+        `select asset.storage_key
+           from book_assets asset
+           join library_books book on book.id = asset.book_id
+          where book.user_id = $1 and book.deleted_at is not null`,
+        [config.defaultUserId],
+      );
+      storageKeys.push(...assets.rows.map((row) => String(row.storage_key)));
       const result = await client.query(
         `
           delete from library_books
@@ -643,18 +659,13 @@ export async function registerBookCatalogRoutes(
         );
         storageKeys.push(...objects.rows.map((row) => String(row.storage_key)));
       }
+      await enqueueObjectDeletions(client, storageKeys, 'purged_books');
       await client.query('commit');
     } catch (error) {
       await client.query('rollback');
       throw error;
     } finally {
       client.release();
-    }
-    const s3 = storageKeys.length > 0 ? createS3Client(config) : undefined;
-    for (const storageKey of storageKeys) {
-      await deleteObject(s3!, config, storageKey).catch((error) => {
-        app.log.warn({ error, storageKey }, 'failed to remove purged source object');
-      });
     }
     return { ok: true, purged: purged ?? 0 };
   });

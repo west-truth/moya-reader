@@ -92,15 +92,18 @@ Copy-Item .env.example .env
 
 ### 3. 비밀번호 설정
 
-개인 PC에서 잠깐 시험하는 경우 기본값으로 시작할 수 있지만, 계속 사용할 서버라면 `.env`의 비밀번호를 반드시
-바꾸십시오. 내부 PostgreSQL과 MinIO를 쓸 때는 다음처럼 각 서비스의 기준값만 바꾸면 됩니다.
+`.env`의 `COMPOSE_PROJECT_NAME=moya-reader`는 그대로 유지하십시오. 이 이름이 PostgreSQL·MinIO 등의 volume
+이름을 결정하므로, 나중에 clone 폴더명이나 `-p` 옵션이 바뀌어도 같은 값을 써야 기존 데이터를 찾습니다.
+
+개인 PC에서 잠깐 시험하는 기본 구성은 개발 fallback으로 시작할 수 있지만, 계속 사용할 서버나 public
+override에서는 첫 기동 전에 아래 세 저장소 자격증명을 반드시 정해야 합니다.
 
 ```dotenv
-POSTGRES_PASSWORD=충분히-긴-비밀번호
+POSTGRES_PASSWORD=충분히긴영문숫자비밀번호
 DATABASE_URL=
 
-MINIO_ROOT_USER=minio
-MINIO_ROOT_PASSWORD=다른-긴-비밀번호
+MINIO_ROOT_USER=noveldesk-storage
+MINIO_ROOT_PASSWORD=다른충분히긴영문숫자비밀번호
 S3_ACCESS_KEY_ID=
 S3_SECRET_ACCESS_KEY=
 ```
@@ -108,6 +111,10 @@ S3_SECRET_ACCESS_KEY=
 빈 `DATABASE_URL`은 `POSTGRES_*`에서, 빈 `S3_*`는 `MINIO_ROOT_*`에서 자동으로 파생되므로 같은 비밀번호를
 중복 입력하다 어긋날 일이 없습니다. 외부 PostgreSQL/S3를 사용할 때만 직접 채우십시오. `.env`는 Git에
 올리지 마십시오.
+
+이미 PostgreSQL volume에 데이터가 있다면 `.env`의 비밀번호만 바꾸면 안 됩니다. 먼저 컨테이너 안의
+`psql`에서 해당 role 비밀번호를 바꾸고, 그 다음 `.env`를 같은 값으로 맞춰야 합니다. 데이터가 있는 서버에서
+비밀번호 문제를 해결하려고 `docker compose down -v`를 사용하면 안 됩니다.
 
 ### 4. 실행
 
@@ -209,10 +216,14 @@ docker compose logs --tail=100 api worker
 openssl rand -hex 32
 ```
 
-`.env`에 token을 설정합니다.
+`.env`에 token과 저장소 자격증명을 설정합니다. public override는 하나라도 비어 있으면 컨테이너를 만들기
+전에 중단됩니다.
 
 ```dotenv
 READER_AUTH_TOKEN=위에서-만든-긴-token
+POSTGRES_PASSWORD=충분히긴영문숫자비밀번호
+MINIO_ROOT_USER=noveldesk-storage
+MINIO_ROOT_PASSWORD=다른충분히긴영문숫자비밀번호
 ```
 
 모야 웹과 `/api`가 같은 nginx 주소에서 제공되면 same-origin이므로 CORS 설정은 필요 없습니다. 별도로 호스팅한
@@ -250,21 +261,22 @@ CPU 기반 MeloTTS 한국어 서비스를 Compose 내부에 추가할 수 있습
 
 ```bash
 docker compose -f compose.yaml -f compose.local-tts.yaml config --quiet
-docker compose -f compose.yaml -f compose.local-tts.yaml up -d --build
+docker compose up -d --build
+docker compose -f compose.yaml -f compose.local-tts.yaml build tts-model
+docker compose -f compose.yaml -f compose.local-tts.yaml up -d --no-build
 docker compose -f compose.yaml -f compose.local-tts.yaml logs -f tts-model
 ```
 
 첫 실행에서는 model을 다운로드하므로 몇 분 이상 걸릴 수 있습니다. model은 `local-tts-models` volume에
-cache되며 TTS 서비스 포트는 외부에 공개되지 않습니다.
+cache되며 TTS 서비스 포트는 외부에 공개되지 않습니다. 모델 build 또는 health check가 실패해도 첫 명령으로
+시작한 책장·Reader·가져오기는 계속 동작하고, 모델이 준비되기 전 TTS 요청만 실패합니다.
 
 외부 접속과 로컬 TTS를 함께 사용할 때:
 
 ```bash
-docker compose \
-  -f compose.yaml \
-  -f compose.public.yaml \
-  -f compose.local-tts.yaml \
-  up -d --build
+docker compose -f compose.yaml -f compose.public.yaml up -d --build
+docker compose -f compose.yaml -f compose.public.yaml -f compose.local-tts.yaml build tts-model
+docker compose -f compose.yaml -f compose.public.yaml -f compose.local-tts.yaml up -d --no-build
 ```
 
 이 override는 MeloTTS 한국어 CPU 구성을 위한 것입니다. 다른 엔진을 사용하려면 `/voices`와 `/synthesize`

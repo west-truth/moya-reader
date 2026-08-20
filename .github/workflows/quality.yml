@@ -32,6 +32,9 @@ jobs:
       - run: docker compose -f compose.yaml -f compose.public.yaml config --quiet
         env:
           READER_AUTH_TOKEN: ci-config-check-only
+          POSTGRES_PASSWORD: ci-postgres-config-check-only
+          MINIO_ROOT_USER: ci-storage-config-check-only
+          MINIO_ROOT_PASSWORD: ci-storage-password-config-check-only
       - name: Protected Compose import E2E
         run: pnpm check:hosted:e2e -- --public --project-name moya-ci-${{ github.run_id }}-${{ github.run_attempt }}
 
