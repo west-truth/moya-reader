@@ -149,7 +149,8 @@ sync/server connection panel; saving it retries a failed first bootstrap automat
 The Ubuntu host nginx reference is [`deploy/host-nginx.example.conf`](../../deploy/host-nginx.example.conf). It proxies
 only to `127.0.0.1:8080`, allows 32 MiB ordinary requests and 512 MiB backup archives, disables request buffering for
 uploads/backups, and preserves the public scheme. Replace its domain and certificate paths, validate with `nginx -t`,
-then reload nginx. Moya browser uploads use 512 KiB chunks so they remain below nginx's usual 1 MiB default as well.
+then reload nginx. Moya browser uploads use 2 MiB resumable chunks, so the committed 32 MiB ordinary-request limit is
+required; nginx's usual 1 MiB default is not sufficient.
 For WireGuard-only access, bind nginx to the server's WireGuard address or allow 443 only on `wg0`; do not publish
 Compose port 8080 or the storage/database ports to the VPN or public interfaces.
 

@@ -114,7 +114,7 @@ describe('ServerUploadImportService', () => {
     expect(store.remove).toHaveBeenCalledWith('fresh-key');
   });
 
-  it('uses 512 KiB chunks by default to stay below common reverse proxy request limits', async () => {
+  it('uses 2 MiB chunks by default to reduce round trips below the configured proxy limit', async () => {
     const store: RemoteUploadSessionStore = {
       read: vi.fn(() => undefined),
       write: vi.fn(),
@@ -784,6 +784,61 @@ describe('ServerUploadImportService', () => {
       });
       expect(client.getImportJob).toHaveBeenCalledTimes(3);
       expect(store.remove).toHaveBeenCalledWith(expect.any(String));
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('treats changing asset progress messages as import activity', async () => {
+    vi.restoreAllMocks();
+    vi.useFakeTimers({ now: new Date('2026-08-21T00:00:00.000Z') });
+    try {
+      const store: RemoteUploadSessionStore = {
+        read: vi.fn(() => undefined),
+        write: vi.fn(),
+        remove: vi.fn(),
+      };
+      const progressJob = (message: string) => ({
+        id: 'job_assets',
+        upload_id: 'upload_1',
+        status: 'processing' as const,
+        stage: 'writing' as const,
+        bytes_read: 6,
+        total_bytes: 6,
+        chapters_detected: 1,
+        paragraphs_written: 0,
+        message,
+        book_id: null,
+      });
+      const client = {
+        initUpload: vi.fn(async () => ({ uploadId: 'upload_1', chunkUrlTemplate: '/chunks/{chunkIndex}' })),
+        getUpload: vi.fn(async () => uploadStatus([0, 1, 2], 6)),
+        putUploadChunk: vi.fn(),
+        completeUpload: vi.fn(async () => ({ jobId: 'job_assets', statusUrl: '/import-jobs/job_assets' })),
+        getImportJob: vi
+          .fn()
+          .mockResolvedValueOnce(progressJob('EPUB 삽화와 표지를 저장하는 중입니다. 4 / 12개'))
+          .mockResolvedValueOnce(progressJob('EPUB 삽화와 표지를 저장하는 중입니다. 8 / 12개'))
+          .mockResolvedValueOnce(progressJob('EPUB 삽화와 표지를 저장하는 중입니다. 12 / 12개'))
+          .mockResolvedValueOnce({
+            ...progressJob('done'),
+            status: 'done' as const,
+            stage: 'ready' as const,
+            paragraphs_written: 3,
+            book_id: 'book_1',
+          }),
+        getBookManifest: vi.fn(async () => importedBook()),
+      };
+      const service = new ServerUploadImportService(client as unknown as RemoteApiClient, 2, 3, store, 1_400);
+      const importPromise = service.importFile({ file: makeFile(), encoding: 'utf-8' }, vi.fn()).promise;
+
+      await vi.waitFor(() => expect(client.getImportJob).toHaveBeenCalledTimes(1));
+      for (let poll = 2; poll <= 4; poll += 1) {
+        await vi.advanceTimersByTimeAsync(700);
+        await vi.waitFor(() => expect(client.getImportJob).toHaveBeenCalledTimes(poll));
+      }
+
+      await expect(importPromise).resolves.toMatchObject({ novel: expect.objectContaining({ id: 'book_1' }) });
     } finally {
       vi.useRealTimers();
     }

@@ -330,8 +330,8 @@ check(
 );
 check('stale upload cleanup runs periodically', includes(files.server, 'uploadPruneIntervalMs'));
 check(
-  'browser upload chunks remain below common 1 MiB proxy defaults',
-  includes(files.serverUploadImport, 'DEFAULT_SERVER_UPLOAD_CHUNK_BYTES = 512 * 1024'),
+  'browser upload chunks use the documented 2 MiB resumable size',
+  includes(files.serverUploadImport, 'DEFAULT_SERVER_UPLOAD_CHUNK_BYTES = 2 * 1024 * 1024'),
 );
 
 check('nginx proxies /api to api service', includes(files.nginx, 'proxy_pass http://api:8787/api/;'));
