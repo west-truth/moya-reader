@@ -9,7 +9,7 @@ import {
 import { hashBlobInChunks } from './chunked-file-reader';
 import { ImportController, ImportFileInput, ImportProgress, ImportResult, ImportService } from './import-service';
 
-export const DEFAULT_SERVER_UPLOAD_CHUNK_BYTES = 512 * 1024;
+export const DEFAULT_SERVER_UPLOAD_CHUNK_BYTES = 2 * 1024 * 1024;
 export const DEFAULT_SERVER_IMPORT_ACTIVITY_TIMEOUT_MS = 90_000;
 export const DEFAULT_SERVER_IMPORT_RESPONSE_TIMEOUT_MS = 20_000;
 const DEFAULT_CHUNK_RETRIES = 3;
@@ -110,6 +110,7 @@ function importJobActivityFingerprint(job: RemoteImportJob): string {
     job.total_bytes,
     job.chapters_detected,
     job.paragraphs_written,
+    job.message,
     job.book_id,
     job.error_message,
   ]);

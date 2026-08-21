@@ -5,6 +5,7 @@ import { EpubImportError, materializeEpubImport, parseEpub, stableEpubCoverSeed 
 interface FixtureOptions {
   readonly version?: '2.0' | '3.0';
   readonly fixedLayout?: boolean;
+  readonly coverMode?: 'epub3' | 'epub2-meta' | 'guide';
   readonly body?: string;
   readonly manifestExtra?: string;
   readonly navTitle?: string;
@@ -20,7 +21,11 @@ async function epubFixture(options: FixtureOptions = {}): Promise<Blob> {
       '<?xml version="1.0"?><container><rootfiles><rootfile full-path="OEBPS/content.opf" media-type="application/oebps-package+xml"/></rootfiles></container>',
     ),
   );
-  const metadata = options.fixedLayout ? '<meta property="rendition:layout">pre-paginated</meta>' : '';
+  const coverMode = options.coverMode ?? 'epub3';
+  const metadata = [
+    options.fixedLayout ? '<meta property="rendition:layout">pre-paginated</meta>' : '',
+    coverMode === 'epub2-meta' ? '<meta name="cover" content="cover"/>' : '',
+  ].join('');
   await writer.add(
     'OEBPS/content.opf',
     new TextReader(`<?xml version="1.0"?>
@@ -30,11 +35,13 @@ async function epubFixture(options: FixtureOptions = {}): Promise<Blob> {
         </metadata>
         <manifest>
           <item id="chapter" href="chapter.xhtml" media-type="application/xhtml+xml"/>
-          <item id="cover" href="images/cover.png" media-type="image/png" properties="cover-image"/>
+          <item id="cover" href="images/cover.png" media-type="image/png"${coverMode === 'epub3' ? ' properties="cover-image"' : ''}/>
+          ${coverMode === 'guide' ? '<item id="cover-page" href="cover.xhtml" media-type="application/xhtml+xml"/>' : ''}
           ${options.navTitle ? '<item id="nav" href="nav.xhtml" media-type="application/xhtml+xml" properties="nav"/>' : ''}
           ${options.manifestExtra ?? ''}
         </manifest>
         <spine${options.version === '2.0' ? ' toc="ncx"' : ''}><itemref idref="chapter"/></spine>
+        ${coverMode === 'guide' ? '<guide><reference type="cover" href="cover.xhtml"/></guide>' : ''}
       </package>`),
   );
   await writer.add(
@@ -47,6 +54,14 @@ async function epubFixture(options: FixtureOptions = {}): Promise<Blob> {
     </body></html>`),
   );
   await writer.add('OEBPS/images/cover.png', new Uint8ArrayReader(new Uint8Array([137, 80, 78, 71, 13, 10, 26, 10])));
+  if (coverMode === 'guide') {
+    await writer.add(
+      'OEBPS/cover.xhtml',
+      new TextReader(
+        '<?xml version="1.0"?><html xmlns="http://www.w3.org/1999/xhtml"><body><img src="images/cover.png" alt="표지"/></body></html>',
+      ),
+    );
+  }
   if (options.navTitle) {
     await writer.add(
       'OEBPS/nav.xhtml',
@@ -153,6 +168,25 @@ describe('EPUB import engine', () => {
       title: 'EPUB 테스트',
       sections: [{ title: 'NCX 첫 장' }],
     });
+  });
+
+  it('recognizes EPUB2 metadata and guide cover declarations', async () => {
+    const metadataCover = await parseEpub(await epubFixture({ version: '2.0', coverMode: 'epub2-meta' }));
+    const guideCover = await parseEpub(await epubFixture({ version: '2.0', coverMode: 'guide' }));
+
+    expect(metadataCover.coverHref).toBe('OEBPS/images/cover.png');
+    expect(guideCover.coverHref).toBe('OEBPS/images/cover.png');
+    expect(metadataCover.resources.some((resource) => resource.href === metadataCover.coverHref)).toBe(true);
+    expect(guideCover.resources.some((resource) => resource.href === guideCover.coverHref)).toBe(true);
+
+    const source = await epubFixture({ version: '2.0', coverMode: 'epub2-meta', body: '<p>표지 확인 본문</p>' });
+    const parsed = materializeEpubImport(await parseEpub(source), {
+      fileName: 'legacy-cover.epub',
+      sourceBytes: new Uint8Array(await source.arrayBuffer()),
+      now: '2026-08-21T00:00:00.000Z',
+    });
+    expect(parsed.novel.coverAssetId).toBeDefined();
+    expect(parsed.embeddedAssets?.some((asset) => asset.id === parsed.novel.coverAssetId)).toBe(true);
   });
 
   it('preserves ruby readings, inherited language spans and footnote references without duplicate rt text', async () => {

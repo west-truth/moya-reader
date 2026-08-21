@@ -272,6 +272,79 @@ function packageManifest(opf: XmlDocument, opfPath: string): Map<string, Manifes
   return result;
 }
 
+function manifestItemByHref(
+  manifest: Map<string, ManifestItem>,
+  href: string | undefined,
+): ManifestItem | undefined {
+  const normalized = href?.split('#', 1)[0];
+  return normalized ? [...manifest.values()].find((item) => item.href === normalized) : undefined;
+}
+
+async function imageFromCoverDocument(
+  entries: Map<string, ArchiveEntry>,
+  coverDocument: ManifestItem,
+  manifest: Map<string, ManifestItem>,
+): Promise<ManifestItem | undefined> {
+  if (!EPUB_TEXT_TYPES.has(coverDocument.mediaType)) return undefined;
+  const document = parseXml(await entryText(findEntry(entries, coverDocument.href)), coverDocument.href);
+  const image = [...descendants(document, 'img'), ...descendants(document, 'image')].find((element) => {
+    const source = element.getAttribute('src') ?? element.getAttribute('href') ?? element.getAttribute('xlink:href');
+    return Boolean(source && resolvedHref(coverDocument.href, source));
+  });
+  if (!image) return undefined;
+  const source = image.getAttribute('src') ?? image.getAttribute('href') ?? image.getAttribute('xlink:href') ?? '';
+  const item = manifestItemByHref(manifest, resolvedHref(coverDocument.href, source));
+  return item && EPUB_IMAGE_TYPES.has(item.mediaType) ? item : undefined;
+}
+
+async function packageCoverItem(
+  entries: Map<string, ArchiveEntry>,
+  opf: XmlDocument,
+  opfPath: string,
+  manifest: Map<string, ManifestItem>,
+): Promise<ManifestItem | undefined> {
+  const epub3Cover = [...manifest.values()].find(
+    (item) => item.properties.has('cover-image') && EPUB_IMAGE_TYPES.has(item.mediaType),
+  );
+  if (epub3Cover) return epub3Cover;
+
+  const metadata = firstDescendant(opf, 'metadata');
+  const legacyCoverId = metadata
+    ? descendants(metadata, 'meta')
+        .find((meta) => meta.getAttribute('name')?.trim().toLowerCase() === 'cover')
+        ?.getAttribute('content')
+        ?.trim()
+    : undefined;
+  const legacyCover = legacyCoverId ? manifest.get(legacyCoverId) : undefined;
+  if (legacyCover && EPUB_IMAGE_TYPES.has(legacyCover.mediaType)) return legacyCover;
+  if (legacyCover) {
+    const nestedImage = await imageFromCoverDocument(entries, legacyCover, manifest);
+    if (nestedImage) return nestedImage;
+  }
+
+  const guideReference = descendants(opf, 'reference').find((reference) =>
+    (reference.getAttribute('type') ?? '')
+      .toLowerCase()
+      .split(/\s+/)
+      .includes('cover'),
+  );
+  const guideHref = guideReference?.getAttribute('href');
+  if (guideHref) {
+    const guideItem = manifestItemByHref(manifest, resolvedHref(opfPath, guideHref));
+    if (guideItem && EPUB_IMAGE_TYPES.has(guideItem.mediaType)) return guideItem;
+    if (guideItem) {
+      const nestedImage = await imageFromCoverDocument(entries, guideItem, manifest);
+      if (nestedImage) return nestedImage;
+    }
+  }
+
+  return [...manifest.values()].find(
+    (item) =>
+      EPUB_IMAGE_TYPES.has(item.mediaType) &&
+      (/^cover(?:[-_.]|$)/i.test(item.id) || /(^|\/)cover(?:[-_.]|$)/i.test(item.href)),
+  );
+}
+
 function packageSpine(opf: XmlDocument, manifest: Map<string, ManifestItem>): ManifestItem[] {
   const spine = firstDescendant(opf, 'spine');
   if (!spine) throw new EpubImportError('EPUB spine이 없습니다.', 'invalid_package');
@@ -560,7 +633,7 @@ export async function parseEpub(blob: Blob): Promise<EpubDocument> {
     const referenced = new Set(
       sections.flatMap((section) => section.blocks.map((block) => block.resourceHref).filter(Boolean) as string[]),
     );
-    const coverItem = [...manifest.values()].find((item) => item.properties.has('cover-image'));
+    const coverItem = await packageCoverItem(entries, opf, normalizedOpfPath, manifest);
     if (coverItem) referenced.add(coverItem.href);
     const resources: EpubResource[] = [];
     for (const href of referenced) {

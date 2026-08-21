@@ -2,7 +2,7 @@
 
 Status: implemented v1
 
-Last verified: 2026-08-01
+Last verified: 2026-08-21
 
 이 문서는 모야의 파일 형식별 import, 저장, 읽기 UI와 아직 지원하지 않는 범위를 정리한다.
 텍스트 계열과 고정 레이아웃 계열은 같은 책장·진행 위치·백업 경계를 사용하지만, 읽기 화면은 서로 다른
@@ -19,6 +19,23 @@ renderer를 사용한다.
 
 EPUB은 이번 작업에서 새로 만든 기능이 아니다. 기존 `packages/epub-core`와 공통 Reader 경로를 유지하고
 회귀 테스트를 추가했다. 새 기능의 중심은 PDF와 이미지 ZIP/CBZ다.
+
+### EPUB 삽화와 표지 처리 경계
+
+- spine XHTML의 로컬 `<img>`와 SVG wrapper 안의 `<image>`가 참조하는 JPEG/PNG/GIF/WebP를 찾는다.
+- 외부 URL과 본문에서 사용하지 않는 manifest 이미지는 가져오지 않는다.
+- 각 삽화는 `epub_resource` asset으로 저장되고 image paragraph의 `assetId`가 이를 가리킨다. Local은
+  IndexedDB, Hosted는 S3/MinIO object와 PostgreSQL `book_assets.byte_length bigint`를 사용한다.
+- 표지는 EPUB3 manifest의 `cover-image`, EPUB2 `<meta name="cover">`, OPF guide의 cover document 순으로 찾고,
+  선언이 없는 legacy 파일만 `cover*` image 관례를 보수적으로 사용한다. cover document가 XHTML/SVG wrapper면
+  그 안의 첫 로컬 image manifest item을 실제 표지 asset으로 저장한다.
+- Reader는 asset을 필요할 때 Blob URL로 열어 본문 위치에 렌더링하고 화면에서 사라지면 URL을 해제한다.
+- 현재 EPUB 안전 한도는 entry 4,000개, 개별 해제 파일 32 MiB, 전체 해제 크기 128 MiB, 압축률 250배다.
+  서버의 원본 upload 기본 한도 500 MiB와는 별도다.
+- Hosted 대형 파일은 2 MiB resumable chunk를 사용한다. Worker는 eager EPUB image asset을 4개씩 저장하고,
+  object-storage bucket readiness와 orphan reservation을 asset마다 반복하지 않는다. 원본 archive 보존과
+  import transaction 경계는 유지한다.
+- SVG 자체가 vector 삽화인 경우와 AVIF, 128 MiB보다 큰 streaming EPUB asset ingestion은 아직 지원하지 않는다.
 
 ## 구현 경계
 

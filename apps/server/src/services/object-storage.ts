@@ -9,6 +9,8 @@ import {
 import { Readable } from 'node:stream';
 import { ServerConfig } from '../config.js';
 
+const bucketReadiness = new WeakMap<S3Client, Map<string, Promise<void>>>();
+
 export function createS3Client(config: ServerConfig): S3Client {
   return new S3Client({
     endpoint: config.s3.endpoint,
@@ -29,6 +31,22 @@ export async function ensureBucket(client: S3Client, bucket: string): Promise<vo
   }
 }
 
+function ensureBucketForWrite(client: S3Client, bucket: string): Promise<void> {
+  let clientBuckets = bucketReadiness.get(client);
+  if (!clientBuckets) {
+    clientBuckets = new Map();
+    bucketReadiness.set(client, clientBuckets);
+  }
+  const existing = clientBuckets.get(bucket);
+  if (existing) return existing;
+  const readiness = ensureBucket(client, bucket).catch((error) => {
+    if (clientBuckets.get(bucket) === readiness) clientBuckets.delete(bucket);
+    throw error;
+  });
+  clientBuckets.set(bucket, readiness);
+  return readiness;
+}
+
 export async function putRawBookObject(
   client: S3Client,
   config: ServerConfig,
@@ -36,7 +54,7 @@ export async function putRawBookObject(
   body: Buffer,
   contentType: string,
 ): Promise<void> {
-  await ensureBucket(client, config.s3.bucket);
+  await ensureBucketForWrite(client, config.s3.bucket);
   await client.send(
     new PutObjectCommand({
       Bucket: config.s3.bucket,
@@ -54,7 +72,7 @@ export async function putTtsAudioObject(
   body: Buffer,
   contentType: string,
 ): Promise<void> {
-  await ensureBucket(client, config.s3.bucket);
+  await ensureBucketForWrite(client, config.s3.bucket);
   await client.send(
     new PutObjectCommand({
       Bucket: config.s3.bucket,

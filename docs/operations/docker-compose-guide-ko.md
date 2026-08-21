@@ -499,8 +499,9 @@ curl -H "Authorization: Bearer $READER_AUTH_TOKEN" https://moya.example.com/api/
 ### 파일 가져오기에서 `413` 또는 요청 크기 오류
 
 호스트 nginx 설정에 `client_max_body_size`가 없으면 nginx 기본 1 MiB 제한에서 차단될 수 있다. 최신 웹은
-512 KiB 청크를 사용하지만, 기존 클라이언트와 백업까지 고려해 `deploy/host-nginx.example.conf`의 32 MiB /
-512 MiB 경계를 적용한다. 413 요청은 API에 도달하지 않으므로 `docker compose logs api`가 비어 있을 수 있다.
+대형 EPUB/PDF의 왕복 횟수를 줄이기 위해 2 MiB resumable 청크를 사용하므로,
+`deploy/host-nginx.example.conf`의 일반 요청 32 MiB / 백업 512 MiB 경계를 적용한다. 413 요청은 API에
+도달하지 않으므로 `docker compose logs api`가 비어 있을 수 있다.
 
 ### 업로드가 100%에서 `Body cannot be empty when content-type is set to 'application/json'`으로 실패
 

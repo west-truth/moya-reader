@@ -36,6 +36,7 @@ import {
 const PARAGRAPHS_PER_PAGE = 120;
 const SERVER_IMPORT_CHAPTER_BATCH_SIZE = 100;
 const SERVER_IMPORT_PAGE_BATCH_SIZE = 25;
+const SERVER_IMPORT_EAGER_ASSET_CONCURRENCY = 4;
 const POSITIVE_SIGNED_INTEGER_MODULUS = 0x80000000;
 
 export function normalizeCoverSeedForPersistence(value: number): number {
@@ -714,18 +715,73 @@ export async function processImportJob(
     uploadedObjectKeys.push(storageKey);
     buffer = undefined;
     const storedAssets: Array<Omit<ParsedNovelImportAsset, 'bytes'> & { byteLength: number; storageKey: string }> = [];
-    const embeddedAssets = async function* (): AsyncGenerator<ParsedNovelImportAsset> {
-      for (const asset of parsed.embeddedAssets ?? []) yield asset;
-      if (parsed.consumeEmbeddedAssets) yield* parsed.consumeEmbeddedAssets();
-    };
-    for await (const asset of embeddedAssets()) {
-      await assertImportExecutionActive(pool, jobId, attempt.executionId);
-      const assetStorageKey = `${session.user_id}/${parsed.novel.id}/staged/${jobId}/${attempt.executionId ?? 'legacy'}/attempt-${attempt.attemptNumber}/${asset.id}/${asset.fileName}`;
-      await reserveObjectDeletions(pool, [assetStorageKey], 'import_asset_staging');
-      await putRawBookObject(s3Client, config, assetStorageKey, Buffer.from(asset.bytes), asset.contentType);
-      uploadedObjectKeys.push(assetStorageKey);
-      const { bytes: _releasedBytes, ...metadata } = asset;
-      storedAssets.push({ ...metadata, byteLength: asset.bytes.byteLength, storageKey: assetStorageKey });
+    const eagerAssets = (parsed.embeddedAssets ?? []).map((asset) => ({
+      asset,
+      storageKey: `${session.user_id}/${parsed.novel.id}/staged/${jobId}/${attempt.executionId ?? 'legacy'}/attempt-${attempt.attemptNumber}/${asset.id}/${asset.fileName}`,
+    }));
+    if (eagerAssets.length > 0) {
+      await reserveObjectDeletions(
+        pool,
+        eagerAssets.map((entry) => entry.storageKey),
+        'import_asset_staging',
+      );
+      let completedAssets = 0;
+      for (const assetBatch of chunked(eagerAssets, SERVER_IMPORT_EAGER_ASSET_CONCURRENCY)) {
+        await assertImportExecutionActive(pool, jobId, attempt.executionId);
+        const outcomes = await Promise.allSettled(
+          assetBatch.map(async ({ asset, storageKey: assetStorageKey }) => {
+            await putRawBookObject(s3Client, config, assetStorageKey, Buffer.from(asset.bytes), asset.contentType);
+            uploadedObjectKeys.push(assetStorageKey);
+            const { bytes: _releasedBytes, ...metadata } = asset;
+            return { ...metadata, byteLength: asset.bytes.byteLength, storageKey: assetStorageKey };
+          }),
+        );
+        const failed = outcomes.find((outcome): outcome is PromiseRejectedResult => outcome.status === 'rejected');
+        if (failed) throw failed.reason;
+        storedAssets.push(
+          ...outcomes
+            .filter((outcome): outcome is PromiseFulfilledResult<(typeof storedAssets)[number]> =>
+              outcome.status === 'fulfilled',
+            )
+            .map((outcome) => outcome.value),
+        );
+        completedAssets += assetBatch.length;
+        await updateImportJobProgress(
+          pool,
+          jobId,
+          {
+            status: 'processing',
+            stage: 'writing',
+            message: `EPUB 삽화와 표지를 저장하는 중입니다. ${completedAssets.toLocaleString()} / ${eagerAssets.length.toLocaleString()}개`,
+          },
+          attempt.executionId,
+        );
+      }
+    }
+    if (parsed.consumeEmbeddedAssets) {
+      let streamedAssets = 0;
+      for await (const asset of parsed.consumeEmbeddedAssets()) {
+        await assertImportExecutionActive(pool, jobId, attempt.executionId);
+        const assetStorageKey = `${session.user_id}/${parsed.novel.id}/staged/${jobId}/${attempt.executionId ?? 'legacy'}/attempt-${attempt.attemptNumber}/${asset.id}/${asset.fileName}`;
+        await reserveObjectDeletions(pool, [assetStorageKey], 'import_asset_staging');
+        await putRawBookObject(s3Client, config, assetStorageKey, Buffer.from(asset.bytes), asset.contentType);
+        uploadedObjectKeys.push(assetStorageKey);
+        const { bytes: _releasedBytes, ...metadata } = asset;
+        storedAssets.push({ ...metadata, byteLength: asset.bytes.byteLength, storageKey: assetStorageKey });
+        streamedAssets += 1;
+        if (streamedAssets % 8 === 0) {
+          await updateImportJobProgress(
+            pool,
+            jobId,
+            {
+              status: 'processing',
+              stage: 'writing',
+              message: `문서 페이지 리소스를 저장하는 중입니다. ${streamedAssets.toLocaleString()}개`,
+            },
+            attempt.executionId,
+          );
+        }
+      }
     }
     arrayBuffer = undefined;
     await assertImportExecutionActive(pool, jobId, attempt.executionId);
