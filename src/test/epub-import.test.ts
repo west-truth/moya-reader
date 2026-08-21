@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { BlobWriter, TextReader, Uint8ArrayReader, ZipWriter } from '@zip.js/zip.js';
-import { EpubImportError, materializeEpubImport, parseEpub } from '@noveldesk/epub-core';
+import { EpubImportError, materializeEpubImport, parseEpub, stableEpubCoverSeed } from '@noveldesk/epub-core';
 
 interface FixtureOptions {
   readonly version?: '2.0' | '3.0';
@@ -62,6 +62,12 @@ async function epubFixture(options: FixtureOptions = {}): Promise<Blob> {
 }
 
 describe('EPUB import engine', () => {
+  it('keeps deterministic cover seeds inside the PostgreSQL signed integer range', () => {
+    expect(stableEpubCoverSeed('sha256:00000000ffffffff')).toBe(2_147_483_647);
+    expect(stableEpubCoverSeed('sha256:0000000080000000')).toBe(0);
+    expect(stableEpubCoverSeed('invalid')).toBe(0);
+  });
+
   it('parses EPUB3 metadata, semantic blocks, marks, links and embedded images', async () => {
     const source = await epubFixture({ navTitle: '목차의 첫 장' });
     const document = await parseEpub(source);
@@ -90,6 +96,46 @@ describe('EPUB import engine', () => {
     expect(parsed.novel).toMatchObject({ format: 'epub', totalChapters: 1, coverFit: 'contain' });
     expect(parsed.embeddedAssets?.map((asset) => asset.kind)).toEqual(['epub_resource', 'cover']);
     expect([...rows[0].paragraphs]).toHaveLength(6);
+  });
+
+  it('retains a separate embedded illustration and links its image block to the stored asset', async () => {
+    const illustration = new Uint8Array(256 * 1024);
+    for (let index = 0; index < illustration.length; index += 1) illustration[index] = index % 251;
+    illustration.set([137, 80, 78, 71, 13, 10, 26, 10]);
+    const source = await epubFixture({
+      body: '<h1>삽화 장</h1><p>삽화 앞 문장</p><img src="images/illustration.png" alt="삽화"/>',
+      manifestExtra: '<item id="illustration" href="images/illustration.png" media-type="image/png"/>',
+      extraEntries: [{ path: 'OEBPS/images/illustration.png', bytes: illustration }],
+    });
+    const document = await parseEpub(source);
+
+    expect(document.resources.map((resource) => [resource.href, resource.bytes.byteLength])).toEqual([
+      ['OEBPS/images/illustration.png', illustration.byteLength],
+      ['OEBPS/images/cover.png', 8],
+    ]);
+
+    const parsed = materializeEpubImport(document, {
+      fileName: 'illustrated.epub',
+      sourceBytes: new Uint8Array(await source.arrayBuffer()),
+      now: '2026-08-21T00:00:00.000Z',
+    });
+    const rows = [
+      ...(parsed.consumeChapterParagraphs() as Iterable<{
+        paragraphs: Iterable<{ documentKind?: string; assetId?: string }>;
+      }>),
+    ];
+    const image = [...rows[0].paragraphs].find((paragraph) => paragraph.documentKind === 'image');
+    const illustrationAsset = parsed.embeddedAssets?.find(
+      (asset) => asset.kind === 'epub_resource' && asset.fileName === 'illustration.png',
+    );
+
+    expect(illustrationAsset?.bytes.byteLength).toBe(illustration.byteLength);
+    expect(image?.assetId).toBe(illustrationAsset?.id);
+    expect(parsed.embeddedAssets?.map((asset) => asset.kind)).toEqual([
+      'epub_resource',
+      'epub_resource',
+      'cover',
+    ]);
   });
 
   it('accepts an EPUB2 package with an NCX manifest item and uses spine order', async () => {

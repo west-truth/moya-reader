@@ -19,6 +19,7 @@ import {
   iterateImportParagraphPageBatches,
   iterateImportParagraphPageBatchesAsync,
   iterateParagraphPageBatches,
+  normalizeCoverSeedForPersistence,
   processImportJob,
   rekeyParsedNovel,
   rekeyParsedNovelImport,
@@ -202,6 +203,12 @@ async function singlePageComicArchive(): Promise<Buffer> {
 }
 
 describe('server import service', () => {
+  it('normalizes visual cover seeds before writing PostgreSQL integer columns', () => {
+    expect(normalizeCoverSeedForPersistence(0xffff_ffff)).toBe(2_147_483_647);
+    expect(normalizeCoverSeedForPersistence(0x8000_0000)).toBe(0);
+    expect(normalizeCoverSeedForPersistence(Number.NaN)).toBe(0);
+  });
+
   it('reuses an exact Buffer backing store when passing upload bytes to the parser', () => {
     const buffer = Buffer.allocUnsafeSlow(32);
     buffer.fill(7);
