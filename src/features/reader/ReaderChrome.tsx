@@ -34,7 +34,7 @@ import type {
   ReaderScreenHandle,
   ReaderScreenModel,
 } from './reader-screen-contract';
-import type { ReaderViewportApi } from './ReaderViewport';
+import type { ReaderRuntimeFlow, ReaderViewportApi } from './ReaderViewport';
 
 function classNames(...values: Array<string | false | undefined>): string {
   return values.filter(Boolean).join(' ');
@@ -44,8 +44,8 @@ function chapterSubtitle(index: number, title: string): string {
   return `${formatCount(index)}화 · ${title}`;
 }
 
-function flowLabel(settings: ReaderScreenModel['settings']): string {
-  return settings.readingProfile.flow === 'paginated' ? '페이지' : '스크롤';
+function flowLabel(readingFlow: ReaderRuntimeFlow): string {
+  return readingFlow === 'paginated' ? '페이지' : '스크롤';
 }
 
 function paragraphProgressLabel(model: ReaderScreenModel, location?: ReaderLocationSnapshot): string {
@@ -63,6 +63,7 @@ export interface ReaderChromeProps {
   readonly search: ReaderSearchController;
   readonly location?: ReaderLocationSnapshot;
   readonly mode: ReaderMode;
+  readonly readingFlow: ReaderRuntimeFlow;
   readonly activeBookmark?: Bookmark;
   readonly activeHighlight?: ReaderHighlight;
   readonly mobileSearchOpen: boolean;
@@ -82,6 +83,7 @@ export function ReaderChrome({
   search,
   location,
   mode,
+  readingFlow,
   activeBookmark,
   activeHighlight,
   mobileSearchOpen,
@@ -220,12 +222,12 @@ export function ReaderChrome({
         <button
           className="icon-btn"
           onClick={() => viewport?.pageJump(-1)}
-          title={model.settings.flow === 'page' ? '이전 화면' : '위로 이동'}
-          aria-label={model.settings.flow === 'page' ? '이전 화면' : '위로 이동'}
+          title={readingFlow === 'paginated' ? '이전 화면' : '위로 이동'}
+          aria-label={readingFlow === 'paginated' ? '이전 화면' : '위로 이동'}
         >
           <SkipBack size={18} />
         </button>
-        <span className="reader-flow-pill">{flowLabel(model.settings)}</span>
+        <span className="reader-flow-pill">{flowLabel(readingFlow)}</span>
         <span className="progress-label">{formatProgress(progress)}</span>
         <input
           aria-label="읽기 진행률"

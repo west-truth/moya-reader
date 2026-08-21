@@ -4,9 +4,11 @@ import {
   fragmentText,
   LruMap,
   pageIndexForAnchor,
+  rebasePageBoundariesAtAnchor,
   safeOversizedSentenceEnd,
   sentenceEnds,
   sliceParagraphForPage,
+  spliceForwardPageBoundaries,
 } from './reader-pagination-model';
 
 const paragraph = {
@@ -67,6 +69,39 @@ describe('reader sentence pagination model', () => {
     ];
     expect(pageIndexForAnchor(boundaries, anchor(2))).toBe(0);
     expect(pageIndexForAnchor(boundaries, anchor(10))).toBe(1);
+  });
+
+  it('starts a transition page at the next unread sentence without losing the prefix', () => {
+    const boundaries: ReaderPageBoundary[] = [
+      { index: 0, start: anchor(0), end: anchor(10) },
+      { index: 1, start: anchor(10), end: anchor(paragraph.text.length) },
+    ];
+    const rebased = rebasePageBoundariesAtAnchor(boundaries, anchor(15));
+    expect(rebased.applied).toBe(true);
+    expect(rebased.pageIndex).toBe(2);
+    expect(rebased.boundaries.map((item) => [item.start.offset, item.end.offset])).toEqual([
+      [0, 10],
+      [10, 15],
+      [15, paragraph.text.length],
+    ]);
+    expect(rebased.boundaries[1].end).toEqual(rebased.boundaries[2].start);
+  });
+
+  it('fills forward from a transition anchor while retaining a lossless canonical bridge', () => {
+    const canonical: ReaderPageBoundary[] = [
+      { index: 0, start: anchor(0), end: anchor(10) },
+      { index: 1, start: anchor(10), end: anchor(20) },
+      { index: 2, start: anchor(20), end: anchor(30) },
+    ];
+    const forward: ReaderPageBoundary[] = [{ index: 0, start: anchor(8), end: anchor(18) }];
+    const combined = spliceForwardPageBoundaries(canonical, anchor(8), forward);
+    expect(combined.map((item) => [item.start.offset, item.end.offset])).toEqual([
+      [0, 8],
+      [8, 18],
+      [18, 20],
+      [20, 30],
+    ]);
+    expect(combined.slice(1).every((item, index) => item.start.offset === combined[index].end.offset)).toBe(true);
   });
 
   it('touches entries on read and evicts only the least recently used value', () => {

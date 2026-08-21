@@ -26,8 +26,10 @@
 
   .reader-screen.addon-open .reader-scroll,
   .reader-scroll {
+    --reader-content-inset-top: calc(76px + env(safe-area-inset-top, 0px));
+    --reader-content-inset-bottom: calc(104px + env(safe-area-inset-bottom, 0px));
     height: 100dvh;
-    padding: calc(76px + env(safe-area-inset-top, 0px)) 20px calc(104px + env(safe-area-inset-bottom, 0px));
+    padding: var(--reader-content-inset-top) 20px var(--reader-content-inset-bottom);
   }
 
   .reader-topbar,
@@ -587,8 +589,10 @@
   }
 
   .reader-scroll {
-    padding-top: calc(58px + var(--reading-margin-y));
-    padding-bottom: calc(94px + var(--reading-margin-y));
+    --reader-content-inset-top: calc(58px + var(--reading-margin-y));
+    --reader-content-inset-bottom: calc(94px + var(--reading-margin-y));
+    padding-top: var(--reader-content-inset-top);
+    padding-bottom: var(--reader-content-inset-bottom);
   }
 
   .panel-header {

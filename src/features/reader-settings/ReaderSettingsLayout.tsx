@@ -125,26 +125,37 @@ export function ReaderSettingsLayout({
         </div>
       </section>
       <section>
-        <h3>읽기 방식</h3>
-        <div className="segmented full" aria-label="읽기 방식">
+        <h3>모드 잠금</h3>
+        <div className="segmented full" aria-label="모드 잠금">
           <button
             type="button"
-            className={profile.flow === 'scroll' ? 'active' : ''}
-            onClick={() => updateProfile({ flow: 'scroll' })}
-            aria-pressed={profile.flow === 'scroll'}
+            className={profile.modeLock === 'auto' ? 'active' : ''}
+            onClick={() => updateProfile({ modeLock: 'auto' })}
+            aria-pressed={profile.modeLock === 'auto'}
+          >
+            자동
+          </button>
+          <button
+            type="button"
+            className={profile.modeLock === 'scroll' ? 'active' : ''}
+            onClick={() => updateProfile({ modeLock: 'scroll' })}
+            aria-pressed={profile.modeLock === 'scroll'}
           >
             스크롤
           </button>
           <button
             type="button"
-            className={profile.flow === 'paginated' ? 'active' : ''}
-            onClick={() => updateProfile({ flow: 'paginated' })}
-            aria-pressed={profile.flow === 'paginated'}
+            className={profile.modeLock === 'paginated' ? 'active' : ''}
+            onClick={() => updateProfile({ modeLock: 'paginated' })}
+            aria-pressed={profile.modeLock === 'paginated'}
           >
             페이지
           </button>
         </div>
-        {profile.flow === 'paginated' && (
+        {profile.modeLock === 'auto' && (
+          <p className="field-help">휠과 세로 스와이프는 스크롤로, 방향키와 화면 넘김은 페이지로 전환됩니다.</p>
+        )}
+        {profile.modeLock !== 'scroll' && (
           <div className="reader-settings-subsection">
             <h3>페이지 이동 효과</h3>
             <div className="segmented full" aria-label="페이지 이동 효과">
