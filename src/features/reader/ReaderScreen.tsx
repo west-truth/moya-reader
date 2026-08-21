@@ -107,6 +107,7 @@ function ReaderScreenComponent({ model, screenHandle }: ReaderScreenProps) {
   });
   const clearSearch = search.clear;
   const chrome = useReaderChrome(model.settings.keepScreenChrome, notify);
+  const { enterImmersive, exitImmersive, immersive } = chrome;
 
   const onSessionCommitted = useCallback(
     (novelId: string, seconds: number, readAt: string) =>
@@ -154,6 +155,19 @@ function ReaderScreenComponent({ model, screenHandle }: ReaderScreenProps) {
     setSelection(undefined);
     window.getSelection()?.removeAllRanges();
   }, []);
+
+  const toggleImmersive = useCallback(() => {
+    if (immersive) {
+      exitImmersive();
+      return;
+    }
+    setMobileSearchOpen(false);
+    setOverflowOpen(false);
+    setFootnote(undefined);
+    clearSelection();
+    if (model.addonOpen) screenHandle.getActions().toggleAddon();
+    enterImmersive();
+  }, [clearSelection, enterImmersive, exitImmersive, immersive, model.addonOpen, screenHandle]);
 
   const handleApiReady = useCallback((api?: ReaderViewportApi) => {
     viewportApiRef.current = api;
@@ -308,7 +322,7 @@ function ReaderScreenComponent({ model, screenHandle }: ReaderScreenProps) {
     dispatchReaderAction(action, {
       previousPage: () => viewportApiRef.current?.pageJump(-1),
       nextPage: () => viewportApiRef.current?.pageJump(1),
-      toggleChrome: chrome.visible ? chrome.hide : chrome.reveal,
+      toggleChrome: toggleImmersive,
       openToc: () => screenHandle.getActions().openAddon('outline'),
       openSettings: () => screenHandle.getActions().openSettings(),
       toggleTTS: () => screenHandle.getActions().toggleTTS(locationRef.current?.ttsIndex ?? 0),
@@ -354,6 +368,10 @@ function ReaderScreenComponent({ model, screenHandle }: ReaderScreenProps) {
       else if (!actions.closeActiveLayer()) chrome.hide();
       return;
     }
+    if (chrome.immersive && ['/', 'b', 'h', 's', 'o', 'i', 'n'].includes(event.key.toLowerCase())) {
+      event.preventDefault();
+      return;
+    }
     if (event.key === '/') {
       event.preventDefault();
       chrome.reveal();
@@ -387,7 +405,7 @@ function ReaderScreenComponent({ model, screenHandle }: ReaderScreenProps) {
     const currentLocation = viewportApiRef.current?.getLocation() ?? locationRef.current;
     if (key === 'b' && currentLocation) {
       event.preventDefault();
-      actions.toggleBookmark(currentLocation);
+      void actions.toggleBookmark(currentLocation);
     } else if (key === 'h' && currentLocation) {
       event.preventDefault();
       actions.addHighlight(currentLocation);
@@ -423,10 +441,10 @@ function ReaderScreenComponent({ model, screenHandle }: ReaderScreenProps) {
         'reader-screen',
         model.addonOpen && 'addon-open',
         mobileSearchOpen && 'mobile-search-open',
-        (chrome.visible || model.settings.keepScreenChrome) && 'chrome-visible',
+        chrome.immersive && 'immersive',
+        !chrome.immersive && (chrome.visible || model.settings.keepScreenChrome) && 'chrome-visible',
       )}
       onMouseMove={chrome.reveal}
-      onClick={chrome.reveal}
     >
       <ReaderChrome
         model={model}
@@ -444,6 +462,7 @@ function ReaderScreenComponent({ model, screenHandle }: ReaderScreenProps) {
         onMobileSearchOpenChanged={setMobileSearchOpen}
         onOverflowOpenChanged={setOverflowOpen}
         onGoToSavedPosition={() => void goToSavedPosition()}
+        onToggleImmersive={toggleImmersive}
       />
       {search.query.trim() && (
         <aside className="reader-search-results-layer" aria-label="본문 검색 결과">
@@ -467,7 +486,7 @@ function ReaderScreenComponent({ model, screenHandle }: ReaderScreenProps) {
         onVisualLocation={handleVisualLocation}
         onSelectionChanged={setSelection}
         onRevealChrome={chrome.reveal}
-        onToggleChrome={chrome.visible ? chrome.hide : chrome.reveal}
+        onToggleImmersive={toggleImmersive}
         onDocumentLink={(href, isFootnote) => void handleDocumentLink(href, isFootnote)}
         assetRepository={readerRuntime.bookAssetRepository}
       />

@@ -32,7 +32,7 @@ export class AnnotationPersistence {
     const existing = findBookmarkAtPosition(context.bookmarks, context.chapter.id, paragraphId, location.progress);
     if (existing) {
       await this.repository.deleteBookmark(existing.id, { expectedRevision: bookmarkRevision(existing) });
-      return { status: 'deleted', bookmarks: await this.repository.listBookmarks(context.novel.id) };
+      return { status: 'deleted', bookmarks: context.bookmarks.filter((bookmark) => bookmark.id !== existing.id) };
     }
     const createdAt = this.now();
     const bookmark: Bookmark = {
@@ -52,7 +52,10 @@ export class AnnotationPersistence {
       createdAt,
     };
     await this.repository.saveBookmark(bookmark, { expectedRevision: bookmarkRevision() });
-    return { status: 'created', bookmarks: await this.repository.listBookmarks(context.novel.id) };
+    return {
+      status: 'created',
+      bookmarks: [bookmark, ...context.bookmarks.filter((candidate) => candidate.id !== bookmark.id)],
+    };
   }
 
   async saveNote(

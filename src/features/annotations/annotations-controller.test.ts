@@ -81,6 +81,14 @@ describe('annotations controller contracts', () => {
     const bookmarkResult = await harness.persistence.toggleBookmark({ ...context, bookmarks: [] });
     expect(bookmarkResult?.bookmarks[0].id).toMatch(/^bookmark_[0-9a-f]{32}$/);
     expect(persistentIdVersion(bookmarkResult?.bookmarks[0].id ?? '')).toBe('v2-sha256-128');
+    expect(harness.repository.listBookmarks).not.toHaveBeenCalled();
+
+    const deletedBookmark = await harness.persistence.toggleBookmark({
+      ...context,
+      bookmarks: bookmarkResult?.bookmarks ?? [],
+    });
+    expect(deletedBookmark).toEqual({ status: 'deleted', bookmarks: [] });
+    expect(harness.repository.listBookmarks).not.toHaveBeenCalled();
 
     const noteResult = await harness.persistence.saveNote({ ...context, notes: [] }, '첫 메모');
     const note = noteResult?.notes[0];

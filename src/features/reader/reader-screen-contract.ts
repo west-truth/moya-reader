@@ -77,7 +77,7 @@ export interface ReaderScreenActions {
   readonly adjustFontSize: (delta: number) => void;
   readonly adjustContentWidth: (delta: number) => void;
   readonly toggleNightTheme: () => void;
-  readonly toggleBookmark: (location: ReaderLocationSnapshot) => void;
+  readonly toggleBookmark: (location: ReaderLocationSnapshot) => Promise<void>;
   readonly addHighlight: (location: ReaderLocationSnapshot, selection?: ReaderSelection) => void;
   readonly highlightSelection: (
     location: ReaderLocationSnapshot,
@@ -129,7 +129,7 @@ const NO_ACTIONS: ReaderScreenActions = {
   adjustFontSize: () => undefined,
   adjustContentWidth: () => undefined,
   toggleNightTheme: () => undefined,
-  toggleBookmark: () => undefined,
+  toggleBookmark: async () => undefined,
   addHighlight: () => undefined,
   highlightSelection: () => undefined,
   openSelectionNote: () => undefined,
