@@ -38,6 +38,7 @@ export type ReaderFlow = 'scroll' | 'page';
 export type ReadingProfileTheme = ReaderTheme | 'custom';
 /** @deprecated `screen_turn` is accepted only to migrate older saved settings. */
 export type ReadingProfileFlow = 'scroll' | 'screen_turn' | 'paginated';
+export type ReadingModeLock = 'auto' | 'scroll' | 'paginated';
 export type PageTurnMotion = 'instant' | 'smooth';
 
 export interface ReadingProfile {
@@ -57,7 +58,9 @@ export interface ReadingProfile {
   foreground?: string;
   background?: string;
   brightness: number;
+  /** @deprecated Runtime flow is selected automatically unless `modeLock` is set. */
   flow: ReadingProfileFlow;
+  modeLock: ReadingModeLock;
   pageTurnMotion: PageTurnMotion;
 }
 

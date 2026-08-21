@@ -11,6 +11,7 @@ export function useReaderGestureHandlers(input: {
   readonly bindings: GestureBindings;
   readonly viewportWidth: () => number;
   readonly actions: ReaderActionHandlers;
+  readonly onVerticalScrollIntent?: (deltaY: number) => void;
 }) {
   const startRef = useRef<{ x: number; y: number; at: number; ignored: boolean }>();
 
@@ -29,6 +30,17 @@ export function useReaderGestureHandlers(input: {
       startRef.current = undefined;
       if (!start || start.ignored || gestureTargetIsInteractive(event.target) || window.getSelection()?.toString())
         return;
+      const deltaX = event.clientX - start.x;
+      const deltaY = event.clientY - start.y;
+      if (
+        input.onVerticalScrollIntent &&
+        Math.abs(deltaY) >= 18 &&
+        Math.abs(deltaY) > Math.abs(deltaX) * 1.2 &&
+        performance.now() - start.at <= 1_000
+      ) {
+        input.onVerticalScrollIntent(-deltaY);
+        return;
+      }
       const action = gestureAction({
         bindings: input.bindings,
         viewportWidth: input.viewportWidth(),

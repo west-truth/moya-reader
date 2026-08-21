@@ -3,6 +3,7 @@ import { defaultSettings } from '../repositories/reader-defaults';
 import {
   readingProfileContrastWarning,
   resolveReadingProfile,
+  settingsWithResolvedReadingProfile,
   updateBookReadingProfile,
   updateGlobalReadingProfile,
 } from '../features/reader-settings/reading-profile';
@@ -35,20 +36,41 @@ describe('reading profile', () => {
     expect(readingProfileContrastWarning({ ...lowContrast, foreground: '#ffffff', background: '#111111' })).toBe(false);
   });
 
-  it('migrates screen-turn profiles to smooth pagination and preserves legacy paginated motion', () => {
+  it('migrates old flows into automatic mode and preserves their page motion', () => {
     expect(
       resolveReadingProfile({
         ...defaultSettings,
         readingProfile: { ...defaultSettings.readingProfile, flow: 'screen_turn' },
       }),
     ).toMatchObject({
-      flow: 'paginated',
+      flow: 'scroll',
+      modeLock: 'auto',
       pageTurnMotion: 'smooth',
     });
     const legacyPaginated = {
       ...defaultSettings,
       readingProfile: { ...defaultSettings.readingProfile, flow: 'paginated', pageTurnMotion: undefined },
     } as unknown as typeof defaultSettings;
-    expect(resolveReadingProfile(legacyPaginated)).toMatchObject({ flow: 'paginated', pageTurnMotion: 'instant' });
+    expect(resolveReadingProfile(legacyPaginated)).toMatchObject({
+      flow: 'scroll',
+      modeLock: 'auto',
+      pageTurnMotion: 'instant',
+    });
+  });
+
+  it('persists explicit scroll and page locks independently from automatic mode', () => {
+    expect(resolveReadingProfile(updateGlobalReadingProfile(defaultSettings, { modeLock: 'scroll' }))).toMatchObject({
+      modeLock: 'scroll',
+      flow: 'scroll',
+    });
+    expect(resolveReadingProfile(updateGlobalReadingProfile(defaultSettings, { modeLock: 'paginated' }))).toMatchObject(
+      { modeLock: 'paginated', flow: 'paginated' },
+    );
+
+    const bookLocked = updateBookReadingProfile(defaultSettings, 'book_1', { modeLock: 'paginated' });
+    expect(settingsWithResolvedReadingProfile(bookLocked, 'book_1')).toMatchObject({
+      flow: 'page',
+      readingProfile: { modeLock: 'paginated', flow: 'paginated' },
+    });
   });
 });

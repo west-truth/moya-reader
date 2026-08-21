@@ -27,7 +27,7 @@ export function safeOversizedSentenceEnd(text: string, startOffset: number, meas
   return bounded;
 }
 
-function compareAnchor(left: ReaderAnchor, right: ReaderAnchor): number {
+export function compareReaderAnchors(left: ReaderAnchor, right: ReaderAnchor): number {
   const block = (left.blockIndex ?? 0) - (right.blockIndex ?? 0);
   return block || left.offset - right.offset;
 }
@@ -38,11 +38,75 @@ export function pageIndexForAnchor(boundaries: readonly ReaderPageBoundary[], an
   while (low <= high) {
     const middle = Math.floor((low + high) / 2);
     const boundary = boundaries[middle];
-    if (compareAnchor(anchor, boundary.start) < 0) high = middle - 1;
-    else if (compareAnchor(anchor, boundary.end) >= 0 && middle < boundaries.length - 1) low = middle + 1;
+    if (compareReaderAnchors(anchor, boundary.start) < 0) high = middle - 1;
+    else if (compareReaderAnchors(anchor, boundary.end) >= 0 && middle < boundaries.length - 1) low = middle + 1;
     else return middle;
   }
   return Math.max(0, Math.min(boundaries.length - 1, low));
+}
+
+export interface RebasedPageBoundaries {
+  readonly boundaries: readonly ReaderPageBoundary[];
+  readonly pageIndex: number;
+  readonly applied: boolean;
+}
+
+/**
+ * Splits the static page containing `anchor` so a scroll-to-page transition can
+ * begin exactly at the next unread sentence without dropping or duplicating
+ * any source range. The shortened prefix remains reachable with PageUp.
+ */
+export function rebasePageBoundariesAtAnchor(
+  boundaries: readonly ReaderPageBoundary[],
+  anchor: ReaderAnchor,
+): RebasedPageBoundaries {
+  if (boundaries.length === 0) return { boundaries, pageIndex: 0, applied: false };
+  const pageIndex = pageIndexForAnchor(boundaries, anchor);
+  const boundary = boundaries[pageIndex];
+  if (compareReaderAnchors(anchor, boundary.start) <= 0) {
+    return { boundaries, pageIndex, applied: false };
+  }
+  if (compareReaderAnchors(anchor, boundary.end) >= 0) {
+    return { boundaries, pageIndex: Math.min(pageIndex + 1, boundaries.length - 1), applied: false };
+  }
+  const next = [
+    ...boundaries.slice(0, pageIndex),
+    { ...boundary, end: anchor },
+    { ...boundary, start: anchor },
+    ...boundaries.slice(pageIndex + 1),
+  ].map((item, index) => ({ ...item, index }));
+  return { boundaries: next, pageIndex: pageIndex + 1, applied: true };
+}
+
+/**
+ * Replaces the canonical range after `anchor` with pages measured from that
+ * anchor. While forward measurement is still running, a split canonical
+ * suffix keeps every source offset reachable without gaps or duplication.
+ */
+export function spliceForwardPageBoundaries(
+  canonical: readonly ReaderPageBoundary[],
+  anchor: ReaderAnchor,
+  forward: readonly ReaderPageBoundary[],
+): readonly ReaderPageBoundary[] {
+  if (canonical.length === 0 || forward.length === 0) {
+    return rebasePageBoundariesAtAnchor(canonical, anchor).boundaries;
+  }
+  const containingIndex = pageIndexForAnchor(canonical, anchor);
+  const containing = canonical[containingIndex];
+  const combined: ReaderPageBoundary[] = [...canonical.slice(0, containingIndex)];
+  if (compareReaderAnchors(anchor, containing.start) > 0) combined.push({ ...containing, end: anchor });
+  combined.push(...forward);
+
+  const forwardEnd = forward.at(-1)!.end;
+  const documentEnd = canonical.at(-1)!.end;
+  if (compareReaderAnchors(forwardEnd, documentEnd) < 0) {
+    const suffixIndex = pageIndexForAnchor(canonical, forwardEnd);
+    const suffix = canonical[suffixIndex];
+    if (compareReaderAnchors(forwardEnd, suffix.end) < 0) combined.push({ ...suffix, start: forwardEnd });
+    combined.push(...canonical.slice(suffixIndex + 1));
+  }
+
+  return combined.map((boundary, index) => ({ ...boundary, index }));
 }
 
 export function fragmentText(fragment: Pick<ReaderPageFragment, 'paragraph' | 'startOffset' | 'endOffset'>): string {

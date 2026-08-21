@@ -86,7 +86,6 @@ export interface ReaderScreenActions {
   readonly adjustFontSize: (delta: number) => void;
   readonly adjustContentWidth: (delta: number) => void;
   readonly toggleNightTheme: () => void;
-  readonly setReadingFlow: (flow: 'scroll' | 'paginated') => void;
   readonly toggleBookmark: (location: ReaderLocationSnapshot) => Promise<void>;
   readonly addHighlight: (location: ReaderLocationSnapshot, selection?: ReaderSelection) => void;
   readonly highlightSelection: (
@@ -141,7 +140,6 @@ const NO_ACTIONS: ReaderScreenActions = {
   adjustFontSize: () => undefined,
   adjustContentWidth: () => undefined,
   toggleNightTheme: () => undefined,
-  setReadingFlow: () => undefined,
   toggleBookmark: async () => undefined,
   addHighlight: () => undefined,
   highlightSelection: () => undefined,

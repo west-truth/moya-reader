@@ -5,6 +5,13 @@ Reader sentence pagination - 2026-08-21: TXT/EPUB Reader는 스크롤과 문장 
 첫 가시 문장 anchor로 전환하며, page map은 IndexedDB v34의 device-local 파생 cache에 최근 24 layout만
 보관한다. `screen_turn`은 저장값 입력 마이그레이션으로만 남는다.
 
+Reader automatic flow polish - 2026-08-22: 기본 `자동` 모드는 연속 스크롤에서 화면 이동 입력이 들어오면
+마지막으로 완전히 보인 문장 다음 anchor를 페이지 첫 문장으로 사용하고, 페이지에서 wheel/세로 swipe가
+들어오면 같은 content frame의 연속 스크롤로 복원한다. 두 viewport는 warm 상태를 유지하고 교체 전 anchor를
+복원해 역방향 이동과 몰입형/mobile resize의 빈 frame을 피한다. 화 첫 화면은 모든 flow에서 화수와 제목을
+표시한다. 연속 스크롤의 화 끝은 280ms idle 뒤 새 wheel/touch 입력을 요구하며, 입력량에 비례한 최대 32px
+pull feedback은 scroll position·progress·page map을 변경하지 않는 일시적 transform이다.
+
 Reader W4 playback boundary - 2026-07-13: TTS 설정은 기존 `ReaderSettings` JSON의 전역값과 책별 sparse
 override로 저장되며 secret/audio cache와 분리된다. source-preserving sentence planner와 playback runner가
 system/Hosted/native 경로의 queue, pause, timer와 다음 화 전환을 공유한다. 브라우저 음성/HTML audio는 provider

@@ -5,7 +5,12 @@ import type { ReadingPosition } from '../../sync/types';
 import { ReaderChrome } from './ReaderChrome';
 import { ReaderSearchResults } from './ReaderSearchResults';
 import { ReaderSelectionToolbar } from './ReaderSelectionToolbar';
-import { ReaderViewport, type ReaderViewportApi } from './ReaderViewport';
+import {
+  ReaderViewport,
+  type ReaderAnchorPlacement,
+  type ReaderRuntimeFlow,
+  type ReaderViewportApi,
+} from './ReaderViewport';
 import type {
   ReaderLocationSnapshot,
   ReaderMode,
@@ -26,6 +31,22 @@ import { PARAGRAPHS_PER_PAGE } from '../../repositories/reader-defaults';
 import { EpubFootnoteSheet } from './EpubFootnoteSheet';
 
 const BOOKMARK_PROGRESS_TOLERANCE = 0.003;
+const SCROLL_HANDOFF_MIN_DURATION_MS = 72;
+const SCROLL_HANDOFF_MAX_DURATION_MS = 120;
+const SCROLL_HANDOFF_MAX_VIEWPORT_RATIO = 0.8;
+
+function clampScrollHandoffDelta(deltaY: number): number {
+  const viewportHeight = Math.max(1, window.innerHeight || document.documentElement.clientHeight);
+  const maximumDelta = Math.max(160, viewportHeight * SCROLL_HANDOFF_MAX_VIEWPORT_RATIO);
+  return Math.max(-maximumDelta, Math.min(maximumDelta, deltaY));
+}
+
+function scrollHandoffDuration(deltaY: number): number {
+  return Math.max(
+    SCROLL_HANDOFF_MIN_DURATION_MS,
+    Math.min(SCROLL_HANDOFF_MAX_DURATION_MS, SCROLL_HANDOFF_MIN_DURATION_MS + Math.abs(deltaY) * 0.08),
+  );
+}
 
 function classNames(...values: Array<string | false | undefined>): string {
   return values.filter(Boolean).join(' ');
@@ -80,20 +101,65 @@ function ReaderScreenComponent({ model, screenHandle }: ReaderScreenProps) {
   const openSequence = openRequest?.sequence;
   const preserveSearch = openRequest?.preserveSearch;
   const initialMode = openRequest?.initialMode;
-  const readingFlow = model.settings.readingProfile.flow === 'paginated' ? 'paginated' : 'scroll';
-  const previousReadingFlowRef = useRef(readingFlow);
+  const modeLock = model.settings.readingProfile.modeLock ?? 'auto';
+  const [readingFlow, setReadingFlow] = useState<ReaderRuntimeFlow>(() =>
+    modeLock === 'paginated' ? 'paginated' : 'scroll',
+  );
+  const [pageToScrollSettling, setPageToScrollSettling] = useState(false);
+  const settleFrameRef = useRef<number>();
+  const scrollHandoffFrameRef = useRef<number>();
+  const readingFlowRef = useRef(readingFlow);
+  readingFlowRef.current = readingFlow;
+  const previousModeLockRef = useRef(modeLock);
   const pendingFlowTransitionRef = useRef<{
-    readonly targetFlow: 'scroll' | 'paginated';
-    readonly anchor: ReaderAnchor;
-    readonly direction?: -1 | 1;
+    targetFlow: 'scroll' | 'paginated';
+    anchor: ReaderAnchor;
+    placement?: ReaderAnchorPlacement;
+    sourceFlow?: ReaderRuntimeFlow;
+    pageDelta?: number;
+    scrollDelta?: number;
   }>();
-  if (previousReadingFlowRef.current !== readingFlow) {
-    if (!pendingFlowTransitionRef.current) {
-      const anchor = viewportApiRef.current?.getAnchor();
-      if (anchor) pendingFlowTransitionRef.current = { targetFlow: readingFlow, anchor };
-    }
-    previousReadingFlowRef.current = readingFlow;
-  }
+  const lastFlowTransitionRef = useRef<typeof pendingFlowTransitionRef.current>();
+  const pageIntentRequestRef = useRef<{
+    readonly api?: ReaderViewportApi;
+    readonly initialDirection: -1 | 1;
+    additionalDelta: number;
+  }>();
+
+  const cancelScrollHandoff = useCallback(() => {
+    window.cancelAnimationFrame(scrollHandoffFrameRef.current ?? 0);
+    scrollHandoffFrameRef.current = undefined;
+  }, []);
+
+  const startScrollHandoff = useCallback(
+    (api: ReaderViewportApi, requestedDelta: number) => {
+      cancelScrollHandoff();
+      const delta = clampScrollHandoffDelta(requestedDelta);
+      if (Math.abs(delta) < 0.5) return;
+      if (window.matchMedia?.('(prefers-reduced-motion: reduce)').matches) {
+        api.scrollByPixels(delta);
+        return;
+      }
+      const duration = scrollHandoffDuration(delta);
+      let startedAt: number | undefined;
+      let applied = 0;
+      const animate = (now: number) => {
+        startedAt ??= now;
+        const progress = Math.min(1, (now - startedAt) / duration);
+        const eased = 1 - (1 - progress) ** 3;
+        const nextApplied = delta * eased;
+        api.scrollByPixels(nextApplied - applied);
+        applied = nextApplied;
+        if (progress < 1) {
+          scrollHandoffFrameRef.current = window.requestAnimationFrame(animate);
+        } else {
+          scrollHandoffFrameRef.current = undefined;
+        }
+      };
+      scrollHandoffFrameRef.current = window.requestAnimationFrame(animate);
+    },
+    [cancelScrollHandoff],
+  );
 
   const notify = useCallback(
     (message: string, tone: 'info' | 'success' | 'warning' | 'danger' = 'warning') => {
@@ -165,6 +231,11 @@ function ReaderScreenComponent({ model, screenHandle }: ReaderScreenProps) {
     setLocation(nextLocation);
   }, []);
 
+  useEffect(() => {
+    locationRef.current = undefined;
+    setLocation(undefined);
+  }, [model.chapter.id]);
+
   const clearSelection = useCallback(() => {
     setSelection(undefined);
     window.getSelection()?.removeAllRanges();
@@ -188,43 +259,192 @@ function ReaderScreenComponent({ model, screenHandle }: ReaderScreenProps) {
     setViewportApi(api);
   }, []);
 
+  useEffect(() => {
+    if (previousModeLockRef.current === modeLock) return;
+    previousModeLockRef.current = modeLock;
+    if (modeLock === 'auto') return;
+    const targetFlow: ReaderRuntimeFlow = modeLock;
+    if (targetFlow === readingFlow) return;
+    const anchor = viewportApiRef.current?.getAnchor();
+    if (anchor) {
+      pendingFlowTransitionRef.current = {
+        targetFlow,
+        anchor,
+        sourceFlow: viewportApiRef.current?.flow,
+      };
+      lastFlowTransitionRef.current = pendingFlowTransitionRef.current;
+      if (targetFlow === 'scroll' && readingFlow === 'paginated') {
+        window.cancelAnimationFrame(settleFrameRef.current ?? 0);
+        setPageToScrollSettling(true);
+      }
+    }
+    setReadingFlow(targetFlow);
+  }, [modeLock, readingFlow]);
+
   const requestPageIntent = useCallback(
     (direction: -1 | 1) => {
+      cancelScrollHandoff();
       if (readingFlow === 'paginated') {
-        viewportApiRef.current?.pageJump(direction);
+        const pending = pendingFlowTransitionRef.current;
+        if (pending?.targetFlow === 'paginated') {
+          pending.pageDelta = (pending.pageDelta ?? 0) + direction;
+        } else if (viewportApiRef.current?.flow === 'paginated') {
+          viewportApiRef.current.pageJump(direction);
+        }
         return;
       }
-      const current = viewportApiRef.current?.getAnchor();
-      const fallbackIndex = Math.max(0, (locationRef.current?.paragraphIndex ?? 1) - 1);
-      const anchor: ReaderAnchor =
-        current ??
-        ({
-          bookId: model.novel.id,
-          contentRevisionId: model.novel.activeContentRevisionId ?? `${model.novel.id}:${model.chapter.id}`,
-          sectionId: model.chapter.id,
-          blockId: locationRef.current?.paragraph?.id ?? '',
-          blockIndex: fallbackIndex,
-          offset: locationRef.current?.offsetInParagraph ?? 0,
-        } satisfies ReaderAnchor);
-      pendingFlowTransitionRef.current = { targetFlow: 'paginated', anchor, direction };
-      screenHandle.getActions().setReadingFlow('paginated');
+      if (modeLock === 'scroll') {
+        viewportApiRef.current?.scrollPageJump(direction);
+        return;
+      }
+      const existingRequest = pageIntentRequestRef.current;
+      if (existingRequest) {
+        existingRequest.additionalDelta += direction;
+        return;
+      }
+      const api = viewportApiRef.current;
+      const request = { api, initialDirection: direction, additionalDelta: 0 };
+      pageIntentRequestRef.current = request;
+      const fallbackAnchor = () => {
+        const current = api?.getAnchor();
+        const fallbackIndex = Math.max(0, (locationRef.current?.paragraphIndex ?? 1) - 1);
+        return (
+          current ??
+          ({
+            bookId: model.novel.id,
+            contentRevisionId: model.novel.activeContentRevisionId ?? `${model.novel.id}:${model.chapter.id}`,
+            sectionId: model.chapter.id,
+            blockId: locationRef.current?.paragraph?.id ?? '',
+            blockIndex: fallbackIndex,
+            offset: locationRef.current?.offsetInParagraph ?? 0,
+          } satisfies ReaderAnchor)
+        );
+      };
+      void (api?.getPageTurnAnchor(request.initialDirection) ?? Promise.resolve(undefined))
+        .catch(() => undefined)
+        .then((resolvedAnchor) => {
+          if (pageIntentRequestRef.current !== request) return;
+          pageIntentRequestRef.current = undefined;
+          if (readingFlowRef.current !== 'scroll' || viewportApiRef.current?.flow !== 'scroll') return;
+          const anchor = resolvedAnchor ?? fallbackAnchor();
+          const paragraph = anchor.blockId ? api?.getCachedParagraphById(anchor.blockId) : undefined;
+          const atChapterEnd =
+            request.initialDirection > 0 &&
+            (anchor.blockIndex ?? 0) >= model.chapter.paragraphCount - 1 &&
+            Boolean(paragraph && anchor.offset >= paragraph.text.length);
+          const atChapterStart = request.initialDirection < 0 && (anchor.blockIndex ?? 0) <= 0 && anchor.offset <= 0;
+          pendingFlowTransitionRef.current = {
+            targetFlow: 'paginated',
+            anchor,
+            placement:
+              atChapterEnd || atChapterStart
+                ? 'contain'
+                : request.initialDirection < 0
+                  ? 'previous-page'
+                  : 'page-start',
+            sourceFlow: api?.flow,
+            pageDelta: (atChapterEnd || atChapterStart ? request.initialDirection : 0) + request.additionalDelta,
+          };
+          lastFlowTransitionRef.current = pendingFlowTransitionRef.current;
+          setReadingFlow('paginated');
+        });
     },
-    [model.chapter.id, model.novel.activeContentRevisionId, model.novel.id, readingFlow, screenHandle],
+    [
+      modeLock,
+      model.chapter.id,
+      model.chapter.paragraphCount,
+      model.novel.activeContentRevisionId,
+      model.novel.id,
+      readingFlow,
+      cancelScrollHandoff,
+    ],
+  );
+
+  const requestScrollIntent = useCallback(
+    (deltaY: number) => {
+      if (!Number.isFinite(deltaY) || deltaY === 0) return;
+      const activeTransition = pendingFlowTransitionRef.current;
+      if (activeTransition?.targetFlow === 'scroll') {
+        activeTransition.scrollDelta = (activeTransition.scrollDelta ?? 0) + deltaY;
+        return;
+      }
+      if (readingFlow === 'scroll') {
+        cancelScrollHandoff();
+        viewportApiRef.current?.scrollByPixels(deltaY);
+        return;
+      }
+      if (modeLock === 'paginated') {
+        viewportApiRef.current?.pageJump(deltaY > 0 ? 1 : -1);
+        return;
+      }
+      const anchor = viewportApiRef.current?.getAnchor();
+      if (!anchor) return;
+      pendingFlowTransitionRef.current = {
+        targetFlow: 'scroll',
+        anchor,
+        sourceFlow: viewportApiRef.current?.flow,
+        // Preserve the initiating wheel/swipe so a strong continuous-scroll gesture does
+        // not appear to stall. It is clamped and eased only after the exact anchor settles.
+        scrollDelta: deltaY,
+      };
+      lastFlowTransitionRef.current = pendingFlowTransitionRef.current;
+      window.cancelAnimationFrame(settleFrameRef.current ?? 0);
+      cancelScrollHandoff();
+      setPageToScrollSettling(true);
+      setReadingFlow('scroll');
+    },
+    [cancelScrollHandoff, modeLock, readingFlow],
   );
 
   useEffect(() => {
     const pending = pendingFlowTransitionRef.current;
-    if (!pending || !viewportApi || pending.targetFlow !== readingFlow) return;
+    if (!pending || !viewportApi || pending.targetFlow !== readingFlow || viewportApi.flow !== pending.targetFlow)
+      return;
     let cancelled = false;
-    void viewportApi.scrollToAnchor(pending.anchor).then((restored) => {
-      if (!restored || cancelled || pendingFlowTransitionRef.current !== pending) return;
+    void viewportApi.scrollToAnchor(pending.anchor, 0, pending.placement).then((restored) => {
+      if (cancelled || pendingFlowTransitionRef.current !== pending) return;
+      if (!restored) {
+        pendingFlowTransitionRef.current = undefined;
+        setPageToScrollSettling(false);
+        return;
+      }
       pendingFlowTransitionRef.current = undefined;
-      if (pending.direction) viewportApi.pageJump(pending.direction);
+      const scrollDelta = pending.targetFlow === 'scroll' ? (pending.scrollDelta ?? 0) : 0;
+      const pageDelta = pending.pageDelta ?? 0;
+      const direction = Math.sign(pageDelta) as -1 | 0 | 1;
+      for (let index = 0; index < Math.abs(pageDelta); index += 1) {
+        if (direction) viewportApi.pageJump(direction);
+      }
+      if (pending.targetFlow === 'scroll') {
+        window.cancelAnimationFrame(settleFrameRef.current ?? 0);
+        settleFrameRef.current = window.requestAnimationFrame(() => {
+          setPageToScrollSettling(false);
+          if (scrollDelta) {
+            scrollHandoffFrameRef.current = window.requestAnimationFrame(() =>
+              startScrollHandoff(viewportApi, scrollDelta),
+            );
+          }
+        });
+      }
     });
     return () => {
       cancelled = true;
     };
-  }, [readingFlow, viewportApi]);
+  }, [readingFlow, startScrollHandoff, viewportApi]);
+
+  useEffect(() => {
+    window.cancelAnimationFrame(settleFrameRef.current ?? 0);
+    cancelScrollHandoff();
+    setPageToScrollSettling(false);
+  }, [cancelScrollHandoff, model.chapter.id]);
+
+  useEffect(
+    () => () => {
+      window.cancelAnimationFrame(settleFrameRef.current ?? 0);
+      cancelScrollHandoff();
+    },
+    [cancelScrollHandoff],
+  );
 
   const goToReadingPosition = useCallback(
     async (position: ReadingPosition): Promise<boolean> => {
@@ -391,7 +611,11 @@ function ReaderScreenComponent({ model, screenHandle }: ReaderScreenProps) {
       setFootnote(undefined);
       return;
     }
-    if (isInteractiveShortcutTarget(event.target)) return;
+    const focusedButtonAllowsPageNavigation =
+      ['ArrowRight', 'ArrowDown', 'PageDown', 'ArrowLeft', 'ArrowUp', 'PageUp'].includes(event.key) &&
+      event.target instanceof HTMLElement &&
+      Boolean(event.target.closest('button'));
+    if (isInteractiveShortcutTarget(event.target) && !focusedButtonAllowsPageNavigation) return;
     if (event.altKey || event.ctrlKey || event.metaKey) return;
     const actions = screenHandle.getActions();
     if (model.overlays.settingsOpen || model.overlays.syncPanelOpen || model.overlays.importOpen) {
@@ -498,8 +722,17 @@ function ReaderScreenComponent({ model, screenHandle }: ReaderScreenProps) {
         model.addonOpen && 'addon-open',
         mobileSearchOpen && 'mobile-search-open',
         chrome.immersive && 'immersive',
+        pageToScrollSettling && 'page-to-scroll-settling',
         !chrome.immersive && (chrome.visible || model.settings.keepScreenChrome) && 'chrome-visible',
       )}
+      data-reading-mode-lock={modeLock}
+      data-reading-flow={readingFlow}
+      data-viewport-flow={viewportApi?.flow}
+      data-flow-transition-anchor={lastFlowTransitionRef.current?.anchor.blockIndex}
+      data-flow-transition-offset={lastFlowTransitionRef.current?.anchor.offset}
+      data-flow-transition-placement={lastFlowTransitionRef.current?.placement}
+      data-flow-transition-source={lastFlowTransitionRef.current?.sourceFlow}
+      data-flow-transition-settling={pageToScrollSettling ? 'true' : 'false'}
       onMouseMove={chrome.reveal}
     >
       <ReaderChrome
@@ -510,6 +743,7 @@ function ReaderScreenComponent({ model, screenHandle }: ReaderScreenProps) {
         search={search}
         location={location}
         mode={mode}
+        readingFlow={readingFlow}
         activeBookmark={activeBookmark}
         activeHighlight={activeHighlight}
         mobileSearchOpen={mobileSearchOpen}
@@ -532,6 +766,7 @@ function ReaderScreenComponent({ model, screenHandle }: ReaderScreenProps) {
         chapter={model.chapter}
         chapters={model.chapters}
         settings={model.settings}
+        readingFlow={readingFlow}
         mode={mode}
         ttsIndex={model.ttsIndex}
         search={search}
@@ -544,6 +779,7 @@ function ReaderScreenComponent({ model, screenHandle }: ReaderScreenProps) {
         onRevealChrome={chrome.reveal}
         onToggleImmersive={toggleImmersive}
         onPageIntent={requestPageIntent}
+        onScrollIntent={requestScrollIntent}
         onDocumentLink={(href, isFootnote) => void handleDocumentLink(href, isFootnote)}
         assetRepository={readerRuntime.bookAssetRepository}
       />

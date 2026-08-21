@@ -23,6 +23,7 @@ export const DEFAULT_READING_PROFILE: ReadingProfile = {
   contentWidth: 760,
   brightness: 1,
   flow: 'scroll',
+  modeLock: 'auto',
   pageTurnMotion: 'smooth',
 };
 
@@ -49,7 +50,11 @@ export function normalizeReadingProfile(
   const legacyFont =
     legacy?.font === 'sans' ? 'builtin-sans' : legacy?.font === 'mono' ? 'builtin-mono' : 'builtin-serif';
   const sourceFlow = value?.flow ?? (legacy?.flow === 'page' ? 'screen_turn' : 'scroll');
-  const flow = sourceFlow === 'screen_turn' ? 'paginated' : sourceFlow === 'paginated' ? 'paginated' : 'scroll';
+  const modeLock =
+    value?.modeLock === 'scroll' || value?.modeLock === 'paginated' || value?.modeLock === 'auto'
+      ? value.modeLock
+      : 'auto';
+  const flow = modeLock === 'paginated' ? 'paginated' : 'scroll';
   const pageTurnMotion =
     value?.pageTurnMotion === 'instant' || value?.pageTurnMotion === 'smooth'
       ? value.pageTurnMotion
@@ -75,6 +80,7 @@ export function normalizeReadingProfile(
     background: safeColor(value?.background),
     brightness: clamp(finite(value?.brightness, 1), 0.5, 1),
     flow,
+    modeLock,
     pageTurnMotion,
   };
 }
@@ -135,12 +141,13 @@ export function legacyReaderSettings(
     marginX: profile.marginX,
     marginY: profile.marginY,
     contentWidth: profile.contentWidth,
-    flow: profile.flow === 'scroll' ? 'scroll' : 'page',
+    flow: profile.modeLock === 'paginated' ? 'page' : 'scroll',
   };
 }
 
 export function settingsWithResolvedReadingProfile(settings: ReaderSettings, bookId?: string): ReaderSettings {
-  return { ...settings, ...legacyReaderSettings(resolveReadingProfile(settings, bookId)) };
+  const readingProfile = resolveReadingProfile(settings, bookId);
+  return { ...settings, ...legacyReaderSettings(readingProfile), readingProfile };
 }
 
 export function readingProfileContrastWarning(profile: ReadingProfile): boolean {

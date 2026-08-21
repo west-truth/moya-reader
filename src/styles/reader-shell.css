@@ -86,12 +86,69 @@
 }
 
 .reader-scroll {
+  --reader-content-inset-top: calc(76px + var(--reading-margin-y));
+  --reader-content-inset-bottom: calc(124px + var(--reading-margin-y));
   height: 100dvh;
   overflow: auto;
   overflow-anchor: none;
-  padding: calc(76px + var(--reading-margin-y)) var(--reading-margin-x) calc(124px + var(--reading-margin-y));
+  padding: var(--reader-content-inset-top) var(--reading-margin-x) var(--reader-content-inset-bottom);
   background: var(--reading-background, var(--reader-canvas));
   filter: brightness(var(--reading-brightness, 1));
+}
+
+.reader-scroll:not(.reader-paginated-root) {
+  clip-path: inset(var(--reader-content-inset-top) 0 var(--reader-content-inset-bottom) 0);
+}
+
+/* Reader navigation remains available through wheel, touch, keys, and the scrubber. */
+.reader-scroll[data-reader-layer='scroll'] {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+
+.reader-scroll[data-reader-layer='scroll']::-webkit-scrollbar {
+  display: none;
+  width: 0;
+  height: 0;
+}
+
+.reader-viewport-stack {
+  position: relative;
+  height: 100dvh;
+  overflow: hidden;
+}
+
+.reader-viewport-stack > .reader-viewport-layer {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+}
+
+.reader-viewport-layer.is-active {
+  z-index: 1;
+  visibility: visible;
+}
+
+.reader-viewport-layer.is-inactive {
+  z-index: 0;
+  visibility: hidden;
+  pointer-events: none;
+}
+
+/*
+ * A warm scroll layer still needs several frames to restore the exact source
+ * range. Keep the current page visible until that hidden layer has settled so
+ * the user never sees its stale virtualized position.
+ */
+.reader-screen.page-to-scroll-settling .reader-paginated-root.is-inactive {
+  z-index: 2;
+  visibility: visible;
+}
+
+.reader-screen.page-to-scroll-settling [data-reader-layer='scroll'].is-active {
+  z-index: 1;
+  visibility: hidden;
+  pointer-events: none;
 }
 
 .reader-screen.addon-open .reader-scroll {
@@ -158,9 +215,11 @@
 
 .reader-screen.immersive .reader-scroll,
 .reader-screen.immersive.addon-open .reader-scroll {
-  padding-top: max(var(--reading-margin-y), env(safe-area-inset-top, 0px));
+  --reader-content-inset-top: max(var(--reading-margin-y), env(safe-area-inset-top, 0px));
+  --reader-content-inset-bottom: max(var(--reading-margin-y), env(safe-area-inset-bottom, 0px));
+  padding-top: var(--reader-content-inset-top);
   padding-right: var(--reading-margin-x);
-  padding-bottom: max(var(--reading-margin-y), env(safe-area-inset-bottom, 0px));
+  padding-bottom: var(--reader-content-inset-bottom);
   padding-left: var(--reading-margin-x);
 }
 

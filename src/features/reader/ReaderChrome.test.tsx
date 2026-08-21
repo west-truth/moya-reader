@@ -77,6 +77,7 @@ describe('ReaderChrome bookmark action', () => {
           chrome={chrome}
           search={search}
           mode="read"
+          readingFlow="scroll"
           mobileSearchOpen={false}
           overflowOpen={false}
           onSetMode={vi.fn()}
