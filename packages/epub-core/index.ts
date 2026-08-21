@@ -272,10 +272,7 @@ function packageManifest(opf: XmlDocument, opfPath: string): Map<string, Manifes
   return result;
 }
 
-function manifestItemByHref(
-  manifest: Map<string, ManifestItem>,
-  href: string | undefined,
-): ManifestItem | undefined {
+function manifestItemByHref(manifest: Map<string, ManifestItem>, href: string | undefined): ManifestItem | undefined {
   const normalized = href?.split('#', 1)[0];
   return normalized ? [...manifest.values()].find((item) => item.href === normalized) : undefined;
 }
@@ -323,10 +320,7 @@ async function packageCoverItem(
   }
 
   const guideReference = descendants(opf, 'reference').find((reference) =>
-    (reference.getAttribute('type') ?? '')
-      .toLowerCase()
-      .split(/\s+/)
-      .includes('cover'),
+    (reference.getAttribute('type') ?? '').toLowerCase().split(/\s+/).includes('cover'),
   );
   const guideHref = guideReference?.getAttribute('href');
   if (guideHref) {
@@ -536,15 +530,43 @@ function sectionBlocks(document: XmlDocument, href: string, spineIndex: number):
     let current: XmlNode | null = element;
     while (current?.nodeType === 1) {
       const row = current as XmlElement;
-      const epubTypes = (row.getAttribute('epub:type') ?? row.getAttribute('type') ?? '')
-        .toLowerCase()
-        .split(/\s+/);
+      const epubTypes = (row.getAttribute('epub:type') ?? row.getAttribute('type') ?? '').toLowerCase().split(/\s+/);
       const role = (row.getAttribute('role') ?? '').toLowerCase();
       if (epubTypes.includes('footnote') || role === 'doc-footnote') return 'footnote';
       if (epubTypes.includes('endnote') || role === 'doc-endnote') return 'endnote';
       current = current.parentNode;
     }
     return undefined;
+  };
+  const nestedImages = (element: XmlElement): XmlElement[] => {
+    const images: XmlElement[] = [];
+    const collect = (parent: XmlElement) => {
+      for (const child of elementChildren(parent)) {
+        const childName = localName(child);
+        if (childName === 'img' || childName === 'image') images.push(child);
+        else collect(child);
+      }
+    };
+    collect(element);
+    return images;
+  };
+  const addImageBlock = (element: XmlElement) => {
+    const source =
+      element.getAttribute('src') ?? element.getAttribute('href') ?? element.getAttribute('xlink:href') ?? '';
+    const resourceHref = resolvedHref(href, source);
+    if (!resourceHref) return;
+    result.push({
+      kind: 'image',
+      plainText: (element.getAttribute('alt') ?? '').trim(),
+      resourceHref: resourceHref.split('#', 1)[0],
+      sourceLocator: `epubcfi(/6/${(spineIndex + 1) * 2}!/4/${(result.length + 1) * 2})`,
+      fragmentId: fragmentId(element),
+      semanticRole: semanticRole(element),
+    });
+  };
+  const addTextAndNestedImages = (element: XmlElement, kind: ReaderDocumentBlockKind) => {
+    addTextBlock(element, kind);
+    nestedImages(element).forEach(addImageBlock);
   };
   const visit = (element: XmlElement, inherited?: ReaderDocumentBlockKind) => {
     const name = localName(element);
@@ -557,30 +579,17 @@ function sectionBlocks(document: XmlDocument, href: string, spineIndex: number):
       name === 'video'
     )
       return;
-    if (/^h[1-6]$/.test(name)) return addTextBlock(element, 'heading');
-    if (name === 'p') return addTextBlock(element, inherited ?? 'paragraph');
+    if (/^h[1-6]$/.test(name)) return addTextAndNestedImages(element, 'heading');
+    if (name === 'p') return addTextAndNestedImages(element, inherited ?? 'paragraph');
     if (name === 'blockquote') {
       const paragraphs = elementChildren(element).filter((child) => localName(child) === 'p');
-      if (paragraphs.length) paragraphs.forEach((child) => addTextBlock(child, 'blockquote'));
-      else addTextBlock(element, 'blockquote');
+      if (paragraphs.length) paragraphs.forEach((child) => addTextAndNestedImages(child, 'blockquote'));
+      else addTextAndNestedImages(element, 'blockquote');
       return;
     }
-    if (name === 'li') return addTextBlock(element, 'list_item');
+    if (name === 'li') return addTextAndNestedImages(element, 'list_item');
     if (name === 'hr') return addTextBlock(element, 'separator');
-    if (name === 'img' || name === 'image') {
-      const source =
-        element.getAttribute('src') ?? element.getAttribute('href') ?? element.getAttribute('xlink:href') ?? '';
-      const resourceHref = resolvedHref(href, source);
-      if (resourceHref) {
-        result.push({
-          kind: 'image',
-          plainText: (element.getAttribute('alt') ?? '').trim(),
-          resourceHref: resourceHref.split('#', 1)[0],
-          sourceLocator: `epubcfi(/6/${(spineIndex + 1) * 2}!/4/${(result.length + 1) * 2})`,
-        });
-      }
-      return;
-    }
+    if (name === 'img' || name === 'image') return addImageBlock(element);
     const children = elementChildren(element);
     if (children.length === 0) {
       if (text(element)) addTextBlock(element, inherited ?? 'paragraph');
