@@ -18,10 +18,26 @@ export async function registerBookContentRoutes(
                b.analysis_status, b.favorite, b.metadata_revision, b.created_at, b.updated_at,
                o.id as source_asset_id, o.raw_text_hash as source_content_hash,
                o.content_type as source_content_type, o.size_bytes as source_byte_length,
-               ca.content_hash as cover_content_hash
+               ca.content_hash as cover_content_hash,
+               rp.chapter_id as last_read_chapter_id, rp.paragraph_id as last_read_paragraph_id,
+               rc.chapter_index as last_read_chapter_index, rp.scroll_top as last_read_offset,
+               case
+                 when rp.chapter_id is null then 0
+                 else least(
+                   1,
+                   greatest(
+                     0,
+                     ((greatest(coalesce(rc.chapter_index, 1), 1) - 1) + least(1, greatest(0, rp.chapter_progress)))
+                       / greatest(b.total_chapters, 1)::double precision
+                   )
+                 )
+               end as last_read_progress,
+               rp.updated_at as last_read_at
         from library_books b
         left join book_objects o on o.id = b.object_id
         left join book_assets ca on ca.id = b.cover_asset_id
+        left join reading_positions rp on rp.book_id = b.id and rp.user_id = b.user_id
+        left join chapters rc on rc.id = rp.chapter_id and rc.book_id = b.id
         where b.id = $1 and b.user_id = $2 and b.deleted_at is null
       `,
       [request.params.bookId, config.defaultUserId],

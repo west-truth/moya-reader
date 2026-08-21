@@ -182,7 +182,9 @@ describe('LibraryScreen', () => {
       id: 'reading',
       title: '읽는 작품',
       lastReadAt: '2026-07-09T12:00:00.000Z',
-      lastReadProgress: 0.45,
+      totalChapters: 10,
+      lastReadChapterIndex: 4,
+      lastReadProgress: 0.337,
       readingSeconds: 125,
       favorite: true,
     });
@@ -207,6 +209,8 @@ describe('LibraryScreen', () => {
     });
     expect(markup).toContain('이어 읽기');
     expect(markup).toContain('읽는 작품');
+    expect(markup).toContain('4 / 10화');
+    expect(markup).toContain('37%');
     expect(markup).toContain('미독 작품');
     expect(markup).toContain('읽는 중');
     expect(markup).toContain('미독');
@@ -280,7 +284,9 @@ describe('LibraryScreen', () => {
     const reading = novel({
       title: '접근성 작품',
       lastReadAt: '2026-07-09T12:00:00.000Z',
-      lastReadProgress: 0.45,
+      totalChapters: 10,
+      lastReadChapterIndex: 4,
+      lastReadProgress: 0.337,
     });
     const markup = renderToStaticMarkup(<LibraryScreen model={model([reading])} actions={actions()} />);
 
@@ -291,8 +297,9 @@ describe('LibraryScreen', () => {
     expect(markup).toContain('role="group" aria-label="책장 보기 방식"');
     expect(markup).toContain('aria-pressed="true"');
     expect(markup).toContain('aria-current="page"');
-    expect(markup).toContain('role="progressbar" aria-label="접근성 작품 읽기 진행률"');
-    expect(markup).toContain('aria-valuenow="45"');
+    expect(markup).toContain('role="progressbar" aria-label="접근성 작품 현재 화 진행률"');
+    expect(markup).toContain('aria-valuenow="37"');
+    expect(markup).toContain('aria-valuetext="4 / 10화 · 37%"');
     expect(markup).toContain('aria-label="책 가져오기"');
     expect(markup).toContain('aria-label="책장 메뉴 열기"');
   });

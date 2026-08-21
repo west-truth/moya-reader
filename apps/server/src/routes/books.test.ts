@@ -12,6 +12,8 @@ describe('book routes', () => {
     const pool = {
       query: vi.fn(async (sql: string, params?: unknown[]) => {
         expect(sql).toContain('left join reading_positions');
+        expect(sql).toContain('left join chapters rc');
+        expect(sql).toContain('rc.chapter_index as last_read_chapter_index');
         expect(params).toEqual(['user_test', 1001, 0]);
         return {
           rows: [
@@ -24,6 +26,7 @@ describe('book routes', () => {
               total_characters: 12345,
               total_paragraphs: 678,
               last_read_chapter_id: 'chapter_2',
+              last_read_chapter_index: 2,
               last_read_paragraph_id: 'paragraph_88',
               last_read_offset: 240,
               last_read_progress: 0.42,
@@ -43,6 +46,7 @@ describe('book routes', () => {
           id: 'book_1',
           title: 'Server Novel',
           last_read_chapter_id: 'chapter_2',
+          last_read_chapter_index: 2,
           last_read_progress: 0.42,
         }),
       ],

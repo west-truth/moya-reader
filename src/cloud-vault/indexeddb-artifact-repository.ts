@@ -711,6 +711,7 @@ export class IndexedDbCloudVaultArtifactRepository implements CloudVaultArtifact
         nextNovel = {
           ...nextNovel,
           lastReadChapterId: position.chapterId,
+          lastReadChapterIndex: chapter?.index,
           lastReadParagraphId: position.paragraphId,
           lastReadOffset: position.scrollTop,
           lastReadProgress: bookProgressFromChapterProgress(current, chapter, position.chapterProgress),

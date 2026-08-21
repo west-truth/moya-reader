@@ -84,6 +84,7 @@ export async function saveReadingPosition(input: SaveReadingPositionInput): Prom
     storedNovel({
       ...novel,
       lastReadChapterId: input.chapterId,
+      lastReadChapterIndex: chapter?.index,
       lastReadParagraphId: input.paragraphId,
       lastReadOffset: roundedScrollTop,
       lastReadProgress: bookProgressFromChapterProgress(novel, chapter, clampedProgress),
@@ -120,6 +121,7 @@ export async function clearReadingPosition(novelId: string): Promise<void> {
     storedNovel({
       ...novel,
       lastReadChapterId: undefined,
+      lastReadChapterIndex: undefined,
       lastReadParagraphId: undefined,
       lastReadOffset: 0,
       lastReadProgress: 0,

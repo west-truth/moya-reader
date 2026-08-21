@@ -165,6 +165,7 @@ export interface Novel {
   totalParagraphs: number;
   coverSeed: number;
   lastReadChapterId?: string;
+  lastReadChapterIndex?: number;
   lastReadParagraphId?: string;
   lastReadOffset: number;
   lastReadProgress: number;

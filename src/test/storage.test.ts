@@ -809,6 +809,7 @@ describe('IndexedDB reader storage', () => {
     expect(await getReadingPosition('novel-clear-progress')).toBeUndefined();
     expect(await getNovel('novel-clear-progress')).toMatchObject({
       lastReadChapterId: undefined,
+      lastReadChapterIndex: undefined,
       lastReadParagraphId: undefined,
       lastReadOffset: 0,
       lastReadProgress: 0,
@@ -1056,6 +1057,7 @@ describe('IndexedDB reader storage', () => {
     const novel = await getNovel('novel-progress');
     expect(novel).toMatchObject({
       lastReadChapterId: 'novel-progress:chapter:2',
+      lastReadChapterIndex: 2,
     });
     expect(novel?.lastReadProgress).toBeCloseTo(0.4);
   });

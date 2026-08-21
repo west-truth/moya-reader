@@ -1,10 +1,10 @@
 import { BookOpen, Check, Pencil, Play, RotateCcw, Star, Trash2 } from 'lucide-react';
-import { formatCount, formatProgress } from '../../utils/format';
+import { formatProgress } from '../../utils/format';
 import type { LibraryBookView } from './library-screen-model';
 import type { LibraryScreenProps } from './library-screen-contract';
 import { LibraryReadingProgress } from './LibraryReadingProgress';
 import { BookCover } from './BookCover';
-import { bookUnitLabel, isFixedDocumentFormat } from '../../domain/book-format';
+import { isFixedDocumentFormat } from '../../domain/book-format';
 
 interface LibraryBookItemProps extends LibraryScreenProps {
   readonly book: LibraryBookView;
@@ -163,14 +163,17 @@ function LibraryBookCard(props: LibraryBookItemProps) {
           <h3>{book.novel.title}</h3>
           {book.novel.favorite && <Star className="book-favorite-mark" size={14} fill="currentColor" />}
         </div>
-        <p>
-          {[book.novel.author, `${formatCount(book.novel.totalChapters)}${bookUnitLabel(book.novel)}`]
-            .filter(Boolean)
-            .join(' · ')}
-        </p>
-        {!trashed && <LibraryReadingProgress novel={book.novel} className="card-progress" />}
+        <p>{[book.novel.author, book.readingPositionLabel].filter(Boolean).join(' · ')}</p>
+        {!trashed && (
+          <LibraryReadingProgress
+            novel={book.novel}
+            progress={book.chapterProgress}
+            positionLabel={book.readingPositionLabel}
+            className="card-progress"
+          />
+        )}
         <div className="card-row">
-          <strong>{trashed ? '휴지통' : formatProgress(book.novel.lastReadProgress)}</strong>
+          <strong>{trashed ? '휴지통' : formatProgress(book.chapterProgress)}</strong>
           <span>{book.lastReadLabel}</span>
           <BookItemActions {...props} />
         </div>
@@ -211,19 +214,18 @@ function LibraryBookListRow(props: LibraryBookItemProps) {
           <h3>{book.novel.title}</h3>
           {book.novel.favorite && <Star size={14} fill="currentColor" />}
         </div>
-        <p>
-          {[
-            book.novel.author,
-            `${formatCount(book.novel.totalChapters)}${bookUnitLabel(book.novel)}`,
-            book.readingTimeLabel,
-          ]
-            .filter(Boolean)
-            .join(' · ')}
-        </p>
-        {!trashed && <LibraryReadingProgress novel={book.novel} className="card-progress" />}
+        <p>{[book.novel.author, book.readingPositionLabel, book.readingTimeLabel].filter(Boolean).join(' · ')}</p>
+        {!trashed && (
+          <LibraryReadingProgress
+            novel={book.novel}
+            progress={book.chapterProgress}
+            positionLabel={book.readingPositionLabel}
+            className="card-progress"
+          />
+        )}
       </div>
       <div className="book-list-progress">
-        <strong>{trashed ? '휴지통' : formatProgress(book.novel.lastReadProgress)}</strong>
+        <strong>{trashed ? '휴지통' : formatProgress(book.chapterProgress)}</strong>
         <span>{book.lastReadLabel}</span>
       </div>
       <BookItemActions {...props} />

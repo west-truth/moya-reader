@@ -128,6 +128,7 @@ describe('reader state store', () => {
       normalizedTextHash: before?.normalizedTextHash,
       activeContentRevisionId: before?.activeContentRevisionId,
       lastReadChapterId: 'reader-state-chapter',
+      lastReadChapterIndex: 1,
       lastReadParagraphId: 'reader-state-paragraph',
       lastReadOffset: 180,
       lastReadProgress: 0.8,
@@ -188,6 +189,7 @@ describe('reader state store', () => {
 
     expect(await readerDb.getNovel('reader-state-book')).toMatchObject({
       lastReadChapterId: 'reader-state-chapter',
+      lastReadChapterIndex: 1,
       lastReadParagraphId: 'reader-state-paragraph',
       lastReadOffset: 240,
       lastReadProgress: 0.75,
@@ -218,6 +220,7 @@ describe('reader state store', () => {
 
     expect(await readerDb.getNovel('reader-state-book')).toMatchObject({
       lastReadChapterId: undefined,
+      lastReadChapterIndex: undefined,
       lastReadParagraphId: undefined,
       lastReadOffset: 0,
       lastReadProgress: 0,

@@ -340,6 +340,7 @@ export class ServerUploadImportService implements ImportService {
         }
         if (remoteJob.status === 'done' && remoteJob.book_id) {
           const manifest = await this.client.getBookManifest(remoteJob.book_id);
+          const importedNovel = mapServerBook(manifest.book);
           onProgress({
             ...serverProgress,
             status: 'ready',
@@ -348,7 +349,7 @@ export class ServerUploadImportService implements ImportService {
           this.uploadSessionStore.remove(uploadSession.sessionKey);
           return {
             novel: {
-              ...mapServerBook(manifest.book),
+              ...importedNovel,
               ...(() => {
                 const position = mapServerReadingPosition(manifest.readingPosition);
                 return position
@@ -356,7 +357,11 @@ export class ServerUploadImportService implements ImportService {
                       lastReadChapterId: position.chapterId,
                       lastReadParagraphId: position.paragraphId,
                       lastReadOffset: position.scrollTop,
-                      lastReadProgress: position.chapterProgress,
+                      lastReadProgress:
+                        importedNovel.lastReadChapterIndex === undefined
+                          ? position.chapterProgress
+                          : importedNovel.lastReadProgress,
+                      lastReadAt: position.updatedAt,
                     }
                   : {};
               })(),

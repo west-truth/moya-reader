@@ -26,8 +26,8 @@
 
   .reader-screen.addon-open .reader-scroll,
   .reader-scroll {
-    height: calc(100dvh - 126px - env(safe-area-inset-top, 0px));
-    padding: calc(76px + env(safe-area-inset-top, 0px)) 20px 40px;
+    height: 100dvh;
+    padding: calc(76px + env(safe-area-inset-top, 0px)) 20px calc(104px + env(safe-area-inset-bottom, 0px));
   }
 
   .reader-topbar,
@@ -86,15 +86,6 @@
 
   .toast-region[data-reader-active='true'][data-addon-open='true'] {
     bottom: calc(18px + env(safe-area-inset-bottom, 0px));
-  }
-
-  .reader-topbar,
-  .reader-bottombar,
-  .reader-screen:hover .reader-topbar,
-  .reader-screen:hover .reader-bottombar {
-    opacity: 1;
-    pointer-events: auto;
-    transform: translateY(0);
   }
 
   .reader-actions .search-box {
@@ -275,10 +266,22 @@
   }
 
   .library-topbar {
-    grid-template-columns: minmax(0, 1fr) auto;
+    grid-template-columns: 30px minmax(0, 1fr) auto;
     gap: 8px;
     padding-inline: 12px;
     padding-top: env(safe-area-inset-top, 0px);
+  }
+
+  .library-mobile-brand {
+    width: 30px;
+    height: 30px;
+    display: block;
+    box-sizing: border-box;
+    padding: 2px;
+    object-fit: contain;
+    background: #f8f8fa;
+    border: 1px solid var(--border);
+    border-radius: 4px;
   }
 
   .library-topbar-title,
@@ -549,12 +552,25 @@
   }
 
   .reader-bottombar input[type='range'] {
-    min-width: 54px;
+    min-width: 40px;
+    flex: 1 1 80px;
+  }
+
+  .reader-bottombar {
+    gap: 4px;
+    padding-inline: 8px;
   }
 
   .reader-mode-switch button {
-    min-width: 54px;
-    padding-inline: 8px;
+    width: 38px;
+    min-width: 38px;
+    padding-inline: 6px;
+    font-size: 0;
+  }
+
+  .reader-mode-switch button svg {
+    width: 16px;
+    height: 16px;
   }
 
   .auth-token-row,

@@ -13,6 +13,20 @@ interface LifecycleBody {
   deviceId?: string;
 }
 
+const catalogBookProgress = `
+  case
+    when rp.chapter_id is null then 0
+    else least(
+      1,
+      greatest(
+        0,
+        ((greatest(coalesce(rc.chapter_index, 1), 1) - 1) + least(1, greatest(0, rp.chapter_progress)))
+          / greatest(b.total_chapters, 1)::double precision
+      )
+    )
+  end
+`;
+
 const catalogSelect = `
   select b.id, b.active_content_revision_id, b.format, b.title, b.author, b.series_title, b.series_index, b.tags,
          b.description, b.language, b.cover_asset_id, b.cover_fit, b.cover_position_x, b.cover_position_y,
@@ -24,11 +38,13 @@ const catalogSelect = `
          o.content_type as source_content_type, o.size_bytes as source_byte_length,
          ca.content_hash as cover_content_hash,
          rp.chapter_id as last_read_chapter_id, rp.paragraph_id as last_read_paragraph_id,
-         rp.scroll_top as last_read_offset, rp.chapter_progress as last_read_progress
+         rc.chapter_index as last_read_chapter_index, rp.scroll_top as last_read_offset,
+         ${catalogBookProgress} as last_read_progress, rp.updated_at as last_read_at
   from library_books b
   left join book_objects o on o.id = b.object_id
   left join book_assets ca on ca.id = b.cover_asset_id
   left join reading_positions rp on rp.book_id = b.id and rp.user_id = b.user_id
+  left join chapters rc on rc.id = rp.chapter_id and rc.book_id = b.id
 `;
 
 function expectedRevision(request: FastifyRequest, body?: LifecycleBody): number | undefined {
@@ -149,10 +165,9 @@ export async function registerBookCatalogRoutes(
       );
     }
     if (query.filter === 'favorite') conditions.push('b.favorite = true');
-    if (query.filter === 'reading')
-      conditions.push('coalesce(rp.chapter_progress, 0) > 0 and coalesce(rp.chapter_progress, 0) < 0.995');
-    if (query.filter === 'finished') conditions.push('coalesce(rp.chapter_progress, 0) >= 0.995');
-    if (query.filter === 'unread') conditions.push('coalesce(rp.chapter_progress, 0) = 0');
+    if (query.filter === 'reading') conditions.push(`rp.chapter_id is not null and (${catalogBookProgress}) < 0.995`);
+    if (query.filter === 'finished') conditions.push(`(${catalogBookProgress}) >= 0.995`);
+    if (query.filter === 'unread') conditions.push('rp.chapter_id is null');
     const orderBy =
       query.sort === 'title'
         ? 'lower(b.title), b.id'

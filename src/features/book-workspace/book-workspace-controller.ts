@@ -287,6 +287,7 @@ export class BookWorkspaceController {
         selectedNovel: {
           ...novel,
           lastReadChapterId: chapter.id,
+          lastReadChapterIndex: chapter.index,
           lastReadOffset: pageIndex,
           lastReadProgress: progress,
           lastReadAt: updatedAt,
@@ -568,6 +569,7 @@ export class BookWorkspaceController {
       selectedNovel: {
         ...novel,
         lastReadChapterId: chapter.id,
+        lastReadChapterIndex: chapter.index,
         lastReadOffset: Math.round(location.scrollTop),
         lastReadProgress: bookProgress,
         lastReadParagraphId: location.paragraph?.id,

@@ -39,15 +39,25 @@
 }
 
 .library-rail-brand {
-  width: 30px;
-  height: 30px;
+  width: 34px;
+  height: 34px;
   display: grid;
   place-items: center;
-  color: var(--app-rail-background);
-  background: var(--app-rail-text);
-  border-radius: var(--radius-control);
-  font-size: 0.8rem;
-  font-weight: 850;
+  padding: 3px;
+  overflow: hidden;
+  background: #f8f8fa;
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  border-radius: 4px;
+}
+
+.library-rail-brand img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+
+.library-mobile-brand {
+  display: none;
 }
 
 .library-rail-nav {
@@ -604,12 +614,13 @@
 
 .books-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(154px, 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(176px, 1fr));
   gap: 18px 14px;
 }
 
 .book-card {
   position: relative;
+  container-type: inline-size;
   min-width: 0;
   padding: 7px;
   background: transparent;
@@ -732,6 +743,18 @@
 .book-card .book-edit-action,
 .book-card .book-remove-action {
   display: none;
+}
+
+@container (max-width: 210px) {
+  .book-card .card-row > span,
+  .book-card .book-open-action,
+  .book-card .book-favorite-action {
+    display: none;
+  }
+
+  .book-card .card-row {
+    justify-content: space-between;
+  }
 }
 
 .progress-track,

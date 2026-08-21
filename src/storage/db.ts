@@ -609,12 +609,7 @@ function remoteDocumentAnnotation(event: SyncEvent): DocumentAnnotation | undefi
     return undefined;
   }
   const anchor = remoteDocumentAnchor(value.anchor, bookId);
-  if (
-    !anchor ||
-    anchor.kind === 'reflowable_text' ||
-    anchor.bookId !== bookId ||
-    anchor.pageIndex !== pageIndex
-  ) {
+  if (!anchor || anchor.kind === 'reflowable_text' || anchor.bookId !== bookId || anchor.pageIndex !== pageIndex) {
     return undefined;
   }
   const remapValue = recordValue(value.textAnchorRemap);
@@ -668,8 +663,10 @@ function remoteDocumentTextOrderOverride(event: SyncEvent): DocumentTextOrderOve
     pageIndex < 0 ||
     !pageHash ||
     !sourceRevisionId ||
-    orderedBlockFingerprints.length !== (Array.isArray(value.orderedBlockFingerprints) ? value.orderedBlockFingerprints.length : -1) ||
-    excludedBlockFingerprints.length !== (Array.isArray(value.excludedBlockFingerprints) ? value.excludedBlockFingerprints.length : -1)
+    orderedBlockFingerprints.length !==
+      (Array.isArray(value.orderedBlockFingerprints) ? value.orderedBlockFingerprints.length : -1) ||
+    excludedBlockFingerprints.length !==
+      (Array.isArray(value.excludedBlockFingerprints) ? value.excludedBlockFingerprints.length : -1)
   ) {
     return undefined;
   }
@@ -1035,6 +1032,7 @@ async function applyRemoteSyncEvent(tx: IDBTransaction, event: SyncEvent): Promi
       novelStore.put({
         ...existingNovel,
         lastReadChapterId: position.chapterId,
+        lastReadChapterIndex: existingChapter?.index,
         lastReadParagraphId: position.paragraphId,
         lastReadOffset: position.scrollTop,
         lastReadProgress: bookProgressFromChapterProgress(existingNovel, existingChapter, position.chapterProgress),
@@ -1066,6 +1064,7 @@ async function applyRemoteSyncEvent(tx: IDBTransaction, event: SyncEvent): Promi
         storedNovel({
           ...existingNovel,
           lastReadChapterId: undefined,
+          lastReadChapterIndex: undefined,
           lastReadParagraphId: undefined,
           lastReadOffset: 0,
           lastReadProgress: 0,

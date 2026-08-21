@@ -49,8 +49,6 @@
 
 .reader-screen.chrome-visible .reader-topbar,
 .reader-screen.chrome-visible .reader-bottombar,
-.reader-screen:hover .reader-topbar,
-.reader-screen:hover .reader-bottombar,
 .reader-topbar:focus-within,
 .reader-bottombar:focus-within,
 .reader-topbar.always-visible,

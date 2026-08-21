@@ -105,12 +105,24 @@
 .application-info-mark {
   width: 38px;
   height: 38px;
-  display: grid;
-  place-items: center;
-  color: white;
-  background: var(--app-rail-background);
-  border-radius: 3px;
-  font-weight: 800;
+  padding: 2px;
+  overflow: hidden;
+  background: #f8f8fa;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+}
+
+.application-info-mark img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+
+.application-info-wordmark {
+  width: 102px;
+  height: auto;
+  display: block;
+  margin-bottom: 2px;
 }
 
 .application-info-capabilities,

@@ -58,7 +58,7 @@ function LibraryRail({ model, actions }: LibraryScreenProps) {
   return (
     <aside className="library-rail" aria-label="주요 화면">
       <div className="library-rail-brand" aria-label="모야">
-        모
+        <img src="/icons/moya-192.png" alt="" />
       </div>
       <nav className="library-rail-nav">
         <button className="active" type="button" title="라이브러리" aria-label="라이브러리" aria-current="page">
@@ -145,6 +145,7 @@ function LibraryMobileMenu({ model, actions }: LibraryScreenProps) {
 function LibraryHeader({ model, actions }: LibraryScreenProps) {
   return (
     <header className="library-topbar">
+      <img className="library-mobile-brand" src="/icons/moya-192.png" alt="모야" />
       <div className="library-topbar-title">
         <strong>책장</strong>
         <span>{formatCount(model.collection.totalBooks)}권</span>
@@ -278,12 +279,18 @@ function RecentReadingBand({ model, actions }: LibraryScreenProps) {
         <span className="eyebrow">이어 읽기</span>
         <h2>{featuredBook.novel.title}</h2>
         <p>
-          {formatProgress(featuredBook.novel.lastReadProgress)} · {featuredBook.lastReadLabel}
+          {featuredBook.readingPositionLabel} · {formatProgress(featuredBook.chapterProgress)} ·{' '}
+          {featuredBook.lastReadLabel}
         </p>
       </div>
       <div className="recent-progress">
-        <strong>{formatProgress(featuredBook.novel.lastReadProgress)}</strong>
-        <LibraryReadingProgress novel={featuredBook.novel} className="progress-track" />
+        <strong>{formatProgress(featuredBook.chapterProgress)}</strong>
+        <LibraryReadingProgress
+          novel={featuredBook.novel}
+          progress={featuredBook.chapterProgress}
+          positionLabel={featuredBook.readingPositionLabel}
+          className="progress-track"
+        />
       </div>
       <button
         className="primary-btn"
@@ -375,10 +382,15 @@ function LibraryInspector({
           <>
             <div className="library-inspector-progress">
               <div>
-                <span>읽기 진행률</span>
-                <strong>{formatProgress(novel.lastReadProgress)}</strong>
+                <span>{book.readingPositionLabel}</span>
+                <strong>{formatProgress(book.chapterProgress)}</strong>
               </div>
-              <LibraryReadingProgress novel={novel} className="progress-track" />
+              <LibraryReadingProgress
+                novel={novel}
+                progress={book.chapterProgress}
+                positionLabel={book.readingPositionLabel}
+                className="progress-track"
+              />
               <small>{book.lastReadLabel}</small>
             </div>
             <button className="primary-btn wide" onClick={() => void actions.books.continueReading(novel)}>
