@@ -19,7 +19,7 @@ use std::time::Instant;
 #[tauri::command]
 pub(crate) async fn desktop_ai_generate_json(
     request: DesktopStructuredJsonRequest,
-) -> Result<DesktopStructuredJsonResponse, DesktopStructuredJsonCommandError> {
+) -> Result<DesktopStructuredJsonResponse, Box<DesktopStructuredJsonCommandError>> {
     desktop_ai_generate_json_command(None, request).await
 }
 
@@ -28,20 +28,24 @@ pub(crate) async fn desktop_ai_generate_json(
 pub(crate) async fn desktop_ai_generate_json(
     app: tauri::AppHandle,
     request: DesktopStructuredJsonRequest,
-) -> Result<DesktopStructuredJsonResponse, DesktopStructuredJsonCommandError> {
+) -> Result<DesktopStructuredJsonResponse, Box<DesktopStructuredJsonCommandError>> {
     desktop_ai_generate_json_command(Some(&app), request).await
 }
 
 async fn desktop_ai_generate_json_command(
     app: Option<&tauri::AppHandle>,
     request: DesktopStructuredJsonRequest,
-) -> Result<DesktopStructuredJsonResponse, DesktopStructuredJsonCommandError> {
+) -> Result<DesktopStructuredJsonResponse, Box<DesktopStructuredJsonCommandError>> {
     let started_at = Instant::now();
     let request_context = request.clone();
     desktop_ai_generate_json_impl(app, request)
         .await
         .map_err(|message| {
-            desktop_ai_command_error(&request_context, message, started_at.elapsed().as_millis())
+            Box::new(desktop_ai_command_error(
+                &request_context,
+                message,
+                started_at.elapsed().as_millis(),
+            ))
         })
 }
 
