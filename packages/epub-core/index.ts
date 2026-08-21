@@ -29,6 +29,16 @@ const MAX_COMPRESSION_RATIO = 250;
 
 const EPUB_TEXT_TYPES = new Set(['application/xhtml+xml', 'text/html']);
 const EPUB_IMAGE_TYPES = new Set(['image/jpeg', 'image/png', 'image/gif', 'image/webp']);
+const POSITIVE_SIGNED_INTEGER_MODULUS = 0x80000000;
+
+/**
+ * Produces a deterministic visual seed that also fits persistence layers using
+ * a signed 32-bit integer (notably PostgreSQL `integer`).
+ */
+export function stableEpubCoverSeed(normalizedTextHash: string): number {
+  const hashSuffix = Number.parseInt(normalizedTextHash.slice(-8), 16);
+  return Number.isFinite(hashSuffix) ? hashSuffix % POSITIVE_SIGNED_INTEGER_MODULUS : 0;
+}
 
 export class EpubImportError extends Error {
   constructor(
@@ -709,7 +719,7 @@ export function materializeEpubImport(
       totalChapters: chapters.length,
       totalCharacters,
       totalParagraphs,
-      coverSeed: Number.parseInt(normalizedTextHash.slice(-8), 16) || 0,
+      coverSeed: stableEpubCoverSeed(normalizedTextHash),
       lastReadOffset: 0,
       lastReadProgress: 0,
       favorite: false,

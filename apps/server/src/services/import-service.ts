@@ -36,6 +36,16 @@ import {
 const PARAGRAPHS_PER_PAGE = 120;
 const SERVER_IMPORT_CHAPTER_BATCH_SIZE = 100;
 const SERVER_IMPORT_PAGE_BATCH_SIZE = 25;
+const POSITIVE_SIGNED_INTEGER_MODULUS = 0x80000000;
+
+export function normalizeCoverSeedForPersistence(value: number): number {
+  if (!Number.isFinite(value)) return 0;
+  const integer = Math.trunc(value);
+  return (
+    ((integer % POSITIVE_SIGNED_INTEGER_MODULUS) + POSITIVE_SIGNED_INTEGER_MODULUS) %
+    POSITIVE_SIGNED_INTEGER_MODULUS
+  );
+}
 
 interface UploadSessionRow {
   id: string;
@@ -792,7 +802,7 @@ export async function processImportJob(
           parsed.novel.totalChapters,
           parsed.novel.totalCharacters,
           parsed.novel.totalParagraphs,
-          parsed.novel.coverSeed,
+          normalizeCoverSeedForPersistence(parsed.novel.coverSeed),
           parsed.novel.createdAt,
           parsed.novel.updatedAt,
         ],
