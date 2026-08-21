@@ -118,10 +118,13 @@ export function ApplicationInfoSettings(props: ApplicationInfoSettingsProps) {
     <div className="application-info-settings">
       <section className="application-info-identity" aria-labelledby="application-info-title">
         <div className="application-info-mark" aria-hidden="true">
-          모
+          <img src="/icons/moya-192.png" alt="" />
         </div>
         <div>
-          <h3 id="application-info-title">모야</h3>
+          <h3 id="application-info-title" className="sr-only">
+            모야
+          </h3>
+          <img className="application-info-wordmark" src="/branding/moya-wordmark.png" alt="모야" />
           <p>텍스트 및 만화 뷰어</p>
         </div>
         <span>v{packageMetadata.version}</span>

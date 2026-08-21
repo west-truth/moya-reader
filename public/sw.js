@@ -1,5 +1,5 @@
-const CACHE_NAME = 'moya-app-shell-v2';
-const APP_SHELL = ['/', '/manifest.webmanifest', '/icons/moya.svg', '/icons/moya-192.png', '/icons/moya-512.png'];
+const CACHE_NAME = 'moya-app-shell-v3';
+const APP_SHELL = ['/', '/manifest.webmanifest', '/icons/moya-32.png', '/icons/moya-192.png', '/icons/moya-512.png'];
 
 self.addEventListener('install', (event) => {
   event.waitUntil(
@@ -57,12 +57,16 @@ self.addEventListener('fetch', (event) => {
     return;
   }
 
-  if (url.pathname === '/manifest.webmanifest') {
+  if (
+    url.pathname === '/manifest.webmanifest' ||
+    url.pathname.startsWith('/icons/') ||
+    url.pathname.startsWith('/branding/')
+  ) {
     event.respondWith(networkFirst(event.request));
     return;
   }
 
-  if (url.pathname.startsWith('/assets/') || url.pathname.startsWith('/icons/')) {
+  if (url.pathname.startsWith('/assets/')) {
     event.respondWith(
       caches.match(event.request).then(async (cached) => {
         if (cached) return cached;

@@ -1,4 +1,28 @@
-# 모야 - 텍스트 및 만화 뷰어
+<p align="center">
+  <img src="assets/branding/moya-wordmark.png" alt="MOYA" width="420" />
+</p>
+
+<h1 align="center">모야 — 텍스트 및 만화 뷰어</h1>
+
+<p align="center">
+  개인 서재를 위한 self-hosted TXT·EPUB·PDF·만화 뷰어
+</p>
+
+<p align="center">
+  <a href="https://github.com/west-truth/moya-reader/actions/workflows/quality.yml"><img src="https://github.com/west-truth/moya-reader/actions/workflows/quality.yml/badge.svg" alt="Quality checks" /></a>
+  <a href="LICENSE"><img src="https://img.shields.io/github/license/west-truth/moya-reader?color=5b68d6" alt="Apache-2.0 license" /></a>
+  <img src="https://img.shields.io/badge/self--hosted-Docker_Compose-2456a4?logo=docker&logoColor=white" alt="Docker Compose" />
+  <img src="https://img.shields.io/badge/apps-PWA_%C2%B7_Windows_%C2%B7_Android-7b61d1" alt="PWA, Windows and Android" />
+</p>
+
+<p align="center">
+  <a href="#무엇을-할-수-있나요">기능</a> ·
+  <a href="#지원-형식">지원 형식</a> ·
+  <a href="#가장-빠른-설치-ubuntu--docker-compose">빠른 설치</a> ·
+  <a href="#windows-데스크톱-앱">Windows</a> ·
+  <a href="#android-앱">Android</a> ·
+  <a href="#라이선스">라이선스</a>
+</p>
 
 모야(Moya)는 TXT·EPUB·PDF와 이미지 만화를 한곳에서 보관하고 읽는 개인용 뷰어입니다. 책장, 읽던 위치,
 검색, 북마크, 하이라이트, 메모, 통계와 TTS를 지원하며 Docker Compose를 이용해 개인 서버에 설치할 수 있습니다.
@@ -405,6 +429,15 @@ pnpm check                  # 웹·서버와 Rust 전체 검사
 서버와 라이선스 인벤토리의 기준 환경은 Linux x64 glibc입니다. 인벤토리 생성은 Ubuntu 또는 WSL2 Ubuntu에서
 `pnpm licenses:generate`로 수행합니다. Windows에서는 Linux 기준본을 덮어쓰지 않고 플랫폼 중립 의존성을
 검증합니다.
+
+### 브랜드 자산 교체
+
+[브랜드 자산 가이드](assets/branding/README.md)의 워드마크와 앱 아이콘 PNG를 같은 파일명으로 교체한 뒤
+다음 명령을 실행하면 Web/PWA, desktop과 Android 파생 아이콘이 함께 갱신됩니다.
+
+```bash
+pnpm brand:generate
+```
 
 ## 문제가 생겼을 때
 

@@ -266,10 +266,22 @@
   }
 
   .library-topbar {
-    grid-template-columns: minmax(0, 1fr) auto;
+    grid-template-columns: 30px minmax(0, 1fr) auto;
     gap: 8px;
     padding-inline: 12px;
     padding-top: env(safe-area-inset-top, 0px);
+  }
+
+  .library-mobile-brand {
+    width: 30px;
+    height: 30px;
+    display: block;
+    box-sizing: border-box;
+    padding: 2px;
+    object-fit: contain;
+    background: #f8f8fa;
+    border: 1px solid var(--border);
+    border-radius: 4px;
   }
 
   .library-topbar-title,

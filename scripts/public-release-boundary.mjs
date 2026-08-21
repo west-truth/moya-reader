@@ -54,8 +54,13 @@ export const PUBLIC_FORBIDDEN_EXTENSIONS = new Set([
 ]);
 
 export const PUBLIC_REQUIRED_PRODUCT_SOURCES = [
+  'assets/branding/moya-app-icon.png',
+  'assets/branding/moya-wordmark.png',
+  'assets/branding/README.md',
   'public/manifest.webmanifest',
   'public/sw.js',
+  'public/branding/moya-wordmark.png',
+  'public/icons/moya-32.png',
   'public/icons/moya-192.png',
   'public/icons/moya-512.png',
   'src-tauri/Cargo.toml',
@@ -81,6 +86,7 @@ export const PUBLIC_REQUIRED_PRODUCT_SOURCES = [
   'src-tauri/gen/android/gradle/wrapper/gradle-wrapper.jar',
   'src-tauri/gen/android/app/src/main/AndroidManifest.xml',
   'scripts/build-android-arm64-debug.mjs',
+  'scripts/generate-brand-assets.mjs',
   'scripts/public-release-boundary.mjs',
   'scripts/sync-tauri-android-document-io-plugin.mjs',
   'scripts/sync-tauri-android-provider-secret-plugin.mjs',

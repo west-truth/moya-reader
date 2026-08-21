@@ -58,7 +58,7 @@ function LibraryRail({ model, actions }: LibraryScreenProps) {
   return (
     <aside className="library-rail" aria-label="주요 화면">
       <div className="library-rail-brand" aria-label="모야">
-        모
+        <img src="/icons/moya-192.png" alt="" />
       </div>
       <nav className="library-rail-nav">
         <button className="active" type="button" title="라이브러리" aria-label="라이브러리" aria-current="page">
@@ -145,6 +145,7 @@ function LibraryMobileMenu({ model, actions }: LibraryScreenProps) {
 function LibraryHeader({ model, actions }: LibraryScreenProps) {
   return (
     <header className="library-topbar">
+      <img className="library-mobile-brand" src="/icons/moya-192.png" alt="모야" />
       <div className="library-topbar-title">
         <strong>책장</strong>
         <span>{formatCount(model.collection.totalBooks)}권</span>
