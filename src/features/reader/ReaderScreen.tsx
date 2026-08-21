@@ -1,5 +1,5 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import type { Bookmark, Chapter, Paragraph, ReaderHighlight } from '../../domain/types';
+import type { Bookmark, Chapter, Paragraph, ReaderAnchor, ReaderHighlight } from '../../domain/types';
 import { useAppRuntime } from '../../app/runtime/RuntimeProvider';
 import type { ReadingPosition } from '../../sync/types';
 import { ReaderChrome } from './ReaderChrome';
@@ -80,6 +80,20 @@ function ReaderScreenComponent({ model, screenHandle }: ReaderScreenProps) {
   const openSequence = openRequest?.sequence;
   const preserveSearch = openRequest?.preserveSearch;
   const initialMode = openRequest?.initialMode;
+  const readingFlow = model.settings.readingProfile.flow === 'paginated' ? 'paginated' : 'scroll';
+  const previousReadingFlowRef = useRef(readingFlow);
+  const pendingFlowTransitionRef = useRef<{
+    readonly targetFlow: 'scroll' | 'paginated';
+    readonly anchor: ReaderAnchor;
+    readonly direction?: -1 | 1;
+  }>();
+  if (previousReadingFlowRef.current !== readingFlow) {
+    if (!pendingFlowTransitionRef.current) {
+      const anchor = viewportApiRef.current?.getAnchor();
+      if (anchor) pendingFlowTransitionRef.current = { targetFlow: readingFlow, anchor };
+    }
+    previousReadingFlowRef.current = readingFlow;
+  }
 
   const notify = useCallback(
     (message: string, tone: 'info' | 'success' | 'warning' | 'danger' = 'warning') => {
@@ -174,6 +188,44 @@ function ReaderScreenComponent({ model, screenHandle }: ReaderScreenProps) {
     setViewportApi(api);
   }, []);
 
+  const requestPageIntent = useCallback(
+    (direction: -1 | 1) => {
+      if (readingFlow === 'paginated') {
+        viewportApiRef.current?.pageJump(direction);
+        return;
+      }
+      const current = viewportApiRef.current?.getAnchor();
+      const fallbackIndex = Math.max(0, (locationRef.current?.paragraphIndex ?? 1) - 1);
+      const anchor: ReaderAnchor =
+        current ??
+        ({
+          bookId: model.novel.id,
+          contentRevisionId: model.novel.activeContentRevisionId ?? `${model.novel.id}:${model.chapter.id}`,
+          sectionId: model.chapter.id,
+          blockId: locationRef.current?.paragraph?.id ?? '',
+          blockIndex: fallbackIndex,
+          offset: locationRef.current?.offsetInParagraph ?? 0,
+        } satisfies ReaderAnchor);
+      pendingFlowTransitionRef.current = { targetFlow: 'paginated', anchor, direction };
+      screenHandle.getActions().setReadingFlow('paginated');
+    },
+    [model.chapter.id, model.novel.activeContentRevisionId, model.novel.id, readingFlow, screenHandle],
+  );
+
+  useEffect(() => {
+    const pending = pendingFlowTransitionRef.current;
+    if (!pending || !viewportApi || pending.targetFlow !== readingFlow) return;
+    let cancelled = false;
+    void viewportApi.scrollToAnchor(pending.anchor).then((restored) => {
+      if (!restored || cancelled || pendingFlowTransitionRef.current !== pending) return;
+      pendingFlowTransitionRef.current = undefined;
+      if (pending.direction) viewportApi.pageJump(pending.direction);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [readingFlow, viewportApi]);
+
   const goToReadingPosition = useCallback(
     async (position: ReadingPosition): Promise<boolean> => {
       if (position.novelId !== model.novel.id) return false;
@@ -232,6 +284,8 @@ function ReaderScreenComponent({ model, screenHandle }: ReaderScreenProps) {
     getParagraphAtIndex: (index) => viewportApiRef.current?.getParagraphAtIndex(index) ?? Promise.resolve(undefined),
     getCachedParagraphById: (paragraphId) => viewportApiRef.current?.getCachedParagraphById(paragraphId),
     getLocation: () => viewportApiRef.current?.getLocation() ?? locationRef.current,
+    getAnchor: () => viewportApiRef.current?.getAnchor(),
+    scrollToAnchor: (anchor) => viewportApiRef.current?.scrollToAnchor(anchor) ?? Promise.resolve(false),
     getSelection: () => viewportApiRef.current?.getSelection() ?? selection,
     clearSelection,
   };
@@ -252,6 +306,8 @@ function ReaderScreenComponent({ model, screenHandle }: ReaderScreenProps) {
         implementationRef.current?.getParagraphAtIndex(index) ?? Promise.resolve(undefined),
       getCachedParagraphById: (paragraphId) => implementationRef.current?.getCachedParagraphById(paragraphId),
       getLocation: () => implementationRef.current?.getLocation(),
+      getAnchor: () => implementationRef.current?.getAnchor(),
+      scrollToAnchor: (anchor) => implementationRef.current?.scrollToAnchor(anchor) ?? Promise.resolve(false),
       getSelection: () => implementationRef.current?.getSelection(),
       clearSelection: () => implementationRef.current?.clearSelection(),
     }),
@@ -320,8 +376,8 @@ function ReaderScreenComponent({ model, screenHandle }: ReaderScreenProps) {
 
   const dispatchAction = (action: 'previous_page' | 'next_page') =>
     dispatchReaderAction(action, {
-      previousPage: () => viewportApiRef.current?.pageJump(-1),
-      nextPage: () => viewportApiRef.current?.pageJump(1),
+      previousPage: () => requestPageIntent(-1),
+      nextPage: () => requestPageIntent(1),
       toggleChrome: toggleImmersive,
       openToc: () => screenHandle.getActions().openAddon('outline'),
       openSettings: () => screenHandle.getActions().openSettings(),
@@ -487,6 +543,7 @@ function ReaderScreenComponent({ model, screenHandle }: ReaderScreenProps) {
         onSelectionChanged={setSelection}
         onRevealChrome={chrome.reveal}
         onToggleImmersive={toggleImmersive}
+        onPageIntent={requestPageIntent}
         onDocumentLink={(href, isFootnote) => void handleDocumentLink(href, isFootnote)}
         assetRepository={readerRuntime.bookAssetRepository}
       />

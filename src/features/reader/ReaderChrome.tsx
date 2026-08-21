@@ -45,8 +45,7 @@ function chapterSubtitle(index: number, title: string): string {
 }
 
 function flowLabel(settings: ReaderScreenModel['settings']): string {
-  if (settings.readingProfile.flow === 'paginated') return '페이지';
-  return settings.flow === 'page' ? '화면 넘김' : '스크롤';
+  return settings.readingProfile.flow === 'paginated' ? '페이지' : '스크롤';
 }
 
 function paragraphProgressLabel(model: ReaderScreenModel, location?: ReaderLocationSnapshot): string {

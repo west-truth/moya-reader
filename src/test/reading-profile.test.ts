@@ -34,4 +34,21 @@ describe('reading profile', () => {
     expect(readingProfileContrastWarning(lowContrast)).toBe(true);
     expect(readingProfileContrastWarning({ ...lowContrast, foreground: '#ffffff', background: '#111111' })).toBe(false);
   });
+
+  it('migrates screen-turn profiles to smooth pagination and preserves legacy paginated motion', () => {
+    expect(
+      resolveReadingProfile({
+        ...defaultSettings,
+        readingProfile: { ...defaultSettings.readingProfile, flow: 'screen_turn' },
+      }),
+    ).toMatchObject({
+      flow: 'paginated',
+      pageTurnMotion: 'smooth',
+    });
+    const legacyPaginated = {
+      ...defaultSettings,
+      readingProfile: { ...defaultSettings.readingProfile, flow: 'paginated', pageTurnMotion: undefined },
+    } as unknown as typeof defaultSettings;
+    expect(resolveReadingProfile(legacyPaginated)).toMatchObject({ flow: 'paginated', pageTurnMotion: 'instant' });
+  });
 });

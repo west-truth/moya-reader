@@ -71,6 +71,10 @@
   overflow-wrap: anywhere;
 }
 
+.reader-paragraph.is-continuation p {
+  text-indent: 0;
+}
+
 .reader-paragraph h2 {
   margin: 1.8em 0 0.9em;
   font-size: 1.28em;
@@ -137,9 +141,63 @@
   padding-bottom: calc(92px + var(--reading-margin-y));
 }
 
-.reader-paginated-page {
+.reader-pagination-stage {
+  position: relative;
   min-height: 0;
   overflow: hidden;
+}
+
+.reader-paginated-page {
+  position: absolute;
+  inset: 0;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.reader-pagination-stage.turn-next .reader-paginated-page.is-current {
+  animation: reader-page-in-next 180ms ease-out both;
+}
+
+.reader-pagination-stage.turn-next .reader-paginated-page.is-outgoing {
+  animation: reader-page-out-next 180ms ease-out both;
+}
+
+.reader-pagination-stage.turn-previous .reader-paginated-page.is-current {
+  animation: reader-page-in-previous 180ms ease-out both;
+}
+
+.reader-pagination-stage.turn-previous .reader-paginated-page.is-outgoing {
+  animation: reader-page-out-previous 180ms ease-out both;
+}
+
+@keyframes reader-page-in-next {
+  from {
+    transform: translateY(100%);
+  }
+}
+
+@keyframes reader-page-out-next {
+  to {
+    transform: translateY(-100%);
+  }
+}
+
+@keyframes reader-page-in-previous {
+  from {
+    transform: translateY(-100%);
+  }
+}
+
+@keyframes reader-page-out-previous {
+  to {
+    transform: translateY(100%);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .reader-pagination-stage .reader-paginated-page {
+    animation: none !important;
+  }
 }
 
 .reader-pagination-measure {
@@ -161,6 +219,14 @@
   width: min(100%, 32rem);
   height: min(42vh, 22rem);
   margin: 1.5em auto;
+}
+
+.reader-paginated-page .reader-epub-image,
+.reader-paginated-page .reader-image-placeholder {
+  width: min(100%, 32rem);
+  height: min(42vh, 22rem);
+  max-height: calc(100% - 3rem);
+  object-fit: contain;
 }
 
 .reader-pagination-controls {

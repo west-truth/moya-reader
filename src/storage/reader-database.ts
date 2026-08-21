@@ -27,9 +27,10 @@ import {
 import { SPEAKER_WORKFLOW_STORES, upgradeSpeakerWorkflowStores } from './speaker-workflow-schema';
 import { VOICE_CASTING_STORES, upgradeVoiceCastingStores } from './voice-casting-schema';
 import { DOCUMENT_LISTENING_STORES, upgradeDocumentListeningStores } from './document-listening-schema';
+import { READER_PAGE_MAP_STORE, upgradeReaderPageMapStore } from './reader-page-map-schema';
 
 export const READER_DB_NAME = 'noveldesk-reader';
-export const READER_DB_VERSION = 33;
+export const READER_DB_VERSION = 34;
 
 export type ReaderStoreName =
   | 'novels'
@@ -89,7 +90,8 @@ export type ReaderStoreName =
   | (typeof SPEAKER_WORKFLOW_STORES)[keyof typeof SPEAKER_WORKFLOW_STORES]
   | (typeof VOICE_CASTING_STORES)[keyof typeof VOICE_CASTING_STORES]
   | (typeof DOCUMENT_LISTENING_STORES)[keyof typeof DOCUMENT_LISTENING_STORES]
-  | typeof READER_ANCHOR_QUARANTINE_STORE;
+  | typeof READER_ANCHOR_QUARANTINE_STORE
+  | typeof READER_PAGE_MAP_STORE;
 
 const LOCAL_DEVICE_ID = 'device_local';
 let dbPromise: Promise<IDBDatabase> | undefined;
@@ -327,6 +329,7 @@ function upgrade(db: IDBDatabase, transaction: IDBTransaction, oldVersion: numbe
   upgradeSpeakerWorkflowStores(db);
   upgradeVoiceCastingStores(db);
   upgradeDocumentListeningStores(db, transaction);
+  upgradeReaderPageMapStore(db);
   if (oldVersion > 0 && oldVersion < 5 && db.objectStoreNames.contains('novels')) backfillReadingPositions(transaction);
   if (oldVersion > 0 && oldVersion < 7) stripExistingTextPayloads(transaction);
   if (oldVersion > 0 && oldVersion < 8) stripParagraphTextPayloads(transaction);

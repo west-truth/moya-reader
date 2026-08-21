@@ -37,6 +37,7 @@ export interface ReaderParagraphRowProps {
   readonly assetRepository?: BookAssetRepository;
   readonly onDocumentLink?: (href: string, footnote: boolean) => void;
   readonly staticLayout?: boolean;
+  readonly sourceOffset?: number;
 }
 
 function EpubImage({
@@ -154,6 +155,7 @@ function ReaderParagraphRowComponent({
   assetRepository,
   onDocumentLink = () => undefined,
   staticLayout = false,
+  sourceOffset = 0,
 }: ReaderParagraphRowProps) {
   const subscribe = useCallback(
     (listener: () => void) => decorationStore.subscribe(paragraph.id, listener),
@@ -163,9 +165,12 @@ function ReaderParagraphRowComponent({
   const decoration = useSyncExternalStore(subscribe, getSnapshot, getSnapshot);
   const showMeta = mode === 'analysis' || mode === 'correction';
   const needsReview = decoration.segments.some((segment) => decoration.reviewSegmentIds.has(segment.id));
-  const decoratedText = decorateReaderText(paragraph.text, [...decoration.highlights], searchQuery, [
-    ...decoration.activeRanges,
-  ]);
+  const decoratedText = decorateReaderText(
+    paragraph.text,
+    [...decoration.highlights],
+    searchQuery,
+    decoration.activeRanges.map((range) => ({ start: range.start - sourceOffset, end: range.end - sourceOffset })),
+  );
   const hasInlineHighlight = decoratedText.some((part) => part.highlightColor);
   const paragraphHighlight = hasInlineHighlight ? undefined : decoration.highlights[0];
   const useDocumentInline =
@@ -233,6 +238,7 @@ function ReaderParagraphRowComponent({
           paragraphHighlight && `highlight-${paragraphHighlight.color}`,
           needsReview && showMeta && 'low-confidence',
           showMeta && 'with-meta',
+          sourceOffset > 0 && 'is-continuation',
         )}
         onClick={() => {
           if (mode !== 'correction' || decoration.segments.length === 0) return;

@@ -1,5 +1,10 @@
 # 현재 아키텍처
 
+Reader sentence pagination - 2026-08-21: TXT/EPUB Reader는 스크롤과 문장 단위 페이지만 노출한다. TTS와
+조판은 text-core 문장 경계를 공유하고 page fragment는 원본 paragraph offset을 유지한다. 스크롤/페이지는
+첫 가시 문장 anchor로 전환하며, page map은 IndexedDB v34의 device-local 파생 cache에 최근 24 layout만
+보관한다. `screen_turn`은 저장값 입력 마이그레이션으로만 남는다.
+
 Reader W4 playback boundary - 2026-07-13: TTS 설정은 기존 `ReaderSettings` JSON의 전역값과 책별 sparse
 override로 저장되며 secret/audio cache와 분리된다. source-preserving sentence planner와 playback runner가
 system/Hosted/native 경로의 queue, pause, timer와 다음 화 전환을 공유한다. 브라우저 음성/HTML audio는 provider

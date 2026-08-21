@@ -21,6 +21,10 @@
       "types": "./spoken-text.ts",
       "default": "./spoken-text.ts"
     },
+    "./sentence-boundaries": {
+      "types": "./sentence-boundaries.ts",
+      "default": "./sentence-boundaries.ts"
+    },
     "./chapter-structure": {
       "types": "./chapter-structure.ts",
       "default": "./chapter-structure.ts"

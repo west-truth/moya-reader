@@ -227,11 +227,46 @@ async function runReaderSmoke() {
       .waitFor({ state: 'visible', timeout: timeoutMs });
     await assertNoHorizontalOverflow(page, 'desktop reader search');
 
+    await page.getByPlaceholder('본문 검색').fill('');
+    const chapterBeforePageIntent = await page.locator('.reader-title span').innerText();
+    await page.locator('.reader-scroll').press('PageDown');
+    await page.locator('.reader-paginated-root').waitFor({ state: 'visible', timeout: timeoutMs });
+    await page.waitForTimeout(500);
+    const automaticPageIndicator = await page.locator('.reader-pagination-controls').innerText();
+    const chapterAfterPageIntent = await page.locator('.reader-title span').innerText();
+    if (!/^2 \/ /u.test(automaticPageIndicator) && chapterAfterPageIntent === chapterBeforePageIntent) {
+      throw new Error(`Scroll-to-page intent did not advance exactly one page: ${automaticPageIndicator}`);
+    }
+
     await page.getByRole('button', { name: '읽기 설정 열기' }).click();
-    await page.getByRole('heading', { name: '읽기 설정' }).waitFor({ state: 'visible', timeout: timeoutMs });
+    await page.getByRole('heading', { name: '설정', exact: true }).waitFor({ state: 'visible', timeout: timeoutMs });
     await assertNoHorizontalOverflow(page, 'desktop settings panel');
+    await page.getByRole('tab', { name: '조판', exact: true }).click();
+    const readingFlow = page.getByLabel('읽기 방식');
+    if ((await readingFlow.getByRole('button').count()) !== 2) {
+      throw new Error('Reader settings must expose only scroll and page flows');
+    }
+    if (
+      (await readingFlow.getByRole('button', { name: '페이지', exact: true }).getAttribute('aria-pressed')) !== 'true'
+    ) {
+      throw new Error('Automatic page intent was not persisted as the active reader flow');
+    }
+    await page.getByLabel('페이지 이동 효과').getByRole('button', { name: '부드럽게', exact: true }).click();
     await screenshot(page, 'reader-ui-smoke-settings');
     await page.getByRole('button', { name: '설정 닫기' }).click();
+    await page.locator('.reader-paginated-root').waitFor({ state: 'visible', timeout: timeoutMs });
+    await page
+      .locator('.reader-pagination-controls')
+      .getByText(/\d+ \/ (\d+|계산 중)/)
+      .waitFor({
+        state: 'visible',
+        timeout: timeoutMs,
+      });
+    await page.keyboard.press('PageDown');
+    await page.waitForTimeout(220);
+    await assertVisible(page, '.reader-paginated-page.is-current .reader-paragraph', 'paginated reader page');
+    await page.keyboard.press('PageUp');
+    await page.waitForTimeout(220);
 
     await page.getByRole('button', { name: '부가 기능 열기' }).click();
     await page.locator('.addon-panel').first().waitFor({ state: 'visible', timeout: timeoutMs });
