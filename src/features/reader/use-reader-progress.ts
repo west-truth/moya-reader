@@ -148,6 +148,7 @@ export function useReaderProgress(options: ReaderProgressOptions): ReaderProgres
       scrollTop: root.scrollTop,
       paragraphIndex,
       paragraph: visible.paragraph,
+      offsetInParagraph: 0,
       ttsIndex: clamp(
         visible.index ?? Math.floor(progress * Math.max(chapter.paragraphCount - 1, 0)),
         0,

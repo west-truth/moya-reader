@@ -485,6 +485,13 @@ different fingerprints but share this store and eviction fence. Archive page ide
 asset, allowing a cache hit before full image decode. Explicit whole-document preparation writes the same rows
 sequentially for PDF and image archives and preserves completed rows after cancellation or isolated page failure.
 
+## Reader page-map cache
+
+IndexedDB v34 adds `reader_page_maps` for TXT/EPUB reflowable pagination. A row is keyed by content revision,
+chapter, viewport/layout fingerprint and renderer version, and stores only original-offset page boundaries plus LRU
+timestamps. The cache keeps the most recent 24 layouts. It is derived device-local data: backup, Cloud Vault, Hosted
+sync and server migrations deliberately exclude it, and a renderer/layout change simply builds a new row.
+
 ## Current Tests
 
 Current storage tests cover v4/v7/v11/v12 -> v13 upgrade, interrupted migration resume, atomic cutover, rollback safety, active/expired lease behavior, hash quarantine, cross-book FNV collision isolation, mixed v1/v2 anchors, all reader/AI/TTS/sync reference groups, revision heads, stale outbox lease reset, and actual same-file canonical reimport. The default suite uses bounded fixtures and the exact-20MiB single-chapter migration is an opt-in gate with total-time, heartbeat-gap, and heap-growth budgets.

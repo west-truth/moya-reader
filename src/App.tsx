@@ -5290,6 +5290,7 @@ export default function App() {
       changeReadingProfile({
         theme: readingProfile.theme === 'dark' || readingProfile.theme === 'midnight' ? 'light' : 'dark',
       }),
+    setReadingFlow: (flow: 'scroll' | 'paginated') => changeReadingProfile({ flow }),
     toggleBookmark: (location: ReaderLocationSnapshot) => toggleBookmark(location),
     addHighlight: (location: ReaderLocationSnapshot, selection?: ReaderSelection) =>
       void addHighlight('yellow', location, selection),

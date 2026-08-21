@@ -1,4 +1,12 @@
-import type { Bookmark, Chapter, Novel, Paragraph, ReaderHighlight, ReaderSettings } from '../../domain/types';
+import type {
+  Bookmark,
+  Chapter,
+  Novel,
+  Paragraph,
+  ReaderAnchor,
+  ReaderHighlight,
+  ReaderSettings,
+} from '../../domain/types';
 import type { ActiveTTSPlayback } from '../../providers/tts-playback-session';
 import type { ReadingPosition } from '../../sync/types';
 import { ReaderDecorationStore, type ReaderDecorationInput } from './reader-decoration-store';
@@ -17,6 +25,7 @@ export interface ReaderLocationSnapshot {
   readonly scrollTop: number;
   readonly paragraphIndex: number;
   readonly paragraph?: Paragraph;
+  readonly offsetInParagraph?: number;
   readonly ttsIndex: number;
 }
 
@@ -77,6 +86,7 @@ export interface ReaderScreenActions {
   readonly adjustFontSize: (delta: number) => void;
   readonly adjustContentWidth: (delta: number) => void;
   readonly toggleNightTheme: () => void;
+  readonly setReadingFlow: (flow: 'scroll' | 'paginated') => void;
   readonly toggleBookmark: (location: ReaderLocationSnapshot) => Promise<void>;
   readonly addHighlight: (location: ReaderLocationSnapshot, selection?: ReaderSelection) => void;
   readonly highlightSelection: (
@@ -114,6 +124,8 @@ export interface ReaderScreenCommands {
   readonly getParagraphAtIndex: (paragraphIndex: number) => Promise<Paragraph | undefined>;
   readonly getCachedParagraphById: (paragraphId: string) => Paragraph | undefined;
   readonly getLocation: () => ReaderLocationSnapshot | undefined;
+  readonly getAnchor: () => ReaderAnchor | undefined;
+  readonly scrollToAnchor: (anchor: ReaderAnchor) => Promise<boolean>;
   readonly getSelection: () => ReaderSelection | undefined;
   readonly clearSelection: () => void;
 }
@@ -129,6 +141,7 @@ const NO_ACTIONS: ReaderScreenActions = {
   adjustFontSize: () => undefined,
   adjustContentWidth: () => undefined,
   toggleNightTheme: () => undefined,
+  setReadingFlow: () => undefined,
   toggleBookmark: async () => undefined,
   addHighlight: () => undefined,
   highlightSelection: () => undefined,
@@ -258,6 +271,14 @@ export class ReaderScreenHandle {
 
   getLocation(): ReaderLocationSnapshot | undefined {
     return this.commands?.getLocation();
+  }
+
+  getAnchor(): ReaderAnchor | undefined {
+    return this.commands?.getAnchor();
+  }
+
+  scrollToAnchor(anchor: ReaderAnchor): Promise<boolean> {
+    return this.commands?.scrollToAnchor(anchor) ?? Promise.resolve(false);
   }
 
   getSelection(): ReaderSelection | undefined {

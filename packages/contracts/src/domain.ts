@@ -36,7 +36,9 @@ export type ReaderFont = 'serif' | 'sans' | 'mono';
 export type ReaderFlow = 'scroll' | 'page';
 
 export type ReadingProfileTheme = ReaderTheme | 'custom';
+/** @deprecated `screen_turn` is accepted only to migrate older saved settings. */
 export type ReadingProfileFlow = 'scroll' | 'screen_turn' | 'paginated';
+export type PageTurnMotion = 'instant' | 'smooth';
 
 export interface ReadingProfile {
   schemaVersion: 1;
@@ -56,6 +58,7 @@ export interface ReadingProfile {
   background?: string;
   brightness: number;
   flow: ReadingProfileFlow;
+  pageTurnMotion: PageTurnMotion;
 }
 
 export type ReadingProfileOverride = Partial<Omit<ReadingProfile, 'schemaVersion'>>;

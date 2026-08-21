@@ -1,17 +1,8 @@
 import { useVirtualizer } from '@tanstack/react-virtual';
+import { sentenceRanges } from '@noveldesk/text-core/sentence-boundaries';
 import { SkipBack, SkipForward } from 'lucide-react';
-import {
-  memo,
-  useCallback,
-  useEffect,
-  useLayoutEffect,
-  useRef,
-  useState,
-  type KeyboardEvent,
-  type MutableRefObject,
-  type WheelEvent,
-} from 'react';
-import type { Chapter, Novel, Paragraph, ReaderSettings } from '../../domain/types';
+import { memo, useCallback, useEffect, useLayoutEffect, useRef, useState, type MutableRefObject } from 'react';
+import type { Chapter, Novel, Paragraph, ReaderAnchor, ReaderSettings } from '../../domain/types';
 import type { ReaderRepository } from '../../repositories/reader-repository';
 import type { BookAssetRepository } from '../../repositories/book-asset-repository';
 import { PARAGRAPHS_PER_PAGE } from '../../repositories/reader-defaults';
@@ -42,6 +33,8 @@ export interface ReaderViewportApi {
   ) => Promise<void>;
   readonly scrubTo: (progress: number) => Promise<void>;
   readonly pageJump: (direction: -1 | 1) => void;
+  readonly getAnchor: () => ReaderAnchor | undefined;
+  readonly scrollToAnchor: (anchor: ReaderAnchor) => Promise<boolean>;
   readonly getParagraphAtIndex: (paragraphIndex: number) => Promise<Paragraph | undefined>;
   readonly getCachedParagraphById: (paragraphId: string) => Paragraph | undefined;
   readonly getLocation: () => ReaderLocationSnapshot | undefined;
@@ -65,8 +58,62 @@ export interface ReaderViewportProps {
   readonly onSelectionChanged: (selection?: ReaderSelection) => void;
   readonly onRevealChrome: () => void;
   readonly onToggleImmersive: () => void;
+  readonly onPageIntent: (direction: -1 | 1) => void;
   readonly onDocumentLink: (href: string, footnote: boolean) => void;
   readonly assetRepository?: BookAssetRepository;
+}
+
+function sourceTextNodes(root: HTMLElement): Text[] {
+  const nodes: Text[] = [];
+  const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+  let current = walker.nextNode();
+  while (current) {
+    const text = current as Text;
+    const parent = text.parentElement;
+    if (text.data.length > 0 && !parent?.closest('.segment-meta, rt')) nodes.push(text);
+    current = walker.nextNode();
+  }
+  return nodes;
+}
+
+function sourceRange(root: HTMLElement, startOffset: number, endOffset: number): Range | undefined {
+  const nodes = sourceTextNodes(root);
+  if (nodes.length === 0) return undefined;
+  const total = nodes.reduce((sum, node) => sum + node.data.length, 0);
+  const start = clamp(startOffset, 0, total);
+  const end = clamp(Math.max(start + 1, endOffset), 0, total);
+  let traversed = 0;
+  let startPoint: { node: Text; offset: number } | undefined;
+  let endPoint: { node: Text; offset: number } | undefined;
+  for (const node of nodes) {
+    const next = traversed + node.data.length;
+    if (!startPoint && start <= next) startPoint = { node, offset: Math.min(node.data.length, start - traversed) };
+    if (!endPoint && end <= next) {
+      endPoint = { node, offset: Math.min(node.data.length, end - traversed) };
+      break;
+    }
+    traversed = next;
+  }
+  startPoint ??= { node: nodes.at(-1)!, offset: nodes.at(-1)!.data.length };
+  endPoint ??= { node: nodes.at(-1)!, offset: nodes.at(-1)!.data.length };
+  const range = document.createRange();
+  range.setStart(startPoint.node, startPoint.offset);
+  range.setEnd(endPoint.node, endPoint.offset);
+  return range;
+}
+
+function visibleSentenceOffset(root: HTMLElement, paragraphElement: HTMLElement, paragraph: Paragraph): number {
+  const viewportTop = root.getBoundingClientRect().top + 1;
+  if (paragraphElement.getBoundingClientRect().top >= viewportTop) return 0;
+  for (const sentence of sentenceRanges(paragraph.text)) {
+    const range = sourceRange(paragraphElement, sentence.start, sentence.end);
+    if (range && [...range.getClientRects()].some((rect) => rect.bottom > viewportTop)) return sentence.start;
+  }
+  return Math.max(0, paragraph.text.length - 1);
+}
+
+function nextPaint(): Promise<void> {
+  return new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
 }
 
 function VirtualizedReaderViewportComponent({
@@ -86,12 +133,12 @@ function VirtualizedReaderViewportComponent({
   onSelectionChanged,
   onRevealChrome,
   onToggleImmersive,
+  onPageIntent,
   onDocumentLink,
   assetRepository,
 }: ReaderViewportProps) {
   const rootRef = useRef<HTMLDivElement>(null);
   const documentRef = useRef<HTMLElement>(null);
-  const pageWheelTimerRef = useRef<number>();
   const appliedOpenSequenceRef = useRef<number>();
   const visibleAnchorIndexRef = useRef<number>();
   const pages = useParagraphPages(repository, chapter.id, chapter.paragraphCount);
@@ -99,7 +146,7 @@ function VirtualizedReaderViewportComponent({
     count: chapter.paragraphCount,
     getScrollElement: () => rootRef.current,
     estimateSize: () => Math.max(settings.fontSize * settings.lineHeight * 2.4, 72),
-    overscan: settings.flow === 'page' ? 4 : 6,
+    overscan: 6,
   });
   const virtualItems = virtualizer.getVirtualItems();
   const virtualRangeKey = virtualItems.map((item) => item.index).join(':');
@@ -204,42 +251,6 @@ function VirtualizedReaderViewportComponent({
     [chapter.index, chapters, novel.id, screenHandle],
   );
 
-  const pageJump = useCallback(
-    (direction: -1 | 1) => {
-      const root = rootRef.current;
-      if (!root) return;
-      const pageSize = Math.max(settings.flow === 'page' ? root.clientHeight : root.clientHeight - 120, 80);
-      const edgeMargin = 24;
-      const atStart = root.scrollTop <= edgeMargin;
-      const atEnd = root.scrollTop + root.clientHeight >= root.scrollHeight - edgeMargin;
-      if (direction > 0 && atEnd) {
-        void goChapter(1);
-        return;
-      }
-      if (direction < 0 && atStart) {
-        void goChapter(-1, true);
-        return;
-      }
-      if (settings.flow !== 'page') {
-        root.scrollBy({ top: direction * pageSize, behavior: 'smooth' });
-        return;
-      }
-
-      const viewportTop = root.scrollTop;
-      const viewportBottom = viewportTop + root.clientHeight;
-      const items = virtualizer.getVirtualItems();
-      const candidates = direction > 0 ? items : [...items].reverse();
-      const target = candidates.find((item) =>
-        direction > 0
-          ? item.start > viewportTop + edgeMargin && item.start >= viewportBottom - edgeMargin
-          : item.start + item.size <= viewportTop + edgeMargin,
-      );
-      if (target) virtualizer.scrollToIndex(target.index, { align: 'start', behavior: 'smooth' });
-      else root.scrollBy({ top: direction * pageSize, behavior: 'smooth' });
-    },
-    [goChapter, settings.flow, virtualizer],
-  );
-
   const getSelection = useCallback((): ReaderSelection | undefined => {
     const selection = window.getSelection();
     const text = selection?.toString().trim() ?? '';
@@ -264,7 +275,62 @@ function VirtualizedReaderViewportComponent({
     scrollToParagraph,
     scrollToParagraphIndex,
     scrubTo,
-    pageJump,
+    pageJump: onPageIntent,
+    getAnchor: () => {
+      const root = rootRef.current;
+      if (root) {
+        const rootRect = root.getBoundingClientRect();
+        for (const element of root.querySelectorAll<HTMLElement>('[data-paragraph-id]')) {
+          const rect = element.getBoundingClientRect();
+          if (rect.bottom <= rootRect.top + 1 || rect.top >= rootRect.bottom) continue;
+          const row = element.closest<HTMLElement>('[data-index]');
+          const blockIndex = Number(row?.dataset.index);
+          const paragraph = Number.isInteger(blockIndex) ? pages.paragraphAt(blockIndex) : undefined;
+          if (!paragraph) continue;
+          return {
+            bookId: novel.id,
+            contentRevisionId: novel.activeContentRevisionId ?? `${novel.id}:${chapter.id}`,
+            sectionId: chapter.id,
+            blockId: paragraph.id,
+            blockIndex,
+            offset: visibleSentenceOffset(root, element, paragraph),
+            sourceLocator: paragraph.sourceLocator,
+          };
+        }
+      }
+      const current = progress.readLocation();
+      const blockIndex = current?.paragraph
+        ? current.paragraph.index - 1
+        : Math.max(0, current?.paragraphIndex ?? 1) - 1;
+      const paragraph = current?.paragraph ?? pages.paragraphAt(blockIndex);
+      if (!paragraph) return undefined;
+      return {
+        bookId: novel.id,
+        contentRevisionId: novel.activeContentRevisionId ?? `${novel.id}:${chapter.id}`,
+        sectionId: chapter.id,
+        blockId: paragraph.id,
+        blockIndex,
+        offset: current?.offsetInParagraph ?? 0,
+        sourceLocator: paragraph.sourceLocator,
+      };
+    },
+    scrollToAnchor: async (anchor) => {
+      if (anchor.sectionId !== chapter.id) return false;
+      const targetIndex = clamp(anchor.blockIndex ?? 0, 0, Math.max(0, chapter.paragraphCount - 1));
+      await pages.loadIndexes([targetIndex]);
+      virtualizer.scrollToIndex(targetIndex, { align: 'start', behavior: 'auto' });
+      if (anchor.offset > 0) {
+        await nextPaint();
+        const root = rootRef.current;
+        const paragraphElement = [...(root?.querySelectorAll<HTMLElement>('[data-paragraph-id]') ?? [])].find(
+          (element) => element.dataset.paragraphId === anchor.blockId,
+        );
+        const range = paragraphElement ? sourceRange(paragraphElement, anchor.offset, anchor.offset + 1) : undefined;
+        const rect = range?.getBoundingClientRect();
+        if (root && rect) root.scrollTop += rect.top - root.getBoundingClientRect().top;
+      }
+      return true;
+    },
     getParagraphAtIndex: pages.getParagraphAt,
     getCachedParagraphById: pages.paragraphById,
     getLocation: progress.readLocation,
@@ -369,30 +435,9 @@ function VirtualizedReaderViewportComponent({
     }
   }
 
-  const handleWheel = (event: WheelEvent<HTMLDivElement>) => {
-    if (settings.flow !== 'page' || Math.abs(event.deltaY) < 16) return;
-    event.preventDefault();
-    if (pageWheelTimerRef.current) return;
-    pageJump(event.deltaY > 0 ? 1 : -1);
-    pageWheelTimerRef.current = window.setTimeout(() => {
-      pageWheelTimerRef.current = undefined;
-    }, 380);
-  };
-
-  const handleKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
-    if (settings.flow !== 'page') return;
-    if (['ArrowRight', 'ArrowDown', 'PageDown', ' '].includes(event.key)) {
-      event.preventDefault();
-      pageJump(1);
-    } else if (['ArrowLeft', 'ArrowUp', 'PageUp'].includes(event.key)) {
-      event.preventDefault();
-      pageJump(-1);
-    }
-  };
-
   const actionHandlers = {
-    previousPage: () => pageJump(-1),
-    nextPage: () => pageJump(1),
+    previousPage: () => onPageIntent(-1),
+    nextPage: () => onPageIntent(1),
     toggleChrome: onToggleImmersive,
     openToc: () => screenHandle.getActions().openAddon('outline'),
     openSettings: () => screenHandle.getActions().openSettings(),
@@ -407,15 +452,13 @@ function VirtualizedReaderViewportComponent({
   return (
     <section
       ref={rootRef}
-      className={`reader-scroll font-${settings.font} mode-${mode}${settings.flow === 'page' ? ' page-flow' : ''}`}
+      className={`reader-scroll font-${settings.font} mode-${mode}`}
       tabIndex={0}
       onScroll={() => {
         onRevealChrome();
         visibleAnchorIndexRef.current = firstVisible().index;
         progress.handleScroll();
       }}
-      onWheel={handleWheel}
-      onKeyDown={handleKeyDown}
       onKeyUp={updateSelection}
       onMouseUp={updateSelection}
       onPointerDown={gestureHandlers.onPointerDown}

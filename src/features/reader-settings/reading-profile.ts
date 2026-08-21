@@ -23,6 +23,7 @@ export const DEFAULT_READING_PROFILE: ReadingProfile = {
   contentWidth: 760,
   brightness: 1,
   flow: 'scroll',
+  pageTurnMotion: 'smooth',
 };
 
 export const DEFAULT_GESTURE_BINDINGS = {
@@ -47,7 +48,14 @@ export function normalizeReadingProfile(
 ): ReadingProfile {
   const legacyFont =
     legacy?.font === 'sans' ? 'builtin-sans' : legacy?.font === 'mono' ? 'builtin-mono' : 'builtin-serif';
-  const flow = value?.flow ?? (legacy?.flow === 'page' ? 'screen_turn' : 'scroll');
+  const sourceFlow = value?.flow ?? (legacy?.flow === 'page' ? 'screen_turn' : 'scroll');
+  const flow = sourceFlow === 'screen_turn' ? 'paginated' : sourceFlow === 'paginated' ? 'paginated' : 'scroll';
+  const pageTurnMotion =
+    value?.pageTurnMotion === 'instant' || value?.pageTurnMotion === 'smooth'
+      ? value.pageTurnMotion
+      : sourceFlow === 'paginated'
+        ? 'instant'
+        : 'smooth';
   const theme = value?.theme ?? legacy?.theme ?? DEFAULT_READING_PROFILE.theme;
   return {
     schemaVersion: 1,
@@ -66,7 +74,8 @@ export function normalizeReadingProfile(
     foreground: safeColor(value?.foreground),
     background: safeColor(value?.background),
     brightness: clamp(finite(value?.brightness, 1), 0.5, 1),
-    flow: flow === 'screen_turn' || flow === 'paginated' ? flow : 'scroll',
+    flow,
+    pageTurnMotion,
   };
 }
 
