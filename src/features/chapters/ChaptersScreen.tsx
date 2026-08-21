@@ -175,10 +175,16 @@ function ChaptersHeader({ model, actions }: ChaptersScreenProps) {
           <h1>{novel.title}</h1>
         )}
         <p>
-          {novel.totalChapters}개 화 · {formatCount(novel.totalCharacters)}자 · {formatProgress(novel.lastReadProgress)}
+          {model.book.readingPositionLabel} · {formatCount(novel.totalCharacters)}자 ·{' '}
+          {formatProgress(model.book.chapterProgress)}
         </p>
         <div className="chapter-book-progress">
-          <LibraryReadingProgress novel={novel} className="progress-track" />
+          <LibraryReadingProgress
+            novel={novel}
+            progress={model.book.chapterProgress}
+            positionLabel={model.book.readingPositionLabel}
+            className="progress-track"
+          />
           <span>{model.summary.readLocationLabel}</span>
         </div>
       </div>
@@ -525,7 +531,7 @@ function MobileReadingSummary({ model, actions }: ChaptersScreenProps) {
         <span>
           <SlidersHorizontal size={18} /> 책 정보 및 작업
         </span>
-        <strong>{formatProgress(model.book.novel.lastReadProgress)}</strong>
+        <strong>{formatProgress(model.book.chapterProgress)}</strong>
       </summary>
       <div className="reader-summary-mobile-body">
         <ReadingSummaryContent model={model} actions={actions} showHeading={false} />

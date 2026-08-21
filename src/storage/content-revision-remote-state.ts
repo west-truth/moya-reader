@@ -230,6 +230,7 @@ function applyRemoteReadingPosition(
   return {
     ...novel,
     lastReadChapterId: readingPosition.chapterId,
+    lastReadChapterIndex: chapter?.index,
     lastReadParagraphId: readingPosition.paragraphId,
     lastReadOffset: readingPosition.scrollTop,
     lastReadProgress: bookProgressFromChapterProgress(novel, chapter, readingPosition.chapterProgress),
@@ -336,6 +337,7 @@ export function prepareRemoteContentActivation(input: {
       novel = {
         ...novel,
         lastReadChapterId: mappedPosition.chapterId,
+        lastReadChapterIndex: chapter?.index,
         lastReadParagraphId: mappedPosition.paragraphId,
         lastReadOffset: mappedPosition.scrollTop,
         lastReadProgress: bookProgressFromChapterProgress(novel, chapter, mappedPosition.chapterProgress),
@@ -352,6 +354,7 @@ export function prepareRemoteContentActivation(input: {
         novel = {
           ...novel,
           lastReadChapterId: undefined,
+          lastReadChapterIndex: undefined,
           lastReadParagraphId: undefined,
           lastReadOffset: 0,
           lastReadProgress: 0,

@@ -54,6 +54,10 @@ export const PUBLIC_FORBIDDEN_EXTENSIONS = new Set([
 ]);
 
 export const PUBLIC_REQUIRED_PRODUCT_SOURCES = [
+  'public/manifest.webmanifest',
+  'public/sw.js',
+  'public/icons/moya-192.png',
+  'public/icons/moya-512.png',
   'src-tauri/Cargo.toml',
   'src-tauri/Cargo.lock',
   'src-tauri/tauri.conf.json',

@@ -278,12 +278,18 @@ function RecentReadingBand({ model, actions }: LibraryScreenProps) {
         <span className="eyebrow">이어 읽기</span>
         <h2>{featuredBook.novel.title}</h2>
         <p>
-          {formatProgress(featuredBook.novel.lastReadProgress)} · {featuredBook.lastReadLabel}
+          {featuredBook.readingPositionLabel} · {formatProgress(featuredBook.chapterProgress)} ·{' '}
+          {featuredBook.lastReadLabel}
         </p>
       </div>
       <div className="recent-progress">
-        <strong>{formatProgress(featuredBook.novel.lastReadProgress)}</strong>
-        <LibraryReadingProgress novel={featuredBook.novel} className="progress-track" />
+        <strong>{formatProgress(featuredBook.chapterProgress)}</strong>
+        <LibraryReadingProgress
+          novel={featuredBook.novel}
+          progress={featuredBook.chapterProgress}
+          positionLabel={featuredBook.readingPositionLabel}
+          className="progress-track"
+        />
       </div>
       <button
         className="primary-btn"
@@ -375,10 +381,15 @@ function LibraryInspector({
           <>
             <div className="library-inspector-progress">
               <div>
-                <span>읽기 진행률</span>
-                <strong>{formatProgress(novel.lastReadProgress)}</strong>
+                <span>{book.readingPositionLabel}</span>
+                <strong>{formatProgress(book.chapterProgress)}</strong>
               </div>
-              <LibraryReadingProgress novel={novel} className="progress-track" />
+              <LibraryReadingProgress
+                novel={novel}
+                progress={book.chapterProgress}
+                positionLabel={book.readingPositionLabel}
+                className="progress-track"
+              />
               <small>{book.lastReadLabel}</small>
             </div>
             <button className="primary-btn wide" onClick={() => void actions.books.continueReading(novel)}>

@@ -604,12 +604,13 @@
 
 .books-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(154px, 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(176px, 1fr));
   gap: 18px 14px;
 }
 
 .book-card {
   position: relative;
+  container-type: inline-size;
   min-width: 0;
   padding: 7px;
   background: transparent;
@@ -732,6 +733,18 @@
 .book-card .book-edit-action,
 .book-card .book-remove-action {
   display: none;
+}
+
+@container (max-width: 210px) {
+  .book-card .card-row > span,
+  .book-card .book-open-action,
+  .book-card .book-favorite-action {
+    display: none;
+  }
+
+  .book-card .card-row {
+    justify-content: space-between;
+  }
 }
 
 .progress-track,

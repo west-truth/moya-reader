@@ -92,6 +92,7 @@ type MutableNovelMetadata = Pick<
   Novel,
   | 'title'
   | 'lastReadChapterId'
+  | 'lastReadChapterIndex'
   | 'lastReadParagraphId'
   | 'lastReadOffset'
   | 'lastReadProgress'
@@ -171,6 +172,7 @@ function novelForContentActivation(
     createdAt: current.createdAt,
     updatedAt: current.updatedAt > input.updatedAt ? current.updatedAt : input.updatedAt,
     lastReadChapterId: mergedValue('lastReadChapterId'),
+    lastReadChapterIndex: mergedValue('lastReadChapterIndex'),
     lastReadParagraphId: mergedValue('lastReadParagraphId'),
     lastReadOffset: mergedValue('lastReadOffset'),
     lastReadProgress: mergedValue('lastReadProgress'),
@@ -184,6 +186,7 @@ function mutableNovelMetadata(novel: Novel): MutableNovelMetadata {
   return {
     title: novel.title,
     lastReadChapterId: novel.lastReadChapterId,
+    lastReadChapterIndex: novel.lastReadChapterIndex,
     lastReadParagraphId: novel.lastReadParagraphId,
     lastReadOffset: novel.lastReadOffset,
     lastReadProgress: novel.lastReadProgress,
@@ -502,6 +505,7 @@ export async function activateStagedContentRevision(
       nextNovel = {
         ...nextNovel,
         lastReadChapterId: input.readerPlan.readingPosition.chapterId,
+        lastReadChapterIndex: input.novel.lastReadChapterIndex,
         lastReadParagraphId: input.readerPlan.readingPosition.paragraphId,
         lastReadOffset: input.readerPlan.readingPosition.scrollTop,
         lastReadProgress: input.novel.lastReadProgress,
@@ -510,6 +514,7 @@ export async function activateStagedContentRevision(
       nextNovel = {
         ...nextNovel,
         lastReadChapterId: undefined,
+        lastReadChapterIndex: undefined,
         lastReadParagraphId: undefined,
         lastReadOffset: 0,
         lastReadProgress: 0,

@@ -16,7 +16,12 @@ import {
 import type { BookWorkspaceState } from './book-workspace-contract';
 
 export function hasNovelReadActivity(novel: Novel): boolean {
-  return Boolean(novel.lastReadAt || novel.lastReadProgress > 0 || (novel.readingSeconds ?? 0) > 0);
+  return Boolean(
+    novel.lastReadAt ||
+    novel.lastReadChapterIndex !== undefined ||
+    novel.lastReadProgress > 0 ||
+    (novel.readingSeconds ?? 0) > 0,
+  );
 }
 
 export function isNovelFinished(novel: Novel): boolean {

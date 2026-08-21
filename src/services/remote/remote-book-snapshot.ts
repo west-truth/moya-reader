@@ -152,6 +152,10 @@ export function mapServerBook(row: SnapshotJsonRecord): Novel {
     totalParagraphs: numberValue(row.total_paragraphs),
     coverSeed: numberValue(row.cover_seed),
     lastReadChapterId: stringValue(row.last_read_chapter_id) || undefined,
+    lastReadChapterIndex:
+      row.last_read_chapter_index === null || row.last_read_chapter_index === undefined
+        ? undefined
+        : numberValue(row.last_read_chapter_index),
     lastReadParagraphId: stringValue(row.last_read_paragraph_id) || undefined,
     lastReadOffset: numberValue(row.last_read_offset),
     lastReadProgress: numberValue(row.last_read_progress),
@@ -219,7 +223,8 @@ function applyPosition(novel: Novel, position?: ReadingPosition): Novel {
     lastReadChapterId: position.chapterId,
     lastReadParagraphId: position.paragraphId,
     lastReadOffset: position.scrollTop,
-    lastReadProgress: position.chapterProgress,
+    lastReadProgress: novel.lastReadChapterIndex === undefined ? position.chapterProgress : novel.lastReadProgress,
+    lastReadAt: position.updatedAt,
     updatedAt: position.updatedAt,
   };
 }

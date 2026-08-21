@@ -1,0 +1,34 @@
+{
+  "id": "/",
+  "name": "모야 - 텍스트 및 만화 뷰어",
+  "short_name": "모야",
+  "description": "TXT·EPUB·PDF와 이미지 만화를 한곳에서 읽고 관리하는 개인용 뷰어",
+  "lang": "ko-KR",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "display_override": ["window-controls-overlay", "standalone", "minimal-ui"],
+  "background_color": "#f4f5f6",
+  "theme_color": "#1f2933",
+  "orientation": "any",
+  "icons": [
+    {
+      "src": "/icons/moya-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/icons/moya-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "/icons/moya.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}

@@ -50,7 +50,8 @@ function applyPosition(novel: Novel, position?: ReadingPosition): Novel {
     lastReadChapterId: position.chapterId,
     lastReadParagraphId: position.paragraphId,
     lastReadOffset: position.scrollTop,
-    lastReadProgress: position.chapterProgress,
+    lastReadProgress: novel.lastReadChapterIndex === undefined ? position.chapterProgress : novel.lastReadProgress,
+    lastReadAt: position.updatedAt,
     updatedAt: position.updatedAt,
   };
 }
