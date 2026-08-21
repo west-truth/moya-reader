@@ -22,7 +22,8 @@ EPUB은 이번 작업에서 새로 만든 기능이 아니다. 기존 `packages/
 
 ### EPUB 삽화와 표지 처리 경계
 
-- spine XHTML의 로컬 `<img>`와 SVG wrapper 안의 `<image>`가 참조하는 JPEG/PNG/GIF/WebP를 찾는다.
+- spine XHTML의 로컬 `<img>`와 SVG wrapper 안의 `<image>`가 참조하는 JPEG/PNG/GIF/WebP를 찾는다. 이미지가
+  `<p>`, heading, list item 또는 blockquote 안에 감싸진 일반적인 EPUB2 구조도 별도 image block으로 보존한다.
 - 외부 URL과 본문에서 사용하지 않는 manifest 이미지는 가져오지 않는다.
 - 각 삽화는 `epub_resource` asset으로 저장되고 image paragraph의 `assetId`가 이를 가리킨다. Local은
   IndexedDB, Hosted는 S3/MinIO object와 PostgreSQL `book_assets.byte_length bigint`를 사용한다.
@@ -36,6 +37,10 @@ EPUB은 이번 작업에서 새로 만든 기능이 아니다. 기존 `packages/
   object-storage bucket readiness와 orphan reservation을 asset마다 반복하지 않는다. 원본 archive 보존과
   import transaction 경계는 유지한다.
 - SVG 자체가 vector 삽화인 경우와 AVIF, 128 MiB보다 큰 streaming EPUB asset ingestion은 아직 지원하지 않는다.
+
+2026-08-21 실제 EPUB2 표본 점검에서 `<p><img .../></p>` 삽화가 empty text paragraph의 조기 반환에 가려지던
+문제를 수정했다. 약 8.5 MiB 표본의 표지 1장/삽화 1장과 약 20.2 MiB 표본의 표지 1장/삽화 12장이 모두
+manifest resource, image block과 cover asset으로 연결되는 것을 확인했다. 원본 표본은 저장소에 포함하지 않는다.
 
 ## 구현 경계
 

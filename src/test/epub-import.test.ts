@@ -24,7 +24,7 @@ async function epubFixture(options: FixtureOptions = {}): Promise<Blob> {
   const coverMode = options.coverMode ?? 'epub3';
   const metadata = [
     options.fixedLayout ? '<meta property="rendition:layout">pre-paginated</meta>' : '',
-    coverMode === 'epub2-meta' ? '<meta name="cover" content="cover"/>' : '',
+    coverMode === 'epub2-meta' ? '<meta name="cover" content="cover-image"/>' : '',
   ].join('');
   await writer.add(
     'OEBPS/content.opf',
@@ -35,7 +35,7 @@ async function epubFixture(options: FixtureOptions = {}): Promise<Blob> {
         </metadata>
         <manifest>
           <item id="chapter" href="chapter.xhtml" media-type="application/xhtml+xml"/>
-          <item id="cover" href="images/cover.png" media-type="image/png"${coverMode === 'epub3' ? ' properties="cover-image"' : ''}/>
+          <item id="cover-image" href="images/cover.png" media-type="image/png"${coverMode === 'epub3' ? ' properties="cover-image"' : ''}/>
           ${coverMode === 'guide' ? '<item id="cover-page" href="cover.xhtml" media-type="application/xhtml+xml"/>' : ''}
           ${options.navTitle ? '<item id="nav" href="nav.xhtml" media-type="application/xhtml+xml" properties="nav"/>' : ''}
           ${options.manifestExtra ?? ''}
@@ -118,7 +118,7 @@ describe('EPUB import engine', () => {
     for (let index = 0; index < illustration.length; index += 1) illustration[index] = index % 251;
     illustration.set([137, 80, 78, 71, 13, 10, 26, 10]);
     const source = await epubFixture({
-      body: '<h1>삽화 장</h1><p>삽화 앞 문장</p><img src="images/illustration.png" alt="삽화"/>',
+      body: '<h1>삽화 장</h1><p>삽화 앞 문장</p><p><img src="images/illustration.png" alt="삽화"/></p>',
       manifestExtra: '<item id="illustration" href="images/illustration.png" media-type="image/png"/>',
       extraEntries: [{ path: 'OEBPS/images/illustration.png', bytes: illustration }],
     });
@@ -146,11 +146,7 @@ describe('EPUB import engine', () => {
 
     expect(illustrationAsset?.bytes.byteLength).toBe(illustration.byteLength);
     expect(image?.assetId).toBe(illustrationAsset?.id);
-    expect(parsed.embeddedAssets?.map((asset) => asset.kind)).toEqual([
-      'epub_resource',
-      'epub_resource',
-      'cover',
-    ]);
+    expect(parsed.embeddedAssets?.map((asset) => asset.kind)).toEqual(['epub_resource', 'epub_resource', 'cover']);
   });
 
   it('accepts an EPUB2 package with an NCX manifest item and uses spine order', async () => {
