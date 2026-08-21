@@ -64,7 +64,7 @@ export interface ReaderViewportProps {
   readonly onVisualLocation: (location: ReaderLocationSnapshot) => void;
   readonly onSelectionChanged: (selection?: ReaderSelection) => void;
   readonly onRevealChrome: () => void;
-  readonly onToggleChrome: () => void;
+  readonly onToggleImmersive: () => void;
   readonly onDocumentLink: (href: string, footnote: boolean) => void;
   readonly assetRepository?: BookAssetRepository;
 }
@@ -85,7 +85,7 @@ function VirtualizedReaderViewportComponent({
   onVisualLocation,
   onSelectionChanged,
   onRevealChrome,
-  onToggleChrome,
+  onToggleImmersive,
   onDocumentLink,
   assetRepository,
 }: ReaderViewportProps) {
@@ -393,13 +393,13 @@ function VirtualizedReaderViewportComponent({
   const actionHandlers = {
     previousPage: () => pageJump(-1),
     nextPage: () => pageJump(1),
-    toggleChrome: onToggleChrome,
+    toggleChrome: onToggleImmersive,
     openToc: () => screenHandle.getActions().openAddon('outline'),
     openSettings: () => screenHandle.getActions().openSettings(),
     toggleTTS: () => screenHandle.getActions().toggleTTS(progress.readLocation()?.ttsIndex ?? 0),
   };
   const gestureHandlers = useReaderGestureHandlers({
-    bindings: settings.gestureBindings,
+    bindings: { ...settings.gestureBindings, tapCenter: 'toggle_chrome' },
     viewportWidth: () => rootRef.current?.clientWidth ?? window.innerWidth,
     actions: actionHandlers,
   });

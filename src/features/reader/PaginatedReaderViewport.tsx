@@ -114,7 +114,7 @@ export function PaginatedReaderViewport(props: ReaderViewportProps & { readonly 
     onVisualLocation,
     onSelectionChanged,
     onRevealChrome,
-    onToggleChrome,
+    onToggleImmersive,
     onDocumentLink,
     assetRepository,
     onPaginationFailure,
@@ -437,12 +437,12 @@ export function PaginatedReaderViewport(props: ReaderViewportProps & { readonly 
   );
 
   const gestureHandlers = useReaderGestureHandlers({
-    bindings: settings.gestureBindings,
+    bindings: { ...settings.gestureBindings, tapCenter: 'toggle_chrome' },
     viewportWidth: () => rootRef.current?.clientWidth ?? window.innerWidth,
     actions: {
       previousPage: () => pageJump(-1),
       nextPage: () => pageJump(1),
-      toggleChrome: onToggleChrome,
+      toggleChrome: onToggleImmersive,
       openToc: () => screenHandle.getActions().openAddon('outline'),
       openSettings: () => screenHandle.getActions().openSettings(),
       toggleTTS: () => screenHandle.getActions().toggleTTS(location?.ttsIndex ?? 0),

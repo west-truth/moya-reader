@@ -6,6 +6,7 @@ import {
   ChevronLeft,
   Headphones,
   Highlighter,
+  Focus,
   LocateFixed,
   Maximize2,
   Minimize2,
@@ -21,6 +22,7 @@ import {
   Sun,
   X,
 } from 'lucide-react';
+import { useState } from 'react';
 import type { Bookmark, ReaderHighlight } from '../../domain/types';
 import { useMenuPopover } from '../../shared/ui/use-menu-popover';
 import { formatCount, formatProgress } from '../../utils/format';
@@ -70,6 +72,7 @@ export interface ReaderChromeProps {
   readonly onMobileSearchOpenChanged: (open: boolean) => void;
   readonly onOverflowOpenChanged: (open: boolean) => void;
   readonly onGoToSavedPosition: () => void;
+  readonly onToggleImmersive: () => void;
 }
 
 export function ReaderChrome({
@@ -88,12 +91,27 @@ export function ReaderChrome({
   onMobileSearchOpenChanged,
   onOverflowOpenChanged,
   onGoToSavedPosition,
+  onToggleImmersive,
 }: ReaderChromeProps) {
+  const [bookmarkPending, setBookmarkPending] = useState(false);
   const overflowMenu = useMenuPopover(overflowOpen, onOverflowOpenChanged);
   const actions = screenHandle.getActions();
   const progress = location?.progress ?? 0;
   const nightThemeActive = model.settings.theme === 'dark' || model.settings.theme === 'midnight';
-  const toggleBookmark = () => location && actions.toggleBookmark(location);
+  const toggleBookmark = async () => {
+    if (bookmarkPending) return;
+    const currentLocation = location ?? viewport?.getLocation();
+    if (!currentLocation) {
+      actions.notify('읽기 위치를 확인하는 중입니다. 잠시 후 다시 시도해 주세요.', 'warning');
+      return;
+    }
+    setBookmarkPending(true);
+    try {
+      await actions.toggleBookmark(currentLocation);
+    } finally {
+      setBookmarkPending(false);
+    }
+  };
   const addHighlight = () => location && actions.addHighlight(location);
   const runOverflowAction = (action: () => void) => {
     onOverflowOpenChanged(false);
@@ -138,9 +156,11 @@ export function ReaderChrome({
           </button>
           <button
             className={classNames('icon-btn', Boolean(activeBookmark) && 'active')}
-            onClick={toggleBookmark}
-            title={activeBookmark ? '북마크 제거' : '북마크'}
-            aria-label={activeBookmark ? '북마크 제거' : '북마크 추가'}
+            onClick={() => void toggleBookmark()}
+            disabled={bookmarkPending}
+            title={bookmarkPending ? '북마크 저장 중' : activeBookmark ? '북마크 제거' : '북마크'}
+            aria-label={bookmarkPending ? '북마크 저장 중' : activeBookmark ? '북마크 제거' : '북마크 추가'}
+            aria-busy={bookmarkPending}
             aria-pressed={Boolean(activeBookmark)}
           >
             <BookmarkIcon size={18} />
@@ -154,13 +174,17 @@ export function ReaderChrome({
           >
             <Highlighter size={18} />
           </button>
-          <button
-            className="icon-btn"
-            onClick={actions.openSettings}
-            title="읽기 설정"
-            aria-label="읽기 설정 열기"
-          >
+          <button className="icon-btn" onClick={actions.openSettings} title="읽기 설정" aria-label="읽기 설정 열기">
             <Settings size={18} />
+          </button>
+          <button
+            className="icon-btn reader-desktop-action"
+            type="button"
+            onClick={onToggleImmersive}
+            title="몰입 모드"
+            aria-label="몰입 모드 시작"
+          >
+            <Focus size={18} />
           </button>
           <button className="icon-btn" onClick={actions.toggleAddon} title="부가 기능" aria-label="부가 기능 열기">
             <PanelRightOpen size={18} />
@@ -277,47 +301,34 @@ export function ReaderChrome({
                 type="button"
                 role="menuitem"
                 onClick={() =>
-                  runOverflowAction(() =>
-                    void viewport?.scrollToParagraphIndex(model.chapter.paragraphCount - 1, 'end'),
+                  runOverflowAction(
+                    () => void viewport?.scrollToParagraphIndex(model.chapter.paragraphCount - 1, 'end'),
                   )
                 }
               >
                 <ChevronsRight size={15} /> 현재 화 끝
               </button>
-              <button
-                type="button"
-                role="menuitem"
-                onClick={() => runOverflowAction(() => actions.openAddon('notes'))}
-              >
+              <button type="button" role="menuitem" onClick={() => runOverflowAction(() => actions.openAddon('notes'))}>
                 <StickyNote size={15} /> 주석
               </button>
-              <button
-                type="button"
-                role="menuitem"
-                onClick={() => runOverflowAction(actions.openSync)}
-              >
+              <button type="button" role="menuitem" onClick={() => runOverflowAction(actions.openSync)}>
                 <RefreshCw size={15} /> 동기화
               </button>
-              <button
-                type="button"
-                role="menuitem"
-                onClick={() => runOverflowAction(actions.openSettings)}
-              >
+              <button type="button" role="menuitem" onClick={() => runOverflowAction(actions.openSettings)}>
                 <Settings size={15} /> 읽기 설정
               </button>
-              <button
-                type="button"
-                role="menuitem"
-                onClick={() => runOverflowAction(actions.toggleNightTheme)}
-              >
+              <button type="button" role="menuitem" onClick={() => runOverflowAction(actions.toggleNightTheme)}>
                 {nightThemeActive ? <Sun size={15} /> : <Moon size={15} />} 테마
+              </button>
+              <button type="button" role="menuitem" onClick={() => runOverflowAction(onToggleImmersive)}>
+                <Focus size={15} /> 몰입 모드
               </button>
               <button
                 type="button"
                 role="menuitem"
                 onClick={() => runOverflowAction(() => void chrome.toggleFullscreen())}
               >
-                {chrome.fullscreen ? <Minimize2 size={15} /> : <Maximize2 size={15} />} 전체 화면
+                {chrome.fullscreen ? <Minimize2 size={15} /> : <Maximize2 size={15} />} 브라우저 전체 화면
               </button>
             </div>
           )}

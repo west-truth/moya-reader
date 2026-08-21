@@ -148,6 +148,35 @@ function parseXml(source: string, label: string): XmlDocument {
   return document;
 }
 
+/**
+ * EPUB2 content is commonly labelled as XHTML while containing HTML named
+ * entities (for example `&nbsp;`) or other recoverable HTML syntax. Keep the
+ * container, OPF and NCX strict, but allow spine/nav/cover documents to use
+ * the HTML parser after strict XML parsing fails. The parser is local-only and
+ * does not fetch the external XHTML DTD or any referenced resource.
+ */
+function parseContentDocument(source: string, label: string): XmlDocument {
+  try {
+    return parseXml(source, label);
+  } catch (strictError) {
+    const errors: string[] = [];
+    const document = new DOMParser({
+      onError: (level, message) => {
+        if (level === 'error' || level === 'fatalError') errors.push(message);
+      },
+    }).parseFromString(source, 'text/html');
+    if (
+      !document?.documentElement ||
+      errors.length > 0 ||
+      localName(document.documentElement) === 'parsererror' ||
+      !firstDescendant(document, 'body')
+    ) {
+      throw strictError;
+    }
+    return document;
+  }
+}
+
 function normalizedArchivePath(value: string, base = ''): string {
   let decoded: string;
   try {
@@ -227,7 +256,14 @@ async function entryBytes(record: ArchiveEntry): Promise<Uint8Array> {
 }
 
 async function entryText(record: ArchiveEntry): Promise<string> {
-  return new TextDecoder('utf-8', { fatal: false }).decode(await entryBytes(record));
+  const bytes = await entryBytes(record);
+  if (bytes[0] === 0xff && bytes[1] === 0xfe) {
+    return new TextDecoder('utf-16le', { fatal: false }).decode(bytes.subarray(2));
+  }
+  if (bytes[0] === 0xfe && bytes[1] === 0xff) {
+    return new TextDecoder('utf-16be', { fatal: false }).decode(bytes.subarray(2));
+  }
+  return new TextDecoder('utf-8', { fatal: false }).decode(bytes);
 }
 
 function findEntry(entries: Map<string, ArchiveEntry>, path: string): ArchiveEntry {
@@ -260,7 +296,7 @@ function packageManifest(opf: XmlDocument, opfPath: string): Map<string, Manifes
     if (localName(item) !== 'item') continue;
     const id = item.getAttribute('id')?.trim();
     const href = item.getAttribute('href')?.trim();
-    const mediaType = item.getAttribute('media-type')?.trim().toLowerCase();
+    const mediaType = item.getAttribute('media-type')?.split(';', 1)[0].trim().toLowerCase();
     if (!id || !href || !mediaType) continue;
     result.set(id, {
       id,
@@ -283,7 +319,7 @@ async function imageFromCoverDocument(
   manifest: Map<string, ManifestItem>,
 ): Promise<ManifestItem | undefined> {
   if (!EPUB_TEXT_TYPES.has(coverDocument.mediaType)) return undefined;
-  const document = parseXml(await entryText(findEntry(entries, coverDocument.href)), coverDocument.href);
+  const document = parseContentDocument(await entryText(findEntry(entries, coverDocument.href)), coverDocument.href);
   const image = [...descendants(document, 'img'), ...descendants(document, 'image')].find((element) => {
     const source = element.getAttribute('src') ?? element.getAttribute('href') ?? element.getAttribute('xlink:href');
     return Boolean(source && resolvedHref(coverDocument.href, source));
@@ -360,7 +396,7 @@ async function navigationTitles(
   const titles = new Map<string, string>();
   const navItem = [...manifest.values()].find((item) => item.properties.has('nav'));
   if (navItem) {
-    const navigation = parseXml(await entryText(findEntry(entries, navItem.href)), navItem.href);
+    const navigation = parseContentDocument(await entryText(findEntry(entries, navItem.href)), navItem.href);
     for (const anchor of descendants(navigation, 'a')) {
       const href = anchor.getAttribute('href');
       if (!href) continue;
@@ -626,7 +662,7 @@ export async function parseEpub(blob: Blob): Promise<EpubDocument> {
     const sections: EpubSection[] = [];
     for (let index = 0; index < spine.length; index += 1) {
       const item = spine[index];
-      const document = parseXml(await entryText(findEntry(entries, item.href)), item.href);
+      const document = parseContentDocument(await entryText(findEntry(entries, item.href)), item.href);
       const blocks = sectionBlocks(document, item.href, index);
       if (blocks.length > 0) {
         sections.push({

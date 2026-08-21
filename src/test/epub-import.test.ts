@@ -9,7 +9,20 @@ interface FixtureOptions {
   readonly body?: string;
   readonly manifestExtra?: string;
   readonly navTitle?: string;
+  readonly chapterBytes?: Uint8Array;
+  readonly chapterMediaType?: string;
   readonly extraEntries?: ReadonlyArray<{ path: string; text?: string; bytes?: Uint8Array }>;
+}
+
+function utf16Le(value: string): Uint8Array {
+  const bytes = new Uint8Array(2 + value.length * 2);
+  bytes.set([0xff, 0xfe]);
+  for (let index = 0; index < value.length; index += 1) {
+    const codeUnit = value.charCodeAt(index);
+    bytes[2 + index * 2] = codeUnit & 0xff;
+    bytes[3 + index * 2] = codeUnit >>> 8;
+  }
+  return bytes;
 }
 
 async function epubFixture(options: FixtureOptions = {}): Promise<Blob> {
@@ -34,7 +47,7 @@ async function epubFixture(options: FixtureOptions = {}): Promise<Blob> {
           <dc:title>EPUB 테스트</dc:title><dc:creator>테스터</dc:creator><dc:language>ko</dc:language>${metadata}
         </metadata>
         <manifest>
-          <item id="chapter" href="chapter.xhtml" media-type="application/xhtml+xml"/>
+          <item id="chapter" href="chapter.xhtml" media-type="${options.chapterMediaType ?? 'application/xhtml+xml'}"/>
           <item id="cover-image" href="images/cover.png" media-type="image/png"${coverMode === 'epub3' ? ' properties="cover-image"' : ''}/>
           ${coverMode === 'guide' ? '<item id="cover-page" href="cover.xhtml" media-type="application/xhtml+xml"/>' : ''}
           ${options.navTitle ? '<item id="nav" href="nav.xhtml" media-type="application/xhtml+xml" properties="nav"/>' : ''}
@@ -44,14 +57,15 @@ async function epubFixture(options: FixtureOptions = {}): Promise<Blob> {
         ${coverMode === 'guide' ? '<guide><reference type="cover" href="cover.xhtml"/></guide>' : ''}
       </package>`),
   );
-  await writer.add(
-    'OEBPS/chapter.xhtml',
-    new TextReader(`<?xml version="1.0"?><html xmlns="http://www.w3.org/1999/xhtml" xmlns:epub="http://www.idpf.org/2007/ops"><head><title>첫 장</title></head><body>
+  const chapterSource = `<?xml version="1.0"?><html xmlns="http://www.w3.org/1999/xhtml" xmlns:epub="http://www.idpf.org/2007/ops"><head><title>첫 장</title></head><body>
       ${
         options.body ??
         '<h1>첫 장</h1><p>문장 <strong>하나</strong>와 <em>강조</em>.</p><blockquote><p>인용문</p></blockquote><ul><li>항목</li></ul><img src="images/cover.png" alt="표지"/><p><a href="chapter.xhtml#end">내부 링크</a></p>'
       }
-    </body></html>`),
+    </body></html>`;
+  await writer.add(
+    'OEBPS/chapter.xhtml',
+    options.chapterBytes ? new Uint8ArrayReader(options.chapterBytes) : new TextReader(chapterSource),
   );
   await writer.add('OEBPS/images/cover.png', new Uint8ArrayReader(new Uint8Array([137, 80, 78, 71, 13, 10, 26, 10])));
   if (coverMode === 'guide') {
@@ -163,6 +177,32 @@ describe('EPUB import engine', () => {
     await expect(parseEpub(source)).resolves.toMatchObject({
       title: 'EPUB 테스트',
       sections: [{ title: 'NCX 첫 장' }],
+    });
+  });
+
+  it('recovers common EPUB2 XHTML entities and HTML syntax without weakening package XML validation', async () => {
+    const source = await epubFixture({
+      version: '2.0',
+      body: '<p>&nbsp;</p><p>본문&nbsp;문장 &copy;</p><p>줄 하나<br>줄 둘</p>',
+    });
+    const document = await parseEpub(source);
+
+    expect(document.sections[0].blocks.map((block) => block.plainText)).toEqual(['본문\u00a0문장 ©', '줄 하나\n줄 둘']);
+  });
+
+  it('decodes BOM-marked UTF-16 content and normalizes non-canonical manifest media type casing', async () => {
+    const chapter =
+      '<?xml version="1.0" encoding="utf-16"?><html xmlns="http://www.w3.org/1999/xhtml"><head><title>UTF-16</title></head><body><h1>인코딩 장</h1><p>유니코드 본문</p></body></html>';
+    const document = await parseEpub(
+      await epubFixture({
+        chapterBytes: utf16Le(chapter),
+        chapterMediaType: 'Application/XHTML+XML; charset=UTF-16',
+      }),
+    );
+
+    expect(document.sections[0]).toMatchObject({
+      title: '인코딩 장',
+      blocks: [{ plainText: '인코딩 장' }, { plainText: '유니코드 본문' }],
     });
   });
 

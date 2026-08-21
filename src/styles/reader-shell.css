@@ -122,6 +122,52 @@
   right: var(--reader-panel-width);
 }
 
+/*
+ * Immersive reading is a latched state, not the ordinary auto-hidden chrome.
+ * Keep these overrides stronger than hover/focus/"always visible" rules so
+ * pointer movement, scrolling and chapter navigation cannot reveal controls.
+ */
+.reader-screen.immersive .top-progress,
+.reader-screen.immersive .reader-mobile-search,
+.reader-screen.immersive .reader-search-results-layer,
+.reader-screen.immersive .selection-action-bar,
+.reader-screen.immersive .reader-footnote-backdrop,
+.reader-screen.immersive .reader-pagination-controls,
+.reader-screen.immersive .chapter-nav {
+  display: none;
+}
+
+.reader-screen.immersive .reader-topbar,
+.reader-screen.immersive .reader-bottombar,
+.reader-screen.immersive .reader-topbar:focus-within,
+.reader-screen.immersive .reader-bottombar:focus-within,
+.reader-screen.immersive .reader-topbar.always-visible,
+.reader-screen.immersive .reader-bottombar.always-visible {
+  opacity: 0;
+  pointer-events: none;
+  visibility: hidden;
+}
+
+.reader-screen.immersive .reader-topbar {
+  transform: translateY(-100%);
+}
+
+.reader-screen.immersive .reader-bottombar {
+  transform: translateY(100%);
+}
+
+.reader-screen.immersive .reader-scroll,
+.reader-screen.immersive.addon-open .reader-scroll {
+  padding-top: max(var(--reading-margin-y), env(safe-area-inset-top, 0px));
+  padding-right: var(--reading-margin-x);
+  padding-bottom: max(var(--reading-margin-y), env(safe-area-inset-bottom, 0px));
+  padding-left: var(--reading-margin-x);
+}
+
+.reader-screen.immersive ~ .tts-compact-bar {
+  display: none;
+}
+
 .reader-mobile-search-toggle {
   display: none;
 }
