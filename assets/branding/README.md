@@ -18,5 +18,8 @@ pnpm brand:generate
 - `src-tauri/icons/`: Windows, macOS, iOS와 Android용 Tauri 아이콘
 - `src-tauri/gen/android/.../res/`: 이미 생성된 Android 프로젝트의 런처 아이콘
 
+앱 아이콘 원본이 이전 실행과 같으면 네이티브 파생 파일은 그대로 유지한다. Tauri의 ICNS 생성 결과가 실행마다
+불필요하게 달라져 Git 변경으로 잡히는 것을 막기 위한 동작이며, 원본 PNG를 교체하면 전체 아이콘을 다시 만든다.
+
 앱 아이콘은 반드시 정사각형 PNG, 워드마크는 가로형 PNG여야 한다. 이미지의 투명 여백도 디자인 일부로
 간주해 생성 과정에서 자동 crop하지 않는다.

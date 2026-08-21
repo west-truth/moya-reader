@@ -49,14 +49,32 @@ function runTauriIcon(args) {
   if (result.status !== 0) fail('Tauri 아이콘 변환기가 종료되었습니다.');
 }
 
-const temporaryTauriRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'moya-tauri-brand-'));
-try {
-  runTauriIcon([appIconSource, '--output', temporaryTauriRoot]);
-  fs.mkdirSync(tauriIconRoot, { recursive: true });
-  fs.cpSync(temporaryTauriRoot, tauriIconRoot, { recursive: true, force: true });
-  fs.copyFileSync(appIconSource, path.join(tauriIconRoot, 'icon-source.png'));
-} finally {
-  fs.rmSync(temporaryTauriRoot, { recursive: true, force: true });
+const tauriSourceCopy = path.join(tauriIconRoot, 'icon-source.png');
+const requiredNativeOutputs = [
+  'icon.ico',
+  'icon.icns',
+  'icon.png',
+  '32x32.png',
+  'android/mipmap-xxxhdpi/ic_launcher.png',
+  'ios/AppIcon-512@2x.png',
+].map((relativePath) => path.join(tauriIconRoot, relativePath));
+const nativeIconsCurrent =
+  fs.existsSync(tauriSourceCopy) &&
+  fs.readFileSync(tauriSourceCopy).equals(fs.readFileSync(appIconSource)) &&
+  requiredNativeOutputs.every((file) => fs.existsSync(file));
+
+if (nativeIconsCurrent) {
+  console.log('[유지] 앱 아이콘 원본이 같아 Tauri native 파생 파일을 다시 만들지 않습니다.');
+} else {
+  const temporaryTauriRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'moya-tauri-brand-'));
+  try {
+    runTauriIcon([appIconSource, '--output', temporaryTauriRoot]);
+    fs.mkdirSync(tauriIconRoot, { recursive: true });
+    fs.cpSync(temporaryTauriRoot, tauriIconRoot, { recursive: true, force: true });
+    fs.copyFileSync(appIconSource, tauriSourceCopy);
+  } finally {
+    fs.rmSync(temporaryTauriRoot, { recursive: true, force: true });
+  }
 }
 
 const temporaryRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'moya-brand-'));
