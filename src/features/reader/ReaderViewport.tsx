@@ -36,6 +36,7 @@ export interface ReaderViewportApi {
   ) => Promise<void>;
   readonly scrubTo: (progress: number) => Promise<void>;
   readonly pageJump: (direction: -1 | 1) => void;
+  readonly goChapter: (direction: -1 | 1) => Promise<void>;
   readonly scrollPageJump: (direction: -1 | 1) => void;
   readonly scrollByPixels: (deltaY: number) => void;
   readonly getAnchor: () => ReaderAnchor | undefined;
@@ -98,6 +99,7 @@ function createViewportApiProxy(
       current()?.scrollToParagraphIndex(paragraphIndex, align, behavior) ?? Promise.resolve(),
     scrubTo: (progress) => current()?.scrubTo(progress) ?? Promise.resolve(),
     pageJump: (direction) => current()?.pageJump(direction),
+    goChapter: (direction) => current()?.goChapter(direction) ?? Promise.resolve(),
     scrollPageJump: (direction) => current()?.scrollPageJump(direction),
     scrollByPixels: (deltaY) => current()?.scrollByPixels(deltaY),
     getAnchor: () => current()?.getAnchor(),
@@ -243,8 +245,26 @@ function VirtualizedReaderViewportComponent({
     count: chapter.paragraphCount,
     getScrollElement: () => rootRef.current,
     estimateSize: () => Math.max(settings.fontSize * settings.lineHeight * 2.4, 72),
+    measureElement: (element) => Math.ceil(element.getBoundingClientRect().height),
     overscan: 6,
   });
+  const measureVirtualRow = useCallback(
+    (element: Element | null) => {
+      virtualizer.measureElement(element);
+      if (!element) return;
+      const index = Number((element as HTMLElement).dataset.index);
+      if (!Number.isInteger(index)) return;
+      virtualizer.resizeItem(index, Math.ceil(element.getBoundingClientRect().height));
+    },
+    [virtualizer],
+  );
+  const measureMountedRows = useCallback(() => {
+    const root = rootRef.current;
+    if (!root) return;
+    for (const row of root.querySelectorAll<HTMLElement>('.reader-virtual-row[data-index]')) {
+      measureVirtualRow(row);
+    }
+  }, [measureVirtualRow]);
   const virtualItems = virtualizer.getVirtualItems();
   const virtualRangeKey = virtualItems.map((item) => item.index).join(':');
   const loadParagraphIndexes = pages.loadIndexes;
@@ -500,6 +520,7 @@ function VirtualizedReaderViewportComponent({
     scrollToParagraphIndex,
     scrubTo,
     pageJump: onPageIntent,
+    goChapter: (direction) => goChapter(direction, direction < 0),
     scrollPageJump,
     scrollByPixels,
     getAnchor: getVisibleAnchor,
@@ -508,10 +529,14 @@ function VirtualizedReaderViewportComponent({
       if (anchor.sectionId !== chapter.id) return false;
       const targetIndex = clamp(anchor.blockIndex ?? 0, 0, Math.max(0, chapter.paragraphCount - 1));
       await pages.loadIndexes([targetIndex]);
+      virtualizer.measure();
+      await nextPaint();
+      measureMountedRows();
       virtualizer.scrollToIndex(targetIndex, { align: 'start', behavior: 'auto' });
       let stableFrames = 0;
       for (let attempt = 0; attempt < 20; attempt += 1) {
         await nextPaint();
+        measureMountedRows();
         const root = rootRef.current;
         if (!root) return false;
         const paragraphElement =
@@ -552,6 +577,28 @@ function VirtualizedReaderViewportComponent({
   }, [apiRef, chapter.id, onApiReady]);
 
   useLayoutEffect(() => {
+    if (!isActive) return;
+    virtualizer.measure();
+    let settleFrame = 0;
+    const measureFrame = window.requestAnimationFrame(() => {
+      measureMountedRows();
+      settleFrame = window.requestAnimationFrame(measureMountedRows);
+    });
+    return () => {
+      window.cancelAnimationFrame(measureFrame);
+      window.cancelAnimationFrame(settleFrame);
+    };
+  }, [
+    chapter.id,
+    isActive,
+    measureMountedRows,
+    settings.fontSize,
+    settings.lineHeight,
+    settings.paragraphSpacing,
+    virtualizer,
+  ]);
+
+  useLayoutEffect(() => {
     const documentElement = documentRef.current;
     if (!documentElement || typeof ResizeObserver === 'undefined') return;
     let lastWidth = documentElement.getBoundingClientRect().width;
@@ -565,7 +612,10 @@ function VirtualizedReaderViewportComponent({
       window.cancelAnimationFrame(restoreFrame ?? 0);
       restoreFrame = window.requestAnimationFrame(() => {
         virtualizer.measure();
-        virtualizer.scrollToIndex(anchorIndex, { align: 'start', behavior: 'auto' });
+        restoreFrame = window.requestAnimationFrame(() => {
+          measureMountedRows();
+          virtualizer.scrollToIndex(anchorIndex, { align: 'start', behavior: 'auto' });
+        });
       });
     });
     observer.observe(documentElement);
@@ -573,7 +623,7 @@ function VirtualizedReaderViewportComponent({
       observer.disconnect();
       window.cancelAnimationFrame(restoreFrame ?? 0);
     };
-  }, [chapter.id, firstVisible, virtualizer]);
+  }, [chapter.id, firstVisible, measureMountedRows, virtualizer]);
 
   useEffect(() => {
     const activeItems = virtualizer.getVirtualItems();
@@ -662,7 +712,7 @@ function VirtualizedReaderViewportComponent({
   return (
     <section
       ref={rootRef}
-      className={`reader-scroll reader-viewport-layer ${isActive ? 'is-active' : 'is-inactive'} font-${settings.font} mode-${mode}`}
+      className={`reader-scroll reader-viewport-layer ${isActive ? 'is-active' : 'is-inactive'} ${scrollChapterBoundary.armed ? 'is-next-chapter-armed' : ''} font-${settings.font} mode-${mode}`}
       tabIndex={isActive ? 0 : -1}
       aria-hidden={!isActive}
       data-reader-layer="scroll"
@@ -707,7 +757,7 @@ function VirtualizedReaderViewportComponent({
               return (
                 <div
                   key={`${failed ? 'failed' : 'loading'}-${item.index}`}
-                  ref={virtualizer.measureElement}
+                  ref={measureVirtualRow}
                   data-index={item.index}
                   className="reader-virtual-row"
                   style={{ transform: `translateY(${item.start}px)` }}
@@ -737,7 +787,7 @@ function VirtualizedReaderViewportComponent({
                 mode={mode}
                 searchQuery={search.highlightQuery}
                 decorationStore={screenHandle.decorations}
-                measureElement={virtualizer.measureElement}
+                measureElement={measureVirtualRow}
                 onSelectCorrectionSegment={(segmentId) => screenHandle.getActions().selectCorrectionSegment(segmentId)}
                 assetRepository={assetRepository}
                 onDocumentLink={onDocumentLink}

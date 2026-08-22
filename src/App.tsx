@@ -48,6 +48,13 @@ import { ReaderAddonShell } from './features/reader/ReaderAddonShell';
 import { useReaderSettingsDraft } from './features/reader-settings/useReaderSettingsDraft';
 import { useReaderBasicsScreenModel } from './features/reader-settings/useReaderBasicsScreenModel';
 import { useActiveReaderFont } from './features/reader-settings/useActiveReaderFont';
+import { resolveReaderThemeColors } from './features/reader-settings/reader-theme-colors';
+import {
+  appThemeColor,
+  isDarkThemeColor,
+  normalizeApplicationThemeColors,
+  resolveAppTheme,
+} from './features/reader-settings/app-theme';
 import { useListeningSession } from './features/reader/use-listening-session';
 import {
   DEFAULT_READING_PROFILE,
@@ -474,7 +481,7 @@ export default function App() {
     if (activeReaderFont.failed) showToast('사용자 글꼴을 불러오지 못해 기본 글꼴로 표시합니다.', 'warning');
   }, [activeReaderFont.failed, showToast]);
   const changeReadingProfile = (patch: Parameters<typeof updateGlobalReadingProfile>[1]) => {
-    setReaderSettings((previous) =>
+    updateSettings((previous) =>
       selectedNovel && hasBookReadingProfile(previous, selectedNovel.id)
         ? updateBookReadingProfile(previous, selectedNovel.id, patch)
         : updateGlobalReadingProfile(previous, patch),
@@ -482,7 +489,7 @@ export default function App() {
   };
   const setReadingBookOverrideEnabled = (enabled: boolean) => {
     if (!selectedNovel) return;
-    setReaderSettings((previous) =>
+    updateSettings((previous) =>
       enabled
         ? updateBookReadingProfile(previous, selectedNovel.id, {})
         : resetBookReadingProfile(previous, selectedNovel.id),
@@ -869,6 +876,8 @@ export default function App() {
     [currentChapter, readerProgress, selectedNovel, view],
   );
 
+  const readerThemeColors = resolveReaderThemeColors(readingProfile);
+
   const styleVars = {
     '--reading-font-size': `${readingProfile.fontSize}px`,
     '--reading-font-weight': String(readingProfile.fontWeight),
@@ -880,8 +889,8 @@ export default function App() {
     '--reading-margin-x': `${readingProfile.marginX}vw`,
     '--reading-margin-y': `${readingProfile.marginY}vh`,
     '--reading-width': `${readingProfile.contentWidth}px`,
-    '--reading-foreground': readingProfile.foreground ?? 'var(--text)',
-    '--reading-background': readingProfile.background ?? 'var(--bg)',
+    '--reading-foreground': readerThemeColors.foreground,
+    '--reading-background': readerThemeColors.background,
     '--reading-brightness': String(readingProfile.brightness),
     '--reading-font-family': activeReaderFont.family,
   } as CSSProperties;
@@ -1648,8 +1657,22 @@ export default function App() {
   }, [remoteAutoRefreshEnabled]);
 
   useEffect(() => {
-    document.documentElement.dataset.theme = readingProfile.theme === 'custom' ? 'dark' : readingProfile.theme;
-  }, [readingProfile.theme]);
+    const root = document.documentElement;
+    const appTheme = resolveAppTheme(settings.applicationTheme ?? readingProfile.theme);
+    const customColors = normalizeApplicationThemeColors(settings.applicationThemeColors);
+    root.dataset.theme = appTheme;
+    root.style.setProperty('--app-custom-background', customColors.background);
+    root.style.setProperty('--app-custom-surface', customColors.surface);
+    root.style.setProperty('--app-custom-text', customColors.text);
+    root.style.setProperty('--app-custom-accent', customColors.accent);
+    root.style.setProperty(
+      '--app-custom-accent-contrast',
+      isDarkThemeColor(customColors.accent) ? '#ffffff' : '#111315',
+    );
+    root.style.colorScheme = appTheme === 'custom' && !isDarkThemeColor(customColors.background) ? 'light' : 'dark';
+    if (appTheme === 'light' || appTheme === 'sepia') root.style.colorScheme = 'light';
+    document.querySelector('meta[name="theme-color"]')?.setAttribute('content', appThemeColor(appTheme, customColors));
+  }, [readingProfile.theme, settings.applicationTheme, settings.applicationThemeColors]);
 
   useEffect(() => {
     activeNovelIdRef.current = selectedNovel?.id;
@@ -1806,7 +1829,7 @@ export default function App() {
     : true;
   const ttsBookOverrideEnabled = hasBookTTSPlaybackOverride(settings, selectedNovel?.id);
   const changeTTSPlaybackSettings = (patch: TTSPlaybackSettingsOverride) => {
-    setReaderSettings((previous) =>
+    updateSettings((previous) =>
       selectedNovel && hasBookTTSPlaybackOverride(previous, selectedNovel.id)
         ? updateBookTTSPlaybackOverride(
             previous,
@@ -1820,7 +1843,7 @@ export default function App() {
   };
   const setTTSBookOverrideEnabled = (enabled: boolean) => {
     if (!selectedNovel) return;
-    setReaderSettings((previous) =>
+    updateSettings((previous) =>
       enabled
         ? updateBookTTSPlaybackOverride(previous, selectedNovel.id, {})
         : resetBookTTSPlaybackOverride(previous, selectedNovel.id),
@@ -5893,14 +5916,14 @@ export default function App() {
             updateProfile={changeReadingProfile}
             setBookOverrideEnabled={setReadingBookOverrideEnabled}
             resetProfile={() =>
-              setReaderSettings((previous) =>
+              updateSettings((previous) =>
                 selectedNovel && hasBookReadingProfile(previous, selectedNovel.id)
                   ? resetBookReadingProfile(previous, selectedNovel.id)
                   : updateGlobalReadingProfile(previous, DEFAULT_READING_PROFILE),
               )
             }
             updateGestureBindings={(patch) =>
-              setReaderSettings((previous) => ({
+              updateSettings((previous) => ({
                 ...previous,
                 gestureBindings: { ...previous.gestureBindings, ...patch },
               }))

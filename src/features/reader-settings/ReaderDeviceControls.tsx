@@ -53,8 +53,8 @@ export function ReaderDeviceControls() {
   };
 
   return (
-    <section>
-      <h3>기기</h3>
+    <section className="reader-settings-group reader-device-settings">
+      <h3>화면 유지</h3>
       <div className="reader-device-controls">
         {wakeLockAvailable && (
           <button
@@ -62,7 +62,7 @@ export function ReaderDeviceControls() {
             className={`ghost-btn${wakeLocked ? ' active' : ''}`}
             onClick={() => void toggleWakeLock()}
           >
-            {wakeLocked ? <Lock size={16} /> : <Unlock size={16} />} 화면 켜짐
+            {wakeLocked ? <Lock size={16} /> : <Unlock size={16} />} 화면 항상 켜기
           </button>
         )}
         {orientationAvailable && (

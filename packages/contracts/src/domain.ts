@@ -36,6 +36,12 @@ export type ReaderFont = 'serif' | 'sans' | 'mono';
 export type ReaderFlow = 'scroll' | 'page';
 
 export type ReadingProfileTheme = ReaderTheme | 'custom';
+export interface ApplicationThemeColors {
+  background: string;
+  surface: string;
+  text: string;
+  accent: string;
+}
 /** @deprecated `screen_turn` is accepted only to migrate older saved settings. */
 export type ReadingProfileFlow = 'scroll' | 'screen_turn' | 'paginated';
 export type ReadingModeLock = 'auto' | 'scroll' | 'paginated';
@@ -553,6 +559,10 @@ export interface ParsedNovelImportAsset {
 
 export interface ReaderSettings {
   id: 'reader-settings';
+  /** Global application chrome theme. Falls back to the Reader theme for older settings. */
+  applicationTheme?: ReadingProfileTheme;
+  /** Custom application colors. Kept separate from book-specific Reader colors. */
+  applicationThemeColors?: Partial<ApplicationThemeColors>;
   theme: ReaderTheme;
   font: ReaderFont;
   fontSize: number;

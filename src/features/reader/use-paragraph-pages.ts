@@ -54,26 +54,48 @@ export function useParagraphPages(
   chapterId: string,
   paragraphCount: number,
 ): ParagraphPagesController {
-  const [, setRevision] = useState(0);
+  const [, setPublishedRevision] = useState<{
+    readonly cache: ParagraphPageCache;
+    readonly revision: number;
+  }>();
   const mountedRef = useRef(true);
   const ownerRef = useRef<ParagraphPageCacheOwner>();
   if (!ownerRef.current) ownerRef.current = new ParagraphPageCacheOwner();
   const owner = ownerRef.current;
+  const publishCacheRevision = useCallback(
+    (target: ParagraphPageCache) => {
+      if (!mountedRef.current || !owner.isActive(target)) return;
+      const revision = target.snapshot().revision;
+      setPublishedRevision((current) =>
+        current?.cache === target && current.revision === revision ? current : { cache: target, revision },
+      );
+    },
+    [owner],
+  );
   const cache = owner.acquire(chapterId, () => {
     const created = new ParagraphPageCache(PARAGRAPHS_PER_PAGE, () => {
-      if (mountedRef.current && owner.isActive(created)) setRevision((value) => value + 1);
+      publishCacheRevision(created);
     });
     return created;
   });
 
   const loadIndexes = useCallback(
-    (indexes: readonly number[]) => cache.loadIndexes(chapterId, indexes, repository.getParagraphPage.bind(repository)),
-    [cache, chapterId, repository],
+    async (indexes: readonly number[]) => {
+      await cache.loadIndexes(chapterId, indexes, repository.getParagraphPage.bind(repository));
+      // The cache callback normally publishes during the load. Publishing once more
+      // after the promise settles closes the first-paint race where content is cached
+      // between React's effect flush and the virtualizer's initial measurement.
+      publishCacheRevision(cache);
+    },
+    [cache, chapterId, publishCacheRevision, repository],
   );
 
   const retryPage = useCallback(
-    (pageIndex: number) => cache.retryPage(chapterId, pageIndex, repository.getParagraphPage.bind(repository)),
-    [cache, chapterId, repository],
+    async (pageIndex: number) => {
+      await cache.retryPage(chapterId, pageIndex, repository.getParagraphPage.bind(repository));
+      publishCacheRevision(cache);
+    },
+    [cache, chapterId, publishCacheRevision, repository],
   );
 
   const getParagraphAt = useCallback(
@@ -91,13 +113,19 @@ export function useParagraphPages(
     owner.disposeStale();
   }, [chapterId, owner]);
 
-  useEffect(
-    () => () => {
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
       mountedRef.current = false;
-      owner.dispose();
-    },
-    [owner],
-  );
+      // React StrictMode immediately runs effect cleanup and setup once more in
+      // development. Deferring disposal by one microtask keeps that probe from
+      // destroying the active cache while still releasing it after a real
+      // unmount.
+      queueMicrotask(() => {
+        if (!mountedRef.current) owner.dispose();
+      });
+    };
+  }, [owner]);
 
   const snapshot = cache.snapshot();
   return useMemo(
