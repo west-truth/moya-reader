@@ -13,9 +13,20 @@ body {
   color: var(--app-text);
   background: var(--app-canvas);
   font-family: var(--font-ui);
+  font-size: var(--ui-body-size, 13px);
+  font-weight: var(--ui-weight-regular, 400);
+  line-height: var(--ui-leading-body, 1.55);
   -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
   text-rendering: optimizeLegibility;
   overflow: auto;
+}
+
+h1,
+h2,
+h3,
+h4 {
+  text-wrap: balance;
 }
 
 button,

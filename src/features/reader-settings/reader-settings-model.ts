@@ -92,6 +92,8 @@ export const readingSettingsDefaults: Partial<ReaderSettings> = {
 
 export function readerSettingsEqual(left: ReaderSettings, right: ReaderSettings): boolean {
   return (
+    left.applicationTheme === right.applicationTheme &&
+    JSON.stringify(left.applicationThemeColors) === JSON.stringify(right.applicationThemeColors) &&
     left.theme === right.theme &&
     left.font === right.font &&
     left.fontSize === right.fontSize &&

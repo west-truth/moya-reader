@@ -17,8 +17,10 @@ export interface LibraryBookView {
   coverClass: string;
   isFinished: boolean;
   isUnread: boolean;
+  canContinue: boolean;
   readingStatusLabel: '완독' | '읽는 중' | '미독';
-  chapterProgress: number;
+  directActionLabel: '이어 읽기' | '첫 화 보기' | '이어 보기' | '문서 열기';
+  bookProgress: number;
   readingPositionLabel: string;
   readingTimeLabel: string;
   lastReadLabel: string;
@@ -55,15 +57,6 @@ function activityAt(book: LibraryBookView): string {
   return book.novel.lastReadAt ?? book.novel.updatedAt;
 }
 
-function currentChapterProgress(novel: Novel): number {
-  const totalChapters = Math.max(1, novel.totalChapters);
-  const chapterIndex = novel.lastReadChapterIndex;
-  if (isFixedDocumentFormat(novel.format) || chapterIndex === undefined || totalChapters <= 1) {
-    return Math.min(1, Math.max(0, novel.lastReadProgress));
-  }
-  return Math.min(1, Math.max(0, novel.lastReadProgress * totalChapters - (chapterIndex - 1)));
-}
-
 function readingPositionLabel(novel: Novel, isUnread: boolean): string {
   const total = Math.max(0, novel.totalChapters);
   const unit = bookUnitLabel(novel);
@@ -86,14 +79,24 @@ export function buildLibraryBookView(novel: Novel, readState: NovelReadStateSele
   const isFinished = readState.isFinished(novel);
   const isUnread = !readState.hasReadActivity(novel);
   const readingSeconds = novel.readingSeconds ?? 0;
+  const fixedDocument = isFixedDocumentFormat(novel.format);
+  const canContinue = !isUnread;
 
   return {
     novel,
     coverClass: `cover-${(novel.coverSeed % 6) + 1}`,
     isFinished,
     isUnread,
+    canContinue,
     readingStatusLabel: isFinished ? '완독' : isUnread ? '미독' : '읽는 중',
-    chapterProgress: isUnread ? 0 : currentChapterProgress(novel),
+    directActionLabel: fixedDocument
+      ? canContinue
+        ? '이어 보기'
+        : '문서 열기'
+      : canContinue
+        ? '이어 읽기'
+        : '첫 화 보기',
+    bookProgress: isUnread ? 0 : Math.min(1, Math.max(0, novel.lastReadProgress)),
     readingPositionLabel: readingPositionLabel(novel, isUnread),
     readingTimeLabel: readingSeconds > 0 ? formatReadingDuration(readingSeconds) : '기록 없음',
     lastReadLabel: novel.lastReadAt ? formatDateTime(novel.lastReadAt) : '읽은 기록 없음',

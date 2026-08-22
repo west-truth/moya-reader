@@ -141,8 +141,8 @@ p {
   background: var(--app-surface-muted);
   border: 1px solid var(--border);
   border-radius: var(--radius-control);
-  font-size: 0.76rem;
-  font-weight: 700;
+  font-size: var(--ui-meta-size, 12px);
+  font-weight: var(--ui-weight-medium, 500);
   white-space: nowrap;
 }
 
@@ -183,6 +183,7 @@ button.sync-pill {
   border: 1px solid var(--border);
   border-radius: var(--radius-control);
   color: var(--text-2);
+  font-size: var(--ui-body-size, 13px);
 }
 
 .search-box.compact {
@@ -229,7 +230,8 @@ button.sync-pill {
   padding: 0 16px;
   color: var(--app-accent-contrast);
   background: var(--primary-2);
-  font-weight: 700;
+  font-size: var(--ui-body-size, 13px);
+  font-weight: var(--ui-weight-semibold, 600);
 }
 
 .primary-btn:hover {
@@ -250,6 +252,8 @@ button.sync-pill {
   background: var(--app-surface);
   border: 1px solid var(--border);
   color: var(--text-2);
+  font-size: var(--ui-body-size, 13px);
+  font-weight: var(--ui-weight-medium, 500);
 }
 
 .ghost-btn:hover {

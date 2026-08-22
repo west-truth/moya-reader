@@ -26,6 +26,8 @@ function resolveSettingsAction(action: SetStateAction<ReaderSettings>, previous:
   return typeof action === 'function' ? action(previous) : action;
 }
 
+type ReaderSettingsDraftAction = Partial<ReaderSettings> | ((previous: ReaderSettings) => ReaderSettings);
+
 export function useReaderSettingsDraft(options: ReaderSettingsDraftOptions) {
   const [persistedSettings, setPersistedState] = useState(options.initialSettings);
   const [draftSettings, setDraftState] = useState(options.initialSettings);
@@ -75,8 +77,8 @@ export function useReaderSettingsDraft(options: ReaderSettingsDraftOptions) {
   }, [writer]);
 
   const updateDraft = useCallback(
-    (patch: Partial<ReaderSettings>) => {
-      const next = { ...draftRef.current, ...patch };
+    (action: ReaderSettingsDraftAction) => {
+      const next = typeof action === 'function' ? action(draftRef.current) : { ...draftRef.current, ...action };
       draftRef.current = next;
       setDraftState(next);
       setSaveError(false);

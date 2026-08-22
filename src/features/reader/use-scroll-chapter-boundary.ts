@@ -135,6 +135,7 @@ export function useScrollChapterBoundary(input: {
     }
     setArmed(false);
     armTimerRef.current = window.setTimeout(() => {
+      armTimerRef.current = undefined;
       const root = input.rootRef.current;
       if (root && isAtScrollEnd(root) && !transitioningRef.current) setArmed(true);
     }, END_IDLE_MS);
@@ -294,6 +295,30 @@ export function useScrollChapterBoundary(input: {
       clearArmTimer();
     };
   }, [clearArmTimer, clearMotionTimers, clearPullMotion, input.chapterId, input.enabled, resetWheelIntent, setArmed]);
+
+  useEffect(() => {
+    if (!input.enabled) return;
+    const root = input.rootRef.current;
+    const content = input.contentRef.current;
+    if (!root) return;
+
+    const reconcileBoundary = () => {
+      if (!isAtScrollEnd(root)) {
+        if (armedRef.current || armTimerRef.current !== undefined) disarm();
+        return;
+      }
+      if (!armedRef.current && armTimerRef.current === undefined && !transitioningRef.current) scheduleArm();
+    };
+
+    const frame = window.requestAnimationFrame(reconcileBoundary);
+    const observer = typeof ResizeObserver === 'undefined' ? undefined : new ResizeObserver(reconcileBoundary);
+    observer?.observe(root);
+    if (content) observer?.observe(content);
+    return () => {
+      window.cancelAnimationFrame(frame);
+      observer?.disconnect();
+    };
+  }, [disarm, input.chapterId, input.contentRef, input.enabled, input.rootRef, scheduleArm]);
 
   return { armed, onScroll, onWheel, onPointerDown, onPointerMove, onPointerEnd, onVerticalGesture };
 }

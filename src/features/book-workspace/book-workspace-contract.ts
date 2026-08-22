@@ -153,7 +153,7 @@ export const INITIAL_BOOK_WORKSPACE_STATE: BookWorkspaceState = {
   libraryQuery: '',
   libraryFilter: 'all',
   librarySort: 'recent',
-  libraryViewMode: 'list',
+  libraryViewMode: 'grid',
   chapterQuery: '',
   chapterReadFilter: 'all',
   chapterSort: 'asc',

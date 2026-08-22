@@ -13,11 +13,12 @@ export interface ReaderChromeController {
 }
 
 export function useReaderChrome(keepVisible: boolean, notify: (message: string) => void): ReaderChromeController {
-  const [visible, setVisible] = useState(true);
-  const [immersive, setImmersive] = useState(false);
+  const [visible, setVisible] = useState(false);
+  const [immersive, setImmersive] = useState(true);
   const [fullscreen, setFullscreen] = useState(false);
   const hideTimerRef = useRef<number>();
-  const immersiveRef = useRef(false);
+  const immersiveRef = useRef(true);
+  const visibleRef = useRef(false);
 
   const clearHideTimer = useCallback(() => {
     window.clearTimeout(hideTimerRef.current);
@@ -26,23 +27,29 @@ export function useReaderChrome(keepVisible: boolean, notify: (message: string) 
 
   const reveal = useCallback(() => {
     if (immersiveRef.current) return;
+    visibleRef.current = true;
     setVisible(true);
     clearHideTimer();
     if (!keepVisible) {
       hideTimerRef.current = window.setTimeout(() => {
-        if (!immersiveRef.current) setVisible(false);
+        if (!immersiveRef.current) {
+          visibleRef.current = false;
+          setVisible(false);
+        }
       }, 2600);
     }
   }, [clearHideTimer, keepVisible]);
 
   const hide = useCallback(() => {
     clearHideTimer();
+    visibleRef.current = false;
     setVisible(false);
   }, [clearHideTimer]);
 
   const enterImmersive = useCallback(() => {
     immersiveRef.current = true;
     clearHideTimer();
+    visibleRef.current = false;
     setImmersive(true);
     setVisible(false);
   }, [clearHideTimer]);
@@ -54,7 +61,7 @@ export function useReaderChrome(keepVisible: boolean, notify: (message: string) 
   }, [reveal]);
 
   const toggleImmersive = useCallback(() => {
-    if (immersiveRef.current) exitImmersive();
+    if (immersiveRef.current || !visibleRef.current) exitImmersive();
     else enterImmersive();
   }, [enterImmersive, exitImmersive]);
 

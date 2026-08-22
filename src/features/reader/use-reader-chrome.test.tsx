@@ -36,6 +36,17 @@ describe('useReaderChrome immersive mode', () => {
     installBrowserStubs();
   });
 
+  it('starts immersed and reveals controls only through an explicit toggle', () => {
+    const view = renderChrome(false);
+
+    expect(view.controller()).toMatchObject({ immersive: true, visible: false });
+
+    act(() => view.controller().toggleImmersive());
+    expect(view.controller()).toMatchObject({ immersive: false, visible: true });
+
+    view.renderer.unmount();
+  });
+
   afterEach(() => {
     vi.useRealTimers();
     vi.unstubAllGlobals();
@@ -66,6 +77,21 @@ describe('useReaderChrome immersive mode', () => {
     act(() => view.controller().reveal());
 
     expect(view.controller()).toMatchObject({ immersive: true, visible: false });
+    view.renderer.unmount();
+  });
+
+  it('reveals auto-hidden controls on the next center toggle instead of hiding them again', () => {
+    const view = renderChrome(false);
+
+    act(() => view.controller().toggleImmersive());
+    act(() => {
+      vi.advanceTimersByTime(2600);
+    });
+    expect(view.controller()).toMatchObject({ immersive: false, visible: false });
+
+    act(() => view.controller().toggleImmersive());
+    expect(view.controller()).toMatchObject({ immersive: false, visible: true });
+
     view.renderer.unmount();
   });
 });

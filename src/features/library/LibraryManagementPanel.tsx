@@ -1,17 +1,39 @@
-import { ArrowDown, ArrowUp, Check, ImagePlus, Plus, Save, Trash2, X } from 'lucide-react';
+import { ArrowDown, ArrowUp, Check, Folder, ImagePlus, Plus, Save, Trash2, X } from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
 import type { BookMetadataPatch } from '@noveldesk/text-core/library-metadata';
 import { normalizeCoverImage } from '../../services/cover-image';
+import { Dialog } from '../../shared/ui/Dialog';
 import { BookCover } from './BookCover';
 import type { CoverDraftAction, LibraryManagementController } from './useLibraryManagementController';
 
-function MetadataEditor({ controller }: { controller: LibraryManagementController }) {
+function sameIds(left: ReadonlySet<string>, right: ReadonlySet<string>): boolean {
+  return left.size === right.size && [...left].every((value) => right.has(value));
+}
+
+export function normalizeMetadataTags(tags: readonly string[]): string[] {
+  return [...new Set(tags.map((tag) => tag.trim()).filter(Boolean))];
+}
+
+export function mayCloseMetadataEditor(dirty: boolean, confirmDiscard?: (message: string) => boolean): boolean {
+  return !dirty || (confirmDiscard?.('저장하지 않은 책 정보 변경을 버릴까요?') ?? true);
+}
+
+function MetadataEditor({
+  controller,
+  onDirtyChange,
+  onRequestClose,
+}: {
+  controller: LibraryManagementController;
+  onDirtyChange(dirty: boolean): void;
+  onRequestClose(): void;
+}) {
   const book = controller.panel?.kind === 'metadata' ? controller.panel.book : undefined;
   const [title, setTitle] = useState(book?.title ?? '');
   const [author, setAuthor] = useState(book?.author ?? '');
   const [seriesTitle, setSeriesTitle] = useState(book?.seriesTitle ?? '');
   const [seriesIndex, setSeriesIndex] = useState(book?.seriesIndex?.toString() ?? '');
-  const [tags, setTags] = useState((book?.tags ?? []).join(', '));
+  const [tags, setTags] = useState(() => normalizeMetadataTags(book?.tags ?? []));
+  const [tagDraft, setTagDraft] = useState('');
   const [description, setDescription] = useState(book?.description ?? '');
   const [language, setLanguage] = useState(book?.language ?? '');
   const [fit, setFit] = useState<'crop' | 'contain'>(book?.coverFit ?? 'crop');
@@ -23,6 +45,27 @@ function MetadataEditor({ controller }: { controller: LibraryManagementControlle
   const [selectedShelfIds, setSelectedShelfIds] = useState<Set<string>>(
     () => new Set(controller.memberships.filter((item) => item.bookId === book?.id).map((item) => item.shelfId)),
   );
+  const initialShelfIds = useMemo(
+    () => new Set(controller.memberships.filter((item) => item.bookId === book?.id).map((item) => item.shelfId)),
+    [book?.id, controller.memberships],
+  );
+  const dirty = Boolean(
+    book &&
+    (title !== book.title ||
+      author !== (book.author ?? '') ||
+      seriesTitle !== (book.seriesTitle ?? '') ||
+      seriesIndex !== (book.seriesIndex?.toString() ?? '') ||
+      tags.join('\u0000') !== normalizeMetadataTags(book.tags ?? []).join('\u0000') ||
+      description !== (book.description ?? '') ||
+      language !== (book.language ?? '') ||
+      fit !== (book.coverFit ?? 'crop') ||
+      positionX !== (book.coverPositionX ?? 50) ||
+      positionY !== (book.coverPositionY ?? 50) ||
+      cover.kind !== 'keep' ||
+      !sameIds(initialShelfIds, selectedShelfIds)),
+  );
+
+  useEffect(() => onDirtyChange(dirty), [dirty, onDirtyChange]);
 
   useEffect(() => {
     setCover((current) =>
@@ -64,7 +107,7 @@ function MetadataEditor({ controller }: { controller: LibraryManagementControlle
       author: author || null,
       seriesTitle: seriesTitle || null,
       seriesIndex: numericSeriesIndex,
-      tags: tags.split(',').map((tag) => tag.trim()),
+      tags,
       description: description || null,
       language: language || null,
       coverFit: fit,
@@ -81,6 +124,21 @@ function MetadataEditor({ controller }: { controller: LibraryManagementControlle
       if (included !== previous.has(shelf.id)) await controller.setMembership(shelf.id, book.id, included);
     }
     await controller.saveBookDetails(book, patch, cover);
+  };
+
+  const addTag = () => {
+    const additions = tagDraft.split(',');
+    const next = normalizeMetadataTags([...tags, ...additions]);
+    setTagDraft('');
+    if (next.length === tags.length) return;
+    setTags(next);
+  };
+
+  const toggleShelf = (shelfId: string) => {
+    const next = new Set(selectedShelfIds);
+    if (next.has(shelfId)) next.delete(shelfId);
+    else next.add(shelfId);
+    setSelectedShelfIds(next);
   };
 
   return (
@@ -148,75 +206,125 @@ function MetadataEditor({ controller }: { controller: LibraryManagementControlle
             />
           </label>
           {coverError && <p className="field-help warning">{coverError}</p>}
+          <p className="metadata-cover-help">JPG, PNG, WEBP · 표시 위치와 맞춤 방식은 책장과 뷰어에 함께 적용됩니다.</p>
         </div>
       </section>
 
-      <section className="metadata-fields">
-        <label>
-          <span>제목</span>
-          <input value={title} maxLength={300} required onChange={(event) => setTitle(event.target.value)} />
-        </label>
-        <label>
-          <span>작가</span>
-          <input value={author} maxLength={300} onChange={(event) => setAuthor(event.target.value)} />
-        </label>
-        <div className="metadata-field-row">
-          <label>
-            <span>시리즈</span>
-            <input value={seriesTitle} maxLength={300} onChange={(event) => setSeriesTitle(event.target.value)} />
-          </label>
-          <label>
-            <span>권</span>
-            <input
-              type="number"
-              min="0"
-              step="0.1"
-              value={seriesIndex}
-              onChange={(event) => setSeriesIndex(event.target.value)}
-            />
-          </label>
-        </div>
-        <label>
-          <span>태그</span>
-          <input value={tags} placeholder="쉼표로 구분" onChange={(event) => setTags(event.target.value)} />
-        </label>
-        <label>
-          <span>언어</span>
-          <input value={language} placeholder="ko-KR" onChange={(event) => setLanguage(event.target.value)} />
-        </label>
-        <label>
-          <span>설명</span>
-          <textarea
-            value={description}
-            rows={5}
-            maxLength={20000}
-            onChange={(event) => setDescription(event.target.value)}
-          />
-        </label>
-      </section>
-
-      {controller.shelves.length > 0 && (
-        <section className="metadata-shelf-list">
-          <strong>책장</strong>
-          {controller.shelves.map((shelf) => (
-            <label key={shelf.id}>
-              <input
-                type="checkbox"
-                checked={selectedShelfIds.has(shelf.id)}
-                onChange={(event) => {
-                  const next = new Set(selectedShelfIds);
-                  if (event.target.checked) next.add(shelf.id);
-                  else next.delete(shelf.id);
-                  setSelectedShelfIds(next);
-                }}
-              />
-              <span className="shelf-color" style={{ backgroundColor: shelf.color }} /> {shelf.name}
+      <div className="metadata-fields">
+        <section className="metadata-section metadata-basic-section">
+          <div className="metadata-section-heading">
+            <h2>기본 정보</h2>
+            <p>책장과 작품 상세에 표시될 정보를 수정합니다.</p>
+          </div>
+          <div className="metadata-basic-grid">
+            <label>
+              <span>제목</span>
+              <input value={title} maxLength={300} required onChange={(event) => setTitle(event.target.value)} />
             </label>
-          ))}
+            <label>
+              <span>작가</span>
+              <input value={author} maxLength={300} onChange={(event) => setAuthor(event.target.value)} />
+            </label>
+            <label>
+              <span>시리즈</span>
+              <input value={seriesTitle} maxLength={300} onChange={(event) => setSeriesTitle(event.target.value)} />
+            </label>
+            <label>
+              <span>권</span>
+              <input
+                type="number"
+                min="0"
+                step="0.1"
+                value={seriesIndex}
+                onChange={(event) => setSeriesIndex(event.target.value)}
+              />
+            </label>
+            <label>
+              <span>언어</span>
+              <input value={language} placeholder="ko-KR" onChange={(event) => setLanguage(event.target.value)} />
+            </label>
+            <label className="metadata-wide-field">
+              <span>설명</span>
+              <textarea
+                value={description}
+                rows={5}
+                maxLength={20000}
+                onChange={(event) => setDescription(event.target.value)}
+              />
+            </label>
+          </div>
         </section>
-      )}
+
+        <section className="metadata-section">
+          <div className="metadata-section-heading">
+            <h2>태그</h2>
+            <p>검색과 정리에 사용할 태그를 추가하세요.</p>
+          </div>
+          {tags.length > 0 && (
+            <div className="metadata-tag-list" aria-label="등록된 태그">
+              {tags.map((tag) => (
+                <button
+                  key={tag}
+                  type="button"
+                  className="metadata-tag-chip"
+                  onClick={() => setTags(tags.filter((item) => item !== tag))}
+                >
+                  <span>#{tag}</span>
+                  <X size={13} aria-hidden="true" />
+                  <span className="sr-only">{tag} 태그 제거</span>
+                </button>
+              ))}
+            </div>
+          )}
+          <div className="metadata-tag-input-row">
+            <input
+              value={tagDraft}
+              maxLength={80}
+              placeholder="태그 입력"
+              aria-label="추가할 태그"
+              onChange={(event) => setTagDraft(event.target.value)}
+              onKeyDown={(event) => {
+                if (event.key !== 'Enter' || event.nativeEvent.isComposing) return;
+                event.preventDefault();
+                addTag();
+              }}
+            />
+            <button className="ghost-btn" type="button" disabled={!tagDraft.trim()} onClick={addTag}>
+              <Plus size={15} /> 추가
+            </button>
+          </div>
+        </section>
+
+        {controller.shelves.length > 0 && (
+          <section className="metadata-section">
+            <div className="metadata-section-heading">
+              <h2>책장 · 컬렉션</h2>
+              <p>이 작품을 둘 책장을 모두 선택할 수 있습니다.</p>
+            </div>
+            <div className="metadata-shelf-options">
+              {controller.shelves.map((shelf) => {
+                const selected = selectedShelfIds.has(shelf.id);
+                return (
+                  <button
+                    key={shelf.id}
+                    type="button"
+                    className={selected ? 'is-selected' : ''}
+                    aria-pressed={selected}
+                    onClick={() => toggleShelf(shelf.id)}
+                  >
+                    <Folder size={16} aria-hidden="true" />
+                    <span className="shelf-color" style={{ backgroundColor: shelf.color }} />
+                    <span>{shelf.name}</span>
+                    {selected && <Check size={15} aria-hidden="true" />}
+                  </button>
+                );
+              })}
+            </div>
+          </section>
+        )}
+      </div>
       <footer className="dialog-actions">
-        <button className="ghost-btn" type="button" onClick={controller.closePanel}>
+        <button className="ghost-btn" type="button" onClick={onRequestClose}>
           취소
         </button>
         <button
@@ -225,7 +333,7 @@ function MetadataEditor({ controller }: { controller: LibraryManagementControlle
           disabled={controller.busy || coverBusy || !title.trim()}
           onClick={() => void save()}
         >
-          <Save size={16} /> 저장
+          <Save size={16} /> 변경 사항 저장
         </button>
       </footer>
     </div>
@@ -317,34 +425,35 @@ function ShelfEditor({ controller }: { controller: LibraryManagementController }
 }
 
 export default function LibraryManagementPanel({ controller }: { controller: LibraryManagementController }) {
+  const [metadataDirty, setMetadataDirty] = useState(false);
+  useEffect(() => setMetadataDirty(false), [controller.panel]);
   if (!controller.panel) return null;
+  const requestClose = () => {
+    if (controller.panel?.kind === 'metadata' && !mayCloseMetadataEditor(metadataDirty, controller.confirmDiscard))
+      return;
+    controller.closePanel();
+  };
   return (
-    <div
-      className="modal-backdrop"
-      role="presentation"
-      onMouseDown={(event) => event.target === event.currentTarget && controller.closePanel()}
+    <Dialog
+      open
+      title={controller.panel.kind === 'metadata' ? '작품 정보 편집' : '책장 관리'}
+      onClose={requestClose}
+      className="library-management-dialog"
+      backdropClassName="library-management-backdrop"
+      closeLabel="닫기"
+      closeDisabled={controller.busy}
     >
-      <section
-        className="modal library-management-dialog"
-        role="dialog"
-        aria-modal="true"
-        aria-label={controller.panel.kind === 'metadata' ? '책 정보 편집' : '책장 관리'}
-      >
-        <header className="dialog-header">
-          <div>
-            <h2>{controller.panel.kind === 'metadata' ? '책 정보 편집' : '책장 관리'}</h2>
-          </div>
-          <button className="icon-btn" onClick={controller.closePanel} aria-label="닫기">
-            <X size={18} />
-          </button>
-        </header>
-        {controller.panel.kind === 'metadata' ? (
-          <MetadataEditor controller={controller} />
-        ) : (
-          <ShelfEditor controller={controller} />
-        )}
-        {controller.error && <p className="dialog-status danger">{controller.error}</p>}
-      </section>
-    </div>
+      {controller.panel.kind === 'metadata' ? (
+        <MetadataEditor
+          key={controller.panel.book.id}
+          controller={controller}
+          onDirtyChange={setMetadataDirty}
+          onRequestClose={requestClose}
+        />
+      ) : (
+        <ShelfEditor controller={controller} />
+      )}
+      {controller.error && <p className="dialog-status danger">{controller.error}</p>}
+    </Dialog>
   );
 }

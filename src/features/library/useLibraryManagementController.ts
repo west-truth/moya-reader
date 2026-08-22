@@ -27,6 +27,7 @@ export interface LibraryManagementController {
   setActiveShelf(shelfId?: string): void;
   openShelves(): void;
   openMetadata(book: Novel): void;
+  confirmDiscard?(message: string): boolean;
   closePanel(): void;
   startSelection(): void;
   toggleSelected(bookId: string): void;
@@ -120,6 +121,7 @@ export function useLibraryManagementController(
       setActiveShelf: setActiveShelfIdState,
       openShelves: () => setPanel({ kind: 'shelves' }),
       openMetadata: (book) => setPanel({ kind: 'metadata', book }),
+      confirmDiscard: input.confirm,
       closePanel: () => setPanel(undefined),
       startSelection: () => setSelectionMode(true),
       toggleSelected: (bookId) => {

@@ -22,6 +22,8 @@ const timeoutMs = Number(argValue('--timeout-ms', process.env.READER_UI_SMOKE_TI
 const headed = hasArg('--headed');
 const keepServer = hasArg('--keep-server');
 const skipScreenshots = hasArg('--no-screenshots');
+const initialContentOnly = hasArg('--initial-content-only');
+const mobileViewport = hasArg('--mobile');
 const novelFile = argValue('--novel-file', process.env.READER_UI_NOVEL_FILE ?? '');
 let importedChapterCount = 0;
 const screenshotDir = path.resolve(
@@ -190,22 +192,145 @@ async function assertReaderDomIsBounded(page) {
   }
 }
 
+async function waitForReaderTextWithoutInput(page) {
+  const content = page
+    .locator('.reader-viewport-layer.is-active .reader-paragraph:not(.is-loading):not(.is-error)')
+    .first();
+  await content.waitFor({ state: 'visible', timeout: timeoutMs });
+  const text = (await content.innerText()).trim();
+  if (!text) throw new Error('Reader replaced its loading rows without rendering paragraph text');
+}
+
+async function revealReaderChrome(page) {
+  const screen = page.locator('.reader-screen');
+  if ((await screen.getAttribute('class'))?.split(/\s+/u).includes('chrome-visible')) return;
+  const viewport = page.locator('.reader-viewport-layer.is-active');
+  const box = await viewport.boundingBox();
+  if (!box) throw new Error('Reader viewport is unavailable for the center control toggle');
+  await viewport.click({ position: { x: box.width / 2, y: box.height / 2 } });
+  await page.locator('.reader-screen.chrome-visible').waitFor({ state: 'visible', timeout: timeoutMs });
+}
+
+async function readerFrameSnapshot(page) {
+  return page.evaluate(() => {
+    const root = document.querySelector('.reader-viewport-layer.is-active');
+    const documentElement = root?.querySelector('.reader-document');
+    const firstParagraph = root?.querySelector('[data-paragraph-id]');
+    if (!(root instanceof HTMLElement) || !(documentElement instanceof HTMLElement)) return { missing: true };
+    const style = getComputedStyle(root);
+    const documentRect = documentElement.getBoundingClientRect();
+    const paragraphRect = firstParagraph?.getBoundingClientRect();
+    return {
+      missing: false,
+      rootWidth: root.clientWidth,
+      rootHeight: root.clientHeight,
+      paddingTop: style.paddingTop,
+      paddingBottom: style.paddingBottom,
+      documentLeft: Math.round(documentRect.left * 10) / 10,
+      documentWidth: Math.round(documentRect.width * 10) / 10,
+      firstParagraphTop: paragraphRect ? Math.round(paragraphRect.top * 10) / 10 : undefined,
+    };
+  });
+}
+
+async function assertChromeOverlayKeepsReaderFrame(page) {
+  const initial = await readerFrameSnapshot(page);
+  if (initial.missing) throw new Error('Reader frame was unavailable before showing controls');
+  await revealReaderChrome(page);
+  await page.waitForTimeout(220);
+  const visible = await readerFrameSnapshot(page);
+  if (JSON.stringify(visible) !== JSON.stringify(initial)) {
+    throw new Error(`Reader controls changed the reading frame: ${JSON.stringify({ initial, visible })}`);
+  }
+  const viewport = page.locator('.reader-viewport-layer.is-active');
+  const box = await viewport.boundingBox();
+  if (!box) throw new Error('Reader viewport is unavailable for the center control toggle');
+  await viewport.click({ position: { x: box.width / 2, y: box.height / 2 } });
+  await page.locator('.reader-screen.immersive').waitFor({ state: 'visible', timeout: timeoutMs });
+  await page.waitForTimeout(220);
+  const hiddenAgain = await readerFrameSnapshot(page);
+  if (JSON.stringify(hiddenAgain) !== JSON.stringify(initial)) {
+    throw new Error(`Hiding Reader controls changed the reading frame: ${JSON.stringify({ initial, hiddenAgain })}`);
+  }
+}
+
+async function paginatedFrameSnapshot(page) {
+  return page.evaluate(() => {
+    const root = document.querySelector('.reader-paginated-root.is-active');
+    const stage = root?.querySelector('.reader-pagination-stage');
+    const current = root?.querySelector('.reader-paginated-page.is-current');
+    const firstFragment = current?.querySelector('[data-paragraph-id], [data-reader-chapter-heading]');
+    if (!(root instanceof HTMLElement) || !(stage instanceof HTMLElement) || !(current instanceof HTMLElement)) {
+      return { missing: true };
+    }
+    const rootStyle = getComputedStyle(root);
+    const stageRect = stage.getBoundingClientRect();
+    const fragmentRect = firstFragment?.getBoundingClientRect();
+    return {
+      missing: false,
+      rootWidth: root.clientWidth,
+      rootHeight: root.clientHeight,
+      paddingTop: rootStyle.paddingTop,
+      paddingBottom: rootStyle.paddingBottom,
+      stageTop: Math.round(stageRect.top * 10) / 10,
+      stageLeft: Math.round(stageRect.left * 10) / 10,
+      stageWidth: Math.round(stageRect.width * 10) / 10,
+      stageHeight: Math.round(stageRect.height * 10) / 10,
+      firstFragmentTop: fragmentRect ? Math.round(fragmentRect.top * 10) / 10 : undefined,
+      startIndex: current.getAttribute('data-page-start-index'),
+      startOffset: current.getAttribute('data-page-start-offset'),
+    };
+  });
+}
+
+async function assertPaginatedChromeOverlayKeepsReaderFrame(page) {
+  await page.keyboard.press('PageDown');
+  await page.locator('.reader-paginated-page.is-current').waitFor({ state: 'visible', timeout: timeoutMs });
+  await page.waitForTimeout(220);
+  const initial = await paginatedFrameSnapshot(page);
+  if (initial.missing) throw new Error('Paginated Reader frame was unavailable before showing controls');
+  await revealReaderChrome(page);
+  await page.waitForTimeout(220);
+  const visible = await paginatedFrameSnapshot(page);
+  if (JSON.stringify(visible) !== JSON.stringify(initial)) {
+    throw new Error(`Reader controls changed the paginated frame: ${JSON.stringify({ initial, visible })}`);
+  }
+  const viewport = page.locator('.reader-viewport-layer.is-active');
+  const box = await viewport.boundingBox();
+  if (!box) throw new Error('Paginated Reader viewport is unavailable for the center control toggle');
+  await viewport.click({ position: { x: box.width / 2, y: box.height / 2 } });
+  await page.locator('.reader-screen.immersive').waitFor({ state: 'visible', timeout: timeoutMs });
+  await page.waitForTimeout(220);
+  const hiddenAgain = await paginatedFrameSnapshot(page);
+  if (JSON.stringify(hiddenAgain) !== JSON.stringify(initial)) {
+    throw new Error(`Hiding Reader controls changed the paginated frame: ${JSON.stringify({ initial, hiddenAgain })}`);
+  }
+}
+
 async function openSampleReader(page) {
   await page.goto(baseUrl, { waitUntil: 'domcontentloaded', timeout: timeoutMs });
+  await page.getByText('책장을 불러오는 중입니다').waitFor({ state: 'hidden', timeout: timeoutMs });
   await page.getByRole('button', { name: /샘플 추가/ }).click({ timeout: timeoutMs });
   await page.getByText('샘플: 돌아온 밤').first().waitFor({ state: 'visible', timeout: timeoutMs });
-  await page.getByRole('button', { name: '이어 읽기' }).first().click({ timeout: timeoutMs });
-  await page.getByPlaceholder('본문 검색').waitFor({ state: 'visible', timeout: timeoutMs });
-  await page.locator('.reader-paragraph').first().waitFor({ state: 'visible', timeout: timeoutMs });
+  await page
+    .getByRole('button', { name: /첫 화 보기|이어 읽기/ })
+    .first()
+    .click({ timeout: timeoutMs });
+  await waitForReaderTextWithoutInput(page);
 }
 
 async function openImportedNovelReader(page, filePath) {
   await fs.access(filePath);
   await page.goto(baseUrl, { waitUntil: 'domcontentloaded', timeout: timeoutMs });
-  await page.getByRole('button', { name: '책 가져오기', exact: true }).click({ timeout: timeoutMs });
+  if (mobileViewport) {
+    await page.getByRole('button', { name: '더보기', exact: true }).click({ timeout: timeoutMs });
+    await page.getByRole('button', { name: '가져오기', exact: true }).click({ timeout: timeoutMs });
+  } else {
+    await page.getByRole('button', { name: '책 가져오기', exact: true }).click({ timeout: timeoutMs });
+  }
   await page.locator('input[type="file"]').setInputFiles(filePath);
   await page.getByRole('button', { name: '가져오기 시작', exact: true }).click();
-  const continueReading = page.getByRole('button', { name: '이어 읽기', exact: true }).first();
+  const continueReading = page.getByRole('button', { name: /첫 화 보기|이어 읽기/ }).first();
   await continueReading.waitFor({ state: 'visible', timeout: Math.max(timeoutMs, 120_000) });
   const chapterCandidates = page
     .getByRole('region', { name: '화 목록' })
@@ -224,8 +349,7 @@ async function openImportedNovelReader(page, filePath) {
   }
   if (selectedChapter >= 0 && largestParagraphCount > 0) await chapterCandidates.nth(selectedChapter).click();
   else await continueReading.click();
-  await page.getByPlaceholder('본문 검색').waitFor({ state: 'visible', timeout: timeoutMs });
-  await page.locator('.reader-paragraph').first().waitFor({ state: 'visible', timeout: timeoutMs });
+  await waitForReaderTextWithoutInput(page);
 }
 
 async function openReader(page) {
@@ -376,6 +500,15 @@ async function assertScrollChapterBoundary(browser) {
       state: 'visible',
       timeout: timeoutMs,
     });
+    await page.waitForFunction(
+      () => {
+        const progress = document.querySelector('.progress-label')?.textContent?.trim();
+        const scrollTop = document.querySelector('[data-reader-layer="scroll"].is-active')?.scrollTop;
+        return progress === '0%' && (scrollTop ?? Number.POSITIVE_INFINITY) <= 1;
+      },
+      undefined,
+      { timeout: 1_500 },
+    );
     const chapterStart = await page.evaluate(() => ({
       progress: document.querySelector('.progress-label')?.textContent?.trim(),
       scrollTop: document.querySelector('[data-reader-layer="scroll"].is-active')?.scrollTop,
@@ -402,6 +535,40 @@ async function assertScrollChapterBoundary(browser) {
       { timeout: 1_500 },
     );
     log('Scroll chapter boundary armed for touch input');
+    const armedTouchAction = await secondRoot.evaluate((element) => getComputedStyle(element).touchAction);
+    if (armedTouchAction !== 'pan-up') {
+      throw new Error(`Armed touch boundary did not retain the pointer gesture: ${JSON.stringify(armedTouchAction)}`);
+    }
+    await secondRoot.dispatchEvent('pointerdown', {
+      pointerId: 20,
+      pointerType: 'touch',
+      clientX: 195,
+      clientY: 620,
+    });
+    await secondRoot.dispatchEvent('pointermove', {
+      pointerId: 20,
+      pointerType: 'touch',
+      clientX: 195,
+      clientY: 590,
+    });
+    await secondRoot.dispatchEvent('pointerup', {
+      pointerId: 20,
+      pointerType: 'touch',
+      clientX: 195,
+      clientY: 590,
+    });
+    await page.waitForTimeout(220);
+    if ((await page.locator('.reader-title span').innerText()).trim() !== secondTitle.trim()) {
+      throw new Error('A weak boundary touch gesture changed chapter');
+    }
+    await page.waitForFunction(
+      () =>
+        document.querySelector('[data-scroll-chapter-boundary]')?.getAttribute('data-scroll-chapter-boundary-armed') ===
+        'true',
+      undefined,
+      { timeout: 1_500 },
+    );
+    log('Weak touch pull released without changing chapter');
     await secondRoot.dispatchEvent('pointerdown', {
       pointerId: 21,
       pointerType: 'touch',
@@ -435,6 +602,15 @@ async function assertScrollChapterBoundary(browser) {
       { timeout: timeoutMs },
     );
     log('Strong touch input changed chapter');
+    await page.waitForFunction(
+      () => {
+        const progress = document.querySelector('.progress-label')?.textContent?.trim();
+        const scrollTop = document.querySelector('[data-reader-layer="scroll"].is-active')?.scrollTop;
+        return progress === '0%' && (scrollTop ?? Number.POSITIVE_INFINITY) <= 1;
+      },
+      undefined,
+      { timeout: 1_500 },
+    );
     const touchChapterStart = await page.evaluate(() => ({
       progress: document.querySelector('.progress-label')?.textContent?.trim(),
       scrollTop: document.querySelector('[data-reader-layer="scroll"].is-active')?.scrollTop,
@@ -452,7 +628,7 @@ async function assertScrollChapterBoundary(browser) {
 async function runReaderSmoke() {
   const browser = await launchBrowser();
   const context = await browser.newContext({
-    viewport: { width: 1440, height: 960 },
+    viewport: mobileViewport ? { width: 390, height: 844 } : { width: 1440, height: 960 },
     deviceScaleFactor: 1,
   });
   const page = await context.newPage();
@@ -470,8 +646,17 @@ async function runReaderSmoke() {
 
   try {
     await openReader(page);
-    await assertVisible(page, '.reader-topbar', 'desktop reader topbar');
     await assertReaderDomIsBounded(page);
+    if (initialContentOnly) {
+      await assertChromeOverlayKeepsReaderFrame(page);
+      await assertPaginatedChromeOverlayKeepsReaderFrame(page);
+      log(
+        `Initial content rendered without input and overlay controls kept scroll/page frames fixed (${mobileViewport ? 'mobile' : 'desktop'})`,
+      );
+      return;
+    }
+    await revealReaderChrome(page);
+    await assertVisible(page, '.reader-topbar', 'desktop reader topbar');
     await assertNoHorizontalOverflow(page, 'desktop reader');
     await screenshot(page, 'reader-ui-smoke-desktop');
 
@@ -508,7 +693,6 @@ async function runReaderSmoke() {
     await page.waitForTimeout(500);
     const automaticLayout = await assertPaginatedPageFitsViewport(page, 'automatic paginated reader');
     await screenshot(page, 'reader-ui-smoke-scroll-to-page');
-    const automaticPageIndicator = await page.locator('.reader-pagination-controls').innerText();
     const chapterAfterPageIntent = await page.locator('.reader-title span').innerText();
     const transitionStart = await page.locator('.reader-paginated-page.is-current').evaluate((element) => ({
       index: Number(element.getAttribute('data-page-start-index') ?? -1),
@@ -526,7 +710,7 @@ async function runReaderSmoke() {
       (transitionStart.index !== transitionAnchor.index || transitionStart.offset !== transitionAnchor.offset)
     ) {
       throw new Error(
-        `Scroll-to-page did not begin at its exact continuation anchor: ${JSON.stringify({ transitionStart, transitionAnchor, automaticPageIndicator })}`,
+        `Scroll-to-page did not begin at its exact continuation anchor: ${JSON.stringify({ transitionStart, transitionAnchor })}`,
       );
     }
 
@@ -585,26 +769,25 @@ async function runReaderSmoke() {
     await page.getByRole('button', { name: '읽기 설정 열기' }).click();
     await page.getByRole('heading', { name: '설정', exact: true }).waitFor({ state: 'visible', timeout: timeoutMs });
     await assertNoHorizontalOverflow(page, 'desktop settings panel');
-    await page.getByRole('tab', { name: '조판', exact: true }).click();
-    const modeLock = page.getByLabel('모드 잠금');
+    await page.getByRole('tab', { name: /^본문/u }).click();
+    const modeLock = page.locator('[aria-label="읽기 방식"]');
     if ((await modeLock.getByRole('button').count()) !== 3) {
       throw new Error('Reader settings must expose auto, scroll, and page locks');
     }
-    if ((await modeLock.getByRole('button', { name: '자동', exact: true }).getAttribute('aria-pressed')) !== 'true') {
+    if (
+      (await modeLock.getByRole('button', { name: '자동 전환', exact: true }).getAttribute('aria-pressed')) !== 'true'
+    ) {
       throw new Error('Automatic page intent unexpectedly changed the persisted mode lock');
     }
-    await page.getByLabel('페이지 이동 효과').getByRole('button', { name: '부드럽게', exact: true }).click();
+    await page
+      .locator('[aria-label="페이지 전환 효과"]')
+      .getByRole('button', { name: '부드럽게', exact: true })
+      .click();
     await screenshot(page, 'reader-ui-smoke-settings');
     await page.getByRole('button', { name: '설정 닫기' }).click();
     log('Checking automatic page navigation and wheel-to-scroll transition');
     await page.locator('.reader-paginated-root.is-active').waitFor({ state: 'visible', timeout: timeoutMs });
-    await page
-      .locator('.reader-pagination-controls')
-      .getByText(/\d+ \/ (\d+|계산 중)/)
-      .waitFor({
-        state: 'visible',
-        timeout: timeoutMs,
-      });
+    await page.locator('.reader-paginated-page.is-current').waitFor({ state: 'visible', timeout: timeoutMs });
     if (paragraphCount > 20) {
       await page.keyboard.press('PageDown');
       await page.waitForTimeout(220);
@@ -757,8 +940,8 @@ async function runReaderSmoke() {
     await page.locator('[data-reader-layer="scroll"].is-active').waitFor({ state: 'visible', timeout: timeoutMs });
 
     await page.getByRole('button', { name: '읽기 설정 열기' }).click();
-    await page.getByRole('tab', { name: '조판', exact: true }).click();
-    await page.getByLabel('모드 잠금').getByRole('button', { name: '스크롤', exact: true }).click();
+    await page.getByRole('tab', { name: /^본문/u }).click();
+    await page.locator('[aria-label="읽기 방식"]').getByRole('button', { name: '스크롤', exact: true }).click();
     await page.waitForTimeout(150);
     await page.getByRole('button', { name: '설정 닫기' }).click();
     log('Checking scroll mode lock');
@@ -769,8 +952,8 @@ async function runReaderSmoke() {
     }
 
     await page.getByRole('button', { name: '읽기 설정 열기' }).click();
-    await page.getByRole('tab', { name: '조판', exact: true }).click();
-    await page.getByLabel('모드 잠금').getByRole('button', { name: '페이지', exact: true }).click();
+    await page.getByRole('tab', { name: /^본문/u }).click();
+    await page.locator('[aria-label="읽기 방식"]').getByRole('button', { name: '페이지', exact: true }).click();
     await page.waitForTimeout(150);
     await page.getByRole('button', { name: '설정 닫기' }).click();
     log('Checking page mode lock');
@@ -782,8 +965,8 @@ async function runReaderSmoke() {
     }
 
     await page.getByRole('button', { name: '읽기 설정 열기' }).click();
-    await page.getByRole('tab', { name: '조판', exact: true }).click();
-    await page.getByLabel('모드 잠금').getByRole('button', { name: '자동', exact: true }).click();
+    await page.getByRole('tab', { name: /^본문/u }).click();
+    await page.locator('[aria-label="읽기 방식"]').getByRole('button', { name: '자동 전환', exact: true }).click();
     await page.waitForTimeout(150);
     await page.getByRole('button', { name: '설정 닫기' }).click();
     log('Checking automatic vertical swipe transition');

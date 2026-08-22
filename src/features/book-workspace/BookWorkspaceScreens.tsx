@@ -1,5 +1,6 @@
 import { lazy, Suspense, useEffect, useMemo, useState } from 'react';
-import type { LibraryScreenActions } from '../library/library-screen-contract';
+import type { LibraryScreenActions, LibraryScreenModel } from '../library/library-screen-contract';
+import { LibraryHeader, LibraryMobileHeader, LibrarySidebar } from '../library/LibraryChrome';
 import { LibraryScreen } from '../library/LibraryScreen';
 import type { BookWorkspaceController } from './book-workspace-controller';
 import type { BookWorkspaceProjection } from './book-workspace-projection';
@@ -119,139 +120,156 @@ export function BookWorkspaceScreens({
     if (layoutMode === 'compact') setInspectorOpen(true);
   };
 
+  const goLibraryHome = () => {
+    controller.setLibraryQuery('');
+    controller.setLibraryFilter('all');
+    libraryManagement.setActiveShelf(undefined);
+    if (libraryManagement.selectionMode) libraryManagement.clearSelection();
+    setInspectorOpen(false);
+    controller.setView('library');
+  };
+
+  const libraryModel: LibraryScreenModel = {
+    bootstrap: { status: bootstrap.status, message: bootstrap.message },
+    drop: libraryDrop,
+    query: state.libraryQuery,
+    sync,
+    filter: state.libraryFilter,
+    sort: state.librarySort,
+    viewMode: state.libraryViewMode,
+    collection: libraryCollection,
+    presentation: {
+      layoutMode,
+      focusedBookId,
+      inspectorOpen: layoutMode === 'wide' || inspectorOpen,
+      shelfBookCounts,
+    },
+    management: {
+      available: libraryManagement.available,
+      shelves: libraryManagement.shelves,
+      activeShelfId: libraryManagement.activeShelfId,
+      selectionMode: libraryManagement.selectionMode,
+      selectedBookIds: libraryManagement.selectedBookIds,
+      busy: libraryManagement.busy,
+      lastBatchReceipt: libraryManagement.lastBatchReceipt,
+    },
+  };
+
+  const libraryActions: LibraryScreenActions = {
+    drag: libraryDrop.actions,
+    header: {
+      setQuery: controller.setLibraryQuery,
+      retryBootstrap: bootstrap.retry,
+      openSync,
+      openSettings,
+      openBackup,
+      openImport,
+      openLibraryFolders,
+    },
+    presentation: {
+      goHome: goLibraryHome,
+      focusBook,
+      closeInspector: () => setInspectorOpen(false),
+    },
+    controls: {
+      setFilter: controller.setLibraryFilter,
+      setSort: controller.setLibrarySort,
+      setViewMode: controller.setLibraryViewMode,
+      emptyTrash: controller.emptyTrash,
+      setShelf: libraryManagement.setActiveShelf,
+      openShelves: libraryManagement.openShelves,
+      startSelection: libraryManagement.startSelection,
+      selectVisible: () => libraryManagement.selectBooks(libraryCollection.visibleBooks.map((book) => book.novel.id)),
+      clearSelection: libraryManagement.clearSelection,
+      applyBatch: (command) => libraryManagement.applyBatch(command, state.novels),
+      exportSelectedMetadata: () => libraryManagement.exportSelectedMetadata(state.novels),
+    },
+    books: {
+      open: controller.openNovel,
+      continueReading: controller.continueReading,
+      toggleFavorite: controller.toggleFavorite,
+      remove: controller.removeNovel,
+      restore: controller.restoreNovel,
+      purge: controller.purgeNovel,
+      downloadSource: exportSource,
+      addSample,
+      editMetadata: libraryManagement.openMetadata,
+      toggleSelected: (novel) => libraryManagement.toggleSelected(novel.id),
+    },
+  };
+
   return (
     <>
-      {state.view === 'library' && (
-        <LibraryScreen
-          model={{
-            bootstrap: { status: bootstrap.status, message: bootstrap.message },
-            drop: libraryDrop,
-            query: state.libraryQuery,
-            sync,
-            filter: state.libraryFilter,
-            sort: state.librarySort,
-            viewMode: state.libraryViewMode,
-            collection: libraryCollection,
-            presentation: {
-              layoutMode,
-              focusedBookId,
-              inspectorOpen: layoutMode === 'wide' || inspectorOpen,
-              shelfBookCounts,
-            },
-            management: {
-              available: libraryManagement.available,
-              shelves: libraryManagement.shelves,
-              activeShelfId: libraryManagement.activeShelfId,
-              selectionMode: libraryManagement.selectionMode,
-              selectedBookIds: libraryManagement.selectedBookIds,
-              busy: libraryManagement.busy,
-              lastBatchReceipt: libraryManagement.lastBatchReceipt,
-            },
-          }}
-          actions={{
-            drag: libraryDrop.actions,
-            header: {
-              setQuery: controller.setLibraryQuery,
-              retryBootstrap: bootstrap.retry,
-              openSync,
-              openSettings,
-              openBackup,
-              openImport,
-              openLibraryFolders,
-            },
-            presentation: {
-              focusBook,
-              closeInspector: () => setInspectorOpen(false),
-            },
-            controls: {
-              setFilter: controller.setLibraryFilter,
-              setSort: controller.setLibrarySort,
-              setViewMode: controller.setLibraryViewMode,
-              emptyTrash: controller.emptyTrash,
-              setShelf: libraryManagement.setActiveShelf,
-              openShelves: libraryManagement.openShelves,
-              startSelection: libraryManagement.startSelection,
-              selectVisible: () =>
-                libraryManagement.selectBooks(libraryCollection.visibleBooks.map((book) => book.novel.id)),
-              clearSelection: libraryManagement.clearSelection,
-              applyBatch: (command) => libraryManagement.applyBatch(command, state.novels),
-              exportSelectedMetadata: () => libraryManagement.exportSelectedMetadata(state.novels),
-            },
-            books: {
-              open: controller.openNovel,
-              continueReading: controller.continueReading,
-              toggleFavorite: controller.toggleFavorite,
-              remove: controller.removeNovel,
-              restore: controller.restoreNovel,
-              purge: controller.purgeNovel,
-              downloadSource: exportSource,
-              addSample,
-              editMetadata: libraryManagement.openMetadata,
-              toggleSelected: (novel) => libraryManagement.toggleSelected(novel.id),
-            },
-          }}
-        />
-      )}
+      {state.view === 'library' && <LibraryScreen model={libraryModel} actions={libraryActions} />}
 
       {state.view === 'chapters' && state.selectedNovel && projection.selectedNovelScreenBook && (
-        <Suspense fallback={null}>
-          <ChaptersScreen
-            model={{
-              book: projection.selectedNovelScreenBook,
-              titleEditor: { editing: state.bookTitleEditing, draft: state.bookTitleDraft },
-              query: state.chapterQuery,
-              readFilter: state.chapterReadFilter,
-              sort: state.chapterSort,
-              chapterList: projection.chapterList,
-              summary: {
-                readChapterProgress: projection.readChapterProgress,
-                readLocationLabel: projection.readLocationLabel,
-                bookmarkCount: annotationTotals.bookmarks,
-                highlightCount: annotationTotals.highlights,
-                noteCount: annotationTotals.notes,
-                syncLabel: sync.label,
-                firstUnreadChapter: projection.firstUnreadChapter,
-                currentReadTargetChapter: projection.currentReadTargetChapter,
-                canMarkCurrentChapterRead: projection.canMarkCurrentChapterRead,
-                canMarkBookFinished: projection.canMarkBookFinished,
-                canResetBookProgress: projection.canResetBookProgress,
-              },
-            }}
-            actions={{
-              navigation: {
-                backToLibrary: () => controller.setView('library'),
-                continueReading: () => controller.continueReading(),
-                openSettings,
-                openSync,
-                openImport,
-                openStructureEditor: () => void openChapterStructure(state.selectedNovel!.id),
-                openMetadata: () => libraryManagement.openMetadata(state.selectedNovel!),
-              },
-              titleEditor: {
-                start: controller.startBookTitleEdit,
-                cancel: controller.cancelBookTitleEdit,
-                setDraft: controller.setBookTitleDraft,
-                save: controller.saveBookTitle,
-              },
-              book: {
-                toggleFavorite: controller.toggleFavorite,
-                openFirstUnreadChapter: controller.openFirstUnreadChapter,
-                markCurrentChapterRead: controller.markCurrentChapterRead,
-                markFinished: controller.markBookFinished,
-                resetProgress: controller.resetBookProgress,
-                exportSource,
-                reselectSource,
-                reconstructSource,
-              },
-              chapterList: {
-                setQuery: controller.setChapterQuery,
-                setReadFilter: controller.setChapterReadFilter,
-                setSort: controller.setChapterSort,
-                openChapter: controller.openChapterFromList,
-              },
-            }}
-          />
-        </Suspense>
+        <main className="library-screen book-detail-product-screen">
+          <div className="library-product-shell">
+            <LibrarySidebar model={libraryModel} actions={libraryActions} />
+            <section className="library-workspace book-detail-workspace">
+              <LibraryMobileHeader model={libraryModel} actions={libraryActions} />
+              <LibraryHeader model={libraryModel} actions={libraryActions} />
+              <Suspense fallback={null}>
+                <ChaptersScreen
+                  model={{
+                    book: projection.selectedNovelScreenBook,
+                    titleEditor: { editing: state.bookTitleEditing, draft: state.bookTitleDraft },
+                    query: state.chapterQuery,
+                    readFilter: state.chapterReadFilter,
+                    sort: state.chapterSort,
+                    chapterList: projection.chapterList,
+                    summary: {
+                      readChapterProgress: projection.readChapterProgress,
+                      readLocationLabel: projection.readLocationLabel,
+                      bookmarkCount: annotationTotals.bookmarks,
+                      highlightCount: annotationTotals.highlights,
+                      noteCount: annotationTotals.notes,
+                      syncLabel: sync.label,
+                      firstUnreadChapter: projection.firstUnreadChapter,
+                      currentReadTargetChapter: projection.currentReadTargetChapter,
+                      canMarkCurrentChapterRead: projection.canMarkCurrentChapterRead,
+                      canMarkBookFinished: projection.canMarkBookFinished,
+                      canResetBookProgress: projection.canResetBookProgress,
+                    },
+                  }}
+                  actions={{
+                    navigation: {
+                      backToLibrary: () => controller.setView('library'),
+                      continueReading: () => controller.continueReading(),
+                      openSettings,
+                      openSync,
+                      openImport,
+                      openStructureEditor: () => void openChapterStructure(state.selectedNovel!.id),
+                      openMetadata: () => libraryManagement.openMetadata(state.selectedNovel!),
+                    },
+                    titleEditor: {
+                      start: controller.startBookTitleEdit,
+                      cancel: controller.cancelBookTitleEdit,
+                      setDraft: controller.setBookTitleDraft,
+                      save: controller.saveBookTitle,
+                    },
+                    book: {
+                      toggleFavorite: controller.toggleFavorite,
+                      openFirstUnreadChapter: controller.openFirstUnreadChapter,
+                      markCurrentChapterRead: controller.markCurrentChapterRead,
+                      markFinished: controller.markBookFinished,
+                      resetProgress: controller.resetBookProgress,
+                      exportSource,
+                      reselectSource,
+                      reconstructSource,
+                    },
+                    chapterList: {
+                      setQuery: controller.setChapterQuery,
+                      setReadFilter: controller.setChapterReadFilter,
+                      setSort: controller.setChapterSort,
+                      openChapter: controller.openChapterFromList,
+                    },
+                  }}
+                />
+              </Suspense>
+            </section>
+          </div>
+        </main>
       )}
       {libraryManagement.panel && (
         <Suspense fallback={null}>

@@ -59,8 +59,6 @@
   width: 100%;
   padding-bottom: var(--reading-paragraph-spacing);
   contain: layout paint style;
-  content-visibility: auto;
-  contain-intrinsic-size: 0 96px;
 }
 
 .reader-paragraph p {
@@ -138,7 +136,7 @@
   position: relative;
   display: block;
   overflow: hidden;
-  padding-bottom: calc(124px + var(--reading-margin-y));
+  padding-bottom: var(--reader-content-inset-bottom);
   touch-action: none;
 }
 
@@ -205,8 +203,8 @@
 .reader-pagination-measure {
   position: fixed;
   z-index: -1;
-  width: min(var(--reading-width), calc(100vw - 2 * var(--reading-margin-x)));
-  height: calc(100dvh - 15rem);
+  width: min(var(--reading-width), calc(100vw - 2 * var(--reader-layout-margin-x)));
+  height: calc(100dvh - var(--reader-content-inset-top) - var(--reader-content-inset-bottom));
   overflow: hidden;
   visibility: hidden;
   pointer-events: none;
@@ -231,36 +229,12 @@
   object-fit: contain;
 }
 
-.reader-pagination-controls {
-  position: absolute;
-  right: var(--reading-margin-x);
-  bottom: calc(52px + var(--reading-margin-y));
-  left: var(--reading-margin-x);
-  z-index: 2;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 0.75rem;
-  min-height: 2.75rem;
-  font-family: var(--font-ui);
-  color: var(--text-2);
-}
-
-.reader-pagination-controls span {
-  min-width: 8rem;
-  text-align: center;
-}
-
 .reader-pagination-status {
   display: grid;
   min-height: 12rem;
   place-items: center;
   color: var(--text-2);
   font-family: var(--font-ui);
-}
-
-.chapter-nav.reader-pagination-chapter-nav {
-  display: none;
 }
 
 .reader-paragraph.is-loading {
