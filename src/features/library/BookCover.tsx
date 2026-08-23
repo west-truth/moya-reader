@@ -27,6 +27,24 @@ export interface BookCoverProps {
   readonly children?: ReactNode;
 }
 
+const formatLabels: Record<NonNullable<Novel['format']>, string> = {
+  txt: 'TEXT',
+  markdown: 'MARKDOWN',
+  epub: 'EPUB',
+  pdf: 'PDF',
+  image_archive: 'COMIC',
+};
+
+function FallbackCover({ novel }: { readonly novel: Novel }) {
+  return (
+    <span className="book-cover-fallback" aria-hidden="true">
+      <span className="book-cover-format">{novel.format ? formatLabels[novel.format] : 'MOYA'}</span>
+      <strong>{novel.title}</strong>
+      <small>{novel.author || 'MOYA LIBRARY'}</small>
+    </span>
+  );
+}
+
 function ResolvedCoverImage({ novel }: { readonly novel: Novel }) {
   const runtime = useOptionalAppRuntime();
   const repository = runtime?.readerRuntime.bookAssetRepository;
@@ -93,14 +111,14 @@ function ResolvedCoverImage({ novel }: { readonly novel: Novel }) {
       }}
     />
   ) : (
-    <span>{novel.title}</span>
+    <FallbackCover novel={novel} />
   );
 }
 
 export function BookCover({ novel, className, children }: BookCoverProps) {
   return (
     <div className={className}>
-      {novel.coverAssetId ? <ResolvedCoverImage novel={novel} /> : <span>{novel.title}</span>}
+      {novel.coverAssetId ? <ResolvedCoverImage novel={novel} /> : <FallbackCover novel={novel} />}
       {children}
     </div>
   );

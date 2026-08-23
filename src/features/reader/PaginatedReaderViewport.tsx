@@ -1,4 +1,3 @@
-import { SkipBack, SkipForward } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { Chapter, Paragraph, ReaderAnchor, ReaderPageBoundary } from '../../domain/types';
 import { PARAGRAPHS_PER_PAGE } from '../../repositories/reader-defaults';
@@ -1090,6 +1089,7 @@ export function PaginatedReaderViewport(
         }
       },
       pageJump,
+      goChapter,
       scrollPageJump: pageJump,
       scrollByPixels: onScrollIntent,
       getAnchor: () => boundariesRef.current[currentPageRef.current]?.start ?? currentBoundary?.start,
@@ -1161,6 +1161,7 @@ export function PaginatedReaderViewport(
       contentRevisionId,
       currentBoundary,
       flushPosition,
+      goChapter,
       getParagraphAtIndex,
       loadPageFragments,
       location,
@@ -1273,39 +1274,6 @@ export function PaginatedReaderViewport(
           {!boundaries.length && <div className="reader-pagination-status">첫 페이지 계산 중</div>}
         </article>
       </div>
-      <footer className="reader-pagination-controls">
-        <button
-          type="button"
-          className="mini-icon-btn"
-          disabled={currentPage <= 0 && chapter.index <= 1}
-          onClick={() => pageJump(-1)}
-          aria-label="이전 페이지"
-          title="이전 페이지"
-        >
-          <SkipBack size={17} />
-        </button>
-        <span>
-          {boundaries.length ? `${currentPage + 1} / ${complete ? boundaries.length : '계산 중'}` : '페이지 계산 중'}
-        </span>
-        <button
-          type="button"
-          className="mini-icon-btn"
-          disabled={currentPage >= boundaries.length - 1 && chapter.index >= chapters.length}
-          onClick={() => pageJump(1)}
-          aria-label="다음 페이지"
-          title="다음 페이지"
-        >
-          <SkipForward size={17} />
-        </button>
-      </footer>
-      <nav className="chapter-nav reader-pagination-chapter-nav">
-        <button className="ghost-btn" disabled={chapter.index <= 1} onClick={() => void goChapter(-1)}>
-          <SkipBack size={18} /> 이전 화
-        </button>
-        <button className="ghost-btn" disabled={chapter.index >= chapters.length} onClick={() => void goChapter(1)}>
-          다음 화 <SkipForward size={18} />
-        </button>
-      </nav>
     </section>
   );
 }

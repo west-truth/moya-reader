@@ -1,4 +1,4 @@
-import { BookOpen, Check, Pencil, Play, RotateCcw, Star, Trash2 } from 'lucide-react';
+import { Check, Pencil, Play, RotateCcw, Star, Trash2 } from 'lucide-react';
 import { formatProgress } from '../../utils/format';
 import type { LibraryBookView } from './library-screen-model';
 import type { LibraryScreenProps } from './library-screen-contract';
@@ -13,6 +13,12 @@ interface LibraryBookItemProps extends LibraryScreenProps {
 function classNames(...values: Array<string | false | undefined>): string {
   return values.filter(Boolean).join(' ');
 }
+
+const statusClassName: Record<LibraryBookView['readingStatusLabel'], string> = {
+  '읽는 중': 'is-reading',
+  완독: 'is-finished',
+  미독: 'is-unread',
+};
 
 function useItemState({ book, model }: LibraryBookItemProps) {
   const selected = model.management.selectionMode && model.management.selectedBookIds.has(book.novel.id);
@@ -33,18 +39,14 @@ function activateBook({ book, model, actions }: LibraryBookItemProps): void {
     if (model.presentation.layoutMode !== 'mobile') actions.presentation.focusBook(book.novel);
     return;
   }
-  if (model.presentation.layoutMode === 'mobile') {
-    void actions.books.open(book.novel);
-    return;
-  }
   actions.presentation.focusBook(book.novel);
+  void actions.books.open(book.novel);
 }
 
 function BookItemActions({ book, model, actions }: LibraryBookItemProps) {
   if (model.management.selectionMode) return null;
   const { novel } = book;
   const trashed = Boolean(novel.deletedAt);
-  const openLabel = isFixedDocumentFormat(novel.format) ? '문서 열기' : '화 목록 열기';
 
   if (trashed) {
     return (
@@ -75,15 +77,6 @@ function BookItemActions({ book, model, actions }: LibraryBookItemProps) {
     <div className="card-actions">
       <button
         type="button"
-        className="mini-icon-btn book-open-action"
-        title={openLabel}
-        aria-label={`${novel.title} ${openLabel}`}
-        onClick={() => void actions.books.open(novel)}
-      >
-        <BookOpen size={15} />
-      </button>
-      <button
-        type="button"
         className="mini-icon-btn book-edit-action"
         title="작품 정보 편집"
         aria-label={`${novel.title} 정보 편집`}
@@ -103,12 +96,13 @@ function BookItemActions({ book, model, actions }: LibraryBookItemProps) {
       </button>
       <button
         type="button"
-        className="mini-icon-btn book-continue-action"
-        title="이어 읽기"
-        aria-label={`${novel.title} 이어 읽기`}
+        className="book-direct-action book-continue-action"
+        title={book.directActionLabel}
+        aria-label={`${novel.title} ${book.directActionLabel}`}
         onClick={() => void actions.books.continueReading(novel)}
       >
-        <Play size={15} />
+        <Play size={13} fill="currentColor" />
+        <span>{book.directActionLabel}</span>
       </button>
       <button
         type="button"
@@ -150,14 +144,19 @@ function LibraryBookCard(props: LibraryBookItemProps) {
         aria-label={
           model.management.selectionMode
             ? `${book.novel.title} ${selected ? '선택 해제' : '선택'}`
-            : model.presentation.layoutMode === 'mobile' && !trashed
-              ? `${book.novel.title} ${isFixedDocumentFormat(book.novel.format) ? '문서' : '화 목록'} 열기`
-              : `${book.novel.title} 작품 정보 보기`
+            : `${book.novel.title} ${isFixedDocumentFormat(book.novel.format) ? '문서 열기' : '작품 상세 열기'}`
         }
       />
-      <BookCover novel={book.novel} className={classNames('book-cover', book.coverClass)}>
-        {model.management.selectionMode && <SelectionMark selected={selected} />}
-      </BookCover>
+      <div className="book-cover-wrap">
+        <BookCover novel={book.novel} className={classNames('book-cover', book.coverClass)}>
+          {model.management.selectionMode && <SelectionMark selected={selected} />}
+        </BookCover>
+        {!trashed && (
+          <span className={classNames('book-status-label', statusClassName[book.readingStatusLabel])}>
+            {book.readingStatusLabel}
+          </span>
+        )}
+      </div>
       <div className="book-info">
         <div className="book-title-line">
           <h3>{book.novel.title}</h3>
@@ -167,13 +166,13 @@ function LibraryBookCard(props: LibraryBookItemProps) {
         {!trashed && (
           <LibraryReadingProgress
             novel={book.novel}
-            progress={book.chapterProgress}
+            progress={book.bookProgress}
             positionLabel={book.readingPositionLabel}
             className="card-progress"
           />
         )}
         <div className="card-row">
-          <strong>{trashed ? '휴지통' : formatProgress(book.chapterProgress)}</strong>
+          <strong>{trashed ? '휴지통' : formatProgress(book.bookProgress)}</strong>
           <span>{book.lastReadLabel}</span>
           <BookItemActions {...props} />
         </div>
@@ -201,9 +200,7 @@ function LibraryBookListRow(props: LibraryBookItemProps) {
         aria-label={
           model.management.selectionMode
             ? `${book.novel.title} ${selected ? '선택 해제' : '선택'}`
-            : model.presentation.layoutMode === 'mobile' && !trashed
-              ? `${book.novel.title} ${isFixedDocumentFormat(book.novel.format) ? '문서' : '화 목록'} 열기`
-              : `${book.novel.title} 작품 정보 보기`
+            : `${book.novel.title} ${isFixedDocumentFormat(book.novel.format) ? '문서 열기' : '작품 상세 열기'}`
         }
       />
       <BookCover novel={book.novel} className={classNames('book-cover thumb', book.coverClass)}>
@@ -218,14 +215,14 @@ function LibraryBookListRow(props: LibraryBookItemProps) {
         {!trashed && (
           <LibraryReadingProgress
             novel={book.novel}
-            progress={book.chapterProgress}
+            progress={book.bookProgress}
             positionLabel={book.readingPositionLabel}
             className="card-progress"
           />
         )}
       </div>
       <div className="book-list-progress">
-        <strong>{trashed ? '휴지통' : formatProgress(book.chapterProgress)}</strong>
+        <strong>{trashed ? '휴지통' : formatProgress(book.bookProgress)}</strong>
         <span>{book.lastReadLabel}</span>
       </div>
       <BookItemActions {...props} />
@@ -243,6 +240,13 @@ export function LibraryBookCollection(props: LibraryScreenProps) {
         </p>
       )}
       <div className={collectionClass} role="list" aria-label="작품 목록">
+        {props.model.viewMode === 'list' && (
+          <div className="book-list-head" aria-hidden="true">
+            <span>작품</span>
+            <span>전체 진행률</span>
+            <span>작업</span>
+          </div>
+        )}
         {props.model.collection.visibleBooks.map((book) =>
           props.model.viewMode === 'grid' ? (
             <LibraryBookCard key={book.novel.id} book={book} {...props} />

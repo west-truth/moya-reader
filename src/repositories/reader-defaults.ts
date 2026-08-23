@@ -6,6 +6,7 @@ export const PARAGRAPHS_PER_PAGE = 120;
 
 export const defaultSettings: ReaderSettings = {
   id: 'reader-settings',
+  applicationTheme: 'dark',
   theme: 'dark',
   font: 'serif',
   fontSize: 18,

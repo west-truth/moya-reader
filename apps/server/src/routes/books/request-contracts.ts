@@ -281,6 +281,26 @@ export function validateSettingsBody(value: unknown): ValidationResult<ReaderSet
   const body = recordBody(value);
   if (!body) return { ok: false, error: 'settings body must be an object' };
   const next = { ...defaultSettings };
+  const applicationTheme = body.applicationTheme;
+  if (applicationTheme !== undefined) {
+    if (!['light', 'dark', 'sepia', 'midnight', 'custom'].includes(String(applicationTheme))) {
+      return { ok: false, error: 'applicationTheme is invalid' };
+    }
+    next.applicationTheme = applicationTheme as ReaderSettings['applicationTheme'];
+  }
+  if (body.applicationThemeColors !== undefined) {
+    const colors = recordBody(body.applicationThemeColors);
+    if (!colors) return { ok: false, error: 'applicationThemeColors must be an object' };
+    const parsedColors: NonNullable<ReaderSettings['applicationThemeColors']> = {};
+    for (const field of ['background', 'surface', 'text', 'accent'] as const) {
+      if (colors[field] === undefined) continue;
+      if (typeof colors[field] !== 'string' || !/^#[0-9a-f]{6}$/i.test(colors[field])) {
+        return { ok: false, error: `applicationThemeColors.${field} must be a hex color` };
+      }
+      parsedColors[field] = colors[field];
+    }
+    next.applicationThemeColors = parsedColors;
+  }
   const theme = body.theme;
   if (theme !== undefined) {
     if (!['light', 'dark', 'sepia', 'midnight'].includes(String(theme))) {

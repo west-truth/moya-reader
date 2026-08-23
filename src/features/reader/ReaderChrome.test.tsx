@@ -33,11 +33,15 @@ describe('ReaderChrome bookmark action', () => {
       paragraphIndex: 12,
       ttsIndex: 12,
     };
-    const viewport = { getLocation: () => fallbackLocation } as ReaderViewportApi;
+    const goChapter = vi.fn(async () => undefined);
+    const viewport = { getLocation: () => fallbackLocation, goChapter } as unknown as ReaderViewportApi;
     const model = {
       novel: { id: 'book_1', title: '모바일 책', totalChapters: 2, format: 'epub' },
       chapter: { id: 'chapter_1', novelId: 'book_1', index: 1, title: '첫 화', paragraphCount: 20 },
-      chapters: [],
+      chapters: [
+        { id: 'chapter_1', novelId: 'book_1', index: 1, title: '첫 화', paragraphCount: 20 },
+        { id: 'chapter_2', novelId: 'book_1', index: 2, title: '둘째 화', paragraphCount: 20 },
+      ],
       settings: defaultSettings,
       bookmarks: [],
       highlights: [],
@@ -89,19 +93,32 @@ describe('ReaderChrome bookmark action', () => {
       );
     });
 
-    act(() => renderer.root.findByProps({ 'aria-label': '북마크 추가' }).props.onClick());
+    act(() => renderer.root.findAllByProps({ 'aria-label': '북마크 추가' })[0].props.onClick());
     expect(toggleBookmark).toHaveBeenCalledWith(fallbackLocation);
-    const savingButton = renderer.root.findByProps({ 'aria-label': '북마크 저장 중' });
-    expect(savingButton.props.disabled).toBe(true);
+    const savingButtons = renderer.root.findAllByProps({ 'aria-label': '북마크 저장 중' });
+    expect(savingButtons).toHaveLength(2);
+    expect(savingButtons.every((button) => button.props.disabled)).toBe(true);
 
-    act(() => savingButton.props.onClick());
+    act(() => savingButtons[0].props.onClick());
     expect(toggleBookmark).toHaveBeenCalledTimes(1);
+
+    expect(renderer.root.findByProps({ 'aria-label': '읽기 조작' }).type).toBe('footer');
+    expect(renderer.root.findByProps({ 'aria-label': '읽기 모드' }).props['aria-pressed']).toBe(true);
+    expect(renderer.root.findByProps({ 'aria-label': '듣기 모드' }).props['aria-pressed']).toBe(false);
+    expect(renderer.root.findByProps({ 'aria-label': '읽기 진행률' }).props['aria-valuetext']).toBe(
+      '현재 화 진행률 0%',
+    );
+    expect(renderer.root.findByProps({ 'aria-label': '이전 화' }).props.disabled).toBe(true);
+    act(() => renderer.root.findByProps({ 'aria-label': '다음 화' }).props.onClick());
+    expect(goChapter).toHaveBeenCalledWith(1);
 
     await act(async () => {
       pending.resolve();
       await pending.promise;
     });
-    expect(renderer.root.findByProps({ 'aria-label': '북마크 추가' }).props.disabled).toBe(false);
+    expect(
+      renderer.root.findAllByProps({ 'aria-label': '북마크 추가' }).every((button) => !button.props.disabled),
+    ).toBe(true);
     expect(notify).not.toHaveBeenCalled();
     renderer.unmount();
   });

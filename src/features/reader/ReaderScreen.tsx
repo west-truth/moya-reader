@@ -242,7 +242,7 @@ function ReaderScreenComponent({ model, screenHandle }: ReaderScreenProps) {
   }, []);
 
   const toggleImmersive = useCallback(() => {
-    if (immersive) {
+    if (immersive || !chrome.visible) {
       exitImmersive();
       return;
     }
@@ -252,7 +252,7 @@ function ReaderScreenComponent({ model, screenHandle }: ReaderScreenProps) {
     clearSelection();
     if (model.addonOpen) screenHandle.getActions().toggleAddon();
     enterImmersive();
-  }, [clearSelection, enterImmersive, exitImmersive, immersive, model.addonOpen, screenHandle]);
+  }, [chrome.visible, clearSelection, enterImmersive, exitImmersive, immersive, model.addonOpen, screenHandle]);
 
   const handleApiReady = useCallback((api?: ReaderViewportApi) => {
     viewportApiRef.current = api;

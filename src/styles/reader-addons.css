@@ -10,7 +10,7 @@
   padding: 0;
   background: var(--app-surface-strong);
   border-left: 1px solid var(--border);
-  box-shadow: -10px 0 28px rgba(0, 0, 0, 0.1);
+  box-shadow: -10px 0 28px color-mix(in srgb, var(--app-text-strong) 10%, transparent);
 }
 
 .settings-panel {
@@ -796,7 +796,7 @@
   display: grid;
   place-items: center;
   padding: 24px;
-  background: rgba(20, 21, 19, 0.28);
+  background: var(--app-menu-backdrop);
 }
 
 .reader-footnote-sheet {

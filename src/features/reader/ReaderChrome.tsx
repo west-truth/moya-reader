@@ -156,7 +156,7 @@ export function ReaderChrome({
             <Search size={18} />
           </button>
           <button
-            className={classNames('icon-btn', Boolean(activeBookmark) && 'active')}
+            className={classNames('icon-btn', 'reader-topbar-secondary', Boolean(activeBookmark) && 'active')}
             onClick={() => void toggleBookmark()}
             disabled={bookmarkPending}
             title={bookmarkPending ? '북마크 저장 중' : activeBookmark ? '북마크 제거' : '북마크'}
@@ -167,7 +167,7 @@ export function ReaderChrome({
             <BookmarkIcon size={18} />
           </button>
           <button
-            className={classNames('icon-btn', Boolean(activeHighlight) && 'active')}
+            className={classNames('icon-btn', 'reader-topbar-secondary', Boolean(activeHighlight) && 'active')}
             onClick={addHighlight}
             title={activeHighlight ? '현재 문단 하이라이트됨' : '하이라이트'}
             aria-label="하이라이트 토글"
@@ -175,7 +175,12 @@ export function ReaderChrome({
           >
             <Highlighter size={18} />
           </button>
-          <button className="icon-btn" onClick={actions.openSettings} title="읽기 설정" aria-label="읽기 설정 열기">
+          <button
+            className="icon-btn reader-topbar-secondary"
+            onClick={actions.openSettings}
+            title="읽기 설정"
+            aria-label="읽기 설정 열기"
+          >
             <Settings size={18} />
           </button>
           <button
@@ -187,7 +192,12 @@ export function ReaderChrome({
           >
             <Focus size={18} />
           </button>
-          <button className="icon-btn" onClick={actions.toggleAddon} title="부가 기능" aria-label="부가 기능 열기">
+          <button
+            className="icon-btn reader-topbar-secondary"
+            onClick={actions.toggleAddon}
+            title="부가 기능"
+            aria-label="부가 기능 열기"
+          >
             <PanelRightOpen size={18} />
           </button>
         </div>
@@ -218,121 +228,200 @@ export function ReaderChrome({
         </div>
       )}
 
-      <footer className={classNames('reader-bottombar', model.settings.keepScreenChrome && 'always-visible')}>
-        <button
-          className="icon-btn"
-          onClick={() => viewport?.pageJump(-1)}
-          title={readingFlow === 'paginated' ? '이전 화면' : '위로 이동'}
-          aria-label={readingFlow === 'paginated' ? '이전 화면' : '위로 이동'}
-        >
-          <SkipBack size={18} />
-        </button>
-        <span className="reader-flow-pill">{flowLabel(readingFlow)}</span>
-        <span className="progress-label">{formatProgress(progress)}</span>
-        <input
-          aria-label="읽기 진행률"
-          type="range"
-          min={0}
-          max={1000}
-          value={Math.round(progress * 1000)}
-          onChange={(event) => void viewport?.scrubTo(Number(event.target.value) / 1000)}
-          title={`현재 화 진행률 ${formatProgress(progress)}`}
-        />
-        <button
-          className="icon-btn"
-          onClick={() => viewport?.pageJump(1)}
-          title={model.settings.flow === 'page' ? '다음 화면' : '아래로 이동'}
-          aria-label={model.settings.flow === 'page' ? '다음 화면' : '아래로 이동'}
-        >
-          <SkipForward size={18} />
-        </button>
-        <span className="paragraph-progress-label">{paragraphProgressLabel(model, location)}</span>
-        <div className="reader-mode-switch">
-          <button className={mode === 'read' ? 'active' : ''} onClick={() => onSetMode('read')}>
-            <BookOpen size={15} /> 읽기
-          </button>
+      <footer
+        className={classNames('reader-bottombar', model.settings.keepScreenChrome && 'always-visible')}
+        aria-label="읽기 조작"
+      >
+        <div className="reader-position-bar">
           <button
-            className={mode === 'listen' ? 'active' : ''}
-            onClick={() => actions.startTTS(location?.ttsIndex ?? 0)}
+            className="reader-chapter-step"
+            type="button"
+            disabled={!viewport || model.chapter.index <= 1}
+            onClick={() => void viewport?.goChapter(-1)}
+            title="이전 화"
+            aria-label="이전 화"
           >
-            <Headphones size={15} /> 듣기
+            <SkipBack size={18} /> <span>이전화</span>
           </button>
+          <span className="reader-flow-pill">{flowLabel(readingFlow)}</span>
+          <span className="progress-label">{formatProgress(progress)}</span>
+          <input
+            aria-label="읽기 진행률"
+            type="range"
+            min={0}
+            max={1000}
+            value={Math.round(progress * 1000)}
+            onChange={(event) => void viewport?.scrubTo(Number(event.target.value) / 1000)}
+            title={`현재 화 진행률 ${formatProgress(progress)}`}
+            aria-valuetext={`현재 화 진행률 ${formatProgress(progress)}`}
+          />
+          <span className="paragraph-progress-label">{paragraphProgressLabel(model, location)}</span>
           <button
-            className={classNames('reader-notes-action', model.addonOpen && model.addonTab === 'notes' && 'active')}
-            onClick={() => actions.openAddon('notes')}
+            className="reader-chapter-step"
+            type="button"
+            disabled={!viewport || model.chapter.index >= model.chapters.length}
+            onClick={() => void viewport?.goChapter(1)}
+            title="다음 화"
+            aria-label="다음 화"
           >
-            <StickyNote size={15} /> 주석
+            <span>다음화</span> <SkipForward size={18} />
           </button>
         </div>
-        <div className="reader-overflow" ref={overflowMenu.rootRef}>
+        <div className="reader-tool-row">
           <button
-            ref={overflowMenu.triggerRef}
-            className="icon-btn reader-overflow-toggle"
+            className={classNames('reader-mobile-tool', model.addonOpen && model.addonTab === 'outline' && 'active')}
             type="button"
-            onClick={() => onOverflowOpenChanged(!overflowOpen)}
-            aria-label="리더 추가 메뉴"
-            aria-expanded={overflowOpen}
+            onClick={() => actions.openAddon('outline')}
+            title="목차"
+            aria-label="목차 열기"
           >
-            <MoreHorizontal size={18} />
+            <BookOpen size={19} />
           </button>
-          {overflowOpen && (
-            <div
-              ref={overflowMenu.menuRef}
-              className="reader-overflow-menu"
-              role="menu"
-              aria-label="리더 추가 작업"
-              onKeyDown={overflowMenu.onMenuKeyDown}
+          <button
+            className={classNames('reader-mobile-tool', Boolean(activeBookmark) && 'active')}
+            type="button"
+            onClick={() => void toggleBookmark()}
+            disabled={bookmarkPending}
+            title={bookmarkPending ? '북마크 저장 중' : activeBookmark ? '북마크 제거' : '북마크'}
+            aria-label={bookmarkPending ? '북마크 저장 중' : activeBookmark ? '북마크 제거' : '북마크 추가'}
+            aria-busy={bookmarkPending}
+            aria-pressed={Boolean(activeBookmark)}
+          >
+            <BookmarkIcon size={19} />
+          </button>
+          <button
+            className={classNames('reader-mobile-tool', mode === 'listen' && 'active')}
+            type="button"
+            onClick={() => actions.startTTS(location?.ttsIndex ?? 0)}
+            title="듣기"
+            aria-label="듣기 시작"
+            aria-pressed={mode === 'listen'}
+          >
+            <Headphones size={19} />
+          </button>
+          <button
+            className="reader-mobile-tool"
+            type="button"
+            onClick={actions.toggleNightTheme}
+            title="테마 전환"
+            aria-label="테마 전환"
+          >
+            {nightThemeActive ? <Sun size={19} /> : <Moon size={19} />}
+          </button>
+          <button
+            className="reader-mobile-tool"
+            type="button"
+            onClick={actions.openSettings}
+            title="읽기 설정"
+            aria-label="읽기 설정 열기"
+          >
+            <Settings size={19} />
+          </button>
+          <div className="reader-mode-switch" role="group" aria-label="읽기 및 듣기">
+            <button
+              type="button"
+              className={mode === 'read' ? 'active' : ''}
+              onClick={() => onSetMode('read')}
+              title="읽기 모드"
+              aria-label="읽기 모드"
+              aria-pressed={mode === 'read'}
             >
-              <button
-                type="button"
-                role="menuitem"
-                onClick={() => runOverflowAction(() => void viewport?.scrollToParagraphIndex(0, 'start'))}
+              <BookOpen size={15} /> 읽기
+            </button>
+            <button
+              type="button"
+              className={mode === 'listen' ? 'active' : ''}
+              onClick={() => actions.startTTS(location?.ttsIndex ?? 0)}
+              title="듣기 모드"
+              aria-label="듣기 모드"
+              aria-pressed={mode === 'listen'}
+            >
+              <Headphones size={15} /> 듣기
+            </button>
+            <button
+              className={classNames('reader-notes-action', model.addonOpen && model.addonTab === 'notes' && 'active')}
+              onClick={() => actions.openAddon('notes')}
+            >
+              <StickyNote size={15} /> 주석
+            </button>
+          </div>
+          <div className="reader-overflow" ref={overflowMenu.rootRef}>
+            <button
+              ref={overflowMenu.triggerRef}
+              className="icon-btn reader-overflow-toggle"
+              type="button"
+              onClick={() => onOverflowOpenChanged(!overflowOpen)}
+              aria-label="리더 추가 메뉴"
+              aria-expanded={overflowOpen}
+            >
+              <MoreHorizontal size={19} />
+            </button>
+            {overflowOpen && (
+              <div
+                ref={overflowMenu.menuRef}
+                className="reader-overflow-menu"
+                role="menu"
+                aria-label="리더 추가 작업"
+                onKeyDown={overflowMenu.onMenuKeyDown}
               >
-                <ChevronsLeft size={15} /> 현재 화 처음
-              </button>
-              <button
-                type="button"
-                role="menuitem"
-                disabled={!model.canRestoreSavedPosition}
-                onClick={() => runOverflowAction(onGoToSavedPosition)}
-              >
-                <LocateFixed size={15} /> 저장 위치
-              </button>
-              <button
-                type="button"
-                role="menuitem"
-                onClick={() =>
-                  runOverflowAction(
-                    () => void viewport?.scrollToParagraphIndex(model.chapter.paragraphCount - 1, 'end'),
-                  )
-                }
-              >
-                <ChevronsRight size={15} /> 현재 화 끝
-              </button>
-              <button type="button" role="menuitem" onClick={() => runOverflowAction(() => actions.openAddon('notes'))}>
-                <StickyNote size={15} /> 주석
-              </button>
-              <button type="button" role="menuitem" onClick={() => runOverflowAction(actions.openSync)}>
-                <RefreshCw size={15} /> 동기화
-              </button>
-              <button type="button" role="menuitem" onClick={() => runOverflowAction(actions.openSettings)}>
-                <Settings size={15} /> 읽기 설정
-              </button>
-              <button type="button" role="menuitem" onClick={() => runOverflowAction(actions.toggleNightTheme)}>
-                {nightThemeActive ? <Sun size={15} /> : <Moon size={15} />} 테마
-              </button>
-              <button type="button" role="menuitem" onClick={() => runOverflowAction(onToggleImmersive)}>
-                <Focus size={15} /> 몰입 모드
-              </button>
-              <button
-                type="button"
-                role="menuitem"
-                onClick={() => runOverflowAction(() => void chrome.toggleFullscreen())}
-              >
-                {chrome.fullscreen ? <Minimize2 size={15} /> : <Maximize2 size={15} />} 브라우저 전체 화면
-              </button>
-            </div>
-          )}
+                <button
+                  type="button"
+                  role="menuitem"
+                  onClick={() => runOverflowAction(() => void viewport?.scrollToParagraphIndex(0, 'start'))}
+                >
+                  <ChevronsLeft size={15} /> 현재 화 처음
+                </button>
+                <button
+                  type="button"
+                  role="menuitem"
+                  disabled={!model.canRestoreSavedPosition}
+                  onClick={() => runOverflowAction(onGoToSavedPosition)}
+                >
+                  <LocateFixed size={15} /> 저장 위치
+                </button>
+                <button
+                  type="button"
+                  role="menuitem"
+                  onClick={() =>
+                    runOverflowAction(
+                      () => void viewport?.scrollToParagraphIndex(model.chapter.paragraphCount - 1, 'end'),
+                    )
+                  }
+                >
+                  <ChevronsRight size={15} /> 현재 화 끝
+                </button>
+                <button type="button" role="menuitem" onClick={() => runOverflowAction(addHighlight)}>
+                  <Highlighter size={15} /> 현재 문단 하이라이트
+                </button>
+                <button
+                  type="button"
+                  role="menuitem"
+                  onClick={() => runOverflowAction(() => actions.openAddon('notes'))}
+                >
+                  <StickyNote size={15} /> 주석
+                </button>
+                <button type="button" role="menuitem" onClick={() => runOverflowAction(actions.openSync)}>
+                  <RefreshCw size={15} /> 동기화
+                </button>
+                <button type="button" role="menuitem" onClick={() => runOverflowAction(actions.openSettings)}>
+                  <Settings size={15} /> 읽기 설정
+                </button>
+                <button type="button" role="menuitem" onClick={() => runOverflowAction(actions.toggleNightTheme)}>
+                  {nightThemeActive ? <Sun size={15} /> : <Moon size={15} />} 테마
+                </button>
+                <button type="button" role="menuitem" onClick={() => runOverflowAction(onToggleImmersive)}>
+                  <Focus size={15} /> 몰입 모드
+                </button>
+                <button
+                  type="button"
+                  role="menuitem"
+                  onClick={() => runOverflowAction(() => void chrome.toggleFullscreen())}
+                >
+                  {chrome.fullscreen ? <Minimize2 size={15} /> : <Maximize2 size={15} />} 브라우저 전체 화면
+                </button>
+              </div>
+            )}
+          </div>
         </div>
       </footer>
     </>

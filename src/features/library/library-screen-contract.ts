@@ -60,6 +60,7 @@ export interface LibraryScreenActions {
     openLibraryFolders(): void;
   };
   presentation: {
+    goHome(): void;
     focusBook(novel: Novel): void;
     closeInspector(): void;
   };
