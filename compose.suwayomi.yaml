@@ -1,0 +1,63 @@
+# Optional Suwayomi/Mihon compatibility runtime for a personal self-host.
+#
+# This overlay adds no Suwayomi host port. Nginx Proxy Manager must share
+# NPM_DOCKER_NETWORK and proxy to MOYA_PROXY_HOSTNAME:80 for Moya and
+# SUWAYOMI_PROXY_HOSTNAME:4567 for Suwayomi.
+# Create the external network once before starting the stack, for example:
+#   docker network create npm_proxy
+services:
+  web:
+    networks:
+      default:
+      npm-proxy:
+        aliases:
+          - ${MOYA_PROXY_HOSTNAME:-moya-web}
+
+  suwayomi:
+    image: ghcr.io/suwayomi/suwayomi-server:${SUWAYOMI_IMAGE_TAG:-stable}
+    environment:
+      TZ: ${SUWAYOMI_TIMEZONE:-Asia/Seoul}
+      BIND_IP: 0.0.0.0
+      BIND_PORT: 4567
+      # Moya persists sealed ui_login tokens. A Basic password remains session-only,
+      # so Basic auth requires reconnecting after the browser app restarts.
+      AUTH_MODE: ${SUWAYOMI_AUTH_MODE:-ui_login}
+      AUTH_USERNAME: ${SUWAYOMI_AUTH_USERNAME:?Set SUWAYOMI_AUTH_USERNAME before enabling compose.suwayomi.yaml}
+      AUTH_PASSWORD: ${SUWAYOMI_AUTH_PASSWORD:?Set SUWAYOMI_AUTH_PASSWORD before enabling compose.suwayomi.yaml}
+    volumes:
+      - suwayomi-data:/home/suwayomi/.local/share/Tachidesk
+    expose:
+      - '4567'
+    networks:
+      default:
+      npm-proxy:
+        aliases:
+          - ${SUWAYOMI_PROXY_HOSTNAME:-moya-suwayomi}
+    healthcheck:
+      test:
+        [
+          'CMD-SHELL',
+          'status="$$(curl --silent --output /dev/null --write-out "%{http_code}" http://127.0.0.1:4567/)" && { test "$$status" -ge 200 -a "$$status" -lt 400 || test "$$status" = 401 || test "$$status" = 403; }',
+        ]
+      interval: 15s
+      timeout: 10s
+      retries: 20
+      start_period: 90s
+    security_opt:
+      - no-new-privileges:true
+    stop_grace_period: 60s
+    restart: unless-stopped
+    mem_limit: ${SUWAYOMI_MEMORY_LIMIT:-2g}
+    logging:
+      driver: json-file
+      options:
+        max-size: ${LOG_MAX_SIZE:-10m}
+        max-file: ${LOG_MAX_FILES:-5}
+
+networks:
+  npm-proxy:
+    name: ${NPM_DOCKER_NETWORK:-npm_proxy}
+    external: true
+
+volumes:
+  suwayomi-data:

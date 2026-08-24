@@ -1,5 +1,5 @@
 import type { BookAssetMetadata } from '../domain/types';
-import { requestToPromise } from './indexeddb-transaction';
+import { requestToPromise } from './indexeddb-request';
 import { BOOK_ASSET_STORES, type StoredBookAsset } from './book-asset-schema';
 
 export async function activateSourceAssetInTransaction(
@@ -42,7 +42,9 @@ export async function activateEmbeddedAssetsInTransaction(
   const activeCovers = await requestToPromise<StoredBookAsset[]>(
     store.index('bookId_kind_status').getAll([input.bookId, 'cover', 'active']),
   );
-  const preservedCover = activeCovers.find((asset) => asset.provenance === 'user_supplied');
+  const preservedCover =
+    activeCovers.find((asset) => asset.provenance === 'user_supplied') ??
+    activeCovers.find((asset) => asset.provenance === 'approved_enrichment');
   if (!preservedCover) {
     activeCovers.forEach((asset) => store.put({ ...asset, status: 'superseded' } satisfies StoredBookAsset));
   }

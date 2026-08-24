@@ -1,3 +1,5 @@
+import type { AnalysisWorkflowContributionDescriptor, ExtensionContributionId } from '@noveldesk/extension-contracts';
+import type { ReactNode } from 'react';
 import type { Character, LabeledSegment, UserCorrection } from '../../domain/types';
 import type { ReaderMode } from '../reader/reader-screen-contract';
 import type { BookAIWorkflowReviewItem } from '../../providers/book-ai-workflow-review';
@@ -80,7 +82,6 @@ export interface AIAnalysisPanelData {
   readonly desktopAnalysisDisabled: boolean;
   readonly remoteAnalysisDisabled: boolean;
   readonly labelRepairDisabled: boolean;
-  readonly bundleAnalysisDisabled: boolean;
   readonly graphMergeDisabled: boolean;
   readonly segmentCount: number;
   readonly bundleStatusLabel: string;
@@ -88,6 +89,9 @@ export interface AIAnalysisPanelData {
   readonly remoteJob?: RemoteProviderJob;
   readonly providers: readonly ProviderCatalogItem[];
   readonly providerDraft?: ProviderSettingsDraft;
+  readonly workflows: readonly (AnalysisWorkflowContributionDescriptor & {
+    readonly disabled: boolean;
+  })[];
 }
 
 export interface AIGraphReviewCandidateData {
@@ -189,7 +193,7 @@ export interface AIAddonPanelActions {
     runDesktop(): void | Promise<unknown>;
     runRemote(): void | Promise<unknown>;
     repairLabels(): void | Promise<unknown>;
-    analyzeBundle(): void | Promise<unknown>;
+    runWorkflow(workflowId: ExtensionContributionId): void | Promise<unknown>;
     mergeGraph(): void | Promise<unknown>;
   };
   readonly graphReview: {
@@ -214,8 +218,19 @@ export interface AIAddonPanelController {
   readonly providerSettings: ProviderSettingsPanelController;
 }
 
+export interface AIManagedWorkflowSurface {
+  readonly active?: AnalysisWorkflowContributionDescriptor;
+  readonly options: readonly AnalysisWorkflowContributionDescriptor[];
+  readonly surface?: ReactNode;
+  readonly usedFallback: boolean;
+  readonly switchDisabled: boolean;
+  readonly switchDisabledReason?: string;
+  select(workflowId: ExtensionContributionId): void;
+}
+
 export interface AIAddonPanelProps {
   readonly data: AIAddonPanelData;
   readonly actions: AIAddonPanelActions;
   readonly controller: AIAddonPanelController;
+  readonly managedWorkflow: AIManagedWorkflowSurface;
 }

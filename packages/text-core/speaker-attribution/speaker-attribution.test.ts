@@ -162,6 +162,62 @@ describe('speaker source and span inventory', () => {
     ).toBe(bursts.fingerprint);
   });
 
+  it('adds neutral square-bracket and threaded-message targets only in the broad TTS profile', () => {
+    const sourceParagraphs = paragraphs('chapter_1', [
+      '[일일 퀘스트가 도착하였습니다.]',
+      'ㄴ안녕',
+      '└ 반가워요',
+      '조용한 게시판이었다.',
+    ]);
+    const scenes = buildSpeakerSceneInventory({
+      bookId: 'book_1',
+      contentRevisionId: 'revision_1',
+      chapterId: 'chapter_1',
+      chapterIndex: 1,
+      paragraphs: sourceParagraphs,
+    });
+
+    const strict = buildSpeakerSpanInventory({
+      bookId: 'book_1',
+      contentRevisionId: 'revision_1',
+      chapterId: 'chapter_1',
+      paragraphs: sourceParagraphs,
+      sceneInventory: scenes,
+    });
+    const broad = buildSpeakerSpanInventory({
+      bookId: 'book_1',
+      contentRevisionId: 'revision_1',
+      chapterId: 'chapter_1',
+      paragraphs: sourceParagraphs,
+      sceneInventory: scenes,
+      detectionProfile: 'broad_tts_candidate',
+    });
+
+    expect(strict.spans.filter((span) => span.voiceBearing)).toHaveLength(0);
+    expect(broad.spans.filter((span) => span.voiceBearing)).toEqual([
+      expect.objectContaining({
+        paragraphId: 'paragraph_0',
+        type: 'unknown',
+        deterministicSpeaker: undefined,
+        boundaryCode: 'square_bracket_tts_candidate',
+      }),
+      expect.objectContaining({
+        paragraphId: 'paragraph_1',
+        type: 'message',
+        boundaryCode: 'threaded_message_tts_candidate',
+      }),
+      expect.objectContaining({
+        paragraphId: 'paragraph_2',
+        type: 'message',
+        boundaryCode: 'threaded_message_tts_candidate',
+      }),
+    ]);
+    expect(broad.spans.find((span) => span.paragraphId === 'paragraph_3')).toMatchObject({
+      type: 'narration',
+      voiceBearing: false,
+    });
+  });
+
   it('applies a hash-fenced split patch without changing source coverage', () => {
     const sourceParagraphs = paragraphs('chapter_1', ['“안녕. 그가 돌아섰다']);
     const scenes = buildSpeakerSceneInventory({

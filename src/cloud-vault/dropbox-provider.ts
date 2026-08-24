@@ -22,24 +22,44 @@ export interface DropboxCredentialStore {
   save(credential: DropboxCredential): Promise<void>;
 }
 
+export interface DropboxAccessTokenSource {
+  getAccessToken(): Promise<string>;
+}
+
 interface DropboxTokenResponse {
   access_token?: string;
   refresh_token?: string;
   expires_in?: number;
   account_id?: string;
-  error_description?: string;
+}
+
+const MAX_DROPBOX_TOKEN_RESPONSE_BYTES = 64 * 1024;
+const MAX_DROPBOX_TOKEN_LENGTH = 16 * 1024;
+
+function validToken(value: unknown, label: string): string {
+  if (typeof value !== 'string' || !value.trim() || value.length > MAX_DROPBOX_TOKEN_LENGTH) {
+    throw new Error(`Dropbox ${label} is invalid.`);
+  }
+  return value;
 }
 
 function expiresAt(seconds: number | undefined): string | undefined {
-  return seconds ? new Date(Date.now() + seconds * 1000).toISOString() : undefined;
+  if (seconds === undefined) return undefined;
+  if (!Number.isSafeInteger(seconds) || seconds <= 0 || seconds > 31_536_000) {
+    throw new Error('Dropbox token expiry is invalid.');
+  }
+  return new Date(Date.now() + seconds * 1000).toISOString();
 }
 
-function responseError(prefix: string, response: Response, body: string): Error {
-  return new Error(`${prefix} (${response.status}): ${body || response.statusText}`);
+function responseError(prefix: string, response: Response): Error {
+  return new Error(`${prefix} (${response.status}).`);
 }
 
 async function parseTokenResponse(response: Response): Promise<DropboxTokenResponse> {
   const text = await response.text();
+  if (text.length > MAX_DROPBOX_TOKEN_RESPONSE_BYTES) {
+    throw new Error(`Dropbox authorization failed (${response.status}).`);
+  }
   let body: DropboxTokenResponse = {};
   try {
     body = JSON.parse(text) as DropboxTokenResponse;
@@ -47,9 +67,19 @@ async function parseTokenResponse(response: Response): Promise<DropboxTokenRespo
     // A safe HTTP summary is returned below.
   }
   if (!response.ok || !body.access_token) {
-    throw responseError('Dropbox authorization failed', response, body.error_description ?? text);
+    throw new Error(`Dropbox authorization failed (${response.status}).`);
   }
-  return body;
+  if (
+    body.account_id !== undefined &&
+    (typeof body.account_id !== 'string' || !body.account_id.trim() || body.account_id.length > 512)
+  ) {
+    throw new Error(`Dropbox authorization failed (${response.status}).`);
+  }
+  return {
+    ...body,
+    access_token: validToken(body.access_token, 'access token'),
+    refresh_token: body.refresh_token ? validToken(body.refresh_token, 'refresh token') : undefined,
+  };
 }
 
 export async function exchangeDropboxAuthorizationCode(input: {
@@ -74,6 +104,9 @@ export async function exchangeDropboxAuthorizationCode(input: {
       body: form,
     }),
   );
+  if (typeof body.account_id !== 'string' || !body.account_id.trim() || body.account_id.length > 512) {
+    throw new Error('Dropbox authorization failed because the account identity was missing.');
+  }
   return {
     accessToken: body.access_token!,
     refreshToken: body.refresh_token,
@@ -82,18 +115,86 @@ export async function exchangeDropboxAuthorizationCode(input: {
   };
 }
 
-export class DropboxCloudVaultProvider implements CloudVaultFileProvider {
-  readonly kind = 'dropbox' as const;
-  readonly label = 'Dropbox';
+/**
+ * Host-owned Dropbox token boundary shared by first-party Dropbox adapters.
+ * Refresh credentials never leave the supplied credential store, and concurrent
+ * callers share one refresh request when an access token expires.
+ */
+export class DropboxAccessTokenManager implements DropboxAccessTokenSource {
+  private refreshPromise?: Promise<string>;
 
   constructor(
     private readonly appKey: string,
     private readonly credentials: DropboxCredentialStore,
-    private readonly fetchImpl: typeof fetch = fetch,
+    private readonly fetchImpl: typeof fetch = globalThis.fetch.bind(globalThis),
   ) {}
 
+  async getAccessToken(): Promise<string> {
+    const current = await this.credentials.get();
+    if (!current) throw new Error('Dropbox is not connected.');
+    validToken(current.accessToken, 'access token');
+    const stillValid = !current.expiresAt || Date.parse(current.expiresAt) - Date.now() > 60_000;
+    if (stillValid) return current.accessToken;
+    return this.refreshAccessToken(current.accessToken);
+  }
+
+  /** Refreshes after a 401 while avoiding a second refresh when another caller already rotated the token. */
+  async refreshAccessToken(staleAccessToken?: string): Promise<string> {
+    const current = await this.credentials.get();
+    if (!current) throw new Error('Dropbox is not connected.');
+    validToken(current.accessToken, 'access token');
+    if (staleAccessToken && current.accessToken !== staleAccessToken) return current.accessToken;
+    if (!current.refreshToken) throw new Error('Dropbox session expired. Connect Dropbox again.');
+    validToken(current.refreshToken, 'refresh token');
+    if (!this.refreshPromise) {
+      this.refreshPromise = this.refresh(current).finally(() => {
+        this.refreshPromise = undefined;
+      });
+    }
+    return this.refreshPromise;
+  }
+
+  private async refresh(current: DropboxCredential): Promise<string> {
+    const refreshToken = current.refreshToken;
+    if (!refreshToken) throw new Error('Dropbox session expired. Connect Dropbox again.');
+    const response = await this.fetchImpl(DROPBOX_TOKEN_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({
+        grant_type: 'refresh_token',
+        refresh_token: refreshToken,
+        client_id: this.appKey,
+      }),
+    });
+    const body = await parseTokenResponse(response);
+    const next: DropboxCredential = {
+      ...current,
+      accessToken: body.access_token!,
+      refreshToken: body.refresh_token ?? current.refreshToken,
+      expiresAt: expiresAt(body.expires_in),
+      accountId: body.account_id ?? current.accountId,
+    };
+    await this.credentials.save(next);
+    return next.accessToken;
+  }
+}
+
+export class DropboxCloudVaultProvider implements CloudVaultFileProvider {
+  readonly kind = 'dropbox' as const;
+  readonly label = 'Dropbox';
+
+  private readonly accessTokens: DropboxAccessTokenManager;
+
+  constructor(
+    private readonly appKey: string,
+    private readonly credentials: DropboxCredentialStore,
+    private readonly fetchImpl: typeof fetch = globalThis.fetch.bind(globalThis),
+  ) {
+    this.accessTokens = new DropboxAccessTokenManager(appKey, credentials, fetchImpl);
+  }
+
   async read(): Promise<CloudVaultStoredObject | undefined> {
-    const token = await this.accessToken();
+    const token = await this.accessTokens.getAccessToken();
     const response = await this.fetchImpl(`${DROPBOX_CONTENT_API}/files/download`, {
       method: 'POST',
       headers: {
@@ -104,9 +205,9 @@ export class DropboxCloudVaultProvider implements CloudVaultFileProvider {
     if (response.status === 409) {
       const message = await response.text();
       if (message.includes('not_found')) return undefined;
-      throw responseError('Dropbox vault read failed', response, message);
+      throw responseError('Dropbox vault read failed', response);
     }
-    if (!response.ok) throw responseError('Dropbox vault read failed', response, await response.text());
+    if (!response.ok) throw responseError('Dropbox vault read failed', response);
     const metadata = response.headers.get('Dropbox-API-Result');
     const parsed = metadata ? (JSON.parse(metadata) as { rev?: string }) : undefined;
     if (!parsed?.rev) throw new Error('Dropbox vault response did not include a file revision.');
@@ -114,7 +215,7 @@ export class DropboxCloudVaultProvider implements CloudVaultFileProvider {
   }
 
   async write(bytes: Uint8Array, expectedRevision?: string): Promise<{ revision: string }> {
-    const token = await this.accessToken();
+    const token = await this.accessTokens.getAccessToken();
     const mode = expectedRevision ? { '.tag': 'update', update: expectedRevision } : { '.tag': 'add' };
     const response = await this.fetchImpl(`${DROPBOX_CONTENT_API}/files/upload`, {
       method: 'POST',
@@ -133,37 +234,10 @@ export class DropboxCloudVaultProvider implements CloudVaultFileProvider {
     });
     const text = await response.text();
     if (response.status === 409) throw new CloudVaultWriteConflictError('Dropbox vault revision changed.');
-    if (!response.ok) throw responseError('Dropbox vault write failed', response, text);
+    if (!response.ok) throw responseError('Dropbox vault write failed', response);
     const result = JSON.parse(text) as { rev?: string };
     if (!result.rev) throw new Error('Dropbox vault upload did not return a file revision.');
     return { revision: result.rev };
-  }
-
-  private async accessToken(): Promise<string> {
-    const current = await this.credentials.get();
-    if (!current) throw new Error('Dropbox is not connected.');
-    const stillValid = !current.expiresAt || Date.parse(current.expiresAt) - Date.now() > 60_000;
-    if (stillValid) return current.accessToken;
-    if (!current.refreshToken) throw new Error('Dropbox session expired. Connect Dropbox again.');
-    const response = await this.fetchImpl(DROPBOX_TOKEN_URL, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-      body: new URLSearchParams({
-        grant_type: 'refresh_token',
-        refresh_token: current.refreshToken,
-        client_id: this.appKey,
-      }),
-    });
-    const body = await parseTokenResponse(response);
-    const next: DropboxCredential = {
-      ...current,
-      accessToken: body.access_token!,
-      refreshToken: body.refresh_token ?? current.refreshToken,
-      expiresAt: expiresAt(body.expires_in),
-      accountId: body.account_id ?? current.accountId,
-    };
-    await this.credentials.save(next);
-    return next.accessToken;
   }
 }
 

@@ -6,6 +6,8 @@ export interface BookAIWorkflowRow {
   id: string;
   user_id: string;
   book_id: string;
+  workflow_definition_id: string;
+  workflow_version: string;
   provider_id: string;
   model_id: string | null;
   plan_hash: string;

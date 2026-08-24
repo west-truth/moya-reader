@@ -197,6 +197,330 @@
   gap: 12px;
 }
 
+.extension-settings-sections {
+  display: grid;
+  gap: 24px;
+}
+
+.external-source-settings-sections {
+  display: grid;
+  gap: 24px;
+}
+
+.external-source-settings-list {
+  display: grid;
+  gap: 8px;
+}
+
+.external-source-settings-card {
+  overflow: hidden;
+  background: var(--app-surface-muted);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-control);
+}
+
+.external-source-settings-card.active {
+  border-color: color-mix(in srgb, var(--primary) 42%, var(--border));
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--primary) 12%, transparent);
+}
+
+.external-source-settings-card-heading {
+  width: 100%;
+  min-height: 72px;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 12px;
+  padding: 13px 14px;
+  color: var(--text);
+  background: transparent;
+  border: 0;
+  text-align: left;
+}
+
+.external-source-settings-card-heading:hover {
+  background: var(--app-surface-hover);
+}
+
+.external-source-settings-card-heading > span:nth-child(2),
+.external-source-settings-card-heading strong,
+.external-source-settings-card-heading small {
+  min-width: 0;
+  display: block;
+}
+
+.external-source-settings-card-heading strong {
+  font-size: 0.82rem;
+}
+
+.external-source-settings-card-heading small {
+  margin-top: 5px;
+  overflow: hidden;
+  color: var(--text-2);
+  font-size: 0.69rem;
+  line-height: 1.45;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.external-source-settings-icon {
+  width: 38px;
+  height: 38px;
+  display: grid;
+  place-items: center;
+  color: var(--primary);
+  background: var(--app-accent-soft);
+  border-radius: 11px;
+}
+
+.external-source-settings-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 7px;
+  color: var(--text-2);
+  background: var(--app-surface);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  font-size: 0.64rem;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.external-source-settings-status.is-connected {
+  color: var(--app-success);
+  border-color: color-mix(in srgb, var(--app-success) 38%, var(--border));
+}
+
+.external-source-settings-status.is-reauthorization_required {
+  color: var(--app-warning);
+  border-color: color-mix(in srgb, var(--app-warning) 38%, var(--border));
+}
+
+.external-source-settings-status.is-unavailable {
+  color: var(--muted);
+}
+
+.external-source-settings-controls {
+  display: grid;
+  justify-items: start;
+  gap: 11px;
+  padding: 14px;
+  border-top: 1px solid var(--border);
+}
+
+.external-source-connection-form {
+  width: min(100%, 620px);
+  display: grid;
+  gap: 12px;
+}
+
+.external-source-connection-fields {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.external-source-connection-fields > label {
+  min-width: 0;
+  display: grid;
+  gap: 6px;
+  color: var(--text-2);
+  font-size: 0.69rem;
+  font-weight: 700;
+}
+
+.external-source-connection-fields > label:first-child {
+  grid-column: 1 / -1;
+}
+
+.external-source-connection-fields input,
+.external-source-connection-fields select {
+  width: 100%;
+  min-width: 0;
+  min-height: 36px;
+  padding: 0 10px;
+  color: var(--text);
+  background: var(--app-field);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-control);
+}
+
+.external-source-connection-fields small {
+  color: var(--muted);
+  font-size: 0.64rem;
+  font-weight: 400;
+  line-height: 1.45;
+}
+
+@media (max-width: 560px) {
+  .external-source-connection-fields {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .external-source-connection-fields > label:first-child {
+    grid-column: auto;
+  }
+}
+
+.external-source-settings-account > span {
+  color: var(--text-2);
+  font-size: 0.69rem;
+  font-weight: 700;
+}
+
+.external-source-settings-empty {
+  color: var(--muted);
+  font-size: 0.68rem;
+  line-height: 1.5;
+}
+
+.external-source-settings-account {
+  display: grid;
+  gap: 4px;
+}
+
+.external-source-settings-account strong {
+  font-size: 0.79rem;
+}
+
+.external-source-settings-empty {
+  margin: 0;
+  padding: 12px 14px;
+  background: var(--app-surface-muted);
+  border: 1px dashed var(--border);
+  border-radius: var(--radius-control);
+}
+
+.settings-section-card {
+  display: grid;
+  gap: 12px;
+}
+
+.settings-section-heading {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: start;
+  gap: 9px;
+}
+
+.settings-section-heading > svg {
+  margin-top: 1px;
+  color: var(--primary);
+}
+
+.settings-section-heading h3,
+.settings-section-heading p,
+.extension-settings-card p {
+  margin: 0;
+}
+
+.settings-section-heading p,
+.extension-settings-card p,
+.extension-community-empty {
+  margin-top: 4px;
+  color: var(--text-2);
+  font-size: 0.73rem;
+  line-height: 1.55;
+}
+
+.extension-settings-list {
+  display: grid;
+  gap: 8px;
+}
+
+.extension-settings-card {
+  display: grid;
+  gap: 10px;
+  padding: 13px 14px;
+  background: var(--app-surface-muted);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-control);
+}
+
+.extension-settings-card-heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.extension-settings-card-heading > div,
+.extension-settings-card-heading .muted {
+  min-width: 0;
+}
+
+.extension-settings-card-heading .muted {
+  display: block;
+  margin-top: 5px;
+  font-size: 0.68rem;
+}
+
+.extension-settings-title-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+
+.extension-settings-title-row strong {
+  font-size: 0.82rem;
+}
+
+.extension-badge {
+  padding: 2px 5px;
+  color: var(--text-2);
+  background: var(--app-surface);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  font-size: 0.62rem;
+  font-weight: 700;
+}
+
+.extension-badge.beta {
+  color: var(--primary);
+  background: var(--app-accent-soft);
+  border-color: color-mix(in srgb, var(--primary) 35%, var(--border));
+}
+
+.extension-enable-toggle {
+  flex: 0 0 auto;
+  min-height: 26px;
+}
+
+.extension-settings-card details {
+  padding-top: 9px;
+  border-top: 1px solid var(--border);
+}
+
+.extension-settings-card summary {
+  color: var(--text-2);
+  cursor: pointer;
+  font-size: 0.7rem;
+}
+
+.extension-settings-details {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+  margin-top: 10px;
+}
+
+.extension-detail-label {
+  color: var(--text);
+  font-size: 0.7rem;
+  font-weight: 700;
+}
+
+.extension-settings-details ul {
+  display: grid;
+  gap: 4px;
+  margin: 6px 0 0;
+  padding-left: 17px;
+  color: var(--text-2);
+  font-size: 0.68rem;
+  line-height: 1.5;
+}
+
 .application-info-settings {
   display: grid;
   gap: 24px;
@@ -1094,6 +1418,20 @@
 
   .application-info-runtime-summary dl,
   .application-info-platforms {
+    grid-template-columns: 1fr;
+  }
+
+  .extension-settings-card-heading {
+    align-items: stretch;
+    flex-direction: column;
+    gap: 10px;
+  }
+
+  .extension-enable-toggle {
+    min-height: 36px;
+  }
+
+  .extension-settings-details {
     grid-template-columns: 1fr;
   }
 }

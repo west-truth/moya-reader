@@ -1,4 +1,5 @@
 import type { DragEventHandler } from 'react';
+import type { ExtensionContributionId } from '@noveldesk/extension-contracts';
 import type { Novel } from '../../domain/types';
 import type { LibraryCollectionModel, LibraryFilter, LibrarySort, LibraryViewMode } from './library-screen-model';
 import type { Shelf } from '../../domain/types';
@@ -20,6 +21,16 @@ export interface LibraryScreenModel {
   sync: {
     label: string;
     tone: string;
+  };
+  externalSources: {
+    active: boolean;
+    activeSourceId?: ExtensionContributionId;
+    busy: boolean;
+    sources: readonly {
+      id: ExtensionContributionId;
+      title: string;
+      kind: 'cloud_file' | 'catalog';
+    }[];
   };
   filter: LibraryFilter;
   sort: LibrarySort;
@@ -58,6 +69,8 @@ export interface LibraryScreenActions {
     openBackup(): void;
     openImport(): void;
     openLibraryFolders(): void;
+    openExternalSource(sourceId: ExtensionContributionId): void;
+    openExternalSourceSettings(): void;
   };
   presentation: {
     goHome(): void;

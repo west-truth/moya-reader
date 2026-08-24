@@ -4,6 +4,9 @@ import { defaultSettings } from '../../repositories/reader-defaults';
 import { DEFAULT_GESTURE_BINDINGS, DEFAULT_READING_PROFILE } from './reading-profile';
 import ReaderSettingsPanel from './ReaderSettingsPanel';
 import type { ReaderSettingsController } from './useReaderSettingsDraft';
+import type { ExternalSourceController } from '../external-sources/useExternalSourceController';
+
+const externalSources = { sources: [] } as unknown as ExternalSourceController;
 
 function controller(overrides: Partial<ReaderSettingsController> = {}): ReaderSettingsController {
   return {
@@ -30,16 +33,20 @@ describe('ReaderSettingsPanel', () => {
         gestureBindings={DEFAULT_GESTURE_BINDINGS}
         platformRuntime={{ kind: 'browser', hasTauri: false, isMobileWebView: false, userAgent: 'Test browser' }}
         providerExecutionRuntime="none"
+        extensions={[]}
+        externalSources={externalSources}
         updateProfile={vi.fn()}
         setBookOverrideEnabled={vi.fn()}
         resetProfile={vi.fn()}
         updateGestureBindings={vi.fn()}
+        setExtensionEnabled={vi.fn()}
       />,
     );
 
     expect(markup).toContain('reader-settings-dialog');
     expect(markup).toContain('reader-settings-backdrop');
-    expect(markup.match(/role="tab"/g)).toHaveLength(4);
+    expect(markup.match(/role="tab"/g)).toHaveLength(6);
+    expect(markup).toContain('Dropbox, 작품 저장소');
     expect(markup).toContain('테마, 글꼴, 밝기');
     expect(markup).toContain('글자, 여백, 읽기 방식');
     expect(markup).toContain('변경 사항은 이 기기에 자동 저장됩니다.');
@@ -63,10 +70,13 @@ describe('ReaderSettingsPanel', () => {
         gestureBindings={DEFAULT_GESTURE_BINDINGS}
         platformRuntime={{ kind: 'browser', hasTauri: false, isMobileWebView: false, userAgent: 'Test browser' }}
         providerExecutionRuntime="server"
+        extensions={[]}
+        externalSources={externalSources}
         updateProfile={vi.fn()}
         setBookOverrideEnabled={vi.fn()}
         resetProfile={vi.fn()}
         updateGestureBindings={vi.fn()}
+        setExtensionEnabled={vi.fn()}
       />,
     );
 

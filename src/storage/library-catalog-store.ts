@@ -7,6 +7,8 @@ import { requestToPromise, transactionDone } from './indexeddb-transaction';
 import { openReaderDb } from './reader-database';
 import { getTrashedNovels } from './reader-query-store';
 import { jsonValue, LOCAL_DEVICE_ID, queueSyncEventInTransaction } from './sync-event-store';
+import { BOOK_ENRICHMENT_STORES } from './book-enrichment-schema';
+import { deleteBookEnrichmentDataInTransaction } from './book-enrichment-store';
 
 export class CatalogRevisionConflictError extends Error {
   constructor(
@@ -120,6 +122,7 @@ export async function purgeNovel(bookId: string, expectedRevision?: number): Pro
       ...BOOK_DATA_STORES,
       BOOK_ASSET_STORES.assets,
       BOOK_ASSET_STORES.blobs,
+      ...Object.values(BOOK_ENRICHMENT_STORES),
       'devices',
       'sync_outbox',
       'sync_state',
@@ -143,6 +146,7 @@ export async function purgeNovel(bookId: string, expectedRevision?: number): Pro
   store.delete(bookId);
   deleteBookDataInTransaction(tx, bookId);
   deleteBookAssetsInTransaction(tx, bookId);
+  deleteBookEnrichmentDataInTransaction(tx, bookId);
   await queueSyncEventInTransaction(
     tx,
     'book_purged',

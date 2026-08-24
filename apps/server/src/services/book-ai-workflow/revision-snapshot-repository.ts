@@ -87,6 +87,7 @@ export async function lockBookRevisionState(
   const graphSnapshot = normalizeCharacterGraphSnapshot(
     row.graph_snapshot ?? { novelId: bookId, characters: [], relations: [] },
     bookId,
+    { trustUserConfirmed: true },
   );
   return {
     bookId,

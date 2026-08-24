@@ -182,6 +182,15 @@ function canonicalSyncEntityId(
     const chapterId = stringField(recordValue(payloadValue).chapterId);
     if (chapterId) return aggregateSyncEntityId({ entityType: 'chapter_segments', novelId, chapterId });
   }
+  if (type === 'document_text_order_override_updated' || type === 'document_text_order_override_deleted') {
+    const payload = recordValue(payloadValue);
+    const override = recordValue(payload.orderOverride);
+    const value = override.pageIndex ?? payload.pageIndex;
+    const pageIndex = typeof value === 'number' ? value : Number(value);
+    if (Number.isInteger(pageIndex) && pageIndex >= 0) {
+      return persistentId128('document_text_order_override', [novelId, String(pageIndex)]);
+    }
+  }
   return fallback;
 }
 

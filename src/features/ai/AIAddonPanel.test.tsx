@@ -5,6 +5,7 @@ import AIAddonPanel, {
   type AIAddonPanelController,
   type AIAddonPanelData,
 } from './AIAddonPanel';
+import { AIWorkflowPanel } from './AIWorkflowPanel';
 import type { ChapterLabelAnalysisReviewArtifact } from '../../providers/analysis-review';
 
 function analysisReview(): ChapterLabelAnalysisReviewArtifact {
@@ -138,12 +139,22 @@ function data(showDeveloperTools: boolean): AIAddonPanelData {
       desktopAnalysisDisabled: true,
       remoteAnalysisDisabled: false,
       labelRepairDisabled: false,
-      bundleAnalysisDisabled: false,
       graphMergeDisabled: true,
       segmentCount: 42,
       bundleStatusLabel: '후보 4명 · 관계 3개',
       providerStatusLabel: 'OpenAI',
       providers: [],
+      workflows: [
+        {
+          id: 'test.ai.character-bundle',
+          schemaVersion: 1,
+          title: '등록된 묶음 분석',
+          description: '후보 그래프를 준비합니다.',
+          target: 'chapter-bundle',
+          order: 100,
+          disabled: false,
+        },
+      ],
     },
     correction: {
       segmentCount: 42,
@@ -180,7 +191,7 @@ function actions(): AIAddonPanelActions {
       runDesktop: vi.fn(),
       runRemote: vi.fn(),
       repairLabels: vi.fn(),
-      analyzeBundle: vi.fn(),
+      runWorkflow: vi.fn(),
       mergeGraph: vi.fn(),
     },
     graphReview: { toggleCandidate: vi.fn() },
@@ -219,11 +230,36 @@ function controller(): AIAddonPanelController {
   };
 }
 
+function panel(panelData: AIAddonPanelData) {
+  const panelActions = actions();
+  const descriptor = {
+    id: 'test.ai.book-preparation' as const,
+    schemaVersion: 1 as const,
+    title: '기본 AI 보조 TTS',
+    description: '작품 화자와 음성 연결을 준비합니다.',
+    target: 'book' as const,
+    kind: 'managed' as const,
+  };
+  return (
+    <AIAddonPanel
+      data={panelData}
+      actions={panelActions}
+      controller={controller()}
+      managedWorkflow={{
+        active: descriptor,
+        options: [descriptor],
+        surface: <AIWorkflowPanel data={panelData.workflow} actions={panelActions.workflow} />,
+        usedFallback: false,
+        switchDisabled: false,
+        select: vi.fn(),
+      }}
+    />
+  );
+}
+
 describe('AIAddonPanel', () => {
   it('keeps one recommended action visible and moves diagnostics behind advanced information', () => {
-    const markup = renderToStaticMarkup(
-      <AIAddonPanel data={data(false)} actions={actions()} controller={controller()} />,
-    );
+    const markup = renderToStaticMarkup(panel(data(false)));
 
     expect(markup).toContain('작품 분석');
     expect(markup).toContain('검토가 필요한 항목 1개가 있습니다.');
@@ -244,15 +280,16 @@ describe('AIAddonPanel', () => {
     expect(markup).toContain('aria-label="Workflow review items"');
     expect(markup).toContain('라벨이 없는 예정 문단');
     expect(markup).toContain('후보 4명 · 관계 3개');
+    expect(markup).toContain('data-workflow-id="test.ai.character-bundle"');
+    expect(markup).toContain('등록된 묶음 분석');
+    expect(markup).toContain('data-workflow-id="test.ai.book-preparation"');
+    expect(markup).not.toContain('AI 분석 방식');
+    expect(markup).not.toContain('세밀한 화자 분리');
   });
 
   it('keeps the local Mock control hidden when developer tools are disabled', () => {
-    const productionMarkup = renderToStaticMarkup(
-      <AIAddonPanel data={data(false)} actions={actions()} controller={controller()} />,
-    );
-    const developmentMarkup = renderToStaticMarkup(
-      <AIAddonPanel data={data(true)} actions={actions()} controller={controller()} />,
-    );
+    const productionMarkup = renderToStaticMarkup(panel(data(false)));
+    const developmentMarkup = renderToStaticMarkup(panel(data(true)));
 
     expect(productionMarkup).not.toContain('로컬 Mock');
     expect(developmentMarkup).toContain('로컬 Mock');
@@ -261,14 +298,10 @@ describe('AIAddonPanel', () => {
   it('keeps the compact speaker status absent for legacy workflows', () => {
     const panelData = data(false);
     const markup = renderToStaticMarkup(
-      <AIAddonPanel
-        data={{
-          ...panelData,
-          workflow: { ...panelData.workflow, compactSpeaker: undefined },
-        }}
-        actions={actions()}
-        controller={controller()}
-      />,
+      panel({
+        ...panelData,
+        workflow: { ...panelData.workflow, compactSpeaker: undefined },
+      }),
     );
 
     expect(markup).not.toContain('aria-label="화자 분리 workflow 상태"');
@@ -278,17 +311,13 @@ describe('AIAddonPanel', () => {
   it('renders the durable failed-window review workspace', () => {
     const panelData = data(false);
     const markup = renderToStaticMarkup(
-      <AIAddonPanel
-        data={{
-          ...panelData,
-          workflow: {
-            ...panelData.workflow,
-            reviewWorkspace: { available: true, reviews: [analysisReview()], loading: false },
-          },
-        }}
-        actions={actions()}
-        controller={controller()}
-      />,
+      panel({
+        ...panelData,
+        workflow: {
+          ...panelData.workflow,
+          reviewWorkspace: { available: true, reviews: [analysisReview()], loading: false },
+        },
+      }),
     );
 
     expect(markup).toContain('실패 window 검토');
@@ -308,21 +337,71 @@ describe('AIAddonPanel', () => {
       promotionLastErrorCode: 'promotion_transient_retry_exhausted',
     };
     const markup = renderToStaticMarkup(
-      <AIAddonPanel
-        data={{
-          ...panelData,
-          workflow: {
-            ...panelData.workflow,
-            reviewWorkspace: { available: true, reviews: [review], loading: false },
-          },
-        }}
-        actions={actions()}
-        controller={controller()}
-      />,
+      panel({
+        ...panelData,
+        workflow: {
+          ...panelData.workflow,
+          reviewWorkspace: { available: true, reviews: [review], loading: false },
+        },
+      }),
     );
 
     expect(markup).toContain('반영 차단됨');
     expect(markup).toContain('반영 다시 시도');
     expect(markup).toContain('외부 AI 요청은 발생하지 않고');
+  });
+
+  it('keeps core listening available when no managed workflow surface is registered', () => {
+    const panelData = data(false);
+    const markup = renderToStaticMarkup(
+      <AIAddonPanel
+        data={panelData}
+        actions={actions()}
+        controller={controller()}
+        managedWorkflow={{ options: [], usedFallback: false, switchDisabled: false, select: vi.fn() }}
+      />,
+    );
+
+    expect(markup).toContain('작품 분석');
+    expect(markup).toContain('사용 불가');
+    expect(markup).not.toContain('workflow 없음');
+    expect(markup).toContain('일반 듣기와 시스템 음성은 계속 사용할 수 있습니다.');
+    expect(markup).not.toContain('작품 전체 분석 시작');
+  });
+
+  it('blocks switching between official analysis methods while an execution is active', () => {
+    const panelData = data(false);
+    const panelActions = actions();
+    const first = {
+      id: 'test.ai.book-preparation' as const,
+      schemaVersion: 1 as const,
+      title: '기본 AI 보조 TTS',
+      description: '작품 화자와 음성 연결을 준비합니다.',
+      target: 'book' as const,
+      kind: 'managed' as const,
+    };
+    const second = { ...first, id: 'test.ai.book-preparation-v2' as const, title: '다른 공식 분석' };
+
+    const markup = renderToStaticMarkup(
+      <AIAddonPanel
+        data={panelData}
+        actions={panelActions}
+        controller={controller()}
+        managedWorkflow={{
+          active: first,
+          options: [first, second],
+          surface: <AIWorkflowPanel data={panelData.workflow} actions={panelActions.workflow} />,
+          usedFallback: false,
+          switchDisabled: true,
+          switchDisabledReason: '진행 중인 분석을 취소하거나 완료한 뒤 변경할 수 있습니다.',
+          select: vi.fn(),
+        }}
+      />,
+    );
+
+    expect(markup).toContain('AI 분석 방식');
+    expect(markup).toContain('<select id="ai-managed-workflow" disabled=""');
+    expect(markup).toContain('다른 공식 분석');
+    expect(markup).toContain('진행 중인 분석을 취소하거나 완료한 뒤 변경할 수 있습니다.');
   });
 });

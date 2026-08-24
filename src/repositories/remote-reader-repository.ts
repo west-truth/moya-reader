@@ -296,6 +296,14 @@ export class RemoteReaderRepository implements ReaderRepository {
         rate: response.settings.ttsPlayback?.rate ?? response.settings.ttsSpeed ?? defaultSettings.ttsPlayback.rate,
       },
       readingProfile: { ...defaultSettings.readingProfile, ...response.settings.readingProfile },
+      aiWorkflows: {
+        ...defaultSettings.aiWorkflows!,
+        ...response.settings.aiWorkflows,
+        bookOverrides: {
+          ...defaultSettings.aiWorkflows?.bookOverrides,
+          ...response.settings.aiWorkflows?.bookOverrides,
+        },
+      },
       gestureBindings: { ...defaultSettings.gestureBindings, ...response.settings.gestureBindings },
     };
   }

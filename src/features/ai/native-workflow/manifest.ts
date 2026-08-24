@@ -1,4 +1,5 @@
 import { structuredIntegrityHash } from '@noveldesk/text-core/hash';
+import type { ExtensionContributionId } from '@noveldesk/extension-contracts';
 import {
   BOOK_AI_CHARACTER_GRAPH_MERGE_ITEM_ID,
   type BookAIWorkflowPlan,
@@ -42,9 +43,24 @@ export interface NativeBookWorkflowPlanHashPayload {
 export interface BuildNativeBookWorkflowSubmitRequestInput {
   readonly plan: BookAIWorkflowPlan;
   readonly contentRevision: string;
+  readonly workflowDefinitionId: ExtensionContributionId;
+  readonly workflowVersion: string;
   readonly idempotencyKey?: string;
   readonly requestsByJobId?: Readonly<Record<string, NativeStructuredJsonRequest>>;
   readonly compactExecutionManifest?: NativeCompactExecutionManifestV3;
+}
+
+function nativeWorkflowIdempotencyKey(input: {
+  readonly workflowDefinitionId: ExtensionContributionId;
+  readonly workflowVersion: string;
+  readonly planHash: string;
+}): string {
+  const workflowDefinitionId = input.workflowDefinitionId.trim();
+  const workflowVersion = input.workflowVersion.trim();
+  if (!workflowDefinitionId || !workflowVersion) {
+    throw new Error('Native workflow definition id and version are required');
+  }
+  return structuredIntegrityHash({ workflowDefinitionId, workflowVersion, planHash: input.planHash });
 }
 
 export interface NativeCompactExecutionJobV3 {
@@ -277,7 +293,13 @@ export function buildNativeBookWorkflowSubmitRequest(
     );
     return {
       schemaVersion: NATIVE_BOOK_WORKFLOW_COMPACT_EXECUTION_SCHEMA_VERSION,
-      idempotencyKey: input.idempotencyKey?.trim() || planHash,
+      idempotencyKey:
+        input.idempotencyKey?.trim() ||
+        nativeWorkflowIdempotencyKey({
+          workflowDefinitionId: input.workflowDefinitionId,
+          workflowVersion: input.workflowVersion,
+          planHash,
+        }),
       novelId: input.plan.novelId,
       contentRevision: input.contentRevision,
       planHash,
@@ -291,7 +313,13 @@ export function buildNativeBookWorkflowSubmitRequest(
     jobs: plannedJobs(itemIds, input.requestsByJobId),
   }));
   return {
-    idempotencyKey: input.idempotencyKey?.trim() || planHash,
+    idempotencyKey:
+      input.idempotencyKey?.trim() ||
+      nativeWorkflowIdempotencyKey({
+        workflowDefinitionId: input.workflowDefinitionId,
+        workflowVersion: input.workflowVersion,
+        planHash,
+      }),
     novelId: input.plan.novelId,
     contentRevision: input.contentRevision,
     planHash,

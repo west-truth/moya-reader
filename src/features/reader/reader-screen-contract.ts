@@ -1,3 +1,4 @@
+import type { ExtensionContributionId } from '@noveldesk/extension-contracts';
 import type {
   Bookmark,
   Chapter,
@@ -12,7 +13,8 @@ import type { ReadingPosition } from '../../sync/types';
 import { ReaderDecorationStore, type ReaderDecorationInput } from './reader-decoration-store';
 
 export type ReaderMode = 'read' | 'listen' | 'analysis' | 'correction';
-export type ReaderAddonTab = 'info' | 'outline' | 'tts' | 'ai' | 'notes' | 'stats';
+export type CoreReaderAddonTab = 'info' | 'outline' | 'tts' | 'notes' | 'stats';
+export type ReaderAddonTab = CoreReaderAddonTab | ExtensionContributionId;
 export type ReaderHighlightColor = ReaderHighlight['color'];
 
 export interface ReaderSelection {

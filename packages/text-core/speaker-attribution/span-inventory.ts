@@ -10,6 +10,8 @@ import {
 } from './contracts';
 
 export const DEFAULT_SPAN_DETECTOR_VERSION = 'speaker-span-detector-v2';
+export const BROAD_TTS_CANDIDATE_DETECTOR_VERSION = 'speaker-span-detector-v3-broad-tts-candidate';
+export type SpeakerSpanDetectionProfile = 'strict_voice' | 'broad_tts_candidate';
 
 const quotePairs = new Map([
   ['"', '"'],
@@ -56,6 +58,7 @@ function scanQuotes(text: string): QuoteScan {
 
 function markerClassification(
   text: string,
+  profile: SpeakerSpanDetectionProfile,
 ): { type: SpeakerSpanType; voiceBearing: boolean; speaker?: 'narrator' | 'system'; code: string } | undefined {
   const trimmed = text.trim();
   if (!trimmed) return { type: 'metadata', voiceBearing: false, speaker: 'narrator', code: 'blank' };
@@ -64,6 +67,12 @@ function markerClassification(
   }
   if (/^(?:#{1,6}\s+|(?:scene|chapter|part|장면|막|부)\s*[0-9IVX가-힣]*\b)/iu.test(trimmed)) {
     return { type: 'metadata', voiceBearing: false, speaker: 'narrator', code: 'section_heading' };
+  }
+  if (profile === 'broad_tts_candidate' && /^\[[^\]\r\n]+\]$/u.test(trimmed)) {
+    return { type: 'unknown', voiceBearing: true, code: 'square_bracket_tts_candidate' };
+  }
+  if (profile === 'broad_tts_candidate' && /^(?:(?:ㄴ|└|┗|┖|┕|↳|>{1,3})\s*)\S/u.test(trimmed)) {
+    return { type: 'message', voiceBearing: true, code: 'threaded_message_tts_candidate' };
   }
   if (/^\[(?:시스템|알림|공지|퀘스트|상태|system|notice|status)\b[^\]]*\]$/iu.test(trimmed)) {
     return { type: 'system', voiceBearing: true, speaker: 'system', code: 'system_marker' };
@@ -206,8 +215,12 @@ export function buildSpeakerSpanInventory(input: {
   readonly sceneInventory: SpeakerSceneInventoryV1;
   readonly lockedSpans?: readonly LockedSpeakerSpanV1[];
   readonly detectorVersion?: string;
+  readonly detectionProfile?: SpeakerSpanDetectionProfile;
 }): SpeakerSpanInventoryV1 {
-  const detectorVersion = input.detectorVersion ?? DEFAULT_SPAN_DETECTOR_VERSION;
+  const detectionProfile = input.detectionProfile ?? 'strict_voice';
+  const detectorVersion =
+    input.detectorVersion ??
+    (detectionProfile === 'broad_tts_candidate' ? BROAD_TTS_CANDIDATE_DETECTOR_VERSION : DEFAULT_SPAN_DETECTOR_VERSION);
   const sceneByParagraph = new Map(
     input.sceneInventory.scenes.flatMap((scene) => scene.paragraphIds.map((paragraphId) => [paragraphId, scene.id])),
   );
@@ -241,7 +254,7 @@ export function buildSpeakerSpanInventory(input: {
       continue;
     }
 
-    const marker = markerClassification(paragraph.text);
+    const marker = markerClassification(paragraph.text, detectionProfile);
     if (marker) {
       spans.push(
         span({

@@ -1,4 +1,8 @@
 import type { BookAIWorkflowPlan } from '../../../../../src/providers/book-ai-workflow-plan';
+import {
+  DEFAULT_BOOK_AI_WORKFLOW_DEFINITION_ID,
+  DEFAULT_BOOK_AI_WORKFLOW_VERSION,
+} from '../../../../../src/providers/book-ai-workflow-definition';
 import type pg from 'pg';
 import type { RevisionQueryable } from './analysis-input-repository.js';
 import type { BookAIWorkflowRow } from './workflow-contracts.js';
@@ -7,6 +11,8 @@ interface WorkflowDbRow extends pg.QueryResultRow {
   id: string;
   user_id: string;
   book_id: string;
+  workflow_definition_id?: string;
+  workflow_version?: string;
   provider_id: string;
   model_id: string | null;
   plan_hash: string;
@@ -20,7 +26,12 @@ interface WorkflowDbRow extends pg.QueryResultRow {
 }
 
 function mapWorkflow(row: WorkflowDbRow): BookAIWorkflowRow {
-  return { ...row, revision_fence: Number(row.revision_fence) };
+  return {
+    ...row,
+    workflow_definition_id: row.workflow_definition_id ?? DEFAULT_BOOK_AI_WORKFLOW_DEFINITION_ID,
+    workflow_version: row.workflow_version ?? DEFAULT_BOOK_AI_WORKFLOW_VERSION,
+    revision_fence: Number(row.revision_fence),
+  };
 }
 
 export async function lockWorkflowStartKey(
@@ -39,7 +50,7 @@ export async function lockWorkflowStartKey(
 }
 
 const workflowColumns = `
-  id, user_id, book_id, provider_id, model_id, plan_hash, plan,
+  id, user_id, book_id, workflow_definition_id, workflow_version, provider_id, model_id, plan_hash, plan,
   content_revision_id, base_graph_revision_id, revision_fence,
   status, stage, progress
 `;
@@ -80,6 +91,8 @@ export async function insertWorkflow(
     readonly id: string;
     readonly userId: string;
     readonly bookId: string;
+    readonly workflowDefinitionId: string;
+    readonly workflowVersion: string;
     readonly providerId: string;
     readonly modelId: string;
     readonly planHash: string;
@@ -95,11 +108,12 @@ export async function insertWorkflow(
       insert into book_ai_workflows (
         id, user_id, book_id, workflow_type, provider_id, model_id, plan_hash, plan,
         content_revision_id, base_graph_revision_id, revision_fence,
-        status, stage, progress, started_at, created_at, updated_at
+        status, stage, progress, started_at, created_at, updated_at,
+        workflow_definition_id, workflow_version
       )
       values (
         $1, $2, $3, 'book_ai_tts', $4, $5, $6, $7, $8, $9, $10,
-        'running', 'building_graph', $11, now(), now(), now()
+        'running', 'building_graph', $11, now(), now(), now(), $12, $13
       )
       returning ${workflowColumns}
     `,
@@ -122,6 +136,8 @@ export async function insertWorkflow(
         queuedGraphBootstrapJobs: 0,
         graphBootstrapJobs: [],
       }),
+      input.workflowDefinitionId,
+      input.workflowVersion,
     ],
   );
   const row = result.rows[0];

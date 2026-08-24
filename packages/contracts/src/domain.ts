@@ -6,6 +6,7 @@ export type BookAssetProvenance =
   | 'original'
   | 'canonical_reconstruction'
   | 'user_supplied'
+  | 'approved_enrichment'
   | 'epub_embedded'
   | 'archive_embedded'
   | 'generated_preview';
@@ -557,6 +558,12 @@ export interface ParsedNovelImportAsset {
   bytes: Uint8Array;
 }
 
+export interface AIWorkflowPreferencesV1 {
+  schemaVersion: 1;
+  defaultWorkflowId?: string;
+  bookOverrides?: Record<string, string>;
+}
+
 export interface ReaderSettings {
   id: 'reader-settings';
   /** Global application chrome theme. Falls back to the Reader theme for older settings. */
@@ -579,6 +586,8 @@ export interface ReaderSettings {
   ttsBookOverrides?: Record<string, TTSPlaybackSettingsOverride>;
   readingProfile: ReadingProfile;
   readingBookOverrides?: Record<string, ReadingProfileOverride>;
+  /** Selects an analysis workflow globally or per book. Missing contributions fall back without erasing this preference. */
+  aiWorkflows?: AIWorkflowPreferencesV1;
   gestureBindings: GestureBindings;
   keepScreenChrome: boolean;
 }

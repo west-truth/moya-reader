@@ -114,6 +114,22 @@ describe('LLM generation policy', () => {
     });
   });
 
+  it('allows a bounded Gemini 3 task to opt into medium thinking explicitly', () => {
+    const policy = resolveLLMGenerationPolicy({
+      providerId: 'gemini-vertex',
+      modelId: 'gemini-3.7-flash',
+      taskKind: 'speaker_attribution',
+      reasoningOverride: 'medium',
+      requestedOutputCap: 24_576,
+    });
+
+    expect(policy.reasoning).toBe('medium');
+    expect(applyLLMGenerationPolicy({}, policy)).toEqual({
+      thinkingConfig: { thinkingLevel: 'medium' },
+      maxOutputTokens: 24_576,
+    });
+  });
+
   it('uses low thinking only for Gemini 3.6 Flash speaker escalation', () => {
     const escalation = resolveLLMGenerationPolicy({
       providerId: 'gemini-vertex',

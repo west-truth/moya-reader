@@ -195,6 +195,37 @@ describe('novel parser', () => {
     expect(parsed.chapters.map((chapter) => chapter.title)).toEqual(['001 - 첫 번째 장', '002 - 두 번째 장']);
   });
 
+  it('keeps numbered arc subtitles inside explicit serialized episodes', async () => {
+    const parsed = await parseNovelFile(
+      '작품.txt',
+      toBuffer(`<작품 1화>
+
+0. 프롤로그
+
+첫 번째 프롤로그 본문은 충분히 길게 이어진다. 시스템의 안내를 받은 주인공이 상황을 확인하고 움직이기 시작한다.
+
+1. 첫 번째 장
+
+같은 연재 화 안에서 장 소제목만 바뀐다. 이 번호는 다음 연재 화가 아니라 작품 내부 장 번호다.
+
+<작품 2화>
+
+2. 두 번째 장
+
+두 번째 연재 화의 본문도 충분히 길다. 앞 화에서 시작된 사건이 끊기지 않고 다음 장면으로 이어진다.
+
+<작품 3화>
+
+세 번째 연재 화의 본문이다. 명시적인 화 표지가 약한 번호 소제목보다 우선해야 한다.`),
+      'utf-8',
+    );
+
+    expect(parsed.chapters.map((chapter) => chapter.title)).toEqual(['작품 1화', '작품 2화', '작품 3화']);
+    expect(parsed.chapters[0]?.normalizedText).toContain('0. 프롤로그');
+    expect(parsed.chapters[0]?.normalizedText).toContain('1. 첫 번째 장');
+    expect(parsed.chapters[1]?.normalizedText).toContain('2. 두 번째 장');
+  });
+
   it('keeps title-only documents as one chapter named after the file', async () => {
     const parsed = await parseNovelFile(
       '푸른 밤.txt',

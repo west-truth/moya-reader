@@ -72,7 +72,15 @@ describe('reader state store', () => {
 
   it('persists settings, reading progress, and local-only reading time with existing sync semantics', async () => {
     await readerDb.saveImportedNovel(readerFixture());
-    await readerStateStore.saveSettings({ ...readerDb.defaultSettings, fontSize: 21 });
+    await readerStateStore.saveSettings({
+      ...readerDb.defaultSettings,
+      fontSize: 21,
+      aiWorkflows: {
+        schemaVersion: 1,
+        defaultWorkflowId: 'moya.ai.analysis.character-bundle',
+        bookOverrides: { 'reader-state-book': 'example.ai.alternate-workflow' },
+      },
+    });
     await readerStateStore.saveReadingPosition({
       novelId: 'reader-state-book',
       chapterId: 'reader-state-chapter',
@@ -84,7 +92,14 @@ describe('reader state store', () => {
     });
     await readerStateStore.addNovelReadingTime('reader-state-book', 12.9, '2026-07-10T00:10:00.000Z');
 
-    expect(await readerStateStore.getSettings()).toMatchObject({ fontSize: 21 });
+    expect(await readerStateStore.getSettings()).toMatchObject({
+      fontSize: 21,
+      aiWorkflows: {
+        schemaVersion: 1,
+        defaultWorkflowId: 'moya.ai.analysis.character-bundle',
+        bookOverrides: { 'reader-state-book': 'example.ai.alternate-workflow' },
+      },
+    });
     expect(await readerStateStore.getReadingPosition('reader-state-book')).toMatchObject({
       paragraphIndex: 1,
       offsetInParagraph: 2,

@@ -1,6 +1,7 @@
 import type { Queue } from 'bullmq';
 import type { FastifyInstance } from 'fastify';
 import pg from 'pg';
+import { resolveBookAIWorkflowDefinitionReference } from '../../../../../src/providers/book-ai-workflow-definition';
 import { resolveCharacterBundleAnalysisRequestProfile } from '../../../../../src/providers/character-bundle-request-profile';
 import { resolveLabelingContextCapability } from '../../../../../src/providers/labeling-context-packet';
 import type { ServerConfig } from '../../config.js';
@@ -24,7 +25,10 @@ import {
   resumeBookAIWorkflow,
 } from '../../services/book-ai-workflow-service.js';
 import { cancelBookAIWorkflow } from '../../services/book-ai-workflow/workflow-cancellation-service.js';
-import { startBookAIWorkflow } from '../../services/book-ai-workflow/workflow-start-service.js';
+import {
+  ActiveBookAIWorkflowIdentityConflictError,
+  startBookAIWorkflow,
+} from '../../services/book-ai-workflow/workflow-start-service.js';
 import {
   AnalysisReviewConflictError,
   AnalysisReviewInputError,
@@ -207,11 +211,23 @@ export async function registerAnalysisWorkflowRoutes(
     Body: {
       providerId?: unknown;
       modelId?: unknown;
+      workflowDefinitionId?: unknown;
+      workflowVersion?: unknown;
       planOptions?: unknown;
       force?: unknown;
     };
   }>('/api/books/:bookId/analysis-workflows', async (request, reply) => {
     const body = recordBody(request.body) ?? {};
+    const workflowDefinition = resolveBookAIWorkflowDefinitionReference({
+      workflowDefinitionId: body.workflowDefinitionId,
+      workflowVersion: body.workflowVersion,
+    });
+    if (!workflowDefinition) {
+      return reply.code(400).send({
+        error: 'workflow definition reference is unsupported',
+        errorCode: 'unsupported_workflow_definition',
+      });
+    }
     const rawPlanOptions: Record<string, unknown> =
       body.planOptions === undefined ? {} : (recordBody(body.planOptions) ?? {});
     if (body.planOptions !== undefined && !rawPlanOptions) {
@@ -295,6 +311,7 @@ export async function registerAnalysisWorkflowRoutes(
     let started;
     try {
       started = await startBookAIWorkflow(pool, config, providerQueue, {
+        ...workflowDefinition,
         bookId: request.params.bookId,
         providerId,
         modelId,
@@ -303,6 +320,14 @@ export async function registerAnalysisWorkflowRoutes(
         requestProfile,
       });
     } catch (error) {
+      if (error instanceof ActiveBookAIWorkflowIdentityConflictError) {
+        return reply.code(409).send({
+          error: error.message,
+          errorCode: error.code,
+          activeWorkflow: error.active,
+          requestedWorkflow: error.requested,
+        });
+      }
       const rejection = sendProviderJobAdmissionRejection(reply, error);
       if (rejection) return rejection;
       throw error;

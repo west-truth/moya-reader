@@ -7,6 +7,7 @@ import type { SpeakerSegmentProvenanceDraftV1 } from '../../providers/speaker-at
 import type { SpeakerRiskRouteV1 } from '../../providers/speaker-attribution/routing';
 import type { SpeakerSequenceDecisionRecordV1 } from '../../providers/speaker-attribution/workflow-state';
 import type { NativeLabelingContract } from './labeling-contract';
+import type { ExtensionContributionId } from '@noveldesk/extension-contracts';
 
 export type NativeAnalysisArtifactType = 'character_graph' | 'label_window';
 export type NativeAnalysisStagingStatus = 'staged' | 'promoted' | 'stale' | 'quarantined';
@@ -19,6 +20,8 @@ export interface NativeAnalysisProviderDescriptor {
 
 export interface NativeAnalysisWorkflowDescriptorInput {
   readonly workflowId: string;
+  readonly workflowDefinitionId: ExtensionContributionId;
+  readonly workflowVersion: string;
   readonly novelId: string;
   readonly contentRevisionId: string;
   readonly planHash: string;

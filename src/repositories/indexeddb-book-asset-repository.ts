@@ -7,6 +7,8 @@ import {
   reconstructCanonicalBookSource,
   removeBookCover,
   reselectOriginalBookSource,
+  restoreApprovedEnrichmentBookCover,
+  saveApprovedEnrichmentBookCover,
   saveBookCover,
   saveGeneratedBookCover,
 } from '../storage/book-asset-store';
@@ -55,6 +57,20 @@ export class IndexedDbBookAssetRepository implements BookAssetRepository {
 
   saveCover(bookId: string, input: Parameters<BookAssetRepository['saveCover']>[1]) {
     return saveBookCover(bookId, input);
+  }
+
+  saveApprovedEnrichmentCover(
+    bookId: string,
+    input: Parameters<NonNullable<BookAssetRepository['saveApprovedEnrichmentCover']>>[1],
+  ) {
+    return saveApprovedEnrichmentBookCover(bookId, input);
+  }
+
+  restoreApprovedEnrichmentCover(
+    bookId: string,
+    input: Parameters<NonNullable<BookAssetRepository['restoreApprovedEnrichmentCover']>>[1],
+  ) {
+    return restoreApprovedEnrichmentBookCover(bookId, input);
   }
 
   saveGeneratedCover(bookId: string, input: Parameters<NonNullable<BookAssetRepository['saveGeneratedCover']>>[1]) {

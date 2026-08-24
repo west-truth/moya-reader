@@ -1,5 +1,5 @@
 import { persistentId128 } from '@noveldesk/text-core/hash';
-import { syncEventId, syncPayloadIntegrityHash } from '@noveldesk/text-core/identity/sync';
+import { aggregateSyncEntityId, syncEventId, syncPayloadIntegrityHash } from '@noveldesk/text-core/identity/sync';
 import type { CharacterGraph } from '../../../../../src/providers/ai';
 import type { SyncEntityRevision, SyncEntityType, SyncEventType } from '@noveldesk/contracts/sync';
 import type pg from 'pg';
@@ -230,6 +230,17 @@ export async function insertPromotionSyncEvent(
   },
 ): Promise<void> {
   const createdAt = input.artifact.createdAt;
+  const payload = input.payload as Record<string, unknown>;
+  const entityId =
+    input.entityType === 'character_graph'
+      ? aggregateSyncEntityId({ entityType: 'character_graph', novelId: input.job.book_id })
+      : input.entityType === 'chapter_segments' && typeof payload.chapterId === 'string'
+        ? aggregateSyncEntityId({
+            entityType: 'chapter_segments',
+            novelId: input.job.book_id,
+            chapterId: payload.chapterId,
+          })
+        : input.entityId;
   await client.query(
     `
       insert into sync_events (id, user_id, device_id, type, book_id, entity_id, payload, revision, created_at)
@@ -241,18 +252,18 @@ export async function insertPromotionSyncEvent(
         userId: input.job.user_id,
         type: input.type,
         novelId: input.job.book_id,
-        entityId: input.entityId,
+        entityId,
         seed: input.artifact.id,
       }),
       input.job.user_id,
       input.type,
       input.job.book_id,
-      input.entityId,
+      entityId,
       JSON.stringify(input.payload),
       JSON.stringify(
         syncRevision({
           entityType: input.entityType,
-          entityId: input.entityId,
+          entityId,
           novelId: input.job.book_id,
           createdAt,
           payload: input.payload,

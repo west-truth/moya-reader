@@ -1058,6 +1058,20 @@ async function runReaderSmoke() {
     await page.locator('.addon-panel').first().waitFor({ state: 'visible', timeout: timeoutMs });
     await page.getByRole('tab', { name: '듣기', exact: true }).click();
     await page.getByRole('heading', { name: 'TTS' }).waitFor({ state: 'visible', timeout: timeoutMs });
+    await page.getByRole('tab', { name: 'AI', exact: true }).click();
+    await page.getByRole('heading', { name: 'AI 분석' }).waitFor({ state: 'visible', timeout: timeoutMs });
+    await page
+      .getByText('사용 가능한 workflow 없음', { exact: true })
+      .waitFor({ state: 'visible', timeout: timeoutMs });
+    await page
+      .getByText('AI 보조 TTS workflow가 없어도 일반 듣기와 시스템 음성은 계속 사용할 수 있습니다.', {
+        exact: true,
+      })
+      .waitFor({ state: 'visible', timeout: timeoutMs });
+    await page.getByText('화 단위 작업 및 연결 설정', { exact: true }).click();
+    await page
+      .locator('[data-workflow-id="moya.ai.analysis.character-bundle"]')
+      .waitFor({ state: 'visible', timeout: timeoutMs });
     await assertNoHorizontalOverflow(page, 'desktop addon panel');
     await screenshot(page, 'reader-ui-smoke-addon');
 

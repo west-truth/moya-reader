@@ -10,6 +10,7 @@ import {
 import { createReaderProviderRuntime, type ReaderProviderRuntime } from '../../providers/reader-provider-runtime';
 import type { TTSProvider } from '../../providers/tts';
 import type { TTSCacheGateway } from '../../features/tts/tts-cache-gateway';
+import { createAppExtensionRuntime, type AppExtensionRuntime } from '../../extensions/app-extension-runtime';
 import {
   detectPlatformRuntime,
   resolveProviderExecutionRuntime,
@@ -31,6 +32,7 @@ import {
 } from '../../platform/tauri';
 
 export interface AppRuntime {
+  readonly extensionRuntime: AppExtensionRuntime;
   readonly readerRuntime: ReaderRuntime;
   readonly providerRuntime: ReaderProviderRuntime;
   readonly defaultAIProvider: AIProvider;
@@ -44,6 +46,7 @@ export interface AppRuntime {
 }
 
 export interface AppRuntimeDependencies {
+  readonly extensionRuntimeFactory?: () => AppExtensionRuntime;
   readonly readerRuntimeFactory?: () => ReaderRuntime;
   readonly providerRuntimeFactory?: () => ReaderProviderRuntime;
   readonly platformRuntimeDetector?: () => PlatformRuntimeInfo;
@@ -73,6 +76,7 @@ function nativeWorkflowRepository(
 }
 
 export function createAppRuntime(dependencies: AppRuntimeDependencies = {}): AppRuntime {
+  const extensionRuntime = dependencies.extensionRuntimeFactory?.() ?? createAppExtensionRuntime();
   const platformRuntime = dependencies.platformRuntimeDetector?.() ?? detectPlatformRuntime();
   const providerRuntime =
     dependencies.providerRuntimeFactory?.() ??
@@ -109,6 +113,7 @@ export function createAppRuntime(dependencies: AppRuntimeDependencies = {}): App
   }
 
   return {
+    extensionRuntime,
     readerRuntime,
     providerRuntime,
     defaultAIProvider: providerRuntime.getDefaultAIProvider(),

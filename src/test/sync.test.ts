@@ -29,6 +29,7 @@ import {
 import { Character, LabeledSegment, ParsedNovel } from '../domain/types';
 import { integrityHash } from '../domain/id-hash-contract';
 import { RemoteBookSnapshot, SyncEvent } from '../sync/types';
+import { saveApprovedEnrichmentBookCover } from '../storage/book-asset-store';
 
 function parsedNovel(id: string): ParsedNovel {
   const now = '2026-07-04T00:00:00.000Z';
@@ -108,6 +109,39 @@ describe('LocalOutboxSyncService', () => {
     expect((await listSyncOutbox('sent')).map((item) => item.event.type)).toEqual(['book_imported']);
     expect(await listSyncOutbox('pending')).toEqual([]);
     expect(state).toMatchObject({ mode: 'connected', status: 'idle', pendingCount: 0 });
+  });
+
+  it('uploads an approved enrichment cover without reclassifying it as user supplied', async () => {
+    await saveImportedNovel(parsedNovel('novel-approved-cover'));
+    const bytes = new Uint8Array([0x89, 0x50, 0x4e, 0x47]);
+    await saveApprovedEnrichmentBookCover('novel-approved-cover', {
+      blob: new Blob([bytes], { type: 'image/png' }),
+      fileName: 'approved.png',
+      contentType: 'image/png',
+      contentHash: integrityHash(bytes),
+      pixelWidth: 1,
+      pixelHeight: 1,
+      fit: 'contain',
+      positionX: 50,
+      positionY: 50,
+      expectedMetadataRevision: 0,
+    });
+    let uploadedProvenance: string | undefined;
+    const source: SyncEventSource = {
+      async pushSync(events) {
+        return { accepted: events.length };
+      },
+      async pullSync() {
+        return { cursor: 0, events: [] };
+      },
+      async saveBookCover(_bookId, _cover, metadata) {
+        uploadedProvenance = metadata.provenance;
+      },
+    };
+
+    await new LocalOutboxSyncService(source).flushPending();
+
+    expect(uploadedProvenance).toBe('approved_enrichment');
   });
 
   it('marks outbox events as failed when the server push fails', async () => {

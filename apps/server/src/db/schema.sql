@@ -506,6 +506,8 @@ create table if not exists book_ai_workflows (
   user_id text not null references users(id) on delete cascade,
   book_id text not null references library_books(id) on delete cascade,
   workflow_type text not null default 'book_ai_tts',
+  workflow_definition_id text not null default 'moya.ai.tts.book-preparation',
+  workflow_version text not null default '1.0.0',
   provider_id text not null,
   model_id text,
   plan_hash text not null,

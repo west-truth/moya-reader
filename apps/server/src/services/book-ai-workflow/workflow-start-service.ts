@@ -1,6 +1,10 @@
 import type { Queue } from 'bullmq';
 import { bookAIWorkflowId, bookAIWorkflowPlanIntegrityHash } from '@noveldesk/text-core/identity/workflow';
 import type { BookAIWorkflowPlan } from '../../../../../src/providers/book-ai-workflow-plan';
+import {
+  resolveBookAIWorkflowDefinitionReference,
+  type BookAIWorkflowDefinitionReference,
+} from '../../../../../src/providers/book-ai-workflow-definition';
 import type { ProviderRequestProfile } from '../provider-jobs/contracts.js';
 import type pg from 'pg';
 import type { ServerConfig } from '../../config.js';
@@ -15,7 +19,7 @@ import {
   markBookWorkflowStarted,
 } from './workflow-start-repository.js';
 
-export interface StartBookAIWorkflowInput {
+export interface StartBookAIWorkflowInput extends Partial<BookAIWorkflowDefinitionReference> {
   readonly bookId: string;
   readonly providerId: string;
   readonly modelId: string;
@@ -30,12 +34,35 @@ export interface StartBookAIWorkflowResult {
   readonly childAdmitted: boolean;
 }
 
+export class ActiveBookAIWorkflowIdentityConflictError extends Error {
+  readonly code = 'active_workflow_identity_conflict';
+
+  constructor(
+    readonly active: {
+      readonly workflowId: string;
+      readonly workflowDefinitionId: string;
+      readonly workflowVersion: string;
+      readonly planHash: string;
+    },
+    readonly requested: {
+      readonly workflowDefinitionId: string;
+      readonly workflowVersion: string;
+      readonly planHash: string;
+    },
+  ) {
+    super('A different AI workflow is already active for this book, provider, model, and content revision.');
+    this.name = 'ActiveBookAIWorkflowIdentityConflictError';
+  }
+}
+
 export async function startBookAIWorkflow(
   pool: pg.Pool,
   config: ServerConfig,
   queue: Queue | undefined,
   input: StartBookAIWorkflowInput,
 ): Promise<StartBookAIWorkflowResult> {
+  const workflowDefinition = resolveBookAIWorkflowDefinitionReference(input);
+  if (!workflowDefinition) throw new Error('Unsupported book AI workflow definition reference');
   const planHash = bookAIWorkflowPlanIntegrityHash(input.plan);
   const startedAt = new Date().toISOString();
   const transactionResult = await withBookAITransaction(pool, async (client) => {
@@ -51,7 +78,26 @@ export async function startBookAIWorkflow(
     };
     await lockWorkflowStartKey(client, identity);
     const active = await findActiveWorkflow(client, identity);
-    if (active) return { workflow: active, reused: true };
+    if (active) {
+      const exactIdentity =
+        active.workflow_definition_id === workflowDefinition.workflowDefinitionId &&
+        active.workflow_version === workflowDefinition.workflowVersion &&
+        active.plan_hash === planHash;
+      if (exactIdentity) return { workflow: active, reused: true };
+      throw new ActiveBookAIWorkflowIdentityConflictError(
+        {
+          workflowId: active.id,
+          workflowDefinitionId: active.workflow_definition_id,
+          workflowVersion: active.workflow_version,
+          planHash: active.plan_hash,
+        },
+        {
+          workflowDefinitionId: workflowDefinition.workflowDefinitionId,
+          workflowVersion: workflowDefinition.workflowVersion,
+          planHash,
+        },
+      );
+    }
 
     const workflowId = bookAIWorkflowId({
       userId: config.defaultUserId,
@@ -65,6 +111,8 @@ export async function startBookAIWorkflow(
       id: workflowId,
       userId: config.defaultUserId,
       bookId: input.bookId,
+      workflowDefinitionId: workflowDefinition.workflowDefinitionId,
+      workflowVersion: workflowDefinition.workflowVersion,
       providerId: input.providerId,
       modelId: input.modelId,
       planHash,

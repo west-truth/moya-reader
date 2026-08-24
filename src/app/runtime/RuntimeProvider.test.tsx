@@ -42,13 +42,13 @@ describe('RuntimeProvider', () => {
     expect(() => renderToStaticMarkup(<Probe />)).toThrow('useAppRuntime must be used within RuntimeProvider.');
   });
 
-  it('renders App through the injected composition root', () => {
+  it('renders the library loading state through the injected composition root', () => {
     const markup = renderToStaticMarkup(
       <RuntimeProvider runtime={createAppRuntime()}>
         <App />
       </RuntimeProvider>,
     );
 
-    expect(markup).toContain('모야');
+    expect(markup).toContain('책장을 불러오는 중입니다');
   });
 });

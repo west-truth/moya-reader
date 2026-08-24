@@ -1,5 +1,16 @@
 import { X } from 'lucide-react';
-import { lazy, Suspense, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import type { ExtensionContributionId } from '@noveldesk/extension-contracts';
+import {
+  lazy,
+  Suspense,
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+  useSyncExternalStore,
+} from 'react';
 import type { CSSProperties } from 'react';
 import {
   type Chapter,
@@ -29,7 +40,7 @@ import { runGuardedAppBootstrap, useAppBootstrap } from './app/hooks/use-app-boo
 import { useAppRuntime } from './app/runtime/RuntimeProvider';
 import { useAnnotationsController } from './features/annotations/useAnnotationsController';
 import { BookWorkspaceScreens } from './features/book-workspace/BookWorkspaceScreens';
-import { BookWorkspaceInfoPanel, BookWorkspaceStatsPanel } from './features/book-workspace/book-workspace-lazy-panels';
+import { BookWorkspaceStatsPanel } from './features/book-workspace/book-workspace-lazy-panels';
 import type {
   BookWorkspaceAdjacentFeaturePort,
   BookWorkspaceTransitionPort,
@@ -44,8 +55,18 @@ import {
   type ReaderMode,
   type ReaderSelection,
 } from './features/reader/reader-screen-contract';
-import { ReaderAddonShell } from './features/reader/ReaderAddonShell';
+import {
+  CORE_READER_ADDON_TABS,
+  ReaderAddonShell,
+  type ReaderAddonTabDescriptor,
+} from './features/reader/ReaderAddonShell';
+import type { TrustedReaderAddonHostContext } from './extensions/reader-addon-host-context';
+import type { TrustedAnalysisWorkflowHostContext } from './extensions/analysis-workflow-host-context';
+import { resolveTrustedBookAITTSWorkflow, selectManagedBookWorkflow } from './extensions/analysis-workflow-selection';
+import { READER_INFO_ADDON_ID } from './extensions/builtin/reader-info-extension';
+import { MOYA_AI_ADDON_ID, MOYA_AI_EXTENSION_ID } from './extensions/builtin/moya-ai-extension';
 import { useReaderSettingsDraft } from './features/reader-settings/useReaderSettingsDraft';
+import type { SettingsTab } from './features/reader-settings/ReaderSettingsPanel';
 import { useReaderBasicsScreenModel } from './features/reader-settings/useReaderBasicsScreenModel';
 import { useActiveReaderFont } from './features/reader-settings/useActiveReaderFont';
 import { resolveReaderThemeColors } from './features/reader-settings/reader-theme-colors';
@@ -69,10 +90,13 @@ import {
 import { useImportController } from './features/import/useImportController';
 import { ImportFeatureHost } from './features/import/ImportFeatureHost';
 import { useLibraryFolderController } from './features/library-folders/useLibraryFolderController';
+import { useExternalSourceController } from './features/external-sources/useExternalSourceController';
 import { useBackupController } from './features/backup/useBackupController';
 import { useCloudVaultController } from './features/cloud-vault/useCloudVaultController';
 import { useChapterStructureController } from './features/chapter-structure/useChapterStructureController';
 import { useLibraryManagementController } from './features/library/useLibraryManagementController';
+import { BookEnrichmentService } from './features/book-enrichment/book-enrichment-service';
+import { useBookEnrichmentController } from './features/book-enrichment/useBookEnrichmentController';
 import type { SyncConnectionTestState } from './features/sync/sync-panel-contract';
 import {
   acceptRemoteSyncState as acceptRemoteSyncStateMutation,
@@ -85,7 +109,9 @@ import { useSyncMergeSelections } from './features/sync/useSyncMergeSelections';
 import { useServerAttachController } from './features/sync/useServerAttachController';
 import { useProviderSettingsController } from './features/providers/useProviderSettingsController';
 import { useBookAIWorkflowController } from './features/ai/useBookAIWorkflowController';
+import { GatewayBookAITTSPreparationRunner } from './features/ai/book-ai-tts-preparation-runner';
 import { useAnalysisReviewController } from './features/ai/useAnalysisReviewController';
+import type { AIAddonPanelActions, AIWorkflowPanelData } from './features/ai/ai-addon-panel-contract';
 import { useCharacterGraphKnowledgeController } from './features/ai/useCharacterGraphKnowledgeController';
 import { speakerIdLabel, speakerLabel } from './features/ai/speaker-label';
 import { graphCandidateDetailLabel } from './features/ai/graph-candidate-label';
@@ -98,6 +124,7 @@ import {
   bookAIWorkflowControlState,
   bookAIWorkflowProgress,
   bookAIWorkflowStageLabel,
+  isTerminalBookAIWorkflow,
   progressNumber,
   recordValue,
 } from './features/ai/book-ai-workflow-view';
@@ -150,6 +177,28 @@ import { BrowserMediaSessionAdapter } from './platform/media-session-adapter';
 import { createPlatformDocumentIo } from './platform/document-io';
 import { createPlatformLibraryFolderIo } from './platform/library-folder-io';
 import { LibraryFolderLocalStateStore } from './library-folders/local-state';
+import { ExternalSourceLocalStateStore } from './external-sources/local-state';
+import { AppExternalSourceRegistry } from './external-sources/app-external-source-registry';
+import { DropboxSourceAccountBroker } from './external-sources/dropbox-source-account-broker';
+import { GoogleDriveSourceAccountBroker } from './external-sources/google-drive-source-account-broker';
+import type { TrustedExternalSourceHostContext } from './external-sources/contracts';
+import {
+  DROPBOX_EXTERNAL_SOURCE_BROKER_ID,
+  DROPBOX_EXTERNAL_SOURCE_ID,
+  dropboxBuiltInExternalSource,
+} from './external-sources/dropbox-external-source';
+import {
+  GOOGLE_DRIVE_EXTERNAL_SOURCE_BROKER_ID,
+  GOOGLE_DRIVE_EXTERNAL_SOURCE_ID,
+  googleDriveBuiltInExternalSource,
+} from './external-sources/google-drive-external-source';
+import { SuwayomiSourceAccountBroker } from './external-sources/suwayomi/suwayomi-source-account-broker';
+import {
+  SUWAYOMI_EXTERNAL_SOURCE_BROKER_ID,
+  SUWAYOMI_EXTERNAL_SOURCE_ID,
+  suwayomiBuiltInExternalSource,
+} from './external-sources/suwayomi/suwayomi-external-source';
+import { appPublicRuntimeConfig } from './config/public-runtime-config';
 import {
   dispatchAndroidBackEscape,
   dismissTopAppBackLayer,
@@ -287,6 +336,7 @@ export default function App() {
     defaultAIProvider: aiProvider,
     defaultTTSProvider: systemTTS,
     bookAnalysisWorkflowGateway,
+    extensionRuntime,
     ttsCacheGateway,
     platformRuntime,
     providerApiClient,
@@ -294,11 +344,21 @@ export default function App() {
     providerExecutionRuntime,
     readerRuntime,
   } = useAppRuntime();
+  const extensionRevision = useSyncExternalStore(
+    extensionRuntime.manager.subscribe,
+    extensionRuntime.manager.getRevision,
+    extensionRuntime.manager.getRevision,
+  );
+  const extensionSnapshots = useMemo(() => {
+    void extensionRevision;
+    return extensionRuntime.manager.list();
+  }, [extensionRuntime.manager, extensionRevision]);
   const {
     importService,
     readerRepository,
     bookAssetRepository,
     libraryCatalogRepository,
+    bookEnrichmentRepository,
     backupRepository,
     chapterStructureRepository,
     personalizationRepository,
@@ -311,9 +371,68 @@ export default function App() {
   const localDeviceId = useMemo(() => getOrCreateRemoteDeviceId(), []);
   const documentIo = useMemo(() => createPlatformDocumentIo(platformRuntime), [platformRuntime]);
   const libraryFolderState = useMemo(() => new LibraryFolderLocalStateStore(), []);
+  const externalSourceState = useMemo(() => new ExternalSourceLocalStateStore(), []);
   const libraryFolderIo = useMemo(
     () => createPlatformLibraryFolderIo(platformRuntime, libraryFolderState),
     [libraryFolderState, platformRuntime],
+  );
+  const dropboxExternalSourceAppKey =
+    appPublicRuntimeConfig.dropbox.sourceAppKey ?? appPublicRuntimeConfig.dropbox.appKey;
+  const dropboxExternalSourceBroker = useMemo(
+    () => new DropboxSourceAccountBroker(DROPBOX_EXTERNAL_SOURCE_ID, dropboxExternalSourceAppKey, externalSourceState),
+    [dropboxExternalSourceAppKey, externalSourceState],
+  );
+  const googleDriveExternalSourceConfig = appPublicRuntimeConfig.googleDrive;
+  const googleDriveExternalSourceBroker = useMemo(
+    () =>
+      new GoogleDriveSourceAccountBroker(
+        GOOGLE_DRIVE_EXTERNAL_SOURCE_ID,
+        googleDriveExternalSourceConfig,
+        externalSourceState,
+      ),
+    [externalSourceState, googleDriveExternalSourceConfig],
+  );
+  const suwayomiExternalSourceBroker = useMemo(
+    () =>
+      new SuwayomiSourceAccountBroker(SUWAYOMI_EXTERNAL_SOURCE_ID, externalSourceState, {
+        defaultBaseUrl: appPublicRuntimeConfig.suwayomi.defaultBaseUrl,
+      }),
+    [externalSourceState],
+  );
+  const [externalSourceBrokerRevision, setExternalSourceBrokerRevision] = useState(0);
+  useEffect(() => {
+    let cancelled = false;
+    void Promise.allSettled([
+      dropboxExternalSourceBroker.initialize(),
+      googleDriveExternalSourceBroker.initialize(),
+      suwayomiExternalSourceBroker.initialize(),
+    ]).finally(() => {
+      if (!cancelled) setExternalSourceBrokerRevision((value) => value + 1);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [dropboxExternalSourceBroker, googleDriveExternalSourceBroker, suwayomiExternalSourceBroker]);
+  const externalSourceHostContext = useMemo<TrustedExternalSourceHostContext>(
+    () => ({
+      brokers: {
+        get: (brokerId) => {
+          if (brokerId === DROPBOX_EXTERNAL_SOURCE_BROKER_ID) return dropboxExternalSourceBroker;
+          if (brokerId === GOOGLE_DRIVE_EXTERNAL_SOURCE_BROKER_ID) return googleDriveExternalSourceBroker;
+          if (brokerId === SUWAYOMI_EXTERNAL_SOURCE_BROKER_ID) return suwayomiExternalSourceBroker;
+          return undefined;
+        },
+      },
+    }),
+    [dropboxExternalSourceBroker, googleDriveExternalSourceBroker, suwayomiExternalSourceBroker],
+  );
+  const externalSourceRegistry = useMemo(
+    () =>
+      new AppExternalSourceRegistry(
+        [dropboxBuiltInExternalSource, googleDriveBuiltInExternalSource, suwayomiBuiltInExternalSource],
+        extensionRuntime.trustedExtensions,
+      ),
+    [extensionRuntime.trustedExtensions],
   );
   const desktopLocalLLMProviderIds = useMemo(
     () => new Set<string>(nativeLocalLLMProviderIds(platformRuntime.kind)),
@@ -329,6 +448,16 @@ export default function App() {
   const [addonTab, setAddonTab] = useState<AddonTab>('outline');
   const [spokenPreviewRequest, setSpokenPreviewRequest] = useState<{ id: number; text: string }>();
   const { toasts: toastList, showToast, dismissToast } = useToastController();
+  const readerAddonTabs = useMemo<readonly ReaderAddonTabDescriptor[]>(() => {
+    void extensionRevision;
+    return [
+      ...CORE_READER_ADDON_TABS,
+      ...extensionRuntime.trustedExtensions.getReaderAddonTabs().map(({ descriptor }) => descriptor),
+    ].sort((left, right) => (left.order ?? 500) - (right.order ?? 500) || left.id.localeCompare(right.id));
+  }, [extensionRuntime, extensionRevision]);
+  useEffect(() => {
+    if (addonOpen && !readerAddonTabs.some((tab) => tab.id === addonTab)) setAddonTab('outline');
+  }, [addonOpen, addonTab, readerAddonTabs]);
   const readerScreenHandle = useMemo(() => new ReaderScreenHandle(), []);
   const bookWorkspaceTransitionRef = useRef<BookWorkspaceTransitionPort>({
     flushReaderSession: async () => undefined,
@@ -421,6 +550,7 @@ export default function App() {
   const [correctionSpeakerDraft, setCorrectionSpeakerDraft] = useState('unknown');
   const [correctionEmotionDraft, setCorrectionEmotionDraft] = useState('neutral');
   const [correctionScope, setCorrectionScope] = useState<UserCorrection['applyScope']>('segment');
+  const [settingsInitialTab, setSettingsInitialTab] = useState<SettingsTab>('appearance');
 
   const voiceProfilesRef = useRef<VoiceProfile[]>([]);
   const voiceProfileSaveQueueRef = useRef(Promise.resolve());
@@ -467,6 +597,36 @@ export default function App() {
     updateSettings,
     open: settingsOpen,
   } = readerSettingsController;
+  const openReaderSettings = useCallback(() => {
+    setSettingsInitialTab('appearance');
+    readerSettingsController.openPanel();
+  }, [readerSettingsController]);
+  const openExternalSourceSettings = useCallback(() => {
+    setSettingsInitialTab('sources');
+    readerSettingsController.openPanel();
+  }, [readerSettingsController]);
+  const trustedAnalysisWorkflows = extensionRuntime.trustedExtensions.getAnalysisWorkflows();
+  const baseBookAITTSPreparationRunner = useMemo(
+    () =>
+      bookAnalysisWorkflowGateway ? new GatewayBookAITTSPreparationRunner(bookAnalysisWorkflowGateway) : undefined,
+    [bookAnalysisWorkflowGateway],
+  );
+  const managedBookWorkflow = resolveTrustedBookAITTSWorkflow({
+    workflows: trustedAnalysisWorkflows,
+    runnerWorkflowIds: baseBookAITTSPreparationRunner ? extensionRuntime.bookAITTSRunners.listWorkflowIds() : [],
+    bookId: selectedNovel?.id,
+    preferences: settings.aiWorkflows,
+  });
+  const bookAITTSPreparationRunner = useMemo(
+    () =>
+      baseBookAITTSPreparationRunner && managedBookWorkflow.active
+        ? extensionRuntime.bookAITTSRunners.resolve(
+            managedBookWorkflow.active.descriptor.id,
+            baseBookAITTSPreparationRunner,
+          )
+        : undefined,
+    [baseBookAITTSPreparationRunner, extensionRuntime, managedBookWorkflow.active],
+  );
   const readingProfile = useMemo(
     () => resolveReadingProfile(settings, selectedNovel?.id),
     [selectedNovel?.id, settings],
@@ -514,6 +674,7 @@ export default function App() {
     sleepTimerPreset: ttsPlaybackSettings.sleepTimerDefault,
     preserveSystemPlaybackOnUnmount: platformRuntime.kind === 'tauri-mobile',
   });
+  const syncExternalTTSPlayback = ttsExecutionController.syncExternalPlayback;
   const ttsIndex = ttsExecutionController.index;
   const ttsPlaying = ttsExecutionController.playing;
   const ttsPaused = ttsExecutionController.paused;
@@ -647,14 +808,14 @@ export default function App() {
     const applyNativePlayback = (playback: TTSStatus['playback']) => {
       if (cancelled) return;
       setTTSStatus((current) => (current ? { ...current, playback } : current));
-      ttsExecutionController.syncExternalPlayback(playback);
+      syncExternalTTSPlayback(playback);
     };
     const refreshNativePlayback = async () => {
       try {
         const status = await systemTTS.getStatus();
         if (cancelled) return;
         setTTSStatus(status);
-        ttsExecutionController.syncExternalPlayback(status.playback);
+        syncExternalTTSPlayback(status.playback);
       } catch {
         // Bootstrap and the provider fallback own user-facing availability errors.
       }
@@ -667,7 +828,7 @@ export default function App() {
       unsubscribe?.();
       window.clearInterval(interval);
     };
-  }, [platformRuntime.kind, systemTTS, ttsExecutionController.syncExternalPlayback]);
+  }, [platformRuntime.kind, syncExternalTTSPlayback, systemTTS]);
 
   useEffect(() => {
     const playback = ttsStatus?.playback;
@@ -957,6 +1118,25 @@ export default function App() {
       },
     },
   });
+  const bookEnrichmentService = useMemo(
+    () =>
+      libraryCatalogRepository && bookAssetRepository
+        ? new BookEnrichmentService({
+            registry: extensionRuntime.trustedExtensions,
+            repository: bookEnrichmentRepository,
+            books: readerRepository,
+            catalog: libraryCatalogRepository,
+            assets: bookAssetRepository,
+          })
+        : undefined,
+    [bookAssetRepository, bookEnrichmentRepository, extensionRuntime, libraryCatalogRepository, readerRepository],
+  );
+  const bookEnrichment = useBookEnrichmentController({
+    service: bookEnrichmentService,
+    refreshNovels,
+    refreshAfterMutation: refreshAfterLocalMutation,
+    notify: showToast,
+  });
   const libraryManagement = useLibraryManagementController({
     catalog: libraryCatalogRepository,
     assets: bookAssetRepository,
@@ -1029,6 +1209,7 @@ export default function App() {
     },
     notify: showToast,
     confirm: (message) => window.confirm(message),
+    dropboxAppKey: appPublicRuntimeConfig.dropbox.appKey,
   });
 
   const chapterStructureFeature = useChapterStructureController({
@@ -1065,6 +1246,22 @@ export default function App() {
       await refreshAfterLocalMutation();
     },
     notify: showToast,
+  });
+  const externalSourceFeature = useExternalSourceController({
+    registry: externalSourceRegistry,
+    hostContext: externalSourceHostContext,
+    state: externalSourceState,
+    importService,
+    extensionRevision: extensionRevision + externalSourceBrokerRevision,
+    getNovel: (id) => readerRepository.getNovel(id),
+    openNovel: (novel) => bookWorkspace.openNovel(novel),
+    listNovels: () => readerRepository.listNovels(),
+    onLibraryChanged: async () => {
+      await refreshNovels();
+      await refreshAfterLocalMutation();
+    },
+    notify: showToast,
+    confirm: (message) => window.confirm(message),
   });
   const importBusy = importFeature.busy;
 
@@ -1191,7 +1388,7 @@ export default function App() {
 
   const refreshBookAIWorkflowArtifacts = useCallback(
     async (bookId: string) => {
-      if (bookAnalysisWorkflowGateway?.runtime === 'hosted' && !(await syncConnectedProviderState('after_job'))) {
+      if (bookAITTSPreparationRunner?.runtime === 'hosted' && !(await syncConnectedProviderState('after_job'))) {
         return false;
       }
       const chapterId = activeChapterIdRef.current;
@@ -1211,7 +1408,7 @@ export default function App() {
       if (chapterId && activeChapterIdRef.current === chapterId && loadedSegments) setSegmentsState(loadedSegments);
       return true;
     },
-    [bookAnalysisWorkflowGateway?.runtime, readerRepository, setNovels, setSelectedNovel, syncConnectedProviderState],
+    [bookAITTSPreparationRunner?.runtime, readerRepository, setNovels, setSelectedNovel, syncConnectedProviderState],
   );
 
   const refreshCancelledBookAIWorkflowNovel = useCallback(
@@ -1229,11 +1426,11 @@ export default function App() {
     [chapters, selectedNovel?.id],
   );
   const bookAIWorkflowController = useBookAIWorkflowController({
-    gateway: bookAnalysisWorkflowGateway,
+    runner: bookAITTSPreparationRunner,
     bookId: selectedNovel?.id,
     chapterIds: bookAIWorkflowChapterIds,
     beforeRun: (bookId, chapterIds) => {
-      if (bookAnalysisWorkflowGateway?.runtime === 'native') {
+      if (bookAITTSPreparationRunner?.runtime === 'native') {
         return Promise.resolve(connectedProviderTargetStillActive(bookId));
       }
       return runConnectedProviderPreflight({
@@ -1246,7 +1443,7 @@ export default function App() {
     onCancelled: refreshCancelledBookAIWorkflowNovel,
     openAIAddon: () => {
       setAddonOpen(true);
-      setAddonTab('ai');
+      setAddonTab(MOYA_AI_ADDON_ID);
     },
     notify: showToast,
   });
@@ -1609,7 +1806,7 @@ export default function App() {
 
   useEffect(() => {
     if (!providerApiClient && !isDesktopProviderRuntime) return;
-    if (!addonOpen || (addonTab !== 'ai' && addonTab !== 'tts')) return;
+    if (!addonOpen || (addonTab !== MOYA_AI_ADDON_ID && addonTab !== 'tts')) return;
     if (providerSettingsLoading) return;
     if (providerSettingsBundle && !(isDesktopProviderRuntime && providerSecretStatuses.length === 0)) return;
     const autoLoadKey = `${providerExecutionRuntime}:${platformRuntime.kind}`;
@@ -1952,7 +2149,7 @@ export default function App() {
   const activeBookAIWorkflowTtsReadinessMetrics = recordValue(activeBookAIWorkflowTtsReadiness?.metrics);
   const activeBookAIWorkflowTtsCacheReadiness = recordValue(activeBookAIWorkflowProgressBody?.ttsCacheReadiness);
   const activeBookAIWorkflowTtsCacheReadinessMetrics = recordValue(activeBookAIWorkflowTtsCacheReadiness?.metrics);
-  const bookAIWorkflowAvailable = Boolean(bookAnalysisWorkflowGateway);
+  const bookAIWorkflowAvailable = Boolean(bookAITTSPreparationRunner);
   const {
     reviewItems: activeBookAIWorkflowReviewItems,
     busy: bookAIWorkflowBusy,
@@ -1968,9 +2165,7 @@ export default function App() {
     running: bookAIWorkflowRunning,
     anotherAnalysisRunning: remoteAnalysisRunning,
     providerBlocked:
-      bookAnalysisWorkflowGateway?.runtime === 'native'
-        ? desktopAnalysisProviderBlocked
-        : remoteAnalysisProviderBlocked,
+      bookAITTSPreparationRunner?.runtime === 'native' ? desktopAnalysisProviderBlocked : remoteAnalysisProviderBlocked,
   });
   useEffect(() => {
     setGraphReviewExcludedCharacterIds(new Set());
@@ -2167,7 +2362,7 @@ export default function App() {
           readerRepository.iterateParagraphPages({ chapterId, signal: requestSignal, batchSize: 20 }),
       });
     },
-    [chapters, selectedNovel, spokenTextRules],
+    [chapters, readerRepository, selectedNovel, spokenTextRules],
   );
   useEffect(() => {
     voiceProductStateRef.current = voiceProductController.state;
@@ -2242,7 +2437,7 @@ export default function App() {
     };
   };
   const bookAIWorkflowCacheRefreshDisabled =
-    !(bookAnalysisWorkflowGateway?.supportsTTSCacheReadiness || nativeTTSCacheAvailable) ||
+    !(bookAITTSPreparationRunner?.supportsTTSCacheReadiness || nativeTTSCacheAvailable) ||
     !activeBookAIWorkflow ||
     !bookAIWorkflowLabelVoiceReady ||
     bookAIWorkflowLoading;
@@ -2449,7 +2644,7 @@ export default function App() {
     if (!execution) return;
     setReaderMode('analysis');
     setAddonOpen(true);
-    setAddonTab('ai');
+    setAddonTab(MOYA_AI_ADDON_ID);
     try {
       const { job } = await providerApiClient.enqueueAnalysisJob({ bookId, chapterId, providerId, modelId });
       if (!(await analysisExecutionController.publishRemoteJob(execution, job))) return;
@@ -2498,7 +2693,7 @@ export default function App() {
     analysisExecutionController.publishJob(execution, job);
     setReaderMode('analysis');
     setAddonOpen(true);
-    setAddonTab('ai');
+    setAddonTab(MOYA_AI_ADDON_ID);
     try {
       const [validationRuntime, analysisContext] = await Promise.all([
         import('./features/ai/chapter-labeling-validation-runtime'),
@@ -2638,7 +2833,7 @@ export default function App() {
     analysisExecutionController.publishJob(execution, job);
     setReaderMode('analysis');
     setAddonOpen(true);
-    setAddonTab('ai');
+    setAddonTab(MOYA_AI_ADDON_ID);
     try {
       const [validationRuntime, analysisContext] = await Promise.all([
         import('./features/ai/chapter-labeling-validation-runtime'),
@@ -2776,7 +2971,7 @@ export default function App() {
     analysisExecutionController.publishJob(execution, job);
     setReaderMode('analysis');
     setAddonOpen(true);
-    setAddonTab('ai');
+    setAddonTab(MOYA_AI_ADDON_ID);
     try {
       const { existingCharacters, existingRelations, userCorrections, chapterSources } =
         await import('./features/ai/analysis-paragraph-source').then((module) =>
@@ -2875,7 +3070,7 @@ export default function App() {
     analysisExecutionController.publishJob(execution, job);
     setReaderMode('analysis');
     setAddonOpen(true);
-    setAddonTab('ai');
+    setAddonTab(MOYA_AI_ADDON_ID);
     try {
       const [existingCharacters, existingRelations, userCorrections] = await Promise.all([
         readerRepository.listCharacters(bookId),
@@ -2951,7 +3146,7 @@ export default function App() {
     if (!execution) return;
     setReaderMode('analysis');
     setAddonOpen(true);
-    setAddonTab('ai');
+    setAddonTab(MOYA_AI_ADDON_ID);
     try {
       const { job } = await providerApiClient.enqueueAnalysisJob({
         bookId,
@@ -3010,7 +3205,7 @@ export default function App() {
     if (!execution) return;
     setReaderMode('analysis');
     setAddonOpen(true);
-    setAddonTab('ai');
+    setAddonTab(MOYA_AI_ADDON_ID);
     try {
       const { job } = await providerApiClient.enqueueAnalysisJob({
         bookId,
@@ -3079,7 +3274,7 @@ export default function App() {
     if (!execution) return;
     setReaderMode('analysis');
     setAddonOpen(true);
-    setAddonTab('ai');
+    setAddonTab(MOYA_AI_ADDON_ID);
     try {
       const { job } = await providerApiClient.enqueueAnalysisJob({
         bookId,
@@ -3159,7 +3354,7 @@ export default function App() {
     setSelectedNovel(nextNovel);
     setReaderMode('analysis');
     setAddonOpen(true);
-    setAddonTab('ai');
+    setAddonTab(MOYA_AI_ADDON_ID);
     showToast('로컬 Mock 분석 결과를 표시했습니다. 외부 요청은 없습니다.', 'success');
   };
 
@@ -3168,7 +3363,7 @@ export default function App() {
     setCorrectionSpeakerDraft(segment.speakerId);
     setCorrectionEmotionDraft(segment.emotion || 'neutral');
     setAddonOpen(true);
-    setAddonTab('ai');
+    setAddonTab(MOYA_AI_ADDON_ID);
     setReaderMode('correction');
   };
 
@@ -4153,8 +4348,8 @@ export default function App() {
         );
         if (activeBookAIWorkflow?.id) {
           try {
-            if (!bookAnalysisWorkflowGateway?.refreshTTSCacheReadiness) return;
-            const workflow = await bookAnalysisWorkflowGateway.refreshTTSCacheReadiness(
+            if (!bookAITTSPreparationRunner?.refreshCacheReadiness) return;
+            const workflow = await bookAITTSPreparationRunner.refreshCacheReadiness(
               activeBookAIWorkflow.id,
               operation.controller.signal,
             );
@@ -4257,7 +4452,7 @@ export default function App() {
       return;
     }
     if (item.recommendedAction === 'review_labels') {
-      setAddonTab('ai');
+      setAddonTab(MOYA_AI_ADDON_ID);
       const navigation = await navigateBookAIWorkflowReviewTarget(item, 'correction');
       const target = navigation.chapterChanged
         ? undefined
@@ -4275,7 +4470,7 @@ export default function App() {
       return;
     }
     if (item.recommendedAction === 'inspect_failed_job') {
-      setAddonTab('ai');
+      setAddonTab(MOYA_AI_ADDON_ID);
       await navigateBookAIWorkflowReviewTarget(item, 'analysis');
       const failedJob = activeBookAIWorkflow?.jobs.find((link) => link.providerJobId === item.providerJobId)?.job;
       if (failedJob) analysisExecutionController.showJob(failedJob);
@@ -4287,7 +4482,7 @@ export default function App() {
       item.recommendedAction === 'retry_same_request' ||
       item.recommendedAction === 'resume_after_fix'
     ) {
-      setAddonTab('ai');
+      setAddonTab(MOYA_AI_ADDON_ID);
       void retryBookAIWorkflow();
     }
   };
@@ -5217,6 +5412,7 @@ export default function App() {
 
   const appBackLayers: readonly AppBackLayer[] = [
     { id: 'import', open: importFeature.isOpen, dismiss: importFeature.close },
+    { id: 'external-sources', open: externalSourceFeature.open, dismiss: externalSourceFeature.close },
     {
       id: 'chapter-structure',
       open: chapterStructureFeature.open,
@@ -5296,11 +5492,17 @@ export default function App() {
   readerScreenHandle.setActions({
     openChapter: (chapter, options = {}) => bookWorkspace.openChapter(chapter, { ...options, novel: selectedNovel }),
     returnToChapters: bookWorkspace.returnToChapters,
-    openSettings: readerSettingsController.openPanel,
+    openSettings: openReaderSettings,
     openSync: () => setSyncPanelOpen(true),
     toggleAddon: () => setAddonOpen((open) => !open),
     openAddon: (tab: AddonTab) => {
-      setAddonTab(tab);
+      setAddonTab(
+        tab === 'info'
+          ? extensionRuntime.trustedExtensions.getReaderAddon(READER_INFO_ADDON_ID)
+            ? READER_INFO_ADDON_ID
+            : 'outline'
+          : tab,
+      );
       setAddonOpen(true);
       revealChrome();
     },
@@ -5354,6 +5556,283 @@ export default function App() {
     notify: showToast,
   });
 
+  const activeTrustedReaderAddon = extensionRuntime.trustedExtensions.getReaderAddon(addonTab);
+  const aiWorkflowPanelData: AIWorkflowPanelData = {
+    stageLabel: activeBookAIWorkflow ? bookAIWorkflowStageLabel(activeBookAIWorkflow.stage) : '계획 대기',
+    graphBundleCount: activeBookAIWorkflowPlan?.bundleWindows.length ?? activeBookAIWorkflowProgress.totalBundleWindows,
+    labelingWindowCount:
+      activeBookAIWorkflowPlan?.labelingWindows.length ?? activeBookAIWorkflowProgress.totalLabelingWindows,
+    succeededJobCount: activeBookAIWorkflowProgress.childSucceeded,
+    pendingJobCount: activeBookAIWorkflowProgress.childPending,
+    failedJobCount: activeBookAIWorkflowProgress.childFailed,
+    labelingBudget: activeBookAIWorkflowPlan?.labelingBudget
+      ? {
+          targetCharacters: activeBookAIWorkflowPlan.labelingBudget.targetLabelingCharacters,
+          contextWindowTokens: activeBookAIWorkflowPlan.labelingBudget.capability.contextWindowTokens,
+          reservedOutputTokens: activeBookAIWorkflowPlan.labelingBudget.capability.maxOutputTokens,
+          estimated: activeBookAIWorkflowPlan.labelingBudget.capability.tokenCountMode === 'estimated_characters',
+        }
+      : undefined,
+    workflow: activeBookAIWorkflow
+      ? {
+          status: activeBookAIWorkflow.status,
+          stage: activeBookAIWorkflow.stage,
+          jobCount: activeBookAIWorkflow.jobs.length,
+          modelId: activeBookAIWorkflow.modelId,
+          errorMessage: activeBookAIWorkflow.errorMessage,
+        }
+      : undefined,
+    compactSpeaker: bookAIWorkflowCompactSpeakerView(activeBookAIWorkflow),
+    labelVoiceReadiness: activeBookAIWorkflowTtsReadiness
+      ? {
+          ok: activeBookAIWorkflowTtsReadiness.ok === true,
+          segmentCount: progressNumber(activeBookAIWorkflowTtsReadinessMetrics, 'segmentCount') ?? 0,
+          missingParagraphCount:
+            progressNumber(activeBookAIWorkflowTtsReadinessMetrics, 'missingPlannedParagraphCount') ?? 0,
+          missingVoiceCount:
+            progressNumber(activeBookAIWorkflowTtsReadinessMetrics, 'missingCharacterVoiceProfileCount') ?? 0,
+          unknownPercent: Math.round(
+            (progressNumber(activeBookAIWorkflowTtsReadinessMetrics, 'unknownSegmentRatio') ?? 0) * 100,
+          ),
+        }
+      : undefined,
+    cacheReadiness: activeBookAIWorkflowTtsCacheReadiness
+      ? {
+          ok: activeBookAIWorkflowTtsCacheReadiness.ok === true,
+          cachedSegmentCount: progressNumber(activeBookAIWorkflowTtsCacheReadinessMetrics, 'cachedSegmentCount') ?? 0,
+          cacheableSegmentCount:
+            progressNumber(activeBookAIWorkflowTtsCacheReadinessMetrics, 'cacheableSegmentCount') ?? 0,
+          missingCachedSegmentCount:
+            progressNumber(activeBookAIWorkflowTtsCacheReadinessMetrics, 'missingCachedSegmentCount') ?? 0,
+          cacheItemCount: progressNumber(activeBookAIWorkflowTtsCacheReadinessMetrics, 'cacheItemCount') ?? 0,
+          cachedByteSizeLabel: formatBytes(
+            progressNumber(activeBookAIWorkflowTtsCacheReadinessMetrics, 'cachedByteSize') ?? 0,
+          ),
+        }
+      : undefined,
+    labelVoiceReady: bookAIWorkflowLabelVoiceReady,
+    cacheReady: bookAIWorkflowCacheReady,
+    reviewItems: activeBookAIWorkflowReviewItems,
+    reviewWorkspace: {
+      available: analysisReviewController.available,
+      reviews: analysisReviewController.reviews,
+      loading: analysisReviewController.loading,
+      busyReviewId: analysisReviewController.busyReviewId,
+      error: analysisReviewController.error,
+    },
+    workflowRuntime: bookAITTSPreparationRunner?.runtime,
+    error: bookAIWorkflowError,
+    retryDisabled: bookAIWorkflowRetryDisabled,
+    cancelDisabled: bookAIWorkflowCancelDisabled,
+    startDisabled: bookAIWorkflowDisabled || bookAIWorkflowBusy,
+    refreshDisabled: !bookAIWorkflowAvailable || !selectedNovel || bookAIWorkflowLoading,
+    warmupDisabled: bookAIWorkflowWarmupDisabled,
+    cacheRefreshDisabled: bookAIWorkflowCacheRefreshDisabled,
+  };
+  const aiWorkflowPanelActions: AIAddonPanelActions['workflow'] = {
+    retry: retryBookAIWorkflow,
+    cancel: cancelBookAIWorkflow,
+    start: startBookAIWorkflow,
+    refresh: refreshBookAIWorkflowStatus,
+    warmupBookCache: () => {
+      setAddonTab('tts');
+      return warmupHostedTTSCache('book');
+    },
+    refreshCacheReadiness: refreshBookAIWorkflowTTSCacheReadiness,
+    runReviewAction: runBookAIWorkflowReviewAction,
+    refreshReviews: analysisReviewController.refresh,
+    saveReviewDraft: analysisReviewController.saveDraft,
+    approveReview: analysisReviewController.approve,
+    rejectReview: analysisReviewController.reject,
+  };
+  const trustedAnalysisWorkflowHostContext: TrustedAnalysisWorkflowHostContext = {
+    target: selectedNovel
+      ? {
+          bookId: selectedNovel.id,
+          contentRevisionId: selectedNovel.activeContentRevisionId,
+          chapterId: currentChapter?.id,
+        }
+      : undefined,
+    bookAITTS: {
+      enabled: Boolean(bookAITTSPreparationRunner && selectedNovel),
+      data: aiWorkflowPanelData,
+      actions: aiWorkflowPanelActions,
+    },
+    characterBundleAnalysis: {
+      enabled: !bundleAnalysisDisabled,
+      run: () => (desktopProviderMode ? runDesktopBundleAnalysisJob() : runRemoteBundleAnalysisJob()),
+    },
+  };
+  const managedBookWorkflowSurface =
+    managedBookWorkflow.active && managedBookWorkflow.active.isEnabled?.(trustedAnalysisWorkflowHostContext) !== false
+      ? extensionRuntime.trustedExtensions.renderAnalysisWorkflow(
+          managedBookWorkflow.active.descriptor.id,
+          trustedAnalysisWorkflowHostContext,
+        )
+      : undefined;
+  const managedBookWorkflowSwitchDisabled =
+    bookAIWorkflowLoading || Boolean(activeBookAIWorkflow && !isTerminalBookAIWorkflow(activeBookAIWorkflow));
+  const selectBookAIWorkflow = (workflowId: ExtensionContributionId) => {
+    if (!selectedNovel) return;
+    if (managedBookWorkflowSwitchDisabled) {
+      showToast('진행 중인 AI 분석을 취소하거나 완료한 뒤 분석 방식을 변경해 주세요.', 'warning');
+      return;
+    }
+    updateSettings((previous) => ({
+      ...previous,
+      aiWorkflows: selectManagedBookWorkflow(previous.aiWorkflows, selectedNovel.id, workflowId),
+    }));
+  };
+  const runTrustedAnalysisWorkflow = async (workflowId: ExtensionContributionId): Promise<void> => {
+    try {
+      await extensionRuntime.trustedExtensions.executeAnalysisWorkflow(workflowId, trustedAnalysisWorkflowHostContext);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      showToast(`AI workflow를 실행하지 못했습니다: ${message}`, 'danger');
+    }
+  };
+  const aiReaderAddonSurface = (
+    <Suspense fallback={<div className="panel-body" aria-busy="true" />}>
+      <AIAddonPanel
+        data={{
+          workflow: aiWorkflowPanelData,
+          analysis: {
+            showDeveloperTools: SHOW_DEVELOPER_AI_TOOLS,
+            desktopProviderMode,
+            desktopAnalysisDisabled,
+            remoteAnalysisDisabled,
+            labelRepairDisabled,
+            graphMergeDisabled,
+            segmentCount: segments.length,
+            bundleStatusLabel: lastBundleAnalysisSummary.discoveredGraph
+              ? `후보 ${lastBundleAnalysisSummary.discoveredCharacterCount ?? 0}명 · 관계 ${lastBundleAnalysisSummary.discoveredRelationCount ?? 0}개`
+              : `현재 화부터 ${bundleAnalysisChapters.length}화`,
+            providerStatusLabel: remoteAnalysisRunning
+              ? `${remoteAnalysisJob?.stage ?? remoteAnalysisJob?.status ?? 'queued'}`
+              : llmProviderBlocked && selectedLLMProvider
+                ? providerReadinessLabel(selectedLLMProvider)
+                : providerSettingsMode
+                  ? selectedLLMLabel
+                  : SHOW_DEVELOPER_AI_TOOLS
+                    ? 'Mock only'
+                    : 'provider 미연결',
+            remoteJob: remoteAnalysisJob,
+            providers: llmProviders,
+            providerDraft: llmDraft,
+            workflows: trustedAnalysisWorkflows
+              .filter((workflow) => (workflow.descriptor.kind ?? 'action') === 'action')
+              .map((workflow) => ({
+                ...workflow.descriptor,
+                disabled: workflow.isEnabled?.(trustedAnalysisWorkflowHostContext) === false,
+              })),
+          },
+          graphReview:
+            graphReview || graphKnowledgeData
+              ? {
+                  includedCharacterCount: graphReview?.reviewedGraph.characters.length ?? characters.length,
+                  candidateCount: graphReview?.candidates.length ?? 0,
+                  newCandidateCount: graphReview?.newCandidateCount ?? 0,
+                  duplicateCandidateCount: graphReview?.duplicateCandidateCount ?? 0,
+                  lowConfidenceCount: graphReview?.lowConfidenceCount ?? 0,
+                  relationCount: graphReview?.reviewedGraph.relations.length ?? 0,
+                  invalidRelationCount: graphReview?.invalidRelationCount ?? 0,
+                  parseError: graphReview?.parseError,
+                  candidates: graphReviewCandidates.map((candidate) => ({
+                    id: candidate.character.id,
+                    name: candidate.character.canonicalName,
+                    confidence: candidate.character.confidence,
+                    detailLabel: graphCandidateDetailLabel(candidate),
+                    excluded: candidate.excluded,
+                  })),
+                  knowledge: graphKnowledgeData,
+                }
+              : undefined,
+          correction: {
+            segmentCount: segments.length,
+            reviewItems: correctionReviewItems.map((item) => ({
+              segment: item.segment,
+              speakerLabel: speakerLabel(item.segment, characters),
+              reasons: item.reasons,
+              snippet: segmentSnippet(item.segment),
+            })),
+            readerMode,
+            characters,
+            target: correctionTarget,
+            targetSnippet: correctionTarget ? segmentSnippet(correctionTarget) : undefined,
+            speakerDraft: correctionSpeakerDraft,
+            speakerOptions: correctionSpeakerOptions,
+            candidateSpeakerOptions:
+              correctionTarget?.candidateSpeakers.map((speakerId) => ({
+                id: speakerId,
+                label: speakerIdLabel(speakerId, characters),
+              })) ?? [],
+            emotionDraft: correctionEmotionDraft,
+            emotionOptions: correctionEmotionOptions,
+            scope: correctionScope,
+          },
+        }}
+        actions={{
+          workflow: aiWorkflowPanelActions,
+          analysis: {
+            runMock: runMockAnalysis,
+            runDesktop: runDesktopAnalysisJob,
+            runRemote: runRemoteAnalysisJob,
+            repairLabels: () => (desktopProviderMode ? runDesktopLabelRepairJob() : runRemoteLabelRepairJob()),
+            runWorkflow: runTrustedAnalysisWorkflow,
+            mergeGraph: () => (desktopProviderMode ? runDesktopGraphMergeJob() : runRemoteGraphMergeJob()),
+          },
+          graphReview: {
+            toggleCandidate: toggleGraphReviewCandidate,
+            confirmFact: (factId) => graphKnowledgeController.decideFact(factId, 'active'),
+            rejectFact: (factId) => graphKnowledgeController.decideFact(factId, 'rejected'),
+            mergeCandidate: graphKnowledgeController.mergeCandidate,
+            splitFact: graphKnowledgeController.splitFact,
+          },
+          correction: {
+            selectSegment: (segment) => {
+              selectCorrectionSegment(segment);
+              return scrollToParagraph(segment.paragraphId);
+            },
+            setReaderMode,
+            setSpeakerDraft: setCorrectionSpeakerDraft,
+            setEmotionDraft: setCorrectionEmotionDraft,
+            setScope: setCorrectionScope,
+            apply: applyCorrectionDraft,
+            close: () => setCorrectionTarget(undefined),
+          },
+        }}
+        managedWorkflow={{
+          active: managedBookWorkflow.active?.descriptor,
+          options: managedBookWorkflow.available.map(({ descriptor }) => descriptor),
+          surface: managedBookWorkflowSurface,
+          usedFallback: managedBookWorkflow.usedFallback,
+          switchDisabled: managedBookWorkflowSwitchDisabled,
+          switchDisabledReason: managedBookWorkflowSwitchDisabled
+            ? '진행 중인 분석을 취소하거나 완료한 뒤 변경할 수 있습니다.'
+            : undefined,
+          select: selectBookAIWorkflow,
+        }}
+        controller={{ providerSettings: providerSettingsPanelController }}
+      />
+    </Suspense>
+  );
+  const trustedReaderAddonHostContext: TrustedReaderAddonHostContext | undefined =
+    selectedNovel && currentChapter
+      ? {
+          readerInfo: {
+            novel: selectedNovel,
+            chapter: currentChapter,
+            projection: bookWorkspaceProjection,
+            annotationCount: bookmarks.length + highlights.length + notes.length,
+            syncLabel: syncStatusLabel(syncState),
+            returnToChapters: bookWorkspace.returnToChapters,
+            openSettings: openReaderSettings,
+            openSync: () => setSyncPanelOpen(true),
+          },
+          aiPanel: aiReaderAddonSurface,
+        }
+      : undefined;
+
   return (
     <div className="app-shell" style={styleVars}>
       <BookWorkspaceScreens
@@ -5365,16 +5844,19 @@ export default function App() {
         sync={{ label: syncStatusLabel(syncState), tone: syncTone }}
         annotationTotals={{ bookmarks: bookmarks.length, highlights: highlights.length, notes: notes.length }}
         openSync={() => setSyncPanelOpen(true)}
-        openSettings={readerSettingsController.openPanel}
+        openSettings={openReaderSettings}
         openBackup={backupFeature.openPanel}
         openImport={importFeature.open}
         openLibraryFolders={libraryFolderFeature.show}
+        externalSources={externalSourceFeature}
+        openExternalSourceSettings={openExternalSourceSettings}
         addSample={addSample}
         exportSource={exportBookSource}
         reselectSource={reselectBookSource}
         reconstructSource={reconstructBookSource}
         openChapterStructure={chapterStructureFeature.openPanel}
         libraryManagement={libraryManagement}
+        bookEnrichment={bookEnrichment}
       />
 
       {view === 'reader' && selectedNovel && currentChapter && readerScreenModel && (
@@ -5383,20 +5865,14 @@ export default function App() {
             <ReaderScreen model={readerScreenModel} screenHandle={readerScreenHandle} />
           </Suspense>
           {addonOpen && (
-            <ReaderAddonShell activeTab={addonTab} setActiveTab={setAddonTab} close={() => setAddonOpen(false)}>
-              {addonTab === 'info' && (
-                <Suspense fallback={null}>
-                  <BookWorkspaceInfoPanel
-                    novel={selectedNovel}
-                    chapter={currentChapter}
-                    projection={bookWorkspaceProjection}
-                    annotationCount={bookmarks.length + highlights.length + notes.length}
-                    syncLabel={syncStatusLabel(syncState)}
-                    returnToChapters={bookWorkspace.returnToChapters}
-                    openSettings={readerSettingsController.openPanel}
-                    openSync={() => setSyncPanelOpen(true)}
-                  />
-                </Suspense>
+            <ReaderAddonShell
+              activeTab={addonTab}
+              tabs={readerAddonTabs}
+              setActiveTab={setAddonTab}
+              close={() => setAddonOpen(false)}
+            >
+              {activeTrustedReaderAddon && trustedReaderAddonHostContext && (
+                <Suspense fallback={null}>{activeTrustedReaderAddon.render(trustedReaderAddonHostContext)}</Suspense>
               )}
 
               {addonTab === 'outline' && (
@@ -5506,225 +5982,6 @@ export default function App() {
                 </Suspense>
               )}
 
-              {addonTab === 'ai' && (
-                <Suspense fallback={<div className="panel-body" aria-busy="true" />}>
-                  <AIAddonPanel
-                    data={{
-                      workflow: {
-                        stageLabel: activeBookAIWorkflow
-                          ? bookAIWorkflowStageLabel(activeBookAIWorkflow.stage)
-                          : '계획 대기',
-                        graphBundleCount:
-                          activeBookAIWorkflowPlan?.bundleWindows.length ??
-                          activeBookAIWorkflowProgress.totalBundleWindows,
-                        labelingWindowCount:
-                          activeBookAIWorkflowPlan?.labelingWindows.length ??
-                          activeBookAIWorkflowProgress.totalLabelingWindows,
-                        succeededJobCount: activeBookAIWorkflowProgress.childSucceeded,
-                        pendingJobCount: activeBookAIWorkflowProgress.childPending,
-                        failedJobCount: activeBookAIWorkflowProgress.childFailed,
-                        labelingBudget: activeBookAIWorkflowPlan?.labelingBudget
-                          ? {
-                              targetCharacters: activeBookAIWorkflowPlan.labelingBudget.targetLabelingCharacters,
-                              contextWindowTokens:
-                                activeBookAIWorkflowPlan.labelingBudget.capability.contextWindowTokens,
-                              reservedOutputTokens: activeBookAIWorkflowPlan.labelingBudget.capability.maxOutputTokens,
-                              estimated:
-                                activeBookAIWorkflowPlan.labelingBudget.capability.tokenCountMode ===
-                                'estimated_characters',
-                            }
-                          : undefined,
-                        workflow: activeBookAIWorkflow
-                          ? {
-                              status: activeBookAIWorkflow.status,
-                              stage: activeBookAIWorkflow.stage,
-                              jobCount: activeBookAIWorkflow.jobs.length,
-                              modelId: activeBookAIWorkflow.modelId,
-                              errorMessage: activeBookAIWorkflow.errorMessage,
-                            }
-                          : undefined,
-                        compactSpeaker: bookAIWorkflowCompactSpeakerView(activeBookAIWorkflow),
-                        labelVoiceReadiness: activeBookAIWorkflowTtsReadiness
-                          ? {
-                              ok: activeBookAIWorkflowTtsReadiness.ok === true,
-                              segmentCount:
-                                progressNumber(activeBookAIWorkflowTtsReadinessMetrics, 'segmentCount') ?? 0,
-                              missingParagraphCount:
-                                progressNumber(
-                                  activeBookAIWorkflowTtsReadinessMetrics,
-                                  'missingPlannedParagraphCount',
-                                ) ?? 0,
-                              missingVoiceCount:
-                                progressNumber(
-                                  activeBookAIWorkflowTtsReadinessMetrics,
-                                  'missingCharacterVoiceProfileCount',
-                                ) ?? 0,
-                              unknownPercent: Math.round(
-                                (progressNumber(activeBookAIWorkflowTtsReadinessMetrics, 'unknownSegmentRatio') ?? 0) *
-                                  100,
-                              ),
-                            }
-                          : undefined,
-                        cacheReadiness: activeBookAIWorkflowTtsCacheReadiness
-                          ? {
-                              ok: activeBookAIWorkflowTtsCacheReadiness.ok === true,
-                              cachedSegmentCount:
-                                progressNumber(activeBookAIWorkflowTtsCacheReadinessMetrics, 'cachedSegmentCount') ?? 0,
-                              cacheableSegmentCount:
-                                progressNumber(activeBookAIWorkflowTtsCacheReadinessMetrics, 'cacheableSegmentCount') ??
-                                0,
-                              missingCachedSegmentCount:
-                                progressNumber(
-                                  activeBookAIWorkflowTtsCacheReadinessMetrics,
-                                  'missingCachedSegmentCount',
-                                ) ?? 0,
-                              cacheItemCount:
-                                progressNumber(activeBookAIWorkflowTtsCacheReadinessMetrics, 'cacheItemCount') ?? 0,
-                              cachedByteSizeLabel: formatBytes(
-                                progressNumber(activeBookAIWorkflowTtsCacheReadinessMetrics, 'cachedByteSize') ?? 0,
-                              ),
-                            }
-                          : undefined,
-                        labelVoiceReady: bookAIWorkflowLabelVoiceReady,
-                        cacheReady: bookAIWorkflowCacheReady,
-                        reviewItems: activeBookAIWorkflowReviewItems,
-                        reviewWorkspace: {
-                          available: analysisReviewController.available,
-                          reviews: analysisReviewController.reviews,
-                          loading: analysisReviewController.loading,
-                          busyReviewId: analysisReviewController.busyReviewId,
-                          error: analysisReviewController.error,
-                        },
-                        workflowRuntime: bookAnalysisWorkflowGateway?.runtime,
-                        error: bookAIWorkflowError,
-                        retryDisabled: bookAIWorkflowRetryDisabled,
-                        cancelDisabled: bookAIWorkflowCancelDisabled,
-                        startDisabled: bookAIWorkflowDisabled || bookAIWorkflowBusy,
-                        refreshDisabled: !bookAIWorkflowAvailable || !selectedNovel || bookAIWorkflowLoading,
-                        warmupDisabled: bookAIWorkflowWarmupDisabled,
-                        cacheRefreshDisabled: bookAIWorkflowCacheRefreshDisabled,
-                      },
-                      analysis: {
-                        showDeveloperTools: SHOW_DEVELOPER_AI_TOOLS,
-                        desktopProviderMode,
-                        desktopAnalysisDisabled,
-                        remoteAnalysisDisabled,
-                        labelRepairDisabled,
-                        bundleAnalysisDisabled,
-                        graphMergeDisabled,
-                        segmentCount: segments.length,
-                        bundleStatusLabel: lastBundleAnalysisSummary.discoveredGraph
-                          ? `후보 ${lastBundleAnalysisSummary.discoveredCharacterCount ?? 0}명 · 관계 ${lastBundleAnalysisSummary.discoveredRelationCount ?? 0}개`
-                          : `현재 화부터 ${bundleAnalysisChapters.length}화`,
-                        providerStatusLabel: remoteAnalysisRunning
-                          ? `${remoteAnalysisJob?.stage ?? remoteAnalysisJob?.status ?? 'queued'}`
-                          : llmProviderBlocked && selectedLLMProvider
-                            ? providerReadinessLabel(selectedLLMProvider)
-                            : providerSettingsMode
-                              ? selectedLLMLabel
-                              : SHOW_DEVELOPER_AI_TOOLS
-                                ? 'Mock only'
-                                : 'provider 미연결',
-                        remoteJob: remoteAnalysisJob,
-                        providers: llmProviders,
-                        providerDraft: llmDraft,
-                      },
-                      graphReview:
-                        graphReview || graphKnowledgeData
-                          ? {
-                              includedCharacterCount: graphReview?.reviewedGraph.characters.length ?? characters.length,
-                              candidateCount: graphReview?.candidates.length ?? 0,
-                              newCandidateCount: graphReview?.newCandidateCount ?? 0,
-                              duplicateCandidateCount: graphReview?.duplicateCandidateCount ?? 0,
-                              lowConfidenceCount: graphReview?.lowConfidenceCount ?? 0,
-                              relationCount: graphReview?.reviewedGraph.relations.length ?? 0,
-                              invalidRelationCount: graphReview?.invalidRelationCount ?? 0,
-                              parseError: graphReview?.parseError,
-                              candidates: graphReviewCandidates.map((candidate) => ({
-                                id: candidate.character.id,
-                                name: candidate.character.canonicalName,
-                                confidence: candidate.character.confidence,
-                                detailLabel: graphCandidateDetailLabel(candidate),
-                                excluded: candidate.excluded,
-                              })),
-                              knowledge: graphKnowledgeData,
-                            }
-                          : undefined,
-                      correction: {
-                        segmentCount: segments.length,
-                        reviewItems: correctionReviewItems.map((item) => ({
-                          segment: item.segment,
-                          speakerLabel: speakerLabel(item.segment, characters),
-                          reasons: item.reasons,
-                          snippet: segmentSnippet(item.segment),
-                        })),
-                        readerMode,
-                        characters,
-                        target: correctionTarget,
-                        targetSnippet: correctionTarget ? segmentSnippet(correctionTarget) : undefined,
-                        speakerDraft: correctionSpeakerDraft,
-                        speakerOptions: correctionSpeakerOptions,
-                        candidateSpeakerOptions:
-                          correctionTarget?.candidateSpeakers.map((speakerId) => ({
-                            id: speakerId,
-                            label: speakerIdLabel(speakerId, characters),
-                          })) ?? [],
-                        emotionDraft: correctionEmotionDraft,
-                        emotionOptions: correctionEmotionOptions,
-                        scope: correctionScope,
-                      },
-                    }}
-                    actions={{
-                      workflow: {
-                        retry: retryBookAIWorkflow,
-                        cancel: cancelBookAIWorkflow,
-                        start: startBookAIWorkflow,
-                        refresh: refreshBookAIWorkflowStatus,
-                        warmupBookCache: () => {
-                          setAddonTab('tts');
-                          return warmupHostedTTSCache('book');
-                        },
-                        refreshCacheReadiness: refreshBookAIWorkflowTTSCacheReadiness,
-                        runReviewAction: runBookAIWorkflowReviewAction,
-                        refreshReviews: analysisReviewController.refresh,
-                        saveReviewDraft: analysisReviewController.saveDraft,
-                        approveReview: analysisReviewController.approve,
-                        rejectReview: analysisReviewController.reject,
-                      },
-                      analysis: {
-                        runMock: runMockAnalysis,
-                        runDesktop: runDesktopAnalysisJob,
-                        runRemote: runRemoteAnalysisJob,
-                        repairLabels: () =>
-                          desktopProviderMode ? runDesktopLabelRepairJob() : runRemoteLabelRepairJob(),
-                        analyzeBundle: () =>
-                          desktopProviderMode ? runDesktopBundleAnalysisJob() : runRemoteBundleAnalysisJob(),
-                        mergeGraph: () => (desktopProviderMode ? runDesktopGraphMergeJob() : runRemoteGraphMergeJob()),
-                      },
-                      graphReview: {
-                        toggleCandidate: toggleGraphReviewCandidate,
-                        confirmFact: (factId) => graphKnowledgeController.decideFact(factId, 'active'),
-                        rejectFact: (factId) => graphKnowledgeController.decideFact(factId, 'rejected'),
-                        mergeCandidate: graphKnowledgeController.mergeCandidate,
-                        splitFact: graphKnowledgeController.splitFact,
-                      },
-                      correction: {
-                        selectSegment: (segment) => {
-                          selectCorrectionSegment(segment);
-                          return scrollToParagraph(segment.paragraphId);
-                        },
-                        setReaderMode,
-                        setSpeakerDraft: setCorrectionSpeakerDraft,
-                        setEmotionDraft: setCorrectionEmotionDraft,
-                        setScope: setCorrectionScope,
-                        apply: applyCorrectionDraft,
-                        close: () => setCorrectionTarget(undefined),
-                      },
-                    }}
-                    controller={{ providerSettings: providerSettingsPanelController }}
-                  />
-                </Suspense>
-              )}
               {addonTab === 'notes' && (
                 <Suspense fallback={<div className="panel-body" aria-busy="true" />}>
                   <AnnotationsPanel controller={annotationsController} />
@@ -5913,6 +6170,9 @@ export default function App() {
             personalizationRepository={personalizationRepository}
             platformRuntime={platformRuntime}
             providerExecutionRuntime={providerExecutionRuntime}
+            extensions={extensionSnapshots}
+            externalSources={externalSourceFeature}
+            initialTab={settingsInitialTab}
             updateProfile={changeReadingProfile}
             setBookOverrideEnabled={setReadingBookOverrideEnabled}
             resetProfile={() =>
@@ -5928,6 +6188,20 @@ export default function App() {
                 gestureBindings: { ...previous.gestureBindings, ...patch },
               }))
             }
+            setExtensionEnabled={(extensionId, enabled) => {
+              if (
+                extensionId === MOYA_AI_EXTENSION_ID &&
+                !enabled &&
+                activeBookAIWorkflow &&
+                !isTerminalBookAIWorkflow(activeBookAIWorkflow)
+              ) {
+                showToast('진행 중인 AI 작업을 취소하거나 완료한 뒤 Moya AI를 꺼 주세요.', 'warning');
+                return;
+              }
+              if (!extensionRuntime.manager.setEnabled(extensionId, enabled)) {
+                showToast('익스텐션 상태를 변경하지 못했습니다.', 'warning');
+              }
+            }}
           />
         </Suspense>
       )}
@@ -5950,7 +6224,10 @@ export default function App() {
         addonOpen={view === 'reader' && addonOpen}
         onDismiss={dismissToast}
       />
-      <ImportFeatureHost controller={importFeature} showFloatingTrigger={view === 'library' || view === 'chapters'} />
+      <ImportFeatureHost
+        controller={importFeature}
+        showFloatingTrigger={(view === 'library' && !externalSourceFeature.open) || view === 'chapters'}
+      />
       {libraryFolderFeature.open && (
         <Suspense fallback={null}>
           <LibraryFolderPanel controller={libraryFolderFeature} />

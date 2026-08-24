@@ -5,6 +5,8 @@ import { normalizeCoverImage } from '../../services/cover-image';
 import { Dialog } from '../../shared/ui/Dialog';
 import { BookCover } from './BookCover';
 import type { CoverDraftAction, LibraryManagementController } from './useLibraryManagementController';
+import { BookEnrichmentInbox } from '../book-enrichment/BookEnrichmentInbox';
+import type { BookEnrichmentController } from '../book-enrichment/useBookEnrichmentController';
 
 function sameIds(left: ReadonlySet<string>, right: ReadonlySet<string>): boolean {
   return left.size === right.size && [...left].every((value) => right.has(value));
@@ -22,8 +24,10 @@ function MetadataEditor({
   controller,
   onDirtyChange,
   onRequestClose,
+  bookEnrichment,
 }: {
   controller: LibraryManagementController;
+  bookEnrichment: BookEnrichmentController;
   onDirtyChange(dirty: boolean): void;
   onRequestClose(): void;
 }) {
@@ -211,6 +215,12 @@ function MetadataEditor({
       </section>
 
       <div className="metadata-fields">
+        <BookEnrichmentInbox
+          book={book}
+          controller={bookEnrichment}
+          manualDraftDirty={dirty}
+          onApplied={controller.closePanel}
+        />
         <section className="metadata-section metadata-basic-section">
           <div className="metadata-section-heading">
             <h2>기본 정보</h2>
@@ -424,7 +434,13 @@ function ShelfEditor({ controller }: { controller: LibraryManagementController }
   );
 }
 
-export default function LibraryManagementPanel({ controller }: { controller: LibraryManagementController }) {
+export default function LibraryManagementPanel({
+  controller,
+  bookEnrichment,
+}: {
+  controller: LibraryManagementController;
+  bookEnrichment: BookEnrichmentController;
+}) {
   const [metadataDirty, setMetadataDirty] = useState(false);
   useEffect(() => setMetadataDirty(false), [controller.panel]);
   if (!controller.panel) return null;
@@ -447,6 +463,7 @@ export default function LibraryManagementPanel({ controller }: { controller: Lib
         <MetadataEditor
           key={controller.panel.book.id}
           controller={controller}
+          bookEnrichment={bookEnrichment}
           onDirtyChange={setMetadataDirty}
           onRequestClose={requestClose}
         />

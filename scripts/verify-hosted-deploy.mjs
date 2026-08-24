@@ -12,15 +12,20 @@ const files = {
   compose: read('compose.yaml'),
   composeLocalTTS: read('compose.local-tts.yaml'),
   composePublic: read('compose.public.yaml'),
+  composeSuwayomi: read('compose.suwayomi.yaml'),
   dockerignore: read('.dockerignore'),
   localTTSDockerfile: read('deploy/local-tts.Dockerfile'),
   localTTSServer: read('deploy/local-tts/server.py'),
   webDockerfile: read('deploy/web.Dockerfile'),
+  webRuntimeConfig: read('deploy/web-runtime-config.sh'),
   serverDockerfile: read('deploy/server.Dockerfile'),
   nginx: read('deploy/nginx.conf'),
   hostNginxExample: read('deploy/host-nginx.example.conf'),
   envExample: read('.env.example'),
+  indexHtml: read('index.html'),
   packageJson: read('package.json'),
+  publicRuntimeConfig: read('public/runtime-config.js'),
+  serviceWorker: read('public/sw.js'),
   serverSchema: read('apps/server/src/db/schema.sql'),
   hostedE2E: read('scripts/hosted-e2e.mjs'),
   liveSmoke: read('scripts/hosted-live-smoke.mjs'),
@@ -31,6 +36,7 @@ const files = {
   serverUploadImport: read('src/services/import/server-upload-import-service.ts'),
   composeGuideKo: read('docs/operations/docker-compose-guide-ko.md'),
   composeDeployment: read('docs/operations/docker-compose-deployment.md'),
+  npmWireGuardGuide: read('docs/operations/nginx-proxy-manager-wireguard.md'),
 };
 
 const checks = [];
@@ -90,6 +96,10 @@ const volumes = blockAfter(files.compose, 'volumes:');
 const commonEnvironment = blockAfter(files.compose, 'x-server-common-environment: &server-common-environment');
 const serverVolumes = blockAfter(files.compose, 'x-server-volumes: &server-volumes');
 const localTTS = blockAfter(files.composeLocalTTS, '  tts-model:');
+const suwayomiWeb = blockAfter(files.composeSuwayomi, '  web:');
+const suwayomi = blockAfter(files.composeSuwayomi, '  suwayomi:');
+const suwayomiNetworks = blockAfter(files.composeSuwayomi, 'networks:');
+const suwayomiVolumes = blockAfter(files.composeSuwayomi, 'volumes:');
 
 check('web uses deploy/web.Dockerfile', includes(web, 'dockerfile: deploy/web.Dockerfile'));
 check(
@@ -98,6 +108,16 @@ check(
 );
 check('web waits for healthy api', matches(web, /api:\s*\n\s+condition: service_healthy/));
 check('web restarts unless stopped', includes(web, 'restart: unless-stopped'));
+for (const key of [
+  'MOYA_DROPBOX_APP_KEY',
+  'MOYA_DROPBOX_SOURCE_APP_KEY',
+  'MOYA_GOOGLE_DRIVE_CLIENT_ID',
+  'MOYA_GOOGLE_DRIVE_APP_ID',
+  'MOYA_GOOGLE_DRIVE_DEVELOPER_KEY',
+  'MOYA_SUWAYOMI_DEFAULT_URL',
+]) {
+  check(`web receives public runtime env ${key}`, includes(web, `${key}:`));
+}
 
 check('api uses deploy/server.Dockerfile', includes(api, 'dockerfile: deploy/server.Dockerfile'));
 check('api starts compiled server artifact', matches(api, /command:\s*\[['"]node['"],\s*['"]dist\/index\.js['"]\]/));
@@ -212,6 +232,41 @@ check(
   'web Dockerfile serves dist with nginx',
   includes(files.webDockerfile, 'COPY --from=build /app/dist /usr/share/nginx/html'),
 );
+check(
+  'web Dockerfile installs the runtime config entrypoint',
+  includes(files.webDockerfile, 'deploy/web-runtime-config.sh /docker-entrypoint.d/40-moya-runtime-config.sh') &&
+    includes(files.webDockerfile, 'chmod 755 /docker-entrypoint.d/40-moya-runtime-config.sh'),
+);
+const allowedWebRuntimeEnvironment = [
+  'MOYA_DROPBOX_APP_KEY',
+  'MOYA_DROPBOX_SOURCE_APP_KEY',
+  'MOYA_GOOGLE_DRIVE_CLIENT_ID',
+  'MOYA_GOOGLE_DRIVE_APP_ID',
+  'MOYA_GOOGLE_DRIVE_DEVELOPER_KEY',
+  'MOYA_SUWAYOMI_DEFAULT_URL',
+];
+const projectedWebRuntimeEnvironment = [...files.webRuntimeConfig.matchAll(/\$\{(MOYA_[A-Z0-9_]+):-/g)].map(
+  (match) => match[1],
+);
+check(
+  'web runtime config projects only the public environment allowlist',
+  projectedWebRuntimeEnvironment.length === allowedWebRuntimeEnvironment.length &&
+    new Set(projectedWebRuntimeEnvironment).size === allowedWebRuntimeEnvironment.length &&
+    allowedWebRuntimeEnvironment.every((key) => projectedWebRuntimeEnvironment.includes(key)),
+);
+check(
+  'web runtime config transports arbitrary identifier bytes without JavaScript interpolation',
+  includes(files.webRuntimeConfig, 'printf \'%s\' "$1" | base64') && includes(files.webRuntimeConfig, "tr -d '\\r\\n'"),
+);
+check(
+  'runtime config loads before the application module',
+  files.indexHtml.indexOf('/runtime-config.js') >= 0 &&
+    files.indexHtml.indexOf('/runtime-config.js') < files.indexHtml.indexOf('/src/main.tsx'),
+);
+check(
+  'static runtime config is an empty versioned public stub',
+  includes(files.publicRuntimeConfig, 'Object.freeze({ schemaVersion: 1 })'),
+);
 
 check(
   'server Dockerfile uses a Debian Bookworm build stage',
@@ -288,6 +343,52 @@ check('local TTS Dockerfile runs as non-root', includes(files.localTTSDockerfile
 check('local TTS adapter implements voices', includes(files.localTTSServer, 'if self.path == "/voices"'));
 check('local TTS adapter implements synthesis', includes(files.localTTSServer, 'if self.path != "/synthesize"'));
 
+check('Suwayomi overlay declares the compatibility runtime', Boolean(suwayomi));
+check(
+  'Suwayomi overlay uses the official stable image by default',
+  includes(suwayomi, 'ghcr.io/suwayomi/suwayomi-server:${SUWAYOMI_IMAGE_TAG:-stable}'),
+);
+check('Suwayomi is not published directly to a host port', !matches(suwayomi, /^ {4}ports:/m));
+check('Suwayomi exposes only its Docker-network port', matches(suwayomi, /expose:\s*\n\s+- ['"]4567['"]/));
+check(
+  'Suwayomi requires explicit self-host credentials',
+  includes(suwayomi, 'AUTH_USERNAME: ${SUWAYOMI_AUTH_USERNAME:?') &&
+    includes(suwayomi, 'AUTH_PASSWORD: ${SUWAYOMI_AUTH_PASSWORD:?'),
+);
+check('Suwayomi defaults to UI login', includes(suwayomi, 'AUTH_MODE: ${SUWAYOMI_AUTH_MODE:-ui_login}'));
+check(
+  'Suwayomi persists data in its official data directory',
+  includes(suwayomi, 'suwayomi-data:/home/suwayomi/.local/share/Tachidesk') &&
+    includes(suwayomiVolumes, 'suwayomi-data:'),
+);
+check(
+  'Suwayomi does not overwrite WebUI extension stores from environment',
+  !includes(suwayomi, 'EXTENSION_STORES') && !includes(files.envExample, 'SUWAYOMI_EXTENSION_STORES='),
+);
+check(
+  'Suwayomi healthcheck does not expose credentials and accepts auth boundaries',
+  includes(suwayomi, 'curl --silent --output /dev/null --write-out') &&
+    includes(suwayomi, 'test "$$status" = 401') &&
+    includes(suwayomi, 'test "$$status" = 403') &&
+    !includes(suwayomi, '--user') &&
+    !includes(suwayomi, '$${AUTH_PASSWORD}'),
+);
+check(
+  'Moya and Suwayomi share the configurable external NPM network',
+  includes(suwayomiWeb, 'npm-proxy:') &&
+    includes(suwayomiWeb, '${MOYA_PROXY_HOSTNAME:-moya-web}') &&
+    includes(suwayomi, '${SUWAYOMI_PROXY_HOSTNAME:-moya-suwayomi}') &&
+    includes(suwayomiNetworks, 'name: ${NPM_DOCKER_NETWORK:-npm_proxy}') &&
+    includes(suwayomiNetworks, 'external: true'),
+);
+check(
+  'NPM WireGuard guide documents the combined self-host path',
+  includes(files.npmWireGuardGuide, 'compose.suwayomi.yaml') &&
+    includes(files.npmWireGuardGuide, 'moya-web:80') &&
+    includes(files.npmWireGuardGuide, 'moya-suwayomi:4567') &&
+    includes(files.npmWireGuardGuide, 'MOYA_SUWAYOMI_DEFAULT_URL='),
+);
+
 check('public override forces external exposure', includes(files.composePublic, 'SERVER_EXPOSURE: external'));
 check(
   'public override requires an auth token',
@@ -346,6 +447,14 @@ check(
 );
 check('nginx preserves an outer TLS proxy protocol', includes(files.nginx, '$moya_forwarded_proto'));
 check(
+  'nginx never caches container runtime config',
+  includes(blockAfter(files.nginx, '  location = /runtime-config.js {'), 'Cache-Control "no-store, max-age=0"'),
+);
+check(
+  'service worker bypasses container runtime config',
+  includes(files.serviceWorker, "url.pathname === '/runtime-config.js'"),
+);
+check(
   'host nginx example proxies only to loopback web ingress',
   includes(files.hostNginxExample, 'proxy_pass http://127.0.0.1:8080;'),
 );
@@ -396,6 +505,16 @@ for (const key of [
   'VITE_READER_BACKEND',
   'VITE_API_BASE_URL',
   'VITE_SYNC_API_BASE_URL',
+  'MOYA_DROPBOX_APP_KEY',
+  'MOYA_DROPBOX_SOURCE_APP_KEY',
+  'MOYA_GOOGLE_DRIVE_CLIENT_ID',
+  'MOYA_GOOGLE_DRIVE_APP_ID',
+  'MOYA_GOOGLE_DRIVE_DEVELOPER_KEY',
+  'MOYA_SUWAYOMI_DEFAULT_URL',
+  'SUWAYOMI_AUTH_MODE',
+  'SUWAYOMI_AUTH_USERNAME',
+  'SUWAYOMI_AUTH_PASSWORD',
+  'NPM_DOCKER_NETWORK',
 ]) {
   check(`.env.example includes ${key}`, files.envExample.includes(`${key}=`));
 }
@@ -507,7 +626,8 @@ check('hosted live smoke waits for full readiness', includes(files.liveSmoke, 'w
 check(
   'hosted e2e can include AI workflow smoke script',
   includes(files.hostedE2E, "'scripts/hosted-ai-workflow-smoke.mjs'") &&
-    includes(files.hostedE2E, '--include-ai-workflow'),
+    includes(files.hostedE2E, '--include-ai-workflow') &&
+    includes(files.hostedE2E, '--browser-ui'),
 );
 check(
   'hosted e2e tears down volumes by default',
@@ -543,6 +663,17 @@ check(
   ['voice_profiles_updated', 'character_graph_updated', 'chapter_segments_updated'].every((needle) =>
     includes(files.aiWorkflowSmoke, needle),
   ),
+);
+check(
+  'hosted AI workflow smoke exercises alternate managed execution and basic TTS fallback',
+  [
+    'moya.ai.tts.book-preparation',
+    'moya.ai.tts.detailed.speaker-preparation',
+    'startWorkflowFromBrowser',
+    'verifyCompletedWorkflowInBrowser',
+    'alternate trusted runner applied its two-paragraph planning policy',
+    'basic/system TTS play action was disabled beside the completed workflow',
+  ].every((needle) => includes(files.aiWorkflowSmoke, needle)),
 );
 
 const failed = checks.filter((item) => !item.passed);

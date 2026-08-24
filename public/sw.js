@@ -23,6 +23,7 @@ function shouldBypass(request, url) {
   return (
     request.method !== 'GET' ||
     url.origin !== self.location.origin ||
+    url.pathname === '/runtime-config.js' ||
     url.pathname.startsWith('/api/') ||
     request.headers.has('authorization') ||
     request.headers.has('range')

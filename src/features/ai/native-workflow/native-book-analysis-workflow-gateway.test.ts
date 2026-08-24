@@ -21,6 +21,8 @@ import type { NativeWorkflowReaderRepository } from './native-workflow-dependenc
 import { NativeBookAnalysisWorkflowGateway } from './native-book-analysis-workflow-gateway';
 
 const now = '2026-07-11T00:00:00.000Z';
+const workflowDefinitionId = 'moya.ai.tts.book-preparation' as const;
+const workflowVersion = '1.0.0';
 const novel: Novel = {
   id: 'book-1',
   title: 'Book',
@@ -432,18 +434,23 @@ describe('NativeBookAnalysisWorkflowGateway', () => {
 
     const workflow = await gateway.start({
       bookId: novel.id,
+      workflowDefinitionId,
+      workflowVersion,
       providerId: 'openai',
       modelId: 'gpt-test',
       providerOptions: { requestProfileId: 'default' },
     });
 
     expect(workflow.runtime).toBe('native');
+    expect(workflow).toMatchObject({ workflowDefinitionId, workflowVersion });
     expect(workflow.status).toBe('queued');
     expect(workflow.readiness.outcome).toBe('pending');
     expect(test.materialize).toHaveBeenCalledTimes(1);
     expect(test.repository.saveNativeAnalysisWorkflowDescriptor).toHaveBeenCalledWith(
       expect.objectContaining({
         workflowId: 'workflow-1',
+        workflowDefinitionId,
+        workflowVersion,
         contentRevisionId: 'revision-1',
         provider: expect.objectContaining({ providerId: 'openai', modelId: 'gpt-test' }),
         labelingContract: expect.objectContaining({
@@ -460,6 +467,8 @@ describe('NativeBookAnalysisWorkflowGateway', () => {
 
     const workflow = await gateway.start({
       bookId: novel.id,
+      workflowDefinitionId,
+      workflowVersion,
       providerId: 'openai',
       modelId: 'gpt-test',
       providerOptions: { requestProfileId: 'speaker-attribution-v3-compact' },
@@ -481,6 +490,8 @@ describe('NativeBookAnalysisWorkflowGateway', () => {
     const gateway = new NativeBookAnalysisWorkflowGateway(test.bridge, test.repository);
     await gateway.start({
       bookId: novel.id,
+      workflowDefinitionId,
+      workflowVersion,
       providerId: 'openai',
       modelId: 'gpt-test',
       providerOptions: { requestProfileId: 'chapter-labeling-v1' },
@@ -524,6 +535,8 @@ describe('NativeBookAnalysisWorkflowGateway', () => {
     const gateway = new NativeBookAnalysisWorkflowGateway(test.bridge, test.repository);
     await gateway.start({
       bookId: novel.id,
+      workflowDefinitionId,
+      workflowVersion,
       providerId: 'openai',
       modelId: 'gpt-test',
       providerOptions: { requestProfileId: 'chapter-labeling-v1' },
@@ -587,7 +600,15 @@ describe('NativeBookAnalysisWorkflowGateway', () => {
   it('retires a reviewed workflow after creating its replacement', async () => {
     const test = harness();
     const gateway = new NativeBookAnalysisWorkflowGateway(test.bridge, test.repository);
-    await gateway.start({ bookId: novel.id, providerId: 'openai', modelId: 'gpt-test' });
+    const alternateDefinitionId = 'moya.ai.tts.alternate' as const;
+    const alternateVersion = '2.1.0';
+    await gateway.start({
+      bookId: novel.id,
+      workflowDefinitionId: alternateDefinitionId,
+      workflowVersion: alternateVersion,
+      providerId: 'openai',
+      modelId: 'gpt-test',
+    });
     test.setView({
       ...test.getView(),
       status: 'needs_review',
@@ -600,26 +621,46 @@ describe('NativeBookAnalysisWorkflowGateway', () => {
     expect(replacement.id).toBe('workflow-2');
     expect(test.cancel).toHaveBeenCalledWith('workflow-1');
     expect(replacement.status).not.toBe('cancelled');
+    expect(test.repository.saveNativeAnalysisWorkflowDescriptor).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        workflowDefinitionId: alternateDefinitionId,
+        workflowVersion: alternateVersion,
+      }),
+    );
   });
 
-  it('cancels an orphaned active journal workflow when its descriptor is missing', async () => {
+  it('leaves an orphaned active journal untouched during read-only discovery', async () => {
     const test = harness();
     const gateway = new NativeBookAnalysisWorkflowGateway(test.bridge, test.repository);
-    await gateway.start({ bookId: novel.id, providerId: 'openai', modelId: 'gpt-test' });
+    await gateway.start({
+      bookId: novel.id,
+      workflowDefinitionId,
+      workflowVersion,
+      providerId: 'openai',
+      modelId: 'gpt-test',
+    });
     test.clearDescriptor();
 
     await expect(gateway.getActive(novel.id)).resolves.toBeUndefined();
-    expect(test.cancel).toHaveBeenCalledWith('workflow-1');
+    expect(test.cancel).not.toHaveBeenCalled();
   });
 
   it('retires a failed predecessor when a terminal workflow is force-started', async () => {
     const test = harness();
     const gateway = new NativeBookAnalysisWorkflowGateway(test.bridge, test.repository);
-    await gateway.start({ bookId: novel.id, providerId: 'openai', modelId: 'gpt-test' });
+    await gateway.start({
+      bookId: novel.id,
+      workflowDefinitionId,
+      workflowVersion,
+      providerId: 'openai',
+      modelId: 'gpt-test',
+    });
     test.setView({ ...test.getView(), status: 'failed', errorCode: 'provider_failed' });
 
     const replacement = await gateway.start({
       bookId: novel.id,
+      workflowDefinitionId,
+      workflowVersion,
       providerId: 'openai',
       modelId: 'gpt-test',
       force: true,
@@ -629,29 +670,47 @@ describe('NativeBookAnalysisWorkflowGateway', () => {
     expect(test.cancel).toHaveBeenCalledWith('workflow-1');
   });
 
-  it('continues active discovery after retiring an orphaned workflow', async () => {
+  it('discovers an active descriptor without advancing or mutating the workflow', async () => {
     const test = harness();
     const gateway = new NativeBookAnalysisWorkflowGateway(test.bridge, test.repository);
-    await gateway.start({ bookId: novel.id, providerId: 'openai', modelId: 'gpt-test' });
-    const valid = test.getView();
-    const orphan = { ...valid, id: 'workflow-orphan' };
-    vi.mocked(test.bridge.getActive!).mockResolvedValueOnce(orphan).mockResolvedValueOnce(valid);
+    await gateway.start({
+      bookId: novel.id,
+      workflowDefinitionId,
+      workflowVersion,
+      providerId: 'openai',
+      modelId: 'gpt-test',
+    });
+    const materializeCount = test.materialize.mock.calls.length;
 
     const restored = await gateway.getActive(novel.id);
 
-    expect(test.cancel).toHaveBeenCalledWith('workflow-orphan');
     expect(restored?.id).toBe('workflow-1');
+    expect(restored).toMatchObject({ workflowDefinitionId, workflowVersion });
+    expect(test.materialize).toHaveBeenCalledTimes(materializeCount);
+    expect(test.cancel).not.toHaveBeenCalled();
   });
 
   it('forces a new native workflow when deterministic submit finds an orphaned terminal journal entry', async () => {
     const test = harness();
     const gateway = new NativeBookAnalysisWorkflowGateway(test.bridge, test.repository);
-    await gateway.start({ bookId: novel.id, providerId: 'openai', modelId: 'gpt-test' });
+    await gateway.start({
+      bookId: novel.id,
+      workflowDefinitionId,
+      workflowVersion,
+      providerId: 'openai',
+      modelId: 'gpt-test',
+    });
     const orphanedTerminal = { ...test.getView(), status: 'succeeded' as const, currentStage: null };
     test.clearDescriptor();
     test.submit.mockResolvedValueOnce(orphanedTerminal).mockResolvedValueOnce(orphanedTerminal);
 
-    const replacement = await gateway.start({ bookId: novel.id, providerId: 'openai', modelId: 'gpt-test' });
+    const replacement = await gateway.start({
+      bookId: novel.id,
+      workflowDefinitionId,
+      workflowVersion,
+      providerId: 'openai',
+      modelId: 'gpt-test',
+    });
 
     expect(replacement.id).toBe('workflow-2');
     expect(test.submit).toHaveBeenLastCalledWith(
@@ -662,7 +721,13 @@ describe('NativeBookAnalysisWorkflowGateway', () => {
   it('persists, approves, and resumes a native chapter-label review through the shared workspace gateway', async () => {
     const test = harness();
     const gateway = new NativeBookAnalysisWorkflowGateway(test.bridge, test.repository);
-    await gateway.start({ bookId: novel.id, providerId: 'openai', modelId: 'gpt-test' });
+    await gateway.start({
+      bookId: novel.id,
+      workflowDefinitionId,
+      workflowVersion,
+      providerId: 'openai',
+      modelId: 'gpt-test',
+    });
     const descriptor = (await test.repository.getNativeAnalysisWorkflowDescriptor('workflow-1'))!;
     const window = descriptor.plan.labelingWindows[0]!;
     const segmentTextHash = segmentTextIntegrityHash(paragraph.text);

@@ -34,6 +34,10 @@ import {
 } from './orchestrator';
 
 const CONTENT_REVISION = 'revision_1';
+const WORKFLOW_IDENTITY = {
+  workflowDefinitionId: 'moya.ai.tts.book-preparation',
+  workflowVersion: '1.0.0',
+} as const;
 
 function chapter(index: number): Chapter {
   return {
@@ -337,7 +341,11 @@ function captures() {
 describe('native workflow manifest', () => {
   it('builds the canonical four-stage request and hashes only the v2 plan identity payload', () => {
     const workflowPlan = plan();
-    const request = buildNativeBookWorkflowSubmitRequest({ plan: workflowPlan, contentRevision: CONTENT_REVISION });
+    const request = buildNativeBookWorkflowSubmitRequest({
+      ...WORKFLOW_IDENTITY,
+      plan: workflowPlan,
+      contentRevision: CONTENT_REVISION,
+    });
     const payload = nativeBookWorkflowPlanHashPayload(workflowPlan, CONTENT_REVISION);
 
     expect(request.planHash).toBe(
@@ -348,7 +356,7 @@ describe('native workflow manifest', () => {
         stages: payload.stages,
       }),
     );
-    expect(request.idempotencyKey).toBe(request.planHash);
+    expect(request.idempotencyKey).toBe(structuredIntegrityHash({ ...WORKFLOW_IDENTITY, planHash: request.planHash }));
     expect(request).not.toHaveProperty('schemaVersion');
     expect(request.stages.map((stage) => stage.stage)).toEqual([
       'character_graph_bootstrap',
@@ -363,11 +371,20 @@ describe('native workflow manifest', () => {
 
     const firstJobId = request.stages[0].jobs[0].id;
     const requestWithMaterializedJob = buildNativeBookWorkflowSubmitRequest({
+      ...WORKFLOW_IDENTITY,
       plan: workflowPlan,
       contentRevision: CONTENT_REVISION,
       requestsByJobId: { [firstJobId]: structuredRequest('first bundle') },
     });
     expect(requestWithMaterializedJob.planHash).toBe(request.planHash);
+    expect(
+      buildNativeBookWorkflowSubmitRequest({
+        ...WORKFLOW_IDENTITY,
+        workflowVersion: '2.0.0',
+        plan: workflowPlan,
+        contentRevision: CONTENT_REVISION,
+      }),
+    ).toMatchObject({ planHash: request.planHash, idempotencyKey: expect.not.stringMatching(request.idempotencyKey) });
     expect(requestWithMaterializedJob.stages[0].jobs[0].request).toEqual(structuredRequest('first bundle'));
   });
 
@@ -376,6 +393,7 @@ describe('native workflow manifest', () => {
     const contractFingerprint = 'sha256:compact-contract';
     const compactExecutionManifest = buildNativeCompactExecutionManifest(workflowPlan, contractFingerprint);
     const request = buildNativeBookWorkflowSubmitRequest({
+      ...WORKFLOW_IDENTITY,
       plan: workflowPlan,
       contentRevision: CONTENT_REVISION,
       compactExecutionManifest,
@@ -398,6 +416,7 @@ describe('native workflow manifest', () => {
     (tampered.stages[2].jobs[0] as { contractFingerprint: string }).contractFingerprint = 'sha256:tampered-contract';
     expect(
       buildNativeBookWorkflowSubmitRequest({
+        ...WORKFLOW_IDENTITY,
         plan: workflowPlan,
         contentRevision: CONTENT_REVISION,
         compactExecutionManifest: tampered,
@@ -408,6 +427,7 @@ describe('native workflow manifest', () => {
     (packetJobs.stages[2].jobs[0] as { id: string }).id = `${workflowPlan.labelingWindows[0].id}:packet-1`;
     expect(() =>
       buildNativeBookWorkflowSubmitRequest({
+        ...WORKFLOW_IDENTITY,
         plan: workflowPlan,
         contentRevision: CONTENT_REVISION,
         compactExecutionManifest: packetJobs,

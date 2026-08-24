@@ -10,6 +10,7 @@ import {
 import SevenZip, { type SevenZipModule } from '7z-wasm';
 import { ArchiveReader, libarchiveWasm } from 'libarchive-wasm';
 import { createExtractorFromData, UnrarError, type FileHeader } from 'node-unrar-js';
+import type { PDFWorker } from 'pdfjs-dist/legacy/build/pdf.mjs';
 import type {
   BookFormat,
   Chapter,
@@ -532,19 +533,13 @@ async function openEncryptedSevenZipImageArchiveStream(
   source: Uint8Array,
   options: ImageArchiveParseOptions,
 ): Promise<StreamingImageArchiveDocument> {
-  if (!options.password)
-    throw new FixedDocumentImportError('암호가 필요한 압축 파일입니다.', 'password_required');
+  if (!options.password) throw new FixedDocumentImportError('암호가 필요한 압축 파일입니다.', 'password_required');
   options.signal?.throwIfAborted();
   const output: string[] = [];
   const module = await createSevenZipModule(output);
   module.FS.writeFile('/noveldesk-input.7z', source);
   module.FS.mkdir('/noveldesk-output');
-  const listing = runSevenZipCommand(module, output, [
-    'l',
-    '-slt',
-    `-p${options.password}`,
-    '/noveldesk-input.7z',
-  ]);
+  const listing = runSevenZipCommand(module, output, ['l', '-slt', `-p${options.password}`, '/noveldesk-input.7z']);
   if (listing.failure) {
     throw new FixedDocumentImportError('7z 암호가 올바르지 않습니다.', 'wrong_password');
   }
@@ -968,8 +963,7 @@ export async function parseImageArchive(
   for await (const page of stream.consumePages()) streamedPages.set(page.fileName, page);
   const pages = stream.pages.map((descriptor) => {
     const page = streamedPages.get(descriptor.fileName);
-    if (!page)
-      throw new FixedDocumentImportError('압축 파일 페이지 저장이 중간에 끝났습니다.', 'invalid_archive');
+    if (!page) throw new FixedDocumentImportError('압축 파일 페이지 저장이 중간에 끝났습니다.', 'invalid_archive');
     return page;
   });
   return { pages, comicInfo: stream.comicInfo };
@@ -986,10 +980,17 @@ export async function openImageArchiveStream(
   return openLibarchiveImageArchiveStream(blob, options);
 }
 
-export async function inspectPdf(bytes: Uint8Array): Promise<{ pageCount: number; title?: string; author?: string }> {
+export async function inspectPdf(
+  bytes: Uint8Array,
+  options: { readonly workerSrc?: string } = {},
+): Promise<{ pageCount: number; title?: string; author?: string }> {
+  let dedicatedWorker: PDFWorker | undefined;
   try {
     const pdfjs = await import('pdfjs-dist/legacy/build/pdf.mjs');
-    const loadingTask = pdfjs.getDocument({ data: bytes, useWorkerFetch: false });
+    dedicatedWorker = options.workerSrc
+      ? new pdfjs.PDFWorker({ port: new Worker(options.workerSrc, { type: 'module' }) as never })
+      : undefined;
+    const loadingTask = pdfjs.getDocument({ data: bytes, useWorkerFetch: false, worker: dedicatedWorker });
     const document = await loadingTask.promise;
     const metadata = await document.getMetadata().catch(() => undefined);
     const info = metadata?.info as { Title?: unknown; Author?: unknown } | undefined;
@@ -1012,6 +1013,8 @@ export async function inspectPdf(bytes: Uint8Array): Promise<{ pageCount: number
       error instanceof Error ? `PDF를 읽을 수 없습니다: ${error.message}` : 'PDF를 읽을 수 없습니다.',
       'invalid_pdf',
     );
+  } finally {
+    dedicatedWorker?.destroy();
   }
 }
 
@@ -1164,8 +1167,9 @@ export async function materializePdfImport(input: {
   readonly sourceBytes: Uint8Array;
   readonly clientBookId?: string;
   readonly now?: string;
+  readonly workerSrc?: string;
 }): Promise<ParsedNovelImport> {
-  const inspected = await inspectPdf(input.sourceBytes.slice());
+  const inspected = await inspectPdf(input.sourceBytes.slice(), { workerSrc: input.workerSrc });
   return materializeFixedImport({ format: 'pdf', ...input, ...inspected });
 }
 

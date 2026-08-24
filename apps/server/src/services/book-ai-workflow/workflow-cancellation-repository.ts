@@ -35,34 +35,36 @@ export async function cancelWorkflowProviderJob(
   const result = await db.query<ProviderJobRow & pg.QueryResultRow>(
     `
       with cancelled_job as (
-        update provider_jobs
+        update provider_jobs provider_job
         set status = 'cancelled',
             stage = 'cancelled',
-            outcome_state = 'cancelled',
-            billing_state = case
-              when dispatch_started_at is null then 'not_billable'
-              else 'billed_possible'
-            end,
-            normalized_error_code = 'provider_job_cancelled',
-            reconcile_after = null,
-            lease_expires_at = null,
             progress = $3,
             error_code = 'provider_job_cancelled',
             error_message = 'Provider job cancelled by workflow cancel',
             finished_at = now(),
             updated_at = now()
-        where id = $1
-          and user_id = $2
-          and status = $4
-          and current_attempt_id is not distinct from $5
-        returning id, user_id, book_id, chapter_id, job_type, provider_id, model_id,
-                  input_hash, status, progress, current_attempt_id, attempt_count,
-                  analysis_input_revision_id
+        where provider_job.id = $1
+          and provider_job.user_id = $2
+          and provider_job.status = $4
+          and provider_job.current_attempt_id is not distinct from $5
+        returning provider_job.id, provider_job.user_id, provider_job.book_id, provider_job.chapter_id,
+                  provider_job.job_type, provider_job.provider_id, provider_job.model_id,
+                  provider_job.input_hash, provider_job.status, provider_job.progress,
+                  provider_job.current_attempt_id, provider_job.attempt_count,
+                  provider_job.analysis_input_revision_id
       ),
       cancelled_attempt as (
         update provider_job_attempts attempt
         set status = 'cancelled',
             stage = 'cancelled',
+            outcome_state = 'cancelled',
+            billing_state = case
+              when attempt.dispatch_started_at is null then 'not_billable'
+              else 'billed_possible'
+            end,
+            normalized_error_code = 'provider_job_cancelled',
+            reconcile_after = null,
+            lease_expires_at = null,
             progress = $3,
             error_code = 'provider_job_cancelled',
             error_message = 'Provider job cancelled by workflow cancel',

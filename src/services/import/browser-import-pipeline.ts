@@ -1,6 +1,7 @@
 import { decodeNovelTextWithEncoding } from '../../domain/parser';
 import { sha256 } from '../../domain/hash';
 import type { ChapterSplitMode, EncodingMode } from '../../domain/types';
+import pdfWorkerUrl from 'pdfjs-dist/legacy/build/pdf.worker.min.mjs?url';
 import { saveParsedNovelImport } from '../../storage/db';
 import { hashBlobInChunks } from './chunked-file-reader';
 import {
@@ -301,6 +302,7 @@ export async function runBrowserFixedDocumentImportPipeline(input: BrowserImport
           fileName: input.fileName,
           sourceBytes: bytes,
           clientBookId: input.clientBookId,
+          workerSrc: pdfWorkerUrl,
         })
       : materializeImageArchiveImport({
           fileName: input.fileName,

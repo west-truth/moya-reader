@@ -19,6 +19,7 @@ const expectedStyleImports = [
   './styles/analysis.css',
   './styles/reader-tools.css',
   './styles/dialogs-import.css',
+  './styles/external-sources.css',
   './styles/settings-sync.css',
   './styles/feedback.css',
   './styles/responsive.css',

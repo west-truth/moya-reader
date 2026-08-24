@@ -6,10 +6,11 @@ afterEach(() => {
 });
 
 describe('RemoteSearchTransport', () => {
-  it('passes the caller signal to fetch and aborts the in-flight request', async () => {
+  it('propagates caller cancellation through the timeout-aware fetch signal', async () => {
     const controller = new AbortController();
     const fetchMock = vi.spyOn(globalThis, 'fetch').mockImplementation((_input, init) => {
-      expect(init?.signal).toBe(controller.signal);
+      expect(init?.signal).toBeInstanceOf(AbortSignal);
+      expect(init?.signal).not.toBe(controller.signal);
       return new Promise<Response>((_resolve, reject) => {
         init?.signal?.addEventListener('abort', () => reject(init.signal?.reason), { once: true });
       });

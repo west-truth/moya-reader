@@ -13,6 +13,16 @@ import type {
 
 const MAX_IDENTIFIER_LENGTH = 512;
 
+/** Identity projected only for descriptors written before durable workflow identity existed. */
+export const LEGACY_NATIVE_WORKFLOW_DEFINITION_ID = 'moya.ai.tts.book-preparation' as const;
+export const LEGACY_NATIVE_WORKFLOW_VERSION = '1.0.0' as const;
+
+type StoredNativeAnalysisWorkflowDescriptor = Omit<
+  NativeAnalysisWorkflowDescriptor,
+  'workflowDefinitionId' | 'workflowVersion'
+> &
+  Partial<Pick<NativeAnalysisWorkflowDescriptor, 'workflowDefinitionId' | 'workflowVersion'>>;
+
 function normalizedIdentifier(value: string, label: string): string {
   if (typeof value !== 'string' || !value.trim()) throw new Error(`${label} must be a non-empty string`);
   const normalized = value.trim();
@@ -48,6 +58,11 @@ function normalizedDescriptor(input: NativeAnalysisWorkflowDescriptorInput): Nat
   const plan = structuredClone(input.plan);
   return {
     workflowId,
+    workflowDefinitionId: normalizedIdentifier(
+      input.workflowDefinitionId,
+      'native analysis workflow definition id',
+    ) as NativeAnalysisWorkflowDescriptorInput['workflowDefinitionId'],
+    workflowVersion: normalizedIdentifier(input.workflowVersion, 'native analysis workflow version'),
     novelId,
     contentRevisionId: normalizedIdentifier(input.contentRevisionId, 'native analysis content revision id'),
     planHash: normalizedIdentifier(input.planHash, 'native analysis plan hash'),
@@ -57,7 +72,9 @@ function normalizedDescriptor(input: NativeAnalysisWorkflowDescriptorInput): Nat
   };
 }
 
-export function nativeAnalysisWorkflowDescriptorFingerprint(descriptor: NativeAnalysisWorkflowDescriptorInput): string {
+function descriptorFingerprint(
+  descriptor: NativeAnalysisWorkflowDescriptorInput | StoredNativeAnalysisWorkflowDescriptor,
+): string {
   const legacyPayload = {
     workflowId: descriptor.workflowId,
     novelId: descriptor.novelId,
@@ -66,25 +83,48 @@ export function nativeAnalysisWorkflowDescriptorFingerprint(descriptor: NativeAn
     plan: descriptor.plan,
     provider: descriptor.provider,
   };
-  if (!descriptor.labelingContract) return structuredIntegrityHash(legacyPayload);
+  const identityPayload =
+    descriptor.workflowDefinitionId === undefined && descriptor.workflowVersion === undefined
+      ? legacyPayload
+      : {
+          ...legacyPayload,
+          workflowDefinitionId: descriptor.workflowDefinitionId,
+          workflowVersion: descriptor.workflowVersion,
+        };
+  if (!descriptor.labelingContract) return structuredIntegrityHash(identityPayload);
   const labelingContract = normalizeNativeLabelingContract(descriptor.labelingContract);
   return structuredIntegrityHash({
-    ...legacyPayload,
+    ...identityPayload,
     labelingContract,
     labelingContractFingerprint: nativeLabelingContractFingerprint(labelingContract),
   });
 }
 
-function assertStoredFingerprint(descriptor: NativeAnalysisWorkflowDescriptor): void {
+export function nativeAnalysisWorkflowDescriptorFingerprint(descriptor: NativeAnalysisWorkflowDescriptorInput): string {
+  return descriptorFingerprint(descriptor);
+}
+
+function assertStoredFingerprint(descriptor: StoredNativeAnalysisWorkflowDescriptor): void {
+  if ((descriptor.workflowDefinitionId === undefined) !== (descriptor.workflowVersion === undefined)) {
+    throw new Error(`Native analysis workflow descriptor identity is incomplete: ${descriptor.workflowId}`);
+  }
   const expectedContractFingerprint = descriptor.labelingContract
     ? nativeLabelingContractFingerprint(descriptor.labelingContract)
     : undefined;
   if (descriptor.labelingContractFingerprint !== expectedContractFingerprint) {
     throw new Error(`Native analysis workflow labeling contract fingerprint mismatch: ${descriptor.workflowId}`);
   }
-  if (descriptor.descriptorFingerprint !== nativeAnalysisWorkflowDescriptorFingerprint(descriptor)) {
+  if (descriptor.descriptorFingerprint !== descriptorFingerprint(descriptor)) {
     throw new Error(`Native analysis workflow descriptor fingerprint mismatch: ${descriptor.workflowId}`);
   }
+}
+
+function projectLegacyIdentity(descriptor: StoredNativeAnalysisWorkflowDescriptor): NativeAnalysisWorkflowDescriptor {
+  return {
+    ...descriptor,
+    workflowDefinitionId: descriptor.workflowDefinitionId ?? LEGACY_NATIVE_WORKFLOW_DEFINITION_ID,
+    workflowVersion: descriptor.workflowVersion ?? LEGACY_NATIVE_WORKFLOW_VERSION,
+  };
 }
 
 export async function saveNativeAnalysisWorkflowDescriptor(
@@ -98,7 +138,7 @@ export async function saveNativeAnalysisWorkflowDescriptor(
   const db = await openReaderDb();
   const tx = db.transaction(NATIVE_ANALYSIS_STORES.descriptors, 'readwrite');
   const store = tx.objectStore(NATIVE_ANALYSIS_STORES.descriptors);
-  const existing = await requestToPromise<NativeAnalysisWorkflowDescriptor | undefined>(
+  const existing = await requestToPromise<StoredNativeAnalysisWorkflowDescriptor | undefined>(
     store.get(normalized.workflowId),
   );
   if (existing) {
@@ -108,7 +148,7 @@ export async function saveNativeAnalysisWorkflowDescriptor(
       throw new Error(`Native analysis workflow descriptor drift: ${normalized.workflowId}`);
     }
     await transactionDone(tx);
-    return existing;
+    return projectLegacyIdentity(existing);
   }
 
   const timestamp = nowIso();
@@ -132,12 +172,13 @@ export async function getNativeAnalysisWorkflowDescriptor(
   const normalizedWorkflowId = normalizedIdentifier(workflowId, 'native analysis workflow id');
   const db = await openReaderDb();
   const tx = db.transaction(NATIVE_ANALYSIS_STORES.descriptors, 'readonly');
-  const descriptor = await requestToPromise<NativeAnalysisWorkflowDescriptor | undefined>(
+  const descriptor = await requestToPromise<StoredNativeAnalysisWorkflowDescriptor | undefined>(
     tx.objectStore(NATIVE_ANALYSIS_STORES.descriptors).get(normalizedWorkflowId),
   );
   await transactionDone(tx);
-  if (descriptor) assertStoredFingerprint(descriptor);
-  return descriptor;
+  if (!descriptor) return undefined;
+  assertStoredFingerprint(descriptor);
+  return projectLegacyIdentity(descriptor);
 }
 
 export async function deleteNativeAnalysisWorkflowDescriptor(workflowId: string): Promise<boolean> {

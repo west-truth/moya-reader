@@ -11,7 +11,8 @@ export type LLMGenerationTaskKind =
   | 'voice_trait_profile'
   | 'emotion_projection';
 
-export type LLMReasoningPolicy = 'none' | 'minimal' | 'low' | 'provider_default';
+export type LLMReasoningPolicy = 'none' | 'minimal' | 'low' | 'medium' | 'provider_default';
+export type LLMReasoningOverride = Extract<LLMReasoningPolicy, 'minimal' | 'low' | 'medium'>;
 
 export interface LLMGenerationPolicyV2 {
   readonly version: 'llm-generation-policy-v2';
@@ -106,6 +107,7 @@ export function resolveLLMGenerationPolicy(input: {
   readonly providerOptions?: Readonly<Record<string, unknown>>;
   readonly requestedOutputCap?: number;
   readonly visibleOutputEstimate?: number;
+  readonly reasoningOverride?: LLMReasoningOverride;
 }): LLMGenerationPolicyV2 {
   const providerId = input.providerId.trim().toLowerCase();
   const requestedModelId = input.modelId.trim();
@@ -118,6 +120,12 @@ export function resolveLLMGenerationPolicy(input: {
       ? ('model_default' as const)
       : { temperature, topP, topK };
   const modelFamily = resolveLLMModelFamily(providerId, requestedModelId);
+  if (
+    input.reasoningOverride &&
+    !(providerId.startsWith('gemini') && modelFamily === 'gemini-3.x' && boundedReasoningTask(input.taskKind))
+  ) {
+    throw new Error('llm_reasoning_override_unsupported');
+  }
   const requestedOutputCap = positiveInteger(input.requestedOutputCap ?? options.maxOutputTokens);
   const visibleOutputEstimate = positiveInteger(input.visibleOutputEstimate);
   const core = {
@@ -127,7 +135,7 @@ export function resolveLLMGenerationPolicy(input: {
     modelFamily,
     taskKind: input.taskKind,
     sampling,
-    reasoning: reasoningPolicy(providerId, modelFamily, requestedModelId, input.taskKind),
+    reasoning: input.reasoningOverride ?? reasoningPolicy(providerId, modelFamily, requestedModelId, input.taskKind),
     outputBudgetStrategy: 'request_derived' as const,
     requestedOutputCap,
     visibleOutputEstimate,
@@ -158,7 +166,7 @@ export function applyLLMGenerationPolicy(
 
   if (policy.providerId.startsWith('gemini') && policy.reasoning !== 'provider_default') {
     result.thinkingConfig =
-      policy.reasoning === 'minimal' || policy.reasoning === 'low'
+      policy.reasoning === 'minimal' || policy.reasoning === 'low' || policy.reasoning === 'medium'
         ? { thinkingLevel: policy.reasoning }
         : { thinkingBudget: 0 };
   }

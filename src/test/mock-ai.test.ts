@@ -33,6 +33,31 @@ describe('MockAIProvider', () => {
     expect(result.segments.every((segment) => segment.confidence >= 0 && segment.confidence <= 1)).toBe(true);
   });
 
+  it('uses pinned graph character ids for workflow speaker labels', async () => {
+    const parsed = await parseNovelFile('샘플.txt', toBuffer('제 1화\n\n강현우: 준비했습니다.'), 'utf-8');
+    const chapter = parsed.chapters[0];
+    const paragraphs = parsed.paragraphs.filter((paragraph) => paragraph.chapterId === chapter.id);
+    const character = {
+      id: 'candidate_hyunwoo',
+      novelId: parsed.novel.id,
+      canonicalName: '강현우',
+      aliases: ['현우'],
+      color: '#3b82f6',
+      confidence: 0.8,
+      isUserConfirmed: false,
+    };
+
+    const result = await new MockAIProvider().labelChapterSegments({
+      novelId: parsed.novel.id,
+      chapter,
+      paragraphs,
+      characterGraph: { novelId: parsed.novel.id, characters: [character], relations: [] },
+    });
+
+    expect(result.characters).toEqual([character]);
+    expect(result.segments[0]?.speakerId).toBe(character.id);
+  });
+
   it('consolidates graph candidates without automatic identity collapse', async () => {
     const provider = new MockAIProvider();
     const result = await provider.mergeCharacterGraph({

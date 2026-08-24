@@ -33,6 +33,10 @@ import type {
   ApplyLabelCorrectionsResultV2,
 } from '../../providers/label-mutation-contract';
 import type { BookAIWorkflowPlan, BookAIWorkflowPlanOptions } from '../../providers/book-ai-workflow-plan';
+import {
+  DEFAULT_BOOK_AI_WORKFLOW_DEFINITION_ID,
+  DEFAULT_BOOK_AI_WORKFLOW_VERSION,
+} from '../../providers/book-ai-workflow-definition';
 import { defaultSettings } from '../../repositories/reader-defaults';
 import {
   JsonValue,
@@ -65,6 +69,7 @@ import { RemoteSyncTransport } from './remote-sync-transport';
 import type { ReaderSearchPage, ReaderSearchPageRequest } from '../../repositories/reader-query-contract';
 import type { BackupInspection, BackupRestoreOptions, BackupRestoreResult } from '../../repositories/backup-repository';
 import type { BookMetadataPatch } from '@noveldesk/text-core/library-metadata';
+import type { ExtensionContributionId } from '@noveldesk/extension-contracts';
 import type {
   BatchLibraryCommand,
   BatchLibraryReceipt,
@@ -178,6 +183,8 @@ export interface RemoteBookAIWorkflow {
   readonly id: string;
   readonly novelId: string;
   readonly workflowType: string;
+  readonly workflowDefinitionId: ExtensionContributionId;
+  readonly workflowVersion: string;
   readonly providerId: string;
   readonly modelId?: string;
   readonly planHash: string;
@@ -196,6 +203,8 @@ export interface RemoteBookAIWorkflow {
 
 export interface StartBookAIWorkflowInput {
   readonly bookId: string;
+  readonly workflowDefinitionId: ExtensionContributionId;
+  readonly workflowVersion: string;
   readonly providerId?: string;
   readonly modelId?: string;
   readonly planOptions?: BookAIWorkflowPlanOptions;
@@ -447,6 +456,14 @@ export function mapServerBookAIWorkflow(row: JsonRecord): RemoteBookAIWorkflow {
     id: stringValue(row.id),
     novelId: stringValue(row.novelId, stringValue(row.book_id)),
     workflowType: stringValue(row.workflowType, stringValue(row.workflow_type, 'book_ai_tts')),
+    workflowDefinitionId: stringValue(
+      row.workflowDefinitionId,
+      stringValue(row.workflow_definition_id, DEFAULT_BOOK_AI_WORKFLOW_DEFINITION_ID),
+    ) as ExtensionContributionId,
+    workflowVersion: stringValue(
+      row.workflowVersion,
+      stringValue(row.workflow_version, DEFAULT_BOOK_AI_WORKFLOW_VERSION),
+    ),
     providerId: stringValue(row.providerId, stringValue(row.provider_id)),
     modelId: stringValue(row.modelId, stringValue(row.model_id)) || undefined,
     planHash: stringValue(row.planHash, stringValue(row.plan_hash)),
@@ -731,7 +748,7 @@ export class RemoteApiClient {
       positionX: number;
       positionY: number;
       expectedMetadataRevision?: number;
-      provenance?: 'user_supplied' | 'generated_preview';
+      provenance?: 'user_supplied' | 'approved_enrichment' | 'generated_preview';
     },
   ): Promise<{ cover: JsonRecord }> {
     return this.request(`/books/${encodeURIComponent(bookId)}/cover`, {
@@ -1346,6 +1363,8 @@ export class RemoteApiClient {
         body: JSON.stringify({
           providerId: input.providerId,
           modelId: input.modelId,
+          workflowDefinitionId: input.workflowDefinitionId,
+          workflowVersion: input.workflowVersion,
           planOptions: input.planOptions,
           force: input.force,
         }),

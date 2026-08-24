@@ -1,0 +1,342 @@
+import { renderToStaticMarkup } from 'react-dom/server';
+import { describe, expect, it, vi } from 'vitest';
+import type { LibraryScreenProps } from '../library/library-screen-contract';
+import SourceHubScreen from './SourceHubScreen';
+import type { ExternalSourceController } from './useExternalSourceController';
+
+function controller(overrides: Partial<ExternalSourceController> = {}): ExternalSourceController {
+  return {
+    open: true,
+    loading: false,
+    busy: false,
+    sources: [
+      {
+        id: 'fixture.source',
+        title: '개발용 작품 소스',
+        kind: 'catalog',
+        origin: 'plugin',
+        connection: { state: 'connected', label: '개발 연결' },
+      },
+    ],
+    activeSourceId: 'fixture.source',
+    items: [
+      {
+        key: { connectorId: 'fixture.source', remoteId: 'work-1' },
+        kind: 'work',
+        title: '외부 작품',
+        importFileName: '외부 작품.txt',
+        author: '테스트 작가',
+        formatHint: 'TXT',
+        byteLength: 1024,
+        updatedAt: '2026-08-23T00:00:00.000Z',
+        importability: 'supported',
+        selected: false,
+        importState: 'available',
+      },
+    ],
+    query: '',
+    stale: false,
+    detail: undefined,
+    breadcrumbs: [{ label: '전체' }],
+    currentFolderIsDefault: false,
+    currentLocationCanBeDefault: false,
+    canPickItems: false,
+    canRemoveItems: false,
+    show: vi.fn(),
+    close: vi.fn(),
+    selectSource: vi.fn(async () => undefined),
+    setQuery: vi.fn(),
+    search: vi.fn(async () => undefined),
+    refresh: vi.fn(async () => undefined),
+    loadMore: vi.fn(async () => undefined),
+    toggleItem: vi.fn(),
+    selectAllSupported: vi.fn(),
+    importItem: vi.fn(async () => undefined),
+    importSelected: vi.fn(async () => undefined),
+    openImported: vi.fn(async () => undefined),
+    cancel: vi.fn(),
+    connect: vi.fn(async () => undefined),
+    disconnect: vi.fn(async () => undefined),
+    openItem: vi.fn(async () => undefined),
+    openFolder: vi.fn(async () => undefined),
+    goBack: vi.fn(async () => undefined),
+    setCurrentFolderAsDefault: vi.fn(async () => undefined),
+    clearDefaultFolder: vi.fn(async () => undefined),
+    pickItems: vi.fn(async () => undefined),
+    removeItem: vi.fn(async () => undefined),
+    ...overrides,
+  };
+}
+
+const library = {
+  model: {
+    query: '',
+    filter: 'all',
+    sort: 'recent',
+    viewMode: 'grid',
+    sync: { label: '로컬', tone: 'local' },
+    externalSources: {
+      active: true,
+      activeSourceId: 'fixture.source',
+      busy: false,
+      sources: [{ id: 'fixture.source', title: '개발용 작품 소스', kind: 'catalog' }],
+    },
+    collection: {
+      filterCounts: { all: 0, reading: 0, finished: 0, unread: 0, favorite: 0, trash: 0 },
+    },
+    presentation: { shelfBookCounts: new Map() },
+    management: { available: false, shelves: [], selectionMode: false, selectedBookIds: new Set(), busy: false },
+  },
+  actions: {
+    presentation: { goHome: vi.fn() },
+    controls: { setFilter: vi.fn(), setShelf: vi.fn() },
+    header: {
+      setQuery: vi.fn(),
+      openImport: vi.fn(),
+      openLibraryFolders: vi.fn(),
+      openSync: vi.fn(),
+      openBackup: vi.fn(),
+      openSettings: vi.fn(),
+      openExternalSource: vi.fn(),
+      openExternalSourceSettings: vi.fn(),
+    },
+  },
+} as unknown as LibraryScreenProps;
+
+describe('SourceHubScreen', () => {
+  it('renders a connected catalog as a first-class library-style card screen', () => {
+    const markup = renderToStaticMarkup(
+      <SourceHubScreen controller={controller({ stale: true })} library={library} openSourceSettings={vi.fn()} />,
+    );
+
+    expect(markup).toContain('source-hub-screen');
+    expect(markup).toContain('개발용 작품 소스');
+    expect(markup).toContain('외부 작품');
+    expect(markup).toContain('테스트 작가');
+    expect(markup).toContain('저장된 목록');
+    expect(markup).toContain('라이브러리로 추가');
+    expect(markup).not.toContain('role="dialog"');
+  });
+
+  it('shows explicit update and imported-book actions without automatic download wording', () => {
+    const update = controller({
+      items: [
+        {
+          key: { connectorId: 'fixture.source', remoteId: 'work-1' },
+          kind: 'work',
+          title: '업데이트 작품',
+          importability: 'supported',
+          selected: false,
+          importState: 'update_available',
+          localBookId: 'local-1',
+          localBookTitle: '기존 작품',
+        },
+        {
+          key: { connectorId: 'fixture.source', remoteId: 'work-2' },
+          kind: 'work',
+          title: '가져온 작품',
+          importability: 'supported',
+          selected: false,
+          importState: 'imported',
+          localBookId: 'local-2',
+          localBookTitle: '가져온 작품',
+        },
+      ],
+    });
+    const markup = renderToStaticMarkup(
+      <SourceHubScreen controller={update} library={library} openSourceSettings={vi.fn()} />,
+    );
+
+    expect(markup).toContain('업데이트 있음');
+    expect(markup).toContain('직접 업데이트하기 전까지 책장의 현재 본문은 유지됩니다.');
+    expect(markup).toContain('라이브러리에서 보기');
+    expect(markup).toContain('업데이트</button>');
+  });
+
+  it('renders Suwayomi work navigation and chapter detail without pretending chapters are one local series', () => {
+    const browseMarkup = renderToStaticMarkup(
+      <SourceHubScreen
+        controller={controller({
+          sources: [
+            {
+              id: 'moya.external.suwayomi',
+              title: 'Suwayomi',
+              kind: 'catalog',
+              origin: 'built_in',
+              connection: { state: 'connected', label: 'Local Suwayomi' },
+            },
+          ],
+          activeSourceId: 'moya.external.suwayomi',
+          items: [
+            {
+              key: { connectorId: 'moya.external.suwayomi', remoteId: 'manga:1' },
+              kind: 'work',
+              title: '연동 작품',
+              navigationRef: 'manga:1',
+              importability: 'unsupported',
+              selected: false,
+              importState: 'unsupported',
+            },
+          ],
+        })}
+        library={library}
+        openSourceSettings={vi.fn()}
+      />,
+    );
+    const detailMarkup = renderToStaticMarkup(
+      <SourceHubScreen
+        controller={controller({
+          sources: [
+            {
+              id: 'moya.external.suwayomi',
+              title: 'Suwayomi',
+              kind: 'catalog',
+              origin: 'built_in',
+              connection: { state: 'connected', label: 'Local Suwayomi' },
+            },
+          ],
+          activeSourceId: 'moya.external.suwayomi',
+          detail: { title: '연동 작품', author: '작가', description: '작품 설명', tags: ['판타지'] },
+          breadcrumbs: [{ label: '전체' }, { label: '연동 작품', parentRef: 'manga:1' }],
+          items: [
+            {
+              key: { connectorId: 'moya.external.suwayomi', remoteId: 'chapter:11' },
+              kind: 'file',
+              title: '1화',
+              formatHint: 'CBZ',
+              importability: 'supported',
+              selected: false,
+              importState: 'available',
+            },
+          ],
+        })}
+        library={library}
+        openSourceSettings={vi.fn()}
+      />,
+    );
+
+    expect(browseMarkup).toContain('탐색 가능');
+    expect(browseMarkup).toContain('작품·회차 보기');
+    expect(browseMarkup).not.toContain('연동 작품 선택');
+    expect(detailMarkup).toContain('작품 설명');
+    expect(detailMarkup).toContain('회차</h2>');
+    expect(detailMarkup).toContain('현재는 회차별로 라이브러리에 추가됩니다');
+    expect(detailMarkup).not.toContain('기본 폴더로 설정');
+  });
+
+  it('offers a persistent default-folder action only inside a nested folder', () => {
+    const nested = controller({
+      breadcrumbs: [{ label: '최상위 폴더' }, { label: '소설', parentRef: '/소설' }],
+      currentLocationCanBeDefault: true,
+    });
+    const markup = renderToStaticMarkup(
+      <SourceHubScreen controller={nested} library={library} openSourceSettings={vi.fn()} />,
+    );
+    const selectedMarkup = renderToStaticMarkup(
+      <SourceHubScreen
+        controller={controller({ ...nested, currentFolderIsDefault: true })}
+        library={library}
+        openSourceSettings={vi.fn()}
+      />,
+    );
+
+    expect(markup).toContain('현재 폴더를 기본 폴더로 설정');
+    expect(markup).toContain('기본 폴더로 설정');
+    expect(selectedMarkup).toContain('기본 폴더 해제');
+  });
+
+  it('renders Google-style selected-file add and remove actions without exposing full-drive browsing', () => {
+    const google = controller({
+      canPickItems: true,
+      canRemoveItems: true,
+      items: [],
+      sources: [
+        {
+          id: 'moya.external.google-drive.files',
+          title: 'Google Drive',
+          kind: 'cloud_file',
+          origin: 'built_in',
+          connection: { state: 'connected', label: 'reader@example.com' },
+        },
+      ],
+      activeSourceId: 'moya.external.google-drive.files',
+    });
+    const emptyMarkup = renderToStaticMarkup(
+      <SourceHubScreen controller={google} library={library} openSourceSettings={vi.fn()} />,
+    );
+    const selectedMarkup = renderToStaticMarkup(
+      <SourceHubScreen
+        controller={controller({
+          ...google,
+          items: [
+            {
+              key: {
+                connectorId: 'moya.external.google-drive.files',
+                accountConnectionId: 'google-drive:p1',
+                remoteId: 'file-1',
+              },
+              kind: 'file',
+              title: '선택한 작품.epub',
+              importability: 'supported',
+              selected: false,
+              importState: 'available',
+            },
+          ],
+        })}
+        library={library}
+        openSourceSettings={vi.fn()}
+      />,
+    );
+
+    expect(emptyMarkup).toContain('Drive에서 파일 추가');
+    expect(emptyMarkup).toContain('연결할 파일을 선택해 보세요');
+    expect(emptyMarkup).not.toContain('전체 Drive 탐색');
+    expect(selectedMarkup).toContain('선택한 작품.epub 선택 목록에서 제거');
+  });
+
+  it('explains the remote download phase instead of presenting the current file as completed', () => {
+    const markup = renderToStaticMarkup(
+      <SourceHubScreen
+        controller={controller({
+          busy: true,
+          progress: {
+            current: 1,
+            total: 1,
+            completed: 0,
+            failed: 0,
+            linkedExisting: 0,
+            fileName: '큰 작품.epub',
+            phase: 'downloading',
+          },
+        })}
+        library={library}
+        openSourceSettings={vi.fn()}
+      />,
+    );
+
+    expect(markup).toContain('개발용 작품 소스에서 원문을 내려받는 중입니다');
+    expect(markup).toContain('큰 파일은 잠시 걸릴 수 있습니다');
+    expect(markup).toContain('aria-label="외부 작품 가져오기 진행률"');
+    expect(markup).toContain('value="0"');
+  });
+
+  it('renders nothing after the active source loses its connection', () => {
+    const disconnected = controller({
+      sources: [
+        {
+          id: 'fixture.source',
+          title: '연결 해제된 소스',
+          kind: 'cloud_file',
+          origin: 'built_in',
+          connection: { state: 'disconnected' },
+        },
+      ],
+    });
+
+    expect(
+      renderToStaticMarkup(
+        <SourceHubScreen controller={disconnected} library={library} openSourceSettings={vi.fn()} />,
+      ),
+    ).toBe('');
+  });
+});

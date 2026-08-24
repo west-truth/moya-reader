@@ -4,6 +4,7 @@ import type { ProviderJob } from '../../providers/provider-jobs';
 import type { JsonValue } from '../../sync/types';
 import type { ChapterLabelAnalysisReviewArtifact } from '../../providers/analysis-review';
 import type { AnalysisReviewEditIntentMap } from '../../providers/analysis-review-correction';
+import type { ExtensionContributionId } from '@noveldesk/extension-contracts';
 
 export type BookAnalysisWorkflowRuntime = 'hosted' | 'native';
 export type BookAnalysisWorkflowReadinessOutcome = 'pending' | 'ready_for_tts' | 'needs_review';
@@ -36,7 +37,12 @@ export interface BookAnalysisWorkflowJob {
   readonly createdAt: string;
 }
 
-export interface BookAnalysisWorkflow {
+export interface BookAnalysisWorkflowDefinitionRef {
+  readonly workflowDefinitionId: ExtensionContributionId;
+  readonly workflowVersion: string;
+}
+
+export interface BookAnalysisWorkflow extends BookAnalysisWorkflowDefinitionRef {
   readonly id: string;
   readonly novelId: string;
   readonly workflowType: string;
@@ -58,7 +64,7 @@ export interface BookAnalysisWorkflow {
   readonly errorMessage?: string;
 }
 
-export interface StartBookAnalysisWorkflowInput {
+export interface StartBookAnalysisWorkflowInput extends BookAnalysisWorkflowDefinitionRef {
   readonly bookId: string;
   readonly providerId?: string;
   readonly modelId?: string;

@@ -3,6 +3,12 @@ import * as http from 'node:http';
 import * as https from 'node:https';
 import { BlockList, isIP } from 'node:net';
 
+function errorWithCause(message: string, cause: unknown): Error {
+  const error = new Error(message) as Error & { cause?: unknown };
+  error.cause = cause;
+  return error;
+}
+
 export interface LocalEndpointAddress {
   readonly address: string;
   readonly family: 4 | 6;
@@ -57,7 +63,7 @@ export async function requestLocalEndpoint(
       return await options.fetchImpl(endpoint.url, { ...request, redirect: 'manual' });
     } catch (error) {
       if (isAbortError(error)) throw error;
-      throw new Error('Local TTS endpoint network request failed', { cause: error });
+      throw errorWithCause('Local TTS endpoint network request failed', error);
     }
   }
   return requestPinnedEndpoint(endpoint, request);
@@ -103,7 +109,7 @@ async function approveLocalEndpoint(
   try {
     addresses = await lookup(hostname);
   } catch (error) {
-    throw new Error('Local TTS endpoint DNS lookup failed', { cause: error });
+    throw errorWithCause('Local TTS endpoint DNS lookup failed', error);
   }
   if (!addresses.length) throw new Error('Local TTS endpoint DNS lookup returned no addresses');
 
@@ -209,7 +215,7 @@ function requestPinnedEndpoint(endpoint: ApprovedEndpoint, request: LocalEndpoin
         chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
       });
       incoming.on('error', (error) => {
-        rejectOnce(new Error('Local TTS endpoint network request failed', { cause: error }));
+        rejectOnce(errorWithCause('Local TTS endpoint network request failed', error));
       });
       incoming.on('end', () => {
         const status = incoming.statusCode ?? 500;
@@ -225,9 +231,7 @@ function requestPinnedEndpoint(endpoint: ApprovedEndpoint, request: LocalEndpoin
     const onAbort = () => outgoing.destroy(abortError());
     request.signal?.addEventListener('abort', onAbort, { once: true });
     outgoing.on('error', (error) => {
-      rejectOnce(
-        isAbortError(error) ? error : new Error('Local TTS endpoint network request failed', { cause: error }),
-      );
+      rejectOnce(isAbortError(error) ? error : errorWithCause('Local TTS endpoint network request failed', error));
     });
     outgoing.end(request.body);
   });

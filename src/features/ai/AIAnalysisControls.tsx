@@ -69,13 +69,18 @@ export function AIAnalysisControls({
             >
               <RotateCcw size={18} /> 라벨 복구
             </button>
-            <button
-              className="ghost-btn"
-              onClick={() => void actions.analyzeBundle()}
-              disabled={data.bundleAnalysisDisabled}
-            >
-              <Users size={18} /> 묶음 인물 분석
-            </button>
+            {data.workflows.map((workflow) => (
+              <button
+                key={workflow.id}
+                className="ghost-btn"
+                data-workflow-id={workflow.id}
+                title={workflow.description}
+                onClick={() => void actions.runWorkflow(workflow.id)}
+                disabled={workflow.disabled}
+              >
+                <Users size={18} /> {workflow.title}
+              </button>
+            ))}
             <button className="ghost-btn" onClick={() => void actions.mergeGraph()} disabled={data.graphMergeDisabled}>
               <RefreshCw size={18} /> 후보 병합
             </button>

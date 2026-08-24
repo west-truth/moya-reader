@@ -94,7 +94,13 @@ export class BrowserImportService implements ImportService {
           worker.onerror = (event) => {
             settled = true;
             worker?.terminate();
-            reject(new Error(event.message || 'Import worker failed'));
+            const workerError = event.error;
+            const detail =
+              workerError instanceof Error ? workerError.message.trim() || workerError.name : event.message.trim();
+            const location = event.filename
+              ? ` (${event.filename}${event.lineno ? `:${event.lineno}:${event.colno}` : ''})`
+              : '';
+            reject(new Error(`${detail || 'Import worker failed'}${location}`));
           };
           worker.postMessage({
             type: 'start',

@@ -1,7 +1,7 @@
 # 모야 Docker Compose 배포 가이드
 
 Status: current
-Last verified: 2026-08-20
+Last verified: 2026-08-24
 
 ## 권장 서버 환경
 
@@ -25,6 +25,7 @@ Debian/glibc 계열을 사용한다.
 | 서버와 로컬 한국어 TTS 사용 | `compose.yaml` + `compose.local-tts.yaml` | 외부 TTS 비용 없이 CPU 음성 합성을 쓸 때 |
 | WireGuard/LAN/인터넷 접속   | `compose.yaml` + `compose.public.yaml`    | 개인 서버, 동일 호스트의 HTTPS 프록시 뒤 |
 | 외부 접속과 로컬 TTS 사용   | 위 세 파일 모두                           | 개인 서버와 CPU TTS를 함께 운영할 때     |
+| 외부 접속과 Suwayomi 사용   | 기본 + public + `compose.suwayomi.yaml`   | Mihon 호환 source를 함께 탐색할 때       |
 
 처음에는 기본 구성으로 정상 실행을 확인한 다음 TTS나 외부 공개를 추가하는 편이 가장 쉽다.
 
@@ -35,15 +36,16 @@ Debian/glibc 계열을 사용한다.
 
 기본 구성은 다음 서비스를 실행한다.
 
-| 서비스      | 역할                                  | 호스트 공개 여부           |
-| ----------- | ------------------------------------- | -------------------------- |
-| `web`       | 웹 화면과 `/api` 프록시               | `127.0.0.1:8080`           |
-| `api`       | 책장, Reader, 동기화, 백업 API        | 직접 공개하지 않음         |
-| `worker`    | 파일 가져오기와 AI/TTS 작업           | 공개하지 않음              |
-| `postgres`  | 책장과 독서 데이터의 기준 저장소      | 공개하지 않음              |
-| `redis`     | 작업 큐                               | 공개하지 않음              |
-| `minio`     | 원본 파일, 문서 자산, TTS 오디오 저장 | Console만 `127.0.0.1:9001` |
-| `tts-model` | 선택형 로컬 한국어 TTS                | Compose 내부에서만 사용    |
+| 서비스      | 역할                                  | 호스트 공개 여부            |
+| ----------- | ------------------------------------- | --------------------------- |
+| `web`       | 웹 화면과 `/api` 프록시               | `127.0.0.1:8080`            |
+| `api`       | 책장, Reader, 동기화, 백업 API        | 직접 공개하지 않음          |
+| `worker`    | 파일 가져오기와 AI/TTS 작업           | 공개하지 않음               |
+| `postgres`  | 책장과 독서 데이터의 기준 저장소      | 공개하지 않음               |
+| `redis`     | 작업 큐                               | 공개하지 않음               |
+| `minio`     | 원본 파일, 문서 자산, TTS 오디오 저장 | Console만 `127.0.0.1:9001`  |
+| `tts-model` | 선택형 로컬 한국어 TTS                | Compose 내부에서만 사용     |
+| `suwayomi`  | 선택형 Mihon 호환 source runtime      | NPM 공유 network에서만 사용 |
 
 컨테이너를 다시 만들어도 데이터가 유지되도록 PostgreSQL, Redis, MinIO와 서버 데이터는 Docker named
 volume에 저장된다.
@@ -319,6 +321,10 @@ public override는 위 저장소 자격증명도 required interpolation으로 �
 CORS_ALLOWED_ORIGINS=https://별도-web.example.com,http://10.20.0.2:1420
 ```
 
+Dropbox/Google의 공개 OAuth 식별자와 Suwayomi 기본 origin은 `.env`의 `MOYA_*` 값을 Web 컨테이너 시작 시
+`/runtime-config.js`로 만든다. 값을 바꿀 때 Web image를 다시 빌드할 필요는 없지만 컨테이너는 재생성해야 한다.
+이 경계는 browser-visible 값만 허용하므로 app/client secret, Bearer token이나 provider API key를 넣지 않는다.
+
 외부 공개 구성을 확인하고 시작한다.
 
 ```bash
@@ -366,6 +372,27 @@ PostgreSQL, Redis, MinIO API, TTS 포트는 직접 공개하지 않는다.
 처음 웹 화면을 연 뒤 모야의 서버 연결/동기화 설정에 `.env`와 같은 Bearer 토큰을 저장한다. 연결 테스트는
 공개 `/ready`뿐 아니라 보호된 sync API도 확인한다. 토큰을 저장하면 최초 401로 실패했던 책장도 자동으로
 다시 불러온다.
+
+### 선택형 Suwayomi/Mihon source
+
+Nginx Proxy Manager를 Docker로 운영한다면 NPM, Moya Web과 Suwayomi를 같은 외부 network에 연결한다. 기본
+network 이름은 `npm_proxy`이며 한 번만 만든다.
+
+```bash
+docker network create npm_proxy
+```
+
+`.env`에 `SUWAYOMI_AUTH_USERNAME`, `SUWAYOMI_AUTH_PASSWORD`와 browser에서 접근 가능한 별도 HTTPS origin인
+`MOYA_SUWAYOMI_DEFAULT_URL`을 설정한다. 그런 다음 항상 같은 세 Compose 파일 조합을 사용한다.
+
+```bash
+docker compose -f compose.yaml -f compose.public.yaml -f compose.suwayomi.yaml config --quiet
+docker compose -f compose.yaml -f compose.public.yaml -f compose.suwayomi.yaml up -d --build
+```
+
+Suwayomi는 host port를 publish하지 않고 기본 alias `moya-suwayomi:4567`만 NPM network에 제공한다. 설치 source,
+설정과 library data는 `suwayomi-data` volume에 남는다. 두 Proxy Host, HTTPS/OAuth origin, WireGuard 방화벽과
+업데이트 절차는 [Nginx Proxy Manager + WireGuard 배포 예제](nginx-proxy-manager-wireguard.md)를 따른다.
 
 ## 6. 평상시 운영 명령
 
@@ -584,5 +611,13 @@ docker compose -f compose.yaml -f compose.public.yaml -f compose.local-tts.yaml 
 docker compose -f compose.yaml -f compose.public.yaml -f compose.local-tts.yaml up -d --no-build
 ```
 
+외부 공개와 Suwayomi:
+
+```bash
+docker compose -f compose.yaml -f compose.public.yaml -f compose.suwayomi.yaml up -d --build
+```
+
 상세한 데이터 경계, 장애 복구 범위와 운영 검증 항목은
 [Docker Compose 기술 운영 런북](docker-compose-deployment.md)을 참고한다.
+Nginx Proxy Manager와 Suwayomi를 함께 쓸 때는
+[WireGuard 전용 NPM 예제](nginx-proxy-manager-wireguard.md)도 확인한다.

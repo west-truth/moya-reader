@@ -87,6 +87,21 @@ function source(
     allChapterParagraphs,
     characters,
     graphKnowledge: backfillCharacterGraphKnowledgeV2(graph),
+    previousEpisodeContext: {
+      chapterId: 'chapter_0',
+      summary: 'Alex was speaking.',
+      activeCharacterIds: ['character_alex'],
+      unresolved: [],
+      recentTurns: [
+        {
+          paragraphId: 'previous_paragraph',
+          speakerId: 'character_alex',
+          listenerIds: ['character_blair'],
+          emotion: 'neutral',
+          text: 'Remember this turn.',
+        },
+      ],
+    },
     userCorrections: [],
     providerId: 'mock',
     modelId: 'mock-speaker-v1',
