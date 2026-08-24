@@ -199,6 +199,8 @@ check(
   'Docker build installs and copies shared workspaces',
   dockerfile.includes('COPY packages/contracts/package.json packages/contracts/package.json') &&
     dockerfile.includes('COPY packages/contracts packages/contracts') &&
+    dockerfile.includes('COPY packages/extension-contracts/package.json packages/extension-contracts/package.json') &&
+    dockerfile.includes('COPY packages/extension-contracts packages/extension-contracts') &&
     dockerfile.includes('COPY packages/epub-core/package.json packages/epub-core/package.json') &&
     dockerfile.includes('COPY packages/epub-core packages/epub-core') &&
     dockerfile.includes('COPY packages/fixed-document-core/package.json packages/fixed-document-core/package.json') &&

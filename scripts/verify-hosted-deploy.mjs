@@ -226,6 +226,10 @@ check('web Dockerfile runs pnpm build', includes(files.webDockerfile, 'RUN pnpm 
 check(
   'web Dockerfile installs shared workspaces',
   includes(files.webDockerfile, 'COPY packages/contracts/package.json packages/contracts/package.json') &&
+    includes(
+      files.webDockerfile,
+      'COPY packages/extension-contracts/package.json packages/extension-contracts/package.json',
+    ) &&
     includes(files.webDockerfile, 'COPY packages/text-core/package.json packages/text-core/package.json'),
 );
 check(
@@ -276,6 +280,11 @@ check(
   'server Dockerfile installs and copies shared workspaces',
   includes(files.serverDockerfile, 'COPY packages/contracts/package.json packages/contracts/package.json') &&
     includes(files.serverDockerfile, 'COPY packages/contracts packages/contracts') &&
+    includes(
+      files.serverDockerfile,
+      'COPY packages/extension-contracts/package.json packages/extension-contracts/package.json',
+    ) &&
+    includes(files.serverDockerfile, 'COPY packages/extension-contracts packages/extension-contracts') &&
     includes(files.serverDockerfile, 'COPY packages/text-core/package.json packages/text-core/package.json') &&
     includes(files.serverDockerfile, 'COPY packages/text-core packages/text-core'),
 );
