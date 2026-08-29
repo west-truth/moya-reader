@@ -46,10 +46,10 @@ import { assertNativeLabelingContractExecutable, resolveNativeLabelingContract }
 const MAX_TERMINAL_RESUBMITS = 3;
 let fallbackRetryNonce = 0;
 
-function forcedWorkflowIdempotencyKey(planHash: string): string {
+function forcedWorkflowIdempotencyKey(scopedIdempotencyKey: string): string {
   fallbackRetryNonce += 1;
   const nonce = globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${fallbackRetryNonce}`;
-  return `${planHash}:retry:${nonce}`;
+  return `${scopedIdempotencyKey}:retry:${nonce}`;
 }
 
 function isoTime(milliseconds: number): string {
@@ -183,6 +183,8 @@ function normalizedWorkflow(
   const status = workflowReadiness.outcome === 'needs_review' ? 'needs_review' : view.status;
   return {
     id: view.id,
+    workflowDefinitionId: descriptor.workflowDefinitionId,
+    workflowVersion: descriptor.workflowVersion,
     novelId: descriptor.novelId,
     workflowType: 'book_ai_tts',
     runtime: 'native',
@@ -236,17 +238,27 @@ export class NativeBookAnalysisWorkflowGateway implements BookAnalysisWorkflowGa
     const labelingContract = resolveNativeLabelingContract(provider.providerOptions);
     assertNativeLabelingContractExecutable(labelingContract);
     const plan = await planPinnedNativeBookWorkflow({ source, options: input.planOptions, provider, signal });
-    const predecessor = await this.bridge.getActive({ novelId: input.bookId, contentRevision: contentRevisionId });
+    const predecessorView = await this.bridge.getActive({ novelId: input.bookId, contentRevision: contentRevisionId });
+    const predecessorDescriptor = predecessorView
+      ? await this.repository.getNativeAnalysisWorkflowDescriptor(predecessorView.id)
+      : undefined;
+    const predecessorId =
+      predecessorDescriptor?.workflowDefinitionId === input.workflowDefinitionId &&
+      predecessorDescriptor.workflowVersion === input.workflowVersion
+        ? predecessorView?.id
+        : undefined;
     const replacement = await this.submit({
       source,
       plan,
       contentRevisionId,
+      workflowDefinitionId: input.workflowDefinitionId,
+      workflowVersion: input.workflowVersion,
       provider,
       labelingContract,
       force: input.force,
       signal,
     });
-    return this.retirePredecessor(replacement, predecessor?.id, signal);
+    return this.retirePredecessor(replacement, predecessorId, signal);
   }
 
   async get(workflowId: string, _signal?: AbortSignal): Promise<BookAnalysisWorkflow> {
@@ -265,19 +277,10 @@ export class NativeBookAnalysisWorkflowGateway implements BookAnalysisWorkflowGa
     const source = await this.repository.openContentRevision(bookId);
     const contentRevision = requireContentRevision(source.contentRevisionId);
     if (signal?.aborted) throw new DOMException('Aborted', 'AbortError');
-    const retiredOrphans = new Set<string>();
-    while (true) {
-      signal?.throwIfAborted();
-      const view = await this.bridge.getActive({ novelId: bookId, contentRevision });
-      if (!view) return undefined;
-      const descriptor = await this.repository.getNativeAnalysisWorkflowDescriptor(view.id);
-      if (descriptor) return this.advance(view, descriptor, source);
-      if (retiredOrphans.has(view.id)) {
-        throw new Error('Native workflow orphan cleanup made no progress.');
-      }
-      retiredOrphans.add(view.id);
-      await this.bridge.cancel(view.id);
-    }
+    const view = await this.bridge.getActive({ novelId: bookId, contentRevision });
+    if (!view) return undefined;
+    const descriptor = await this.repository.getNativeAnalysisWorkflowDescriptor(view.id);
+    return descriptor ? normalizedWorkflow(view, descriptor) : undefined;
   }
 
   async retry(workflowId: string, signal?: AbortSignal): Promise<BookAnalysisWorkflow> {
@@ -294,6 +297,8 @@ export class NativeBookAnalysisWorkflowGateway implements BookAnalysisWorkflowGa
       source,
       plan: descriptor.plan,
       contentRevisionId: descriptor.contentRevisionId,
+      workflowDefinitionId: descriptor.workflowDefinitionId,
+      workflowVersion: descriptor.workflowVersion,
       provider: descriptor.provider,
       labelingContract:
         descriptor.labelingContract ?? resolveNativeLabelingContract(descriptor.provider.providerOptions),
@@ -392,6 +397,8 @@ export class NativeBookAnalysisWorkflowGateway implements BookAnalysisWorkflowGa
     readonly source: Awaited<ReturnType<NativeWorkflowReaderRepository['openContentRevision']>>;
     readonly plan: NativeAnalysisWorkflowDescriptor['plan'];
     readonly contentRevisionId: string;
+    readonly workflowDefinitionId: NativeAnalysisWorkflowDescriptor['workflowDefinitionId'];
+    readonly workflowVersion: string;
     readonly provider: NativeAnalysisWorkflowDescriptor['provider'];
     readonly labelingContract: NativeLabelingContract;
     readonly force?: boolean;
@@ -407,10 +414,12 @@ export class NativeBookAnalysisWorkflowGateway implements BookAnalysisWorkflowGa
     const baseSubmitRequest = buildNativeBookWorkflowSubmitRequest({
       plan: input.plan,
       contentRevision: input.contentRevisionId,
+      workflowDefinitionId: input.workflowDefinitionId,
+      workflowVersion: input.workflowVersion,
       compactExecutionManifest,
     });
     const submitRequest = input.force
-      ? { ...baseSubmitRequest, idempotencyKey: forcedWorkflowIdempotencyKey(baseSubmitRequest.planHash) }
+      ? { ...baseSubmitRequest, idempotencyKey: forcedWorkflowIdempotencyKey(baseSubmitRequest.idempotencyKey) }
       : baseSubmitRequest;
     const view = await this.bridge.submit(submitRequest);
     if (['succeeded', 'failed', 'cancelled', 'needs_review'].includes(view.status)) {
@@ -428,6 +437,8 @@ export class NativeBookAnalysisWorkflowGateway implements BookAnalysisWorkflowGa
     try {
       descriptor = await this.repository.saveNativeAnalysisWorkflowDescriptor({
         workflowId: view.id,
+        workflowDefinitionId: input.workflowDefinitionId,
+        workflowVersion: input.workflowVersion,
         novelId: input.plan.novelId,
         contentRevisionId: input.contentRevisionId,
         planHash: submitRequest.planHash,

@@ -169,6 +169,14 @@ export async function getSettings(): Promise<ReaderSettings> {
       rate: settings?.ttsPlayback?.rate ?? settings?.ttsSpeed ?? defaultSettings.ttsPlayback.rate,
     },
     readingProfile: { ...defaultSettings.readingProfile, ...settings?.readingProfile },
+    aiWorkflows: {
+      ...defaultSettings.aiWorkflows!,
+      ...settings?.aiWorkflows,
+      bookOverrides: {
+        ...defaultSettings.aiWorkflows?.bookOverrides,
+        ...settings?.aiWorkflows?.bookOverrides,
+      },
+    },
     gestureBindings: { ...defaultSettings.gestureBindings, ...settings?.gestureBindings },
   };
 }

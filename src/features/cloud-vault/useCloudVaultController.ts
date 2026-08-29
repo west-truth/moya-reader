@@ -115,8 +115,7 @@ export function useCloudVaultController(options: UseCloudVaultControllerOptions)
   const [activity, setActivity] = useState<CloudVaultActivity>(available ? 'loading' : 'idle');
   const [lastReport, setLastReport] = useState<CloudVaultSyncReport>();
   const androidSecureCredentials = apiAuthTokenUsesAndroidKeystore();
-  const dropboxAppKey =
-    configuredDropboxAppKey?.trim() || (import.meta.env.VITE_DROPBOX_APP_KEY as string | undefined)?.trim();
+  const dropboxAppKey = configuredDropboxAppKey?.trim();
 
   useEffect(() => {
     if (!available) return;
@@ -372,7 +371,7 @@ export function useCloudVaultController(options: UseCloudVaultControllerOptions)
       ? 'Android Dropbox 연결은 Custom Tab과 검증된 앱 링크 adapter가 준비되기 전까지 비활성화됩니다.'
       : dropboxAppKey
         ? undefined
-        : '배포 빌드에 VITE_DROPBOX_APP_KEY 설정이 필요합니다.',
+        : '배포의 공개 Dropbox 앱 키 설정이 필요합니다.',
     backupOnly: serverSyncConnected,
     lastReport,
     setPassphrase,

@@ -8,12 +8,18 @@ importers:
 
   .:
     dependencies:
+      '@googleworkspace/drive-picker-element':
+        specifier: 0.7.3
+        version: 0.7.3
       '@noble/hashes':
         specifier: 2.0.1
         version: 2.0.1
       '@noveldesk/epub-core':
         specifier: workspace:*
         version: link:packages/epub-core
+      '@noveldesk/extension-contracts':
+        specifier: workspace:*
+        version: link:packages/extension-contracts
       '@noveldesk/fixed-document-core':
         specifier: workspace:*
         version: link:packages/fixed-document-core
@@ -194,6 +200,12 @@ importers:
       '@noveldesk/contracts':
         specifier: workspace:*
         version: link:../contracts
+      typescript:
+        specifier: ^5.6.3
+        version: 5.9.3
+
+  packages/extension-contracts:
+    devDependencies:
       typescript:
         specifier: ^5.6.3
         version: 5.9.3
@@ -778,6 +790,9 @@ packages:
     peerDependenciesMeta:
       '@modelcontextprotocol/sdk':
         optional: true
+
+  '@googleworkspace/drive-picker-element@0.7.3':
+    resolution: {integrity: sha512-z1hZh1HsPAQ19lencw2x3FcUVoymWYexcWgq66iXum4mUfWWaQ37oGtQ6hGvM8dyrC81G79P26gq7HhRtbGb2Q==}
 
   '@humanfs/core@0.19.2':
     resolution: {integrity: sha512-UhXNm+CFMWcbChXywFwkmhqjs3PRCmcSa/hfBgLIb7oQ5HNb1wS0icWsGtSAUNgefHeI+eBrA8I1fxmbHsGdvA==}
@@ -2879,6 +2894,8 @@ snapshots:
       - bufferutil
       - supports-color
       - utf-8-validate
+
+  '@googleworkspace/drive-picker-element@0.7.3': {}
 
   '@humanfs/core@0.19.2':
     dependencies:

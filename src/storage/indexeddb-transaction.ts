@@ -1,11 +1,7 @@
 import { openReaderDb, type ReaderStoreName } from './reader-database';
+import { requestToPromise } from './indexeddb-request';
 
-export function requestToPromise<T>(request: IDBRequest<T>): Promise<T> {
-  return new Promise((resolve, reject) => {
-    request.onsuccess = () => resolve(request.result);
-    request.onerror = () => reject(request.error);
-  });
-}
+export { requestToPromise } from './indexeddb-request';
 
 export function transactionDone(transaction: IDBTransaction): Promise<void> {
   return new Promise((resolve, reject) => {

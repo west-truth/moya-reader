@@ -1,6 +1,8 @@
 export {
   deleteNativeAnalysisWorkflowDescriptor,
   getNativeAnalysisWorkflowDescriptor,
+  LEGACY_NATIVE_WORKFLOW_DEFINITION_ID,
+  LEGACY_NATIVE_WORKFLOW_VERSION,
   nativeAnalysisWorkflowDescriptorFingerprint,
   saveNativeAnalysisWorkflowDescriptor,
 } from './descriptor-store';

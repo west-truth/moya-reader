@@ -481,14 +481,6 @@ export async function registerProviderJobRoutes(
             update provider_jobs
             set status = 'cancelled',
                 stage = 'cancelled',
-                outcome_state = 'cancelled',
-                billing_state = case
-                  when dispatch_started_at is null then 'not_billable'
-                  else 'billed_possible'
-                end,
-                normalized_error_code = 'provider_job_cancelled',
-                reconcile_after = null,
-                lease_expires_at = null,
                 progress = $3,
                 error_code = 'provider_job_cancelled',
                 error_message = $4,
@@ -506,6 +498,14 @@ export async function registerProviderJobRoutes(
             update provider_job_attempts attempt
             set status = 'cancelled',
                 stage = 'cancelled',
+                outcome_state = 'cancelled',
+                billing_state = case
+                  when attempt.dispatch_started_at is null then 'not_billable'
+                  else 'billed_possible'
+                end,
+                normalized_error_code = 'provider_job_cancelled',
+                reconcile_after = null,
+                lease_expires_at = null,
                 progress = $3,
                 error_code = 'provider_job_cancelled',
                 error_message = $4,

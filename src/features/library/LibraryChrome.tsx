@@ -2,6 +2,7 @@ import {
   ArrowDownUp,
   BookOpen,
   Check,
+  Cloud,
   DatabaseBackup,
   FileText,
   Folder,
@@ -12,6 +13,7 @@ import {
   List,
   Menu,
   MoreVertical,
+  PlugZap,
   RotateCcw,
   Search,
   Settings,
@@ -49,12 +51,13 @@ function FilterNavigation({ model, actions, close }: LibraryScreenProps & { clos
           <button
             key={item.value}
             type="button"
-            className={model.filter === item.value ? 'active' : ''}
+            className={!model.externalSources.active && model.filter === item.value ? 'active' : ''}
+            disabled={model.externalSources.busy}
             onClick={() => {
               actions.controls.setFilter(item.value);
               close?.();
             }}
-            aria-current={model.filter === item.value ? 'page' : undefined}
+            aria-current={!model.externalSources.active && model.filter === item.value ? 'page' : undefined}
           >
             <Icon size={17} strokeWidth={1.7} />
             <span>{item.label}</span>
@@ -72,12 +75,13 @@ function ShelfNavigation({ model, actions, close }: LibraryScreenProps & { close
     <nav className="library-sidebar-list" aria-label="사용자 책장">
       <button
         type="button"
-        className={!model.management.activeShelfId ? 'active' : ''}
+        className={!model.externalSources.active && !model.management.activeShelfId ? 'active' : ''}
+        disabled={model.externalSources.busy}
         onClick={() => {
           actions.controls.setShelf(undefined);
           close?.();
         }}
-        aria-current={!model.management.activeShelfId ? 'page' : undefined}
+        aria-current={!model.externalSources.active && !model.management.activeShelfId ? 'page' : undefined}
       >
         <Folder size={17} strokeWidth={1.7} />
         <span>모든 작품</span>
@@ -87,18 +91,50 @@ function ShelfNavigation({ model, actions, close }: LibraryScreenProps & { close
         <button
           key={shelf.id}
           type="button"
-          className={model.management.activeShelfId === shelf.id ? 'active' : ''}
+          className={!model.externalSources.active && model.management.activeShelfId === shelf.id ? 'active' : ''}
+          disabled={model.externalSources.busy}
           onClick={() => {
             actions.controls.setShelf(shelf.id);
             close?.();
           }}
-          aria-current={model.management.activeShelfId === shelf.id ? 'page' : undefined}
+          aria-current={
+            !model.externalSources.active && model.management.activeShelfId === shelf.id ? 'page' : undefined
+          }
         >
           <Folder size={17} strokeWidth={1.7} />
           <span>{shelf.name}</span>
           <em>{formatCount(model.presentation.shelfBookCounts.get(shelf.id) ?? 0)}</em>
         </button>
       ))}
+    </nav>
+  );
+}
+
+function SourceNavigation({ model, actions, close }: LibraryScreenProps & { close?: () => void }) {
+  if (model.externalSources.sources.length === 0) return null;
+  return (
+    <nav className="library-sidebar-list" aria-label="연결된 외부 소스">
+      {model.externalSources.sources.map((source) => {
+        const Icon = source.kind === 'cloud_file' ? Cloud : PlugZap;
+        const active = model.externalSources.active && model.externalSources.activeSourceId === source.id;
+        return (
+          <button
+            key={source.id}
+            type="button"
+            className={active ? 'active' : ''}
+            disabled={model.externalSources.busy}
+            aria-label={`${source.title} 소스 열기`}
+            aria-current={active ? 'page' : undefined}
+            onClick={() => {
+              actions.header.openExternalSource(source.id);
+              close?.();
+            }}
+          >
+            <Icon size={17} strokeWidth={1.7} />
+            <span>{source.title}</span>
+          </button>
+        );
+      })}
     </nav>
   );
 }
@@ -111,6 +147,7 @@ export function LibrarySidebar(props: LibraryScreenProps) {
         className="library-brand-lockup"
         type="button"
         onClick={() => goLibraryHome(props)}
+        disabled={model.externalSources.busy}
         aria-label="라이브러리 메인"
       >
         <img src="/branding/moya-wordmark.png" alt="MOYA" />
@@ -131,9 +168,26 @@ export function LibrarySidebar(props: LibraryScreenProps) {
             <ShelfNavigation {...props} />
           </section>
         )}
+        {model.externalSources.sources.length > 0 && (
+          <section className="library-source-section">
+            <div className="library-sidebar-section-head">
+              <span className="library-sidebar-label">소스</span>
+              <button
+                type="button"
+                title="소스 관리"
+                aria-label="소스 관리"
+                disabled={model.externalSources.busy}
+                onClick={actions.header.openExternalSourceSettings}
+              >
+                <Settings size={16} />
+              </button>
+            </div>
+            <SourceNavigation {...props} />
+          </section>
+        )}
       </div>
       <footer className="library-sidebar-footer">
-        <button type="button" onClick={actions.header.openSettings}>
+        <button type="button" disabled={model.externalSources.busy} onClick={actions.header.openSettings}>
           <Settings size={18} /> <span>설정</span>
         </button>
         <p>파일과 독서 기록은 이 기기에 저장됩니다.</p>
@@ -205,8 +259,17 @@ export function LibraryHeader({ model, actions }: LibraryScreenProps) {
 
 type MobilePanel = 'drawer' | 'display' | 'more' | null;
 
-export function LibraryMobileHeader(props: LibraryScreenProps) {
+export interface LibraryMobileSourceMode {
+  readonly title: string;
+  readonly query: string;
+  readonly searchable?: boolean;
+  setQuery(value: string): void;
+  search(): void;
+}
+
+export function LibraryMobileHeader(props: LibraryScreenProps & { sourceMode?: LibraryMobileSourceMode }) {
   const { model, actions } = props;
+  const sourceMode = props.sourceMode;
   const [panel, setPanel] = useState<MobilePanel>(null);
   const [searchOpen, setSearchOpen] = useState(false);
   const [shelfOpen, setShelfOpen] = useState(false);
@@ -235,21 +298,28 @@ export function LibraryMobileHeader(props: LibraryScreenProps) {
         >
           <Menu size={20} />
         </button>
-        <button
-          type="button"
-          className="library-mobile-shelf"
-          onClick={() => {
-            setPanel(null);
-            setSearchOpen(false);
-            setShelfOpen((value) => !value);
-          }}
-          aria-expanded={shelfOpen}
-        >
-          <Folder size={15} />
-          <span>
-            {model.management.shelves.find((shelf) => shelf.id === model.management.activeShelfId)?.name ?? '전체'}
+        {sourceMode ? (
+          <span className="library-mobile-shelf is-static">
+            <Cloud size={15} />
+            <span>{sourceMode.title}</span>
           </span>
-        </button>
+        ) : (
+          <button
+            type="button"
+            className="library-mobile-shelf"
+            onClick={() => {
+              setPanel(null);
+              setSearchOpen(false);
+              setShelfOpen((value) => !value);
+            }}
+            aria-expanded={shelfOpen}
+          >
+            <Folder size={15} />
+            <span>
+              {model.management.shelves.find((shelf) => shelf.id === model.management.activeShelfId)?.name ?? '전체'}
+            </span>
+          </button>
+        )}
         <button
           type="button"
           className="library-mobile-home"
@@ -259,32 +329,36 @@ export function LibraryMobileHeader(props: LibraryScreenProps) {
           <img src="/icons/moya-192.png" alt="" />
         </button>
         <span className="library-mobile-spacer" />
-        <button
-          type="button"
-          className="library-mobile-icon"
-          onClick={() => {
-            setSearchOpen(false);
-            setShelfOpen(false);
-            setPanel(panel === 'display' ? null : 'display');
-          }}
-          aria-label="정렬 및 보기"
-          aria-expanded={panel === 'display'}
-        >
-          <ArrowDownUp size={18} />
-        </button>
-        <button
-          type="button"
-          className="library-mobile-icon"
-          onClick={() => {
-            setPanel(null);
-            setShelfOpen(false);
-            setSearchOpen((value) => !value);
-          }}
-          aria-label="작품 검색"
-          aria-expanded={searchOpen}
-        >
-          <Search size={19} />
-        </button>
+        {!sourceMode && (
+          <button
+            type="button"
+            className="library-mobile-icon"
+            onClick={() => {
+              setSearchOpen(false);
+              setShelfOpen(false);
+              setPanel(panel === 'display' ? null : 'display');
+            }}
+            aria-label="정렬 및 보기"
+            aria-expanded={panel === 'display'}
+          >
+            <ArrowDownUp size={18} />
+          </button>
+        )}
+        {(!sourceMode || sourceMode.searchable !== false) && (
+          <button
+            type="button"
+            className="library-mobile-icon"
+            onClick={() => {
+              setPanel(null);
+              setShelfOpen(false);
+              setSearchOpen((value) => !value);
+            }}
+            aria-label="작품 검색"
+            aria-expanded={searchOpen}
+          >
+            <Search size={19} />
+          </button>
+        )}
         <button
           type="button"
           className="library-mobile-icon"
@@ -300,7 +374,7 @@ export function LibraryMobileHeader(props: LibraryScreenProps) {
         </button>
       </div>
 
-      {shelfOpen && (
+      {!sourceMode && shelfOpen && (
         <div className="library-mobile-quick-shelves" role="group" aria-label="책장 빠른 선택">
           <button
             type="button"
@@ -328,19 +402,28 @@ export function LibraryMobileHeader(props: LibraryScreenProps) {
         </div>
       )}
 
-      {searchOpen && (
+      {searchOpen && (!sourceMode || sourceMode.searchable !== false) && (
         <label className="library-mobile-search">
           <Search size={16} />
           <input
             autoFocus
             type="search"
-            value={model.query}
-            onChange={(event) => actions.header.setQuery(event.target.value)}
-            placeholder="작품 검색"
-            aria-label="모바일 작품 검색"
+            value={sourceMode?.query ?? model.query}
+            onChange={(event) =>
+              sourceMode ? sourceMode.setQuery(event.target.value) : actions.header.setQuery(event.target.value)
+            }
+            onKeyDown={(event) => {
+              if (sourceMode && event.key === 'Enter') sourceMode.search();
+            }}
+            placeholder={sourceMode ? '현재 소스 검색' : '작품 검색'}
+            aria-label={sourceMode ? '모바일 외부 소스 검색' : '모바일 작품 검색'}
           />
-          {model.query && (
-            <button type="button" onClick={() => actions.header.setQuery('')} aria-label="검색어 지우기">
+          {(sourceMode?.query ?? model.query) && (
+            <button
+              type="button"
+              onClick={() => (sourceMode ? sourceMode.setQuery('') : actions.header.setQuery(''))}
+              aria-label="검색어 지우기"
+            >
               <X size={15} />
             </button>
           )}
@@ -456,6 +539,22 @@ export function LibraryMobileHeader(props: LibraryScreenProps) {
             <>
               <h2>책장</h2>
               <ShelfNavigation {...props} close={() => setPanel(null)} />
+            </>
+          )}
+          {model.externalSources.sources.length > 0 && (
+            <>
+              <div className="library-mobile-drawer-heading">
+                <h2>소스</h2>
+                <button
+                  type="button"
+                  aria-label="소스 관리"
+                  disabled={model.externalSources.busy}
+                  onClick={() => runGlobal(actions.header.openExternalSourceSettings)}
+                >
+                  <Settings size={15} />
+                </button>
+              </div>
+              <SourceNavigation {...props} close={() => setPanel(null)} />
             </>
           )}
         </div>

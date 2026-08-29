@@ -109,6 +109,7 @@ export function readerSettingsEqual(left: ReaderSettings, right: ReaderSettings)
     JSON.stringify(left.ttsBookOverrides) === JSON.stringify(right.ttsBookOverrides) &&
     JSON.stringify(left.readingProfile) === JSON.stringify(right.readingProfile) &&
     JSON.stringify(left.readingBookOverrides) === JSON.stringify(right.readingBookOverrides) &&
+    JSON.stringify(left.aiWorkflows) === JSON.stringify(right.aiWorkflows) &&
     JSON.stringify(left.gestureBindings) === JSON.stringify(right.gestureBindings) &&
     left.keepScreenChrome === right.keepScreenChrome
   );

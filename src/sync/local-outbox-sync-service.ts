@@ -54,6 +54,7 @@ export interface SyncEventSource {
       fit: 'crop' | 'contain';
       positionX: number;
       positionY: number;
+      provenance?: 'user_supplied' | 'approved_enrichment' | 'generated_preview';
     },
   ): Promise<unknown>;
   removeBookCover?(bookId: string): Promise<unknown>;
@@ -87,12 +88,16 @@ function fieldText(row: Record<string, unknown>, camel: string, snake = camel): 
 function remoteCoverMetadata(bookId: string, row: Record<string, unknown>): BookAssetMetadata {
   const id = fieldText(row, 'id');
   const contentHash = fieldText(row, 'contentHash', 'content_hash');
+  const remoteProvenance = fieldText(row, 'provenance');
   if (!id || !contentHash) throw new Error('remote cover metadata is incomplete');
   return {
     id,
     bookId,
     kind: 'cover',
-    provenance: 'user_supplied',
+    provenance:
+      remoteProvenance === 'approved_enrichment' || remoteProvenance === 'generated_preview'
+        ? remoteProvenance
+        : 'user_supplied',
     status: 'active',
     storageKey: fieldText(row, 'storageKey', 'storage_key') ?? id,
     fileName: fieldText(row, 'fileName', 'file_name'),
@@ -237,6 +242,10 @@ export class LocalOutboxSyncService {
         fit: novel?.coverFit === 'contain' ? 'contain' : 'crop',
         positionX: Number(novel?.coverPositionX) || 50,
         positionY: Number(novel?.coverPositionY) || 50,
+        provenance:
+          cover.metadata.provenance === 'approved_enrichment' || cover.metadata.provenance === 'generated_preview'
+            ? cover.metadata.provenance
+            : 'user_supplied',
       });
     }
   }

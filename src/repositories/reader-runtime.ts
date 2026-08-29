@@ -10,6 +10,8 @@ import { IndexedDbLibraryCatalogRepository } from './indexeddb-library-catalog-r
 import { ReaderRepository } from './reader-repository';
 import type { BookAssetRepository } from './book-asset-repository';
 import type { LibraryCatalogRepository } from './library-catalog-repository';
+import type { BookEnrichmentRepository } from './book-enrichment-repository';
+import { IndexedDbBookEnrichmentRepository } from './indexeddb-book-enrichment-repository';
 import type { BackupRepository } from './backup-repository';
 import { IndexedDbBackupRepository } from './indexeddb-backup-repository';
 import { RemoteReaderRepository } from './remote-reader-repository';
@@ -43,6 +45,7 @@ export interface ReaderRuntime {
   readerRepository: ReaderRepository;
   bookAssetRepository?: BookAssetRepository;
   libraryCatalogRepository?: LibraryCatalogRepository;
+  bookEnrichmentRepository: BookEnrichmentRepository;
   backupRepository?: BackupRepository;
   chapterStructureRepository?: ChapterStructureRepository;
   personalizationRepository?: ReaderPersonalizationRepository;
@@ -296,6 +299,7 @@ export function getOrCreateRemoteDeviceId(): string {
 
 export function createReaderRuntime(): ReaderRuntime {
   const mode = import.meta.env.VITE_READER_BACKEND === 'remote' ? 'remote' : 'local';
+  const bookEnrichmentRepository = new IndexedDbBookEnrichmentRepository();
   if (mode === 'remote') {
     const apiBaseUrl = resolveApiBaseUrl();
     const client = new RemoteApiClient(apiBaseUrl, { getAuthToken: resolveApiAuthToken });
@@ -310,6 +314,7 @@ export function createReaderRuntime(): ReaderRuntime {
       documentRepository: new RepositoryBackedReaderDocumentRepository(remoteRepository),
       bookAssetRepository: new RemoteBookAssetRepository(client),
       libraryCatalogRepository: new RemoteLibraryCatalogRepository(client),
+      bookEnrichmentRepository,
       backupRepository: new RemoteBackupRepository(client),
       chapterStructureRepository: new RemoteChapterStructureRepository(client),
       personalizationRepository: new RemoteReaderPersonalizationRepository(client),
@@ -331,6 +336,7 @@ export function createReaderRuntime(): ReaderRuntime {
     documentRepository: new RepositoryBackedReaderDocumentRepository(localRepository),
     bookAssetRepository: new IndexedDbBookAssetRepository(),
     libraryCatalogRepository: new IndexedDbLibraryCatalogRepository(),
+    bookEnrichmentRepository,
     backupRepository: new IndexedDbBackupRepository(),
     chapterStructureRepository: new IndexedDbChapterStructureRepository(),
     personalizationRepository: new IndexedDbReaderPersonalizationRepository(),

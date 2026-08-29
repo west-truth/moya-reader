@@ -74,6 +74,8 @@ function actions(): LibraryScreenActions {
       openBackup: vi.fn(),
       openImport: vi.fn(),
       openLibraryFolders: vi.fn(),
+      openExternalSource: vi.fn(),
+      openExternalSourceSettings: vi.fn(),
     },
     presentation: {
       goHome: vi.fn(),
@@ -114,6 +116,7 @@ function model(novels: Novel[], overrides: Partial<LibraryScreenModel> = {}): Li
     drop: { active: false, importBusy: false },
     query: '',
     sync: { label: '로컬', tone: 'local' },
+    externalSources: { active: false, busy: false, sources: [] },
     filter: 'all',
     sort: 'recent',
     viewMode: 'grid',
@@ -142,6 +145,34 @@ function model(novels: Novel[], overrides: Partial<LibraryScreenModel> = {}): Li
 }
 
 describe('LibraryScreen', () => {
+  it('shows connected sources in the sidebar without the former topbar shortcut', () => {
+    const screenActions = actions();
+    const unavailableMarkup = renderToStaticMarkup(<LibraryScreen model={model([novel()])} actions={screenActions} />);
+    const elements = collectHostElements(
+      LibraryScreen({
+        model: model([novel()], {
+          externalSources: {
+            active: false,
+            busy: false,
+            sources: [{ id: 'fixture.source', title: '개발용 작품', kind: 'catalog' }],
+          },
+        }),
+        actions: screenActions,
+      }),
+    );
+    const externalSources = elements.find(
+      (element) => element.type === 'button' && element.props['aria-label'] === '개발용 작품 소스 열기',
+    );
+
+    expect(unavailableMarkup).not.toContain('aria-label="개발용 작품 소스 열기"');
+    expect(externalSources).toBeDefined();
+    (externalSources!.props.onClick as () => void)();
+    expect(screenActions.header.openExternalSource).toHaveBeenCalledWith('fixture.source');
+    expect(renderToStaticMarkup(<LibraryScreen model={model([novel()])} actions={screenActions} />)).not.toContain(
+      '외부 소스 열기',
+    );
+  });
+
   it('uses one atomic home action from the desktop brand', () => {
     const screenActions = actions();
     const elements = collectHostElements(LibraryScreen({ model: model([novel()]), actions: screenActions }));

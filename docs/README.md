@@ -7,6 +7,7 @@
 
 - [Ubuntu Docker Compose 설치·업데이트·백업](operations/docker-compose-guide-ko.md)
 - [Docker Compose 구성 기술 문서](operations/docker-compose-deployment.md)
+- [WireGuard + Nginx Proxy Manager + Suwayomi 배포](operations/nginx-proxy-manager-wireguard.md)
 - [Hosted provider admission과 비용 경계](operations/hosted-provider-admission.md)
 
 ## 데스크톱과 Android
@@ -24,6 +25,8 @@
 - [책장 폴더 가져오기와 동기화](architecture/library-folder-import-and-sync.md)
 - [대용량 파일과 동기화](architecture/large-file-and-sync-architecture.md)
 - [Cloud Vault](architecture/cloud-vault-sync.md)
+- [신뢰 익스텐션 v1 개발 가이드](architecture/trusted-extensions.md)
+- [외부 작품 소스와 Source Hub](architecture/external-library-sources.md)
 - [AI/TTS provider 경계](architecture/provider-boundaries.md)
 - [AI/TTS job·cache·보안](architecture/ai-tts-provider-job-cache-security.md)
 

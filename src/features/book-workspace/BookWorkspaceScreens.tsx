@@ -6,12 +6,15 @@ import type { BookWorkspaceController } from './book-workspace-controller';
 import type { BookWorkspaceProjection } from './book-workspace-projection';
 import type { BookWorkspaceState } from './book-workspace-contract';
 import type { LibraryManagementController } from '../library/useLibraryManagementController';
+import type { BookEnrichmentController } from '../book-enrichment/useBookEnrichmentController';
+import type { ExternalSourceController } from '../external-sources/useExternalSourceController';
 import { useResponsiveLayoutMode } from './useResponsiveLayoutMode';
 
 const ChaptersScreen = lazy(() =>
   import('../chapters/ChaptersScreen').then((module) => ({ default: module.ChaptersScreen })),
 );
 const LibraryManagementPanel = lazy(() => import('../library/LibraryManagementPanel'));
+const SourceHubScreen = lazy(() => import('../external-sources/SourceHubScreen'));
 
 export interface BookWorkspaceScreensProps {
   readonly controller: BookWorkspaceController;
@@ -38,12 +41,15 @@ export interface BookWorkspaceScreensProps {
   readonly openBackup: () => void;
   readonly openImport: () => void;
   readonly openLibraryFolders: () => void;
+  readonly externalSources: ExternalSourceController;
+  readonly openExternalSourceSettings: () => void;
   readonly addSample: () => void | Promise<void>;
   readonly exportSource: (novel: import('../../domain/types').Novel) => void | Promise<void>;
   readonly reselectSource: (novel: import('../../domain/types').Novel, file: File) => void | Promise<void>;
   readonly reconstructSource: (novel: import('../../domain/types').Novel) => void | Promise<void>;
   readonly openChapterStructure: (bookId: string) => void | Promise<void>;
   readonly libraryManagement: LibraryManagementController;
+  readonly bookEnrichment: BookEnrichmentController;
 }
 
 export function BookWorkspaceScreens({
@@ -59,12 +65,15 @@ export function BookWorkspaceScreens({
   openBackup,
   openImport,
   openLibraryFolders,
+  externalSources,
+  openExternalSourceSettings,
   addSample,
   exportSource,
   reselectSource,
   reconstructSource,
   openChapterStructure,
   libraryManagement,
+  bookEnrichment,
 }: BookWorkspaceScreensProps) {
   const layoutMode = useResponsiveLayoutMode();
   const [focusedBookId, setFocusedBookId] = useState<string>();
@@ -89,6 +98,10 @@ export function BookWorkspaceScreens({
     });
     return counts;
   }, [libraryManagement.memberships, state.novels]);
+  const connectedExternalSources = useMemo(
+    () => externalSources.sources.filter((source) => source.connection.state === 'connected'),
+    [externalSources.sources],
+  );
   const libraryCollection = useMemo(
     () =>
       activeShelfBookIds
@@ -121,6 +134,8 @@ export function BookWorkspaceScreens({
   };
 
   const goLibraryHome = () => {
+    if (externalSources.busy) return;
+    externalSources.close();
     controller.setLibraryQuery('');
     controller.setLibraryFilter('all');
     libraryManagement.setActiveShelf(undefined);
@@ -134,6 +149,16 @@ export function BookWorkspaceScreens({
     drop: libraryDrop,
     query: state.libraryQuery,
     sync,
+    externalSources: {
+      active: externalSources.open,
+      activeSourceId: externalSources.activeSourceId,
+      busy: externalSources.busy,
+      sources: connectedExternalSources.map((source) => ({
+        id: source.id,
+        title: source.title,
+        kind: source.kind,
+      })),
+    },
     filter: state.libraryFilter,
     sort: state.librarySort,
     viewMode: state.libraryViewMode,
@@ -165,6 +190,12 @@ export function BookWorkspaceScreens({
       openBackup,
       openImport,
       openLibraryFolders,
+      openExternalSource: (sourceId) => {
+        if (externalSources.busy) return;
+        controller.setView('library');
+        externalSources.show(sourceId);
+      },
+      openExternalSourceSettings,
     },
     presentation: {
       goHome: goLibraryHome,
@@ -172,11 +203,21 @@ export function BookWorkspaceScreens({
       closeInspector: () => setInspectorOpen(false),
     },
     controls: {
-      setFilter: controller.setLibraryFilter,
+      setFilter: (filter) => {
+        if (externalSources.busy) return;
+        externalSources.close();
+        controller.setView('library');
+        controller.setLibraryFilter(filter);
+      },
       setSort: controller.setLibrarySort,
       setViewMode: controller.setLibraryViewMode,
       emptyTrash: controller.emptyTrash,
-      setShelf: libraryManagement.setActiveShelf,
+      setShelf: (shelfId) => {
+        if (externalSources.busy) return;
+        externalSources.close();
+        controller.setView('library');
+        libraryManagement.setActiveShelf(shelfId);
+      },
       openShelves: libraryManagement.openShelves,
       startSelection: libraryManagement.startSelection,
       selectVisible: () => libraryManagement.selectBooks(libraryCollection.visibleBooks.map((book) => book.novel.id)),
@@ -200,7 +241,19 @@ export function BookWorkspaceScreens({
 
   return (
     <>
-      {state.view === 'library' && <LibraryScreen model={libraryModel} actions={libraryActions} />}
+      {state.view === 'library' && !externalSources.open && (
+        <LibraryScreen model={libraryModel} actions={libraryActions} />
+      )}
+
+      {state.view === 'library' && externalSources.open && (
+        <Suspense fallback={null}>
+          <SourceHubScreen
+            controller={externalSources}
+            library={{ model: libraryModel, actions: libraryActions }}
+            openSourceSettings={openExternalSourceSettings}
+          />
+        </Suspense>
+      )}
 
       {state.view === 'chapters' && state.selectedNovel && projection.selectedNovelScreenBook && (
         <main className="library-screen book-detail-product-screen">
@@ -273,7 +326,7 @@ export function BookWorkspaceScreens({
       )}
       {libraryManagement.panel && (
         <Suspense fallback={null}>
-          <LibraryManagementPanel controller={libraryManagement} />
+          <LibraryManagementPanel controller={libraryManagement} bookEnrichment={bookEnrichment} />
         </Suspense>
       )}
     </>

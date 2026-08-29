@@ -1,5 +1,8 @@
 import type { BookAssetMetadata, ParsedNovelImportAsset } from '../domain/types';
 import {
+  type ApprovedEnrichmentCoverMutationReceipt,
+  type ApprovedEnrichmentCoverRestoreInput,
+  type ApprovedEnrichmentCoverRestoreReceipt,
   type BookCoverAssetInput,
   type ExportedBookCover,
   type GeneratedBookCoverInput,
@@ -287,6 +290,184 @@ export async function saveBookCover(bookId: string, input: BookCoverAssetInput):
   );
   await done;
   return metadata;
+}
+
+export async function saveApprovedEnrichmentBookCover(
+  bookId: string,
+  input: BookCoverAssetInput,
+): Promise<ApprovedEnrichmentCoverMutationReceipt> {
+  const db = await openReaderDb();
+  const now = new Date().toISOString();
+  const id = persistentId128('approved_enrichment_cover_asset', [bookId, input.contentHash, now]);
+  const storageKey = blobId(input.contentHash);
+  const metadata: StoredBookAsset = {
+    id,
+    bookId,
+    kind: 'cover',
+    provenance: 'approved_enrichment',
+    status: 'active',
+    storageKey,
+    fileName: input.fileName,
+    contentType: input.contentType,
+    byteLength: input.blob.size,
+    contentHash: input.contentHash,
+    pixelWidth: input.pixelWidth,
+    pixelHeight: input.pixelHeight,
+    createdAt: now,
+    activatedAt: now,
+  };
+  const tx = db.transaction(
+    ['novels', BOOK_ASSET_STORES.assets, BOOK_ASSET_STORES.blobs, 'devices', 'sync_outbox', 'sync_state'],
+    'readwrite',
+  );
+  const done = transactionDone(tx);
+  const novelStore = tx.objectStore('novels');
+  const assetStore = tx.objectStore(BOOK_ASSET_STORES.assets);
+  const blobStore = tx.objectStore(BOOK_ASSET_STORES.blobs);
+  const novel = await requestToPromise<Novel | undefined>(novelStore.get(bookId));
+  if (!novel) {
+    tx.abort();
+    await done.catch(() => undefined);
+    throw new Error('책을 찾을 수 없습니다.');
+  }
+  const actualRevision = novel.metadataRevision ?? 0;
+  if (input.expectedMetadataRevision !== undefined && input.expectedMetadataRevision !== actualRevision) {
+    tx.abort();
+    await done.catch(() => undefined);
+    throw new Error('다른 기기에서 책 정보가 변경되었습니다.');
+  }
+  const active = await requestToPromise<StoredBookAsset[]>(
+    assetStore.index('bookId_kind_status').getAll([bookId, 'cover', 'active']),
+  );
+  const previous = active.find((asset) => asset.id === novel.coverAssetId) ?? active[0];
+  if (!(await requestToPromise<StoredBookAssetBlob | undefined>(blobStore.get(storageKey)))) {
+    blobStore.put({
+      id: storageKey,
+      contentHash: input.contentHash,
+      contentType: input.contentType,
+      byteLength: input.blob.size,
+      blob: input.blob,
+      createdAt: now,
+    } satisfies StoredBookAssetBlob);
+  }
+  for (const asset of active) {
+    assetStore.put({ ...asset, status: 'superseded' } satisfies StoredBookAsset);
+  }
+  assetStore.put(metadata);
+  const next: Novel = {
+    ...novel,
+    coverAssetId: id,
+    coverContentHash: input.contentHash,
+    coverFit: input.fit,
+    coverPositionX: input.positionX,
+    coverPositionY: input.positionY,
+    metadataRevision: actualRevision + 1,
+    updatedAt: now,
+  };
+  novelStore.put(next);
+  await queueSyncEventInTransaction(
+    tx,
+    'book_updated',
+    jsonValue({ novel: coverSyncNovel(next), coverMutation: 'replace' }),
+    {
+      novelId: bookId,
+      entityId: bookId,
+    },
+  );
+  await done;
+  return { current: metadata, previous, metadataRevision: actualRevision + 1 };
+}
+
+async function validateRestorableCoverAsset(bookId: string, assetId: string, contentHash: string): Promise<void> {
+  const db = await openReaderDb();
+  const tx = db.transaction([BOOK_ASSET_STORES.assets, BOOK_ASSET_STORES.blobs], 'readonly');
+  const assetStore = tx.objectStore(BOOK_ASSET_STORES.assets);
+  const asset = await requestToPromise<StoredBookAsset | undefined>(assetStore.get(assetId));
+  const blob = asset
+    ? await requestToPromise<StoredBookAssetBlob | undefined>(
+        tx.objectStore(BOOK_ASSET_STORES.blobs).get(asset.storageKey),
+      )
+    : undefined;
+  await transactionDone(tx);
+  if (
+    !asset ||
+    asset.bookId !== bookId ||
+    asset.kind !== 'cover' ||
+    asset.status !== 'superseded' ||
+    asset.contentHash !== contentHash ||
+    !blob ||
+    blob.contentHash !== contentHash
+  ) {
+    throw new Error('이전 표지 자산을 안전하게 복원할 수 없습니다.');
+  }
+  const actualHash = integrityHash(new Uint8Array(await blob.blob.arrayBuffer()));
+  if (actualHash !== contentHash) throw new Error('이전 표지 자산의 무결성 검증에 실패했습니다.');
+}
+
+export async function restoreApprovedEnrichmentBookCover(
+  bookId: string,
+  input: ApprovedEnrichmentCoverRestoreInput,
+): Promise<ApprovedEnrichmentCoverRestoreReceipt> {
+  if ((input.previousAssetId === undefined) !== (input.previousContentHash === undefined)) {
+    throw new Error('이전 표지 복원 정보가 완전하지 않습니다.');
+  }
+  if (input.previousAssetId && input.previousContentHash) {
+    await validateRestorableCoverAsset(bookId, input.previousAssetId, input.previousContentHash);
+  }
+
+  const db = await openReaderDb();
+  const tx = db.transaction(['novels', BOOK_ASSET_STORES.assets, 'devices', 'sync_outbox', 'sync_state'], 'readwrite');
+  const done = transactionDone(tx);
+  const novelStore = tx.objectStore('novels');
+  const assetStore = tx.objectStore(BOOK_ASSET_STORES.assets);
+  const novel = await requestToPromise<Novel | undefined>(novelStore.get(bookId));
+  const active = await requestToPromise<StoredBookAsset | undefined>(assetStore.get(input.expectedActiveAssetId));
+  const previous = input.previousAssetId
+    ? await requestToPromise<StoredBookAsset | undefined>(assetStore.get(input.previousAssetId))
+    : undefined;
+  const validCurrent =
+    novel &&
+    (novel.metadataRevision ?? 0) === input.expectedMetadataRevision &&
+    novel.coverAssetId === input.expectedActiveAssetId &&
+    novel.coverContentHash === input.expectedActiveContentHash &&
+    active?.bookId === bookId &&
+    active.kind === 'cover' &&
+    active.status === 'active' &&
+    active.provenance === 'approved_enrichment' &&
+    active.contentHash === input.expectedActiveContentHash;
+  const validPrevious =
+    !input.previousAssetId ||
+    (previous?.bookId === bookId &&
+      previous.kind === 'cover' &&
+      previous.status === 'superseded' &&
+      previous.contentHash === input.previousContentHash);
+  if (!validCurrent || !validPrevious) {
+    tx.abort();
+    await done.catch(() => undefined);
+    throw new Error('이후 변경이 있어 자동으로 되돌릴 수 없습니다.');
+  }
+  const now = new Date().toISOString();
+  assetStore.put({ ...active, status: 'superseded' } satisfies StoredBookAsset);
+  if (previous) assetStore.put({ ...previous, status: 'active', activatedAt: now } satisfies StoredBookAsset);
+  const next: Novel = {
+    ...novel,
+    coverAssetId: previous?.id,
+    coverContentHash: previous?.contentHash,
+    coverFit: previous ? input.previousFit : undefined,
+    coverPositionX: previous ? input.previousPositionX : undefined,
+    coverPositionY: previous ? input.previousPositionY : undefined,
+    metadataRevision: input.expectedMetadataRevision + 1,
+    updatedAt: now,
+  };
+  novelStore.put(next);
+  await queueSyncEventInTransaction(
+    tx,
+    'book_updated',
+    jsonValue({ novel: coverSyncNovel(next), coverMutation: previous ? 'replace' : 'remove' }),
+    { novelId: bookId, entityId: bookId },
+  );
+  await done;
+  return { current: previous, metadataRevision: input.expectedMetadataRevision + 1 };
 }
 
 export async function saveGeneratedBookCover(

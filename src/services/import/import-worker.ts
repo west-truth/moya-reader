@@ -39,6 +39,16 @@ function throwIfCancelled(jobId: string): void {
   if (cancelled && activeJobId === jobId) throw importAbortError();
 }
 
+function postImportError(error: unknown, fallback = '파일 가져오기에 실패했습니다.'): void {
+  const messageText =
+    error instanceof Error
+      ? error.message.trim() || error.name || fallback
+      : String(error || fallback).trim() || fallback;
+  const name = error instanceof Error ? error.name : undefined;
+  const code = error && typeof error === 'object' && 'code' in error ? String(error.code) : undefined;
+  self.postMessage({ type: 'error', message: messageText, name, code });
+}
+
 async function runImport(message: StartMessage): Promise<void> {
   activeJobId = message.jobId;
   cancelled = false;
@@ -99,10 +109,7 @@ async function runImport(message: StartMessage): Promise<void> {
 
     self.postMessage({ type: 'complete', result });
   } catch (error) {
-    const messageText = error instanceof Error ? error.message : '파일 가져오기에 실패했습니다.';
-    const name = error instanceof Error ? error.name : undefined;
-    const code = error && typeof error === 'object' && 'code' in error ? String(error.code) : undefined;
-    self.postMessage({ type: 'error', message: messageText, name, code });
+    postImportError(error);
   } finally {
     if (activeJobId === jobId) {
       activeJobId = undefined;
@@ -110,6 +117,17 @@ async function runImport(message: StartMessage): Promise<void> {
     }
   }
 }
+
+self.addEventListener('error', (event) => {
+  const location = event.filename ? ` (${event.filename}${event.lineno ? `:${event.lineno}:${event.colno}` : ''})` : '';
+  postImportError(event.error ?? `${event.message || 'Import worker failed'}${location}`);
+  event.preventDefault();
+});
+
+self.addEventListener('unhandledrejection', (event) => {
+  postImportError(event.reason, 'Import worker promise failed');
+  event.preventDefault();
+});
 
 self.onmessage = (event: MessageEvent<WorkerCommand>) => {
   const message = event.data;

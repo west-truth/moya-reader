@@ -1,15 +1,27 @@
 import pg from 'pg';
+import {
+  DEFAULT_BOOK_AI_WORKFLOW_DEFINITION_ID,
+  DEFAULT_BOOK_AI_WORKFLOW_VERSION,
+} from '../../../../../src/providers/book-ai-workflow-definition';
 import type { ServerConfig } from '../../config.js';
 import type { BookAIWorkflowRow, WorkflowProviderJobLinkRow } from './workflow-contracts.js';
 import type { RevisionQueryable } from './analysis-input-repository.js';
 import { recordValue, reviewTargetForFailedLink } from './workflow-state.js';
 
-interface WorkflowDbRow extends pg.QueryResultRow, Omit<BookAIWorkflowRow, 'revision_fence'> {
+interface WorkflowDbRow
+  extends pg.QueryResultRow, Omit<BookAIWorkflowRow, 'revision_fence' | 'workflow_definition_id' | 'workflow_version'> {
+  workflow_definition_id?: string;
+  workflow_version?: string;
   revision_fence: number | string;
 }
 
 function mapWorkflowRow(row: WorkflowDbRow): BookAIWorkflowRow {
-  return { ...row, revision_fence: Number(row.revision_fence) };
+  return {
+    ...row,
+    workflow_definition_id: row.workflow_definition_id ?? DEFAULT_BOOK_AI_WORKFLOW_DEFINITION_ID,
+    workflow_version: row.workflow_version ?? DEFAULT_BOOK_AI_WORKFLOW_VERSION,
+    revision_fence: Number(row.revision_fence),
+  };
 }
 
 export async function loadWorkflow(
@@ -21,7 +33,7 @@ export async function loadWorkflow(
     `
       select id, user_id, book_id, provider_id, model_id, plan_hash, plan,
              content_revision_id, base_graph_revision_id, revision_fence,
-             status, stage, progress
+             status, stage, progress, workflow_definition_id, workflow_version
       from book_ai_workflows
       where id = $1 and user_id = $2
     `,

@@ -37,6 +37,12 @@ export function generatedCoverCanReplace(currentProvenance: unknown): boolean {
   return currentProvenance === undefined || currentProvenance === null || currentProvenance === 'generated_preview';
 }
 
+export function isWritableCoverProvenance(
+  value: unknown,
+): value is 'user_supplied' | 'approved_enrichment' | 'generated_preview' {
+  return value === 'user_supplied' || value === 'approved_enrichment' || value === 'generated_preview';
+}
+
 async function coverRow(pool: pg.Pool, userId: string, bookId: string) {
   return (
     await pool.query(
@@ -107,7 +113,7 @@ export async function registerBookCoverRoutes(
       const positionX = boundedNumber(header(request.headers['x-cover-position-x']), 0, 100);
       const positionY = boundedNumber(header(request.headers['x-cover-position-y']), 0, 100);
       const requestedProvenance = header(request.headers['x-cover-provenance']) ?? 'user_supplied';
-      if (requestedProvenance !== 'user_supplied' && requestedProvenance !== 'generated_preview') {
+      if (!isWritableCoverProvenance(requestedProvenance)) {
         return reply.code(400).send({ error: 'cover provenance is invalid' });
       }
       if (

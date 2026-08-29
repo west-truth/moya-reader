@@ -4,6 +4,7 @@ import ts from 'typescript';
 
 const workspaceRoot = path.resolve(import.meta.dirname, '..');
 const contractsRoot = path.join(workspaceRoot, 'packages/contracts');
+const extensionContractsRoot = path.join(workspaceRoot, 'packages/extension-contracts');
 const textCoreRoot = path.join(workspaceRoot, 'packages/text-core');
 const serverRoot = path.join(workspaceRoot, 'apps/server/src');
 const sourcePattern = /\.tsx?$/;
@@ -68,6 +69,19 @@ for (const file of collectFiles(contractsRoot)) {
     const target = path.resolve(path.dirname(file), specifier);
     if (path.relative(contractsRoot, target).startsWith('..')) {
       failures.push(`${path.relative(workspaceRoot, file)} imports outside contracts: ${specifier}`);
+    }
+  }
+}
+
+for (const file of collectFiles(extensionContractsRoot)) {
+  for (const { specifier } of moduleReferences(file)) {
+    if (!specifier.startsWith('.')) {
+      failures.push(`${path.relative(workspaceRoot, file)} imports external module ${specifier}`);
+      continue;
+    }
+    const target = path.resolve(path.dirname(file), specifier);
+    if (path.relative(extensionContractsRoot, target).startsWith('..')) {
+      failures.push(`${path.relative(workspaceRoot, file)} imports outside extension-contracts: ${specifier}`);
     }
   }
 }

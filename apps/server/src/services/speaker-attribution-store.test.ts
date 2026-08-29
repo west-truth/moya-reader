@@ -142,6 +142,6 @@ describe('hosted speaker attribution persistence', () => {
 
     expect(await getHostedSpeakerSourceManifest(db, 'user_1', 'content_revision_1')).toEqual(manifest);
     expect(manifest.status).toBe('review_required');
-    expect((await loadMigrations()).at(-1)?.fileName).toBe('0022_speaker_attribution_pipeline.sql');
+    expect((await loadMigrations()).at(-1)?.fileName).toBe('0031_book_ai_workflow_definition_identity.sql');
   });
 });

@@ -754,6 +754,60 @@ describe('RemoteApiClient auth headers', () => {
     );
   });
 
+  it('sends and restores hosted book AI workflow definition identity', async () => {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      expect(String(input)).toBe('/api/books/book_1/analysis-workflows');
+      expect(init?.method).toBe('POST');
+      expect(JSON.parse(String(init?.body))).toMatchObject({
+        providerId: 'mock',
+        workflowDefinitionId: 'moya.ai.tts.book-preparation',
+        workflowVersion: '1.0.0',
+      });
+      return jsonResponse({
+        workflow: {
+          id: 'workflow_1',
+          novelId: 'book_1',
+          workflowType: 'book_ai_tts',
+          workflow_definition_id: 'moya.ai.tts.book-preparation',
+          workflow_version: '1.0.0',
+          providerId: 'mock',
+          planHash: 'plan_hash',
+          status: 'running',
+          stage: 'building_graph',
+          jobs: [],
+          createdAt: '2026-08-24T00:00:00.000Z',
+          updatedAt: '2026-08-24T00:00:00.000Z',
+          plan: {
+            novelId: 'book_1',
+            totalChapters: 0,
+            totalCharacters: 0,
+            stages: [],
+            bundleWindows: [],
+            labelingChapters: [],
+            labelingWindows: [],
+            ttsReady: { chapterIds: [], dependsOnLabelingWindowIds: [] },
+          },
+        },
+      });
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    const client = new RemoteApiClient('/api');
+
+    const response = await client.startBookAIWorkflow({
+      bookId: 'book_1',
+      providerId: 'mock',
+      workflowDefinitionId: 'moya.ai.tts.book-preparation',
+      workflowVersion: '1.0.0',
+    });
+
+    expect(response.workflow).toMatchObject({
+      id: 'workflow_1',
+      workflowDefinitionId: 'moya.ai.tts.book-preparation',
+      workflowVersion: '1.0.0',
+      planHash: 'plan_hash',
+    });
+  });
+
   it('retries hosted book AI workflows through the workflow retry endpoint', async () => {
     const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       expect(init?.body).toBe(JSON.stringify({ action: 'retry_same_request' }));

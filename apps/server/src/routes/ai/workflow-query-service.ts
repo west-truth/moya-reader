@@ -1,5 +1,9 @@
 import pg from 'pg';
 import {
+  DEFAULT_BOOK_AI_WORKFLOW_DEFINITION_ID,
+  DEFAULT_BOOK_AI_WORKFLOW_VERSION,
+} from '../../../../../src/providers/book-ai-workflow-definition';
+import {
   characterGraphIntegrityHash,
   correctionCollectionIntegrityHash,
   segmentCollectionIntegrityHash,
@@ -64,6 +68,8 @@ export interface BookAIWorkflowRow {
   id: string;
   book_id: string;
   workflow_type: string;
+  workflow_definition_id?: string;
+  workflow_version?: string;
   provider_id: string;
   model_id: string | null;
   plan_hash: string;
@@ -94,6 +100,8 @@ export interface BookAIWorkflowResponse {
   id: string;
   novelId: string;
   workflowType: string;
+  workflowDefinitionId: string;
+  workflowVersion: string;
   providerId: string;
   modelId?: string;
   planHash: string;
@@ -161,6 +169,8 @@ export function mapBookAIWorkflow(
     id: row.id,
     novelId: row.book_id,
     workflowType: row.workflow_type,
+    workflowDefinitionId: row.workflow_definition_id ?? DEFAULT_BOOK_AI_WORKFLOW_DEFINITION_ID,
+    workflowVersion: row.workflow_version ?? DEFAULT_BOOK_AI_WORKFLOW_VERSION,
     providerId: row.provider_id,
     modelId: row.model_id ?? undefined,
     planHash: row.plan_hash,
@@ -456,7 +466,8 @@ export async function loadBookAIWorkflow(
 ): Promise<{ row: BookAIWorkflowRow; jobs: BookAIWorkflowJobLinkRow[] } | undefined> {
   const workflow = await pool.query<BookAIWorkflowRow>(
     `
-      select id, book_id, workflow_type, provider_id, model_id, plan_hash, plan, status, stage,
+      select id, book_id, workflow_type, workflow_definition_id, workflow_version,
+             provider_id, model_id, plan_hash, plan, status, stage,
              progress, error_code, error_message, created_at, updated_at, started_at, finished_at
       from book_ai_workflows
       where id = $1 and user_id = $2

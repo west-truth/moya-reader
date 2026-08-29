@@ -9,10 +9,10 @@
     "libc": "glibc"
   },
   "summary": {
-    "componentCount": 178,
+    "componentCount": 179,
     "byLicense": {
       "0BSD": 1,
-      "Apache-2.0": 39,
+      "Apache-2.0": 40,
       "Apache-2.0 OR MIT": 1,
       "BSD-2-Clause": 1,
       "BSD-3-Clause": 15,
@@ -196,6 +196,13 @@
       "version": "2.10.0",
       "license": "Apache-2.0",
       "homepage": "https://github.com/googleapis/js-genai#readme"
+    },
+    {
+      "ecosystem": "npm",
+      "name": "@googleworkspace/drive-picker-element",
+      "version": "0.7.3",
+      "license": "Apache-2.0",
+      "homepage": "https://github.com/googleworkspace/drive-picker-element"
     },
     {
       "ecosystem": "npm",

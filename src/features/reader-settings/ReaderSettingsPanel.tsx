@@ -1,10 +1,12 @@
 import {
   BookOpenText,
   ChevronRight,
+  Cloud,
   Info,
   Keyboard,
   LayoutPanelTop,
   Palette,
+  Puzzle,
   RefreshCw,
   type LucideIcon,
 } from 'lucide-react';
@@ -13,6 +15,11 @@ import type { GestureBindings, ReadingProfile, ReadingProfileOverride } from '..
 import type { PlatformRuntimeInfo, ProviderExecutionRuntimeKind } from '../../platform/runtime';
 import type { ReaderPersonalizationRepository } from '../../repositories/reader-personalization-repository';
 import { Dialog } from '../../shared/ui/Dialog';
+import type { ExtensionContributionId } from '@noveldesk/extension-contracts';
+import type { AppExtensionSnapshot } from '../../extensions/app-extension-manager';
+import { ExtensionSettingsPanel } from '../extensions/ExtensionSettingsPanel';
+import { ExternalSourceSettingsPanel } from '../external-sources/ExternalSourceSettingsPanel';
+import type { ExternalSourceController } from '../external-sources/useExternalSourceController';
 import { ApplicationInfoSettings } from './ApplicationInfoSettings';
 import { ReaderGestureSettings } from './ReaderGestureSettings';
 import { ReaderSettingsAppearance } from './ReaderSettingsAppearance';
@@ -21,7 +28,7 @@ import { resolveReaderThemeColors } from './reader-theme-colors';
 import type { ReaderSettingsController } from './useReaderSettingsDraft';
 import './reader-settings-panel.css';
 
-type SettingsTab = 'appearance' | 'layout' | 'gesture' | 'application';
+export type SettingsTab = 'appearance' | 'layout' | 'gesture' | 'sources' | 'extensions' | 'application';
 
 interface SettingsSection {
   readonly id: SettingsTab;
@@ -54,6 +61,20 @@ const SETTINGS_SECTIONS: readonly SettingsSection[] = [
     icon: Keyboard,
   },
   {
+    id: 'sources',
+    label: '소스',
+    detail: 'Dropbox, 작품 저장소',
+    description: '클라우드 저장소와 외부 작품 소스의 계정 연결을 관리합니다.',
+    icon: Cloud,
+  },
+  {
+    id: 'extensions',
+    label: '익스텐션',
+    detail: '내장, 커뮤니티, 권한',
+    description: '기능별 제공 범위와 요청 권한을 확인하고 이 기기에서 켜거나 끕니다.',
+    icon: Puzzle,
+  },
+  {
     id: 'application',
     label: '정보',
     detail: '버전, 환경, 라이선스',
@@ -71,10 +92,14 @@ export interface ReaderSettingsPanelProps {
   readonly personalizationRepository?: ReaderPersonalizationRepository;
   readonly platformRuntime: PlatformRuntimeInfo;
   readonly providerExecutionRuntime: ProviderExecutionRuntimeKind;
+  readonly extensions: readonly AppExtensionSnapshot[];
+  readonly externalSources: ExternalSourceController;
+  readonly initialTab?: SettingsTab;
   updateProfile(patch: ReadingProfileOverride): void;
   setBookOverrideEnabled(enabled: boolean): void;
   resetProfile(): void;
   updateGestureBindings(patch: Partial<GestureBindings>): void;
+  setExtensionEnabled(extensionId: ExtensionContributionId, enabled: boolean): void;
 }
 
 function saveStatusLabel(controller: ReaderSettingsController): string {
@@ -86,11 +111,11 @@ function saveStatusLabel(controller: ReaderSettingsController): string {
 
 export default function ReaderSettingsPanel(props: ReaderSettingsPanelProps) {
   const { controller, profile } = props;
-  const [tab, setTab] = useState<SettingsTab>('appearance');
+  const [tab, setTab] = useState<SettingsTab>(props.initialTab ?? 'appearance');
   const [appearanceThemeTarget, setAppearanceThemeTarget] = useState<'application' | 'reader'>('application');
   const current = SETTINGS_SECTIONS.find((section) => section.id === tab) ?? SETTINGS_SECTIONS[0];
   const readerThemeColors = resolveReaderThemeColors(profile);
-  const readingTab = tab !== 'application';
+  const readingTab = tab === 'appearance' || tab === 'layout' || tab === 'gesture';
   const showReadingFooter = readingTab && !(tab === 'appearance' && appearanceThemeTarget === 'application');
 
   const navigateTabs = (event: KeyboardEvent<HTMLButtonElement>, index: number) => {
@@ -185,6 +210,10 @@ export default function ReaderSettingsPanel(props: ReaderSettingsPanelProps) {
               {tab === 'gesture' && (
                 <ReaderGestureSettings bindings={props.gestureBindings} update={props.updateGestureBindings} />
               )}
+              {tab === 'extensions' && (
+                <ExtensionSettingsPanel extensions={props.extensions} setEnabled={props.setExtensionEnabled} />
+              )}
+              {tab === 'sources' && <ExternalSourceSettingsPanel controller={props.externalSources} />}
               {tab === 'application' && (
                 <ApplicationInfoSettings
                   platformRuntime={props.platformRuntime}

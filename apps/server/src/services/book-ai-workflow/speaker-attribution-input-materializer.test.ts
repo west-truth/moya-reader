@@ -54,6 +54,22 @@ const characters: Character[] = [
   },
 ];
 
+const groundedPreviousEpisodeContext = {
+  chapterId: 'chapter_0',
+  summary: 'Alex was speaking.',
+  activeCharacterIds: ['character_alex'],
+  unresolved: [],
+  recentTurns: [
+    {
+      paragraphId: 'previous_paragraph',
+      speakerId: 'character_alex',
+      listenerIds: ['character_blair'],
+      emotion: 'neutral' as const,
+      text: 'Remember this turn.',
+    },
+  ],
+};
+
 function paragraphs(texts: readonly string[]): Paragraph[] {
   let offset = 0;
   return texts.map((text, index) => {
@@ -227,7 +243,12 @@ describe('hosted compact speaker input materialization', () => {
 
   it('splits a long same-scene target set into bounded packets without changing target order', async () => {
     const all = paragraphs(Array.from({ length: 45 }, (_, index) => `"Dialogue ${index}."`));
-    const result = await materialize({ all, target: all, maxTargets: 10 });
+    const result = await materialize({
+      all,
+      target: all,
+      maxTargets: 10,
+      previousEpisodeContext: groundedPreviousEpisodeContext,
+    });
     const targetIndexes = result.units.flatMap((unit) => unit.packet.targets.map((target) => target[0]));
 
     expect(result.units.length).toBeGreaterThan(1);
@@ -240,7 +261,7 @@ describe('hosted compact speaker input materialization', () => {
 
   it('covers a multi-scene window exactly once with scene-local packet planning', async () => {
     const all = paragraphs(['"First scene."', '***', '"Second scene."']);
-    const result = await materialize({ all, target: all });
+    const result = await materialize({ all, target: all, previousEpisodeContext: groundedPreviousEpisodeContext });
     const targetIndexes = result.units.flatMap((unit) => unit.packet.targets.map((target) => target[0]));
 
     expect(new Set(result.units.map((unit) => unit.sceneId))).toHaveLength(2);

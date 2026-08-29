@@ -48,6 +48,8 @@ describe('native TTS cache controller', () => {
       id: 'workflow-1',
       novelId: 'book-1',
       workflowType: 'book_ai_tts',
+      workflowDefinitionId: 'moya.ai.tts.book-preparation',
+      workflowVersion: '1.0.0',
       runtime: 'native',
       providerId: 'openai',
       planHash: 'sha256:plan',

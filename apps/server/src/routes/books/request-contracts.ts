@@ -120,6 +120,47 @@ function validNonNegative(value: number): boolean {
   return Number.isFinite(value) && value >= 0;
 }
 
+const MAX_AI_WORKFLOW_BOOK_OVERRIDES = 500;
+const AI_WORKFLOW_ID_PATTERN = /^[a-z0-9](?:[a-z0-9.-]{1,158}[a-z0-9])?$/;
+
+function validAIWorkflowId(value: unknown): value is string {
+  return typeof value === 'string' && value.length <= 160 && value.includes('.') && AI_WORKFLOW_ID_PATTERN.test(value);
+}
+
+function validateAIWorkflowPreferences(value: unknown): ValidationResult<NonNullable<ReaderSettings['aiWorkflows']>> {
+  const body = recordBody(value);
+  if (!body) return { ok: false, error: 'aiWorkflows must be an object' };
+  if (body.schemaVersion !== 1) return { ok: false, error: 'aiWorkflows.schemaVersion must be 1' };
+  if (body.defaultWorkflowId !== undefined && !validAIWorkflowId(body.defaultWorkflowId)) {
+    return { ok: false, error: 'aiWorkflows.defaultWorkflowId is invalid' };
+  }
+
+  const rawOverrides = body.bookOverrides === undefined ? {} : recordBody(body.bookOverrides);
+  if (!rawOverrides) return { ok: false, error: 'aiWorkflows.bookOverrides must be an object' };
+  const entries = Object.entries(rawOverrides);
+  if (entries.length > MAX_AI_WORKFLOW_BOOK_OVERRIDES) {
+    return { ok: false, error: `aiWorkflows.bookOverrides must not exceed ${MAX_AI_WORKFLOW_BOOK_OVERRIDES} entries` };
+  }
+  const bookOverrides: Record<string, string> = Object.create(null) as Record<string, string>;
+  for (const [bookId, workflowId] of entries) {
+    if (!bookId.trim() || bookId.length > 512 || ['__proto__', 'constructor', 'prototype'].includes(bookId)) {
+      return { ok: false, error: 'aiWorkflows.bookOverrides contains an invalid book id' };
+    }
+    if (!validAIWorkflowId(workflowId)) {
+      return { ok: false, error: `aiWorkflows.bookOverrides.${bookId} is invalid` };
+    }
+    bookOverrides[bookId] = workflowId;
+  }
+  return {
+    ok: true,
+    value: {
+      schemaVersion: 1,
+      defaultWorkflowId: body.defaultWorkflowId as string | undefined,
+      bookOverrides,
+    },
+  };
+}
+
 function validateTTSPlaybackSettings(
   value: unknown,
   fallback: TTSPlaybackSettings,
@@ -397,6 +438,11 @@ export function validateSettingsBody(value: unknown): ValidationResult<ReaderSet
       return { ok: false, error: 'readingBookOverrides must contain object values' };
     }
     next.readingBookOverrides = overrides as ReaderSettings['readingBookOverrides'];
+  }
+  if (body.aiWorkflows !== undefined) {
+    const preferences = validateAIWorkflowPreferences(body.aiWorkflows);
+    if (!preferences.ok) return preferences;
+    next.aiWorkflows = preferences.value;
   }
   if (body.gestureBindings !== undefined) {
     const bindings = recordBody(body.gestureBindings);

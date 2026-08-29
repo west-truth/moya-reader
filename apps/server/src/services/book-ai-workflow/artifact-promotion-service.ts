@@ -48,6 +48,7 @@ import {
 } from './staging-artifact-repository.js';
 import { withBookAITransaction } from './transaction.js';
 import { replaceHostedAcceptedSpeakerProvenanceForParagraphs } from '../speaker-workflow-state-service.js';
+import { characterGraphFenceFingerprint } from './graph-fence-fingerprint.js';
 
 interface PromotionCommon {
   readonly pool: pg.Pool;
@@ -80,7 +81,7 @@ export async function verifyAnalysisPromotionFence(
     throw new AnalysisInputStaleError('analysis_graph_revision_stale', 'Character graph changed before promotion');
   }
   const currentGraph = await loadCharacterGraph(client, job);
-  if (characterGraphIntegrityHash(currentGraph) !== revision.characterGraphFingerprint) {
+  if (characterGraphFenceFingerprint(currentGraph) !== characterGraphFenceFingerprint(revision.graphSnapshot)) {
     throw new AnalysisInputStaleError(
       'analysis_graph_revision_stale',
       'Canonical character graph changed before promotion',

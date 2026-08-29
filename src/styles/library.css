@@ -1342,6 +1342,231 @@
   font-size: 0.7rem;
 }
 
+.book-enrichment-inbox {
+  padding: 14px;
+  background: color-mix(in srgb, var(--app-accent-soft) 52%, var(--app-surface));
+  border: 1px solid color-mix(in srgb, var(--primary) 20%, var(--border));
+  border-radius: var(--radius-panel);
+}
+
+.enrichment-heading-row {
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: start;
+  gap: 12px;
+}
+
+.enrichment-heading-row h2,
+.enrichment-provider-runner,
+.enrichment-candidate-source,
+.enrichment-candidate-actions {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+
+.enrichment-provider-runner select {
+  max-width: 190px;
+}
+
+.enrichment-empty {
+  color: var(--muted);
+  font-size: 0.72rem;
+}
+
+.enrichment-candidate-list {
+  display: grid;
+  gap: 10px;
+}
+
+.enrichment-candidate-card {
+  display: grid;
+  gap: 11px;
+  padding: 12px;
+  background: var(--app-surface-strong);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-control);
+}
+
+.enrichment-candidate-card.is-stale {
+  opacity: 0.72;
+}
+
+.enrichment-candidate-card > p {
+  color: var(--text-2);
+  font-size: 0.7rem;
+  line-height: 1.55;
+}
+
+.enrichment-candidate-source {
+  flex-wrap: wrap;
+  color: var(--muted);
+  font-size: 0.66rem;
+}
+
+.enrichment-candidate-source > :first-child {
+  color: var(--text);
+  font-weight: 700;
+}
+
+.enrichment-metadata-diff {
+  display: grid;
+  gap: 6px;
+}
+
+.enrichment-metadata-diff label {
+  display: grid;
+  grid-template-columns: auto 64px minmax(0, 1fr) minmax(0, 1fr);
+  align-items: start;
+  gap: 7px;
+  padding: 8px;
+  background: var(--app-surface-muted);
+  border-radius: 8px;
+  font-size: 0.68rem;
+}
+
+.enrichment-field-name {
+  color: var(--text);
+  font-weight: 700;
+}
+
+.enrichment-current-value {
+  color: var(--muted);
+  overflow-wrap: anywhere;
+}
+
+.enrichment-proposed-value {
+  color: var(--primary);
+  overflow-wrap: anywhere;
+}
+
+.enrichment-candidate-actions {
+  justify-content: flex-end;
+}
+
+.enrichment-cover-compare {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 140px));
+  justify-content: center;
+  gap: 16px;
+}
+
+.enrichment-cover-compare figure {
+  display: grid;
+  gap: 6px;
+  margin: 0;
+  text-align: center;
+}
+
+.enrichment-cover-compare .book-cover,
+.enrichment-cover-compare img {
+  width: 100%;
+  aspect-ratio: 2 / 3;
+  border-radius: 8px;
+  background: var(--app-surface-muted);
+}
+
+.enrichment-cover-compare figcaption,
+.enrichment-cover-layout label {
+  color: var(--muted);
+  font-size: 0.66rem;
+}
+
+.enrichment-cover-layout {
+  display: grid;
+  gap: 8px;
+}
+
+.enrichment-cover-layout label {
+  display: grid;
+  grid-template-columns: 62px minmax(0, 1fr);
+  align-items: center;
+  gap: 8px;
+}
+
+.enrichment-history {
+  display: grid;
+  gap: 9px;
+  padding-top: 2px;
+}
+
+.enrichment-history-heading,
+.enrichment-history-card > header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.enrichment-history-heading h3 {
+  color: var(--text);
+  font-size: 0.78rem;
+}
+
+.enrichment-history-heading > span,
+.enrichment-history-card > time,
+.enrichment-receipt-note {
+  color: var(--muted);
+  font-size: 0.66rem;
+}
+
+.enrichment-history-list {
+  display: grid;
+  gap: 8px;
+}
+
+.enrichment-history-card {
+  display: grid;
+  gap: 8px;
+  padding: 11px;
+  background: var(--app-surface-strong);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-control);
+}
+
+.enrichment-history-card.is-undone,
+.enrichment-history-card.is-record-only {
+  background: var(--app-surface-muted);
+}
+
+.enrichment-receipt-state {
+  flex: none;
+  padding: 3px 7px;
+  color: var(--muted);
+  background: var(--app-surface-muted);
+  border-radius: 999px;
+  font-size: 0.62rem;
+  font-weight: 700;
+}
+
+.enrichment-history-card.is-available .enrichment-receipt-state {
+  color: var(--primary);
+  background: var(--app-accent-soft);
+}
+
+.enrichment-receipt-diff {
+  display: grid;
+  gap: 5px;
+}
+
+.enrichment-receipt-diff > div {
+  display: grid;
+  grid-template-columns: 56px minmax(0, 1fr) auto minmax(0, 1fr);
+  gap: 7px;
+  padding: 7px 8px;
+  color: var(--text-2);
+  background: var(--app-surface-muted);
+  border-radius: 7px;
+  font-size: 0.66rem;
+}
+
+.enrichment-receipt-diff strong {
+  color: var(--text);
+}
+
+.enrichment-receipt-diff span {
+  overflow-wrap: anywhere;
+}
+
 .metadata-basic-grid {
   display: grid;
   grid-template-columns: minmax(0, 1fr) 104px;
@@ -1703,6 +1928,38 @@
 
   .metadata-shelf-options {
     grid-template-columns: minmax(0, 1fr);
+  }
+
+  .enrichment-heading-row {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .enrichment-provider-runner {
+    justify-content: space-between;
+  }
+
+  .enrichment-provider-runner .ghost-btn {
+    margin-left: auto;
+  }
+
+  .enrichment-metadata-diff label {
+    grid-template-columns: auto 56px minmax(0, 1fr);
+  }
+
+  .enrichment-proposed-value {
+    grid-column: 3;
+  }
+
+  .enrichment-history-card > header {
+    align-items: flex-start;
+  }
+
+  .enrichment-receipt-diff > div {
+    grid-template-columns: 48px minmax(0, 1fr) auto;
+  }
+
+  .enrichment-receipt-diff > div > span:last-child {
+    grid-column: 2;
   }
 
   .library-management-dialog .metadata-editor > .dialog-actions {

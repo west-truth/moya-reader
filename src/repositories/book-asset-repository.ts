@@ -42,6 +42,28 @@ export interface ExportedBookCover {
   readonly blob: Blob;
 }
 
+export interface ApprovedEnrichmentCoverMutationReceipt {
+  readonly current: BookAssetMetadata;
+  readonly previous?: BookAssetMetadata;
+  readonly metadataRevision: number;
+}
+
+export interface ApprovedEnrichmentCoverRestoreInput {
+  readonly expectedMetadataRevision: number;
+  readonly expectedActiveAssetId: string;
+  readonly expectedActiveContentHash: string;
+  readonly previousAssetId?: string;
+  readonly previousContentHash?: string;
+  readonly previousFit: 'crop' | 'contain';
+  readonly previousPositionX: number;
+  readonly previousPositionY: number;
+}
+
+export interface ApprovedEnrichmentCoverRestoreReceipt {
+  readonly current?: BookAssetMetadata;
+  readonly metadataRevision: number;
+}
+
 export interface GeneratedBookCoverInput extends Omit<BookCoverAssetInput, 'expectedMetadataRevision'> {
   readonly derivationFingerprint: string;
 }
@@ -72,6 +94,14 @@ export interface BookAssetRepository {
   reconstructCanonicalSource?(bookId: string): Promise<BookAssetMetadata>;
   getActiveCover(bookId: string): Promise<ExportedBookCover | undefined>;
   saveCover(bookId: string, input: BookCoverAssetInput): Promise<BookAssetMetadata>;
+  saveApprovedEnrichmentCover?(
+    bookId: string,
+    input: BookCoverAssetInput,
+  ): Promise<ApprovedEnrichmentCoverMutationReceipt>;
+  restoreApprovedEnrichmentCover?(
+    bookId: string,
+    input: ApprovedEnrichmentCoverRestoreInput,
+  ): Promise<ApprovedEnrichmentCoverRestoreReceipt>;
   saveGeneratedCover?(bookId: string, input: GeneratedBookCoverInput): Promise<BookAssetMetadata | undefined>;
   removeCover(bookId: string, expectedMetadataRevision?: number): Promise<void>;
   getEmbeddedResource(bookId: string, assetId: string): Promise<ExportedBookResource | undefined>;

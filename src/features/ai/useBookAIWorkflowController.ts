@@ -2,16 +2,8 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import type { BookAIWorkflowPlan } from '../../providers/book-ai-workflow-plan';
 import { RemoteApiError } from '../../services/remote/remote-api-contracts';
 import { AIExecutionLane, type AIExecutionToken } from './ai-execution-lane';
-import {
-  BookAnalysisWorkflowNotFoundError,
-  type BookAnalysisWorkflow,
-  type BookAnalysisWorkflowGateway,
-} from './book-analysis-workflow-gateway';
-import {
-  abortableWorkflowPollDelay,
-  BOOK_AI_WORKFLOW_POLL_INTERVAL_MS,
-  pollBookAIWorkflowUntilTerminal,
-} from './book-ai-workflow-runner';
+import type { BookAnalysisWorkflow } from './book-analysis-workflow-gateway';
+import type { BookAITTSPreparationRunner } from './book-ai-tts-preparation-runner';
 import { isTerminalBookAIWorkflow, recordValue } from './book-ai-workflow-view';
 
 type NotificationTone = 'success' | 'warning' | 'danger' | 'info';
@@ -23,7 +15,7 @@ export interface BookAIWorkflowIdStore {
 }
 
 export interface BookAIWorkflowControllerInput {
-  readonly gateway?: BookAnalysisWorkflowGateway;
+  readonly runner?: BookAITTSPreparationRunner;
   readonly bookId?: string;
   readonly chapterIds: readonly string[];
   readonly beforeRun: (bookId: string, chapterIds: readonly string[]) => Promise<boolean>;
@@ -70,27 +62,45 @@ function errorMessage(error: unknown, fallback: string): string {
   return fallback;
 }
 
-function isMissingWorkflowError(error: unknown): boolean {
-  return (
-    error instanceof BookAnalysisWorkflowNotFoundError || (error instanceof RemoteApiError && error.status === 404)
-  );
-}
-
-function browserWorkflowIdStore(runtime: BookAnalysisWorkflowGateway['runtime']): BookAIWorkflowIdStore {
-  const key = (bookId: string) => `noveldesk.book_ai_workflow.${runtime}.${bookId}`;
+function browserWorkflowIdStore(runner: BookAITTSPreparationRunner): BookAIWorkflowIdStore {
+  const runnerKey = encodeURIComponent(runner.id);
+  const versionKey = encodeURIComponent(runner.workflowVersion);
+  const key = (bookId: string) => `noveldesk.book_ai_workflow.${runner.runtime}.${runnerKey}.${versionKey}.${bookId}`;
+  const previousDefinitionKey = (bookId: string) =>
+    `noveldesk.book_ai_workflow.${runner.runtime}.${runnerKey}.${bookId}`;
+  const previousRuntimeKey = (bookId: string) => `noveldesk.book_ai_workflow.${runner.runtime}.${bookId}`;
   const legacyKey = (bookId: string) => `noveldesk.book_ai_workflow.${bookId}`;
+  const readsLegacyKeys = runner.restoresLegacyWorkflowIds === true;
   return {
-    get: (bookId) =>
-      window.localStorage.getItem(key(bookId)) ??
-      (runtime === 'hosted' ? window.localStorage.getItem(legacyKey(bookId)) : null) ??
-      undefined,
+    get: (bookId) => {
+      const current = window.localStorage.getItem(key(bookId));
+      if (current || !readsLegacyKeys) return current ?? undefined;
+      const migrated =
+        window.localStorage.getItem(previousDefinitionKey(bookId)) ??
+        window.localStorage.getItem(previousRuntimeKey(bookId)) ??
+        (runner.runtime === 'hosted' ? window.localStorage.getItem(legacyKey(bookId)) : null);
+      if (!migrated) return undefined;
+      window.localStorage.setItem(key(bookId), migrated);
+      window.localStorage.removeItem(previousDefinitionKey(bookId));
+      window.localStorage.removeItem(previousRuntimeKey(bookId));
+      if (runner.runtime === 'hosted') window.localStorage.removeItem(legacyKey(bookId));
+      return migrated;
+    },
     set: (bookId, workflowId) => {
       window.localStorage.setItem(key(bookId), workflowId);
-      if (runtime === 'hosted') window.localStorage.removeItem(legacyKey(bookId));
+      if (readsLegacyKeys) {
+        window.localStorage.removeItem(previousDefinitionKey(bookId));
+        window.localStorage.removeItem(previousRuntimeKey(bookId));
+        if (runner.runtime === 'hosted') window.localStorage.removeItem(legacyKey(bookId));
+      }
     },
     delete: (bookId) => {
       window.localStorage.removeItem(key(bookId));
-      if (runtime === 'hosted') window.localStorage.removeItem(legacyKey(bookId));
+      if (readsLegacyKeys) {
+        window.localStorage.removeItem(previousDefinitionKey(bookId));
+        window.localStorage.removeItem(previousRuntimeKey(bookId));
+        if (runner.runtime === 'hosted') window.localStorage.removeItem(legacyKey(bookId));
+      }
     },
   };
 }
@@ -119,7 +129,7 @@ function withoutTTSReadiness(workflow: BookAnalysisWorkflow): BookAnalysisWorkfl
 }
 
 export function useBookAIWorkflowController(input: BookAIWorkflowControllerInput) {
-  const { gateway, bookId } = input;
+  const { runner, bookId } = input;
   const [state, setState] = useState<BookAIWorkflowState>(INITIAL_STATE);
   const stateRef = useRef(state);
   const inputRef = useRef(input);
@@ -127,11 +137,24 @@ export function useBookAIWorkflowController(input: BookAIWorkflowControllerInput
   const operationBusyRef = useRef(false);
   const ttsReadinessDirtyRef = useRef(false);
   const browserStoreRef = useRef<{
-    readonly runtime: BookAnalysisWorkflowGateway['runtime'];
+    readonly runnerId: string;
+    readonly runnerVersion: string;
+    readonly runtime: BookAITTSPreparationRunner['runtime'];
     readonly store: BookAIWorkflowIdStore;
   }>();
-  if (gateway && typeof window !== 'undefined' && browserStoreRef.current?.runtime !== gateway.runtime) {
-    browserStoreRef.current = { runtime: gateway.runtime, store: browserWorkflowIdStore(gateway.runtime) };
+  if (
+    runner &&
+    typeof window !== 'undefined' &&
+    (browserStoreRef.current?.runtime !== runner.runtime ||
+      browserStoreRef.current.runnerId !== runner.id ||
+      browserStoreRef.current.runnerVersion !== runner.workflowVersion)
+  ) {
+    browserStoreRef.current = {
+      runnerId: runner.id,
+      runnerVersion: runner.workflowVersion,
+      runtime: runner.runtime,
+      store: browserWorkflowIdStore(runner),
+    };
   }
   const store = input.store ?? browserStoreRef.current?.store;
   const storeRef = useRef(store);
@@ -163,22 +186,22 @@ export function useBookAIWorkflowController(input: BookAIWorkflowControllerInput
     operationBusyRef.current = false;
     ttsReadinessDirtyRef.current = false;
     setState(INITIAL_STATE);
-    if (gateway && bookId && store) {
+    if (runner && bookId && store) {
       const workflowId = store.get(bookId);
-      if (workflowId || gateway.getActive) {
+      if (workflowId || runner) {
         const token = laneRef.current.begin(bookId);
-        const restore = workflowId
-          ? gateway.get(workflowId, token.controller.signal).catch((error) => {
-              if (!isMissingWorkflowError(error)) throw error;
-              store.delete(bookId);
-              return gateway.getActive?.(bookId, token.controller.signal);
-            })
-          : gateway.getActive!(bookId, token.controller.signal);
+        const restore = runner.restore(bookId, workflowId, token.controller.signal);
         operationBusyRef.current = true;
         setState((previous) => ({ ...previous, loading: true }));
         void Promise.resolve(restore)
           .then(async (workflow) => {
-            if (!workflow) return;
+            if (!workflow) {
+              if (workflowId && laneRef.current.isCurrent(token, bookId)) store.delete(bookId);
+              return;
+            }
+            if (workflowId && workflow.id !== workflowId && laneRef.current.isCurrent(token, bookId)) {
+              store.delete(bookId);
+            }
             if (workflow.novelId !== bookId) {
               if (laneRef.current.isCurrent(token, bookId)) store.delete(bookId);
               return;
@@ -191,16 +214,10 @@ export function useBookAIWorkflowController(input: BookAIWorkflowControllerInput
               return;
             }
             setState((previous) => ({ ...previous, running: true }));
-            const finalWorkflow = await pollBookAIWorkflowUntilTerminal({
-              gateway,
-              workflowId: workflow.id,
+            const finalWorkflow = await runner.monitor(workflow.id, {
               signal: token.controller.signal,
               attempts: inputRef.current.pollAttempts,
-              delay: (signal) =>
-                abortableWorkflowPollDelay(
-                  inputRef.current.pollIntervalMs ?? BOOK_AI_WORKFLOW_POLL_INTERVAL_MS,
-                  signal,
-                ),
+              pollIntervalMs: inputRef.current.pollIntervalMs,
               onProgress: (progress) => commitWorkflow(token, progress),
             });
             if (!laneRef.current.isCurrent(token, bookId)) return;
@@ -219,12 +236,9 @@ export function useBookAIWorkflowController(input: BookAIWorkflowControllerInput
           })
           .catch((error) => {
             if (!isAbortError(error) && laneRef.current.isCurrent(token, bookId)) {
-              if (isMissingWorkflowError(error)) store.delete(bookId);
               setState((previous) => ({
                 ...previous,
-                error: isMissingWorkflowError(error)
-                  ? '이전에 저장한 workflow를 찾을 수 없습니다. 새 분석을 시작할 수 있습니다.'
-                  : '이전 workflow 자동 모니터링을 이어가지 못했습니다. 상태 새로고침으로 다시 연결할 수 있습니다.',
+                error: '이전 workflow 자동 모니터링을 이어가지 못했습니다. 상태 새로고침으로 다시 연결할 수 있습니다.',
               }));
             }
           })
@@ -236,25 +250,22 @@ export function useBookAIWorkflowController(input: BookAIWorkflowControllerInput
       lane.invalidate();
       operationBusyRef.current = false;
     };
-  }, [bookId, commitWorkflow, finishOperation, gateway, store]);
+  }, [bookId, commitWorkflow, finishOperation, runner, store]);
 
   const poll = useCallback(
     (workflowId: string, token: AIExecutionToken) =>
-      pollBookAIWorkflowUntilTerminal({
-        gateway: gateway!,
-        workflowId,
+      runner!.monitor(workflowId, {
         signal: token.controller.signal,
         attempts: inputRef.current.pollAttempts,
-        delay: (signal) =>
-          abortableWorkflowPollDelay(inputRef.current.pollIntervalMs ?? BOOK_AI_WORKFLOW_POLL_INTERVAL_MS, signal),
+        pollIntervalMs: inputRef.current.pollIntervalMs,
         onProgress: (workflow) => commitWorkflow(token, workflow),
       }),
-    [commitWorkflow, gateway],
+    [commitWorkflow, runner],
   );
 
   const runWorkflow = useCallback(
     async (mode: 'start' | 'retry', options: StartBookAIWorkflowOptions = {}) => {
-      if (!gateway || !bookId) return;
+      if (!runner || !bookId) return;
       const existing = stateRef.current.workflow;
       const storedWorkflowId = storeRef.current?.get(bookId);
       if (mode === 'start' && existing && !isTerminalBookAIWorkflow(existing)) {
@@ -281,19 +292,19 @@ export function useBookAIWorkflowController(input: BookAIWorkflowControllerInput
 
         let workflow: BookAnalysisWorkflow;
         if (mode === 'start') {
-          const plan = await gateway.getPlan(bookId, undefined, token.controller.signal);
+          const plan = await runner.getPlan(bookId, undefined, token.controller.signal);
           if (!laneRef.current.isCurrent(token, bookId)) return;
           setState((previous) => ({ ...previous, plan }));
-          workflow = await gateway.start(
+          workflow = await runner.start(
             { bookId, ...options, force: Boolean(existing && isTerminalBookAIWorkflow(existing)) },
             token.controller.signal,
           );
         } else {
-          workflow = await gateway.retry(existing!.id, token.controller.signal);
+          workflow = await runner.retry(existing!.id, token.controller.signal);
         }
         if (!laneRef.current.isCurrent(token, bookId)) {
           try {
-            await gateway.cancel(workflow.id);
+            await runner.cancel(workflow.id);
           } catch {
             // A detached workflow remains restorable from its durable runtime; cancellation is best effort.
           }
@@ -338,20 +349,20 @@ export function useBookAIWorkflowController(input: BookAIWorkflowControllerInput
         finishOperation(token);
       }
     },
-    [bookId, commitWorkflow, finishOperation, gateway, poll],
+    [bookId, commitWorkflow, finishOperation, poll, runner],
   );
 
   const runPassiveOperation = useCallback(
     async (
       operation: (
-        workflowGateway: BookAnalysisWorkflowGateway,
+        workflowRunner: BookAITTSPreparationRunner,
         workflowId: string | undefined,
         signal: AbortSignal,
       ) => Promise<WorkflowOperationResult>,
       success: (result: WorkflowOperationResult) => void,
       failurePrefix: string,
     ) => {
-      if (!gateway || !bookId) return;
+      if (!runner || !bookId) return;
       if (operationBusyRef.current) {
         inputRef.current.notify('작품 전체 AI/TTS 요청이 이미 진행 중입니다.', 'info');
         return;
@@ -361,7 +372,7 @@ export function useBookAIWorkflowController(input: BookAIWorkflowControllerInput
       setState((previous) => ({ ...previous, loading: true, error: undefined }));
       try {
         const result = await operation(
-          gateway,
+          runner,
           stateRef.current.workflow?.id ?? store?.get(bookId),
           token.controller.signal,
         );
@@ -378,16 +389,16 @@ export function useBookAIWorkflowController(input: BookAIWorkflowControllerInput
         finishOperation(token);
       }
     },
-    [bookId, commitWorkflow, finishOperation, gateway, store],
+    [bookId, commitWorkflow, finishOperation, runner, store],
   );
 
   const refreshPlan = useCallback(
     () =>
       runPassiveOperation(
-        async (workflowGateway, workflowId, signal) => {
+        async (workflowRunner, workflowId, signal) => {
           const [plan, restoredWorkflow] = await Promise.all([
-            workflowGateway.getPlan(bookId!, undefined, signal),
-            workflowId ? workflowGateway.get(workflowId, signal).catch(() => undefined) : undefined,
+            workflowRunner.getPlan(bookId!, undefined, signal),
+            workflowId ? workflowRunner.refresh(workflowId, signal).catch(() => undefined) : undefined,
           ]);
           return {
             plan,
@@ -407,7 +418,7 @@ export function useBookAIWorkflowController(input: BookAIWorkflowControllerInput
       return;
     }
     await runPassiveOperation(
-      async (workflowGateway, _workflowId, signal) => ({ workflow: await workflowGateway.get(workflowId, signal) }),
+      async (workflowRunner, _workflowId, signal) => ({ workflow: await workflowRunner.refresh(workflowId, signal) }),
       () => inputRef.current.notify('작품 전체 AI/TTS 상태를 새로고침했습니다.', 'success'),
       '작품 전체 AI/TTS 상태를 새로고침하지 못했습니다',
     );
@@ -415,12 +426,12 @@ export function useBookAIWorkflowController(input: BookAIWorkflowControllerInput
 
   const cancel = useCallback(async () => {
     const workflow = stateRef.current.workflow;
-    if (!gateway || !bookId || !workflow) return;
+    if (!runner || !bookId || !workflow) return;
     operationBusyRef.current = true;
     const token = laneRef.current.begin(bookId);
     setState((previous) => ({ ...previous, loading: true, running: false, error: undefined }));
     try {
-      const cancelledWorkflow = await gateway.cancel(workflow.id, token.controller.signal);
+      const cancelledWorkflow = await runner.cancel(workflow.id, token.controller.signal);
       if (!commitWorkflow(token, cancelledWorkflow)) return;
       inputRef.current.notify('작품 전체 AI/TTS workflow를 취소했습니다.', 'warning');
       await inputRef.current.onCancelled(bookId, cancelledWorkflow);
@@ -429,7 +440,7 @@ export function useBookAIWorkflowController(input: BookAIWorkflowControllerInput
       let failure = error;
       if (error instanceof RemoteApiError && error.status === 409) {
         try {
-          const latest = await gateway.get(workflow.id, token.controller.signal);
+          const latest = await runner.refresh(workflow.id, token.controller.signal);
           if (!commitWorkflow(token, latest)) return;
           if (latest.status === 'cancelled') {
             await inputRef.current.onCancelled(bookId, latest);
@@ -448,17 +459,17 @@ export function useBookAIWorkflowController(input: BookAIWorkflowControllerInput
     } finally {
       finishOperation(token);
     }
-  }, [bookId, commitWorkflow, finishOperation, gateway]);
+  }, [bookId, commitWorkflow, finishOperation, runner]);
 
   const refreshCacheReadiness = useCallback(
     () =>
       runPassiveOperation(
-        async (workflowGateway, workflowId, signal) => {
+        async (workflowRunner, workflowId, signal) => {
           if (!workflowId) throw new Error('확인할 작품 workflow가 없습니다.');
-          if (!workflowGateway.refreshTTSCacheReadiness) {
+          if (!workflowRunner.refreshCacheReadiness) {
             throw new Error('현재 실행 환경은 TTS 오디오 cache 상태 확인을 지원하지 않습니다.');
           }
-          const workflow = await workflowGateway.refreshTTSCacheReadiness(workflowId, signal);
+          const workflow = await workflowRunner.refreshCacheReadiness(workflowId, signal);
           return { workflow, confirmsTTSReadiness: true };
         },
         ({ workflow }) => {
@@ -477,7 +488,7 @@ export function useBookAIWorkflowController(input: BookAIWorkflowControllerInput
 
   const resumeMonitoring = useCallback(
     async (workflow: BookAnalysisWorkflow) => {
-      if (!gateway || !bookId || workflow.novelId !== bookId) return;
+      if (!runner || !bookId || workflow.novelId !== bookId) return;
       if (operationBusyRef.current) {
         inputRef.current.notify('작품 전체 AI/TTS 상태 확인이 이미 진행 중입니다.', 'info');
         return;
@@ -515,7 +526,7 @@ export function useBookAIWorkflowController(input: BookAIWorkflowControllerInput
         finishOperation(token);
       }
     },
-    [bookId, commitWorkflow, finishOperation, gateway, poll],
+    [bookId, commitWorkflow, finishOperation, poll, runner],
   );
 
   const adoptWorkflow = useCallback(

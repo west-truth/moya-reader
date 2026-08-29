@@ -545,7 +545,7 @@ export async function activateStagedContentRevision(
       });
       const cover = preservedCover ?? assets.find((asset) => asset.kind === 'cover' && asset.status === 'active');
       if (cover) {
-        const keepUserLayout = cover.provenance === 'user_supplied';
+        const keepUserLayout = cover.provenance === 'user_supplied' || cover.provenance === 'approved_enrichment';
         nextNovel = {
           ...nextNovel,
           coverAssetId: cover.id,

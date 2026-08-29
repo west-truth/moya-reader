@@ -4,6 +4,7 @@ import type { ProviderControlClient } from '../../providers/provider-control-cli
 import type { BookAnalysisWorkflowGateway } from '../../features/ai/book-analysis-workflow-gateway';
 import type { NativeBookWorkflowBridge } from '../../features/ai/native-workflow/contracts';
 import type { TTSCacheGateway } from '../../features/tts/tts-cache-gateway';
+import { createAppExtensionRuntime } from '../../extensions/app-extension-runtime';
 import { createReaderProviderRuntime } from '../../providers/reader-provider-runtime';
 import { createReaderRuntime, SYNC_API_BASE_URL_STORAGE_KEY } from '../../repositories/reader-runtime';
 import { createAppRuntime } from './app-runtime';
@@ -61,10 +62,12 @@ describe('createAppRuntime', () => {
     });
     const readerRuntime = createReaderRuntime();
     const providerRuntime = createReaderProviderRuntime();
+    const extensionRuntime = createAppExtensionRuntime({ trustedDefinitions: [] });
     const platformRuntime = tauriDesktopRuntime();
     const controlClient = providerControlClient();
     const readerRuntimeFactory = vi.fn(() => readerRuntime);
     const providerRuntimeFactory = vi.fn(() => providerRuntime);
+    const extensionRuntimeFactory = vi.fn(() => extensionRuntime);
     const platformRuntimeDetector = vi.fn(() => platformRuntime);
     const desktopProviderControlClientFactory = vi.fn(() => controlClient);
     const nativeBridge = {} as NativeBookWorkflowBridge;
@@ -75,6 +78,7 @@ describe('createAppRuntime', () => {
     const nativeTTSCacheGatewayFactory = vi.fn(() => nativeCacheGateway);
 
     const runtime = createAppRuntime({
+      extensionRuntimeFactory,
       readerRuntimeFactory,
       providerRuntimeFactory,
       platformRuntimeDetector,
@@ -84,6 +88,7 @@ describe('createAppRuntime', () => {
       nativeTTSCacheGatewayFactory,
     });
 
+    expect(extensionRuntimeFactory).toHaveBeenCalledOnce();
     expect(readerRuntimeFactory).toHaveBeenCalledOnce();
     expect(providerRuntimeFactory).toHaveBeenCalledOnce();
     expect(platformRuntimeDetector).toHaveBeenCalledOnce();
@@ -91,6 +96,7 @@ describe('createAppRuntime', () => {
     expect(runtime).toMatchObject({
       readerRuntime,
       providerRuntime,
+      extensionRuntime,
       platformRuntime,
       providerExecutionRuntime: 'desktop',
       providerControlClient: controlClient,

@@ -27,7 +27,7 @@ import { pinChapterLabelingInput } from './analysis-input-builder.js';
 import { loadAnalysisInputRevisionForJob } from './analysis-input-repository.js';
 import { insertProviderJob, linkWorkflowJob } from './child-job-repository.js';
 import { loadWorkflow } from './workflow-repository.js';
-import { startBookAIWorkflow } from './workflow-start-service.js';
+import { ActiveBookAIWorkflowIdentityConflictError, startBookAIWorkflow } from './workflow-start-service.js';
 import { testConfig } from './book-ai-workflow-test-harness.js';
 import { pinAndLinkTTSInputRevision } from './tts-workflow-service.js';
 import { withBookAITransaction } from './transaction.js';
@@ -175,15 +175,16 @@ describeWithPostgres('immutable analysis revisions and promotion', () => {
         }),
       ]);
       expect(new Set(starts.map((item) => item.workflowId)).size).toBe(1);
-      const upgradedStart = await startBookAIWorkflow(pool, config, undefined, {
-        bookId: 'book_1',
-        providerId: 'mock',
-        modelId: 'model_same',
-        plan,
-        providerOptions: {},
-        requestProfile,
-      });
-      expect(upgradedStart).toMatchObject({ workflowId: starts[0].workflowId, reused: true });
+      await expect(
+        startBookAIWorkflow(pool, config, undefined, {
+          bookId: 'book_1',
+          providerId: 'mock',
+          modelId: 'model_same',
+          plan,
+          providerOptions: {},
+          requestProfile,
+        }),
+      ).rejects.toBeInstanceOf(ActiveBookAIWorkflowIdentityConflictError);
       expect((await pool.query(`select count(*)::integer as count from book_ai_workflows`)).rows[0].count).toBe(1);
       expect((await pool.query(`select count(*)::integer as count from analysis_input_revisions`)).rows[0].count).toBe(
         1,

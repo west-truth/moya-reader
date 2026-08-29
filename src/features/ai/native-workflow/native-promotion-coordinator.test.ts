@@ -137,6 +137,8 @@ function harness(withRisk: boolean) {
   };
   const descriptor: NativeAnalysisWorkflowDescriptor = {
     workflowId: workflow.id,
+    workflowDefinitionId: 'moya.ai.tts.book-preparation',
+    workflowVersion: '1.0.0',
     novelId: 'book_1',
     contentRevisionId: 'revision_1',
     planHash: workflow.planHash,

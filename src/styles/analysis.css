@@ -802,6 +802,31 @@
   border-bottom: 0;
 }
 
+.ai-managed-workflow-picker {
+  display: grid;
+  gap: 6px;
+}
+
+.ai-managed-workflow-picker label {
+  color: var(--text-2);
+  font-size: 0.76rem;
+  font-weight: 700;
+}
+
+.ai-managed-workflow-picker select {
+  width: 100%;
+  min-height: 40px;
+}
+
+.ai-managed-workflow-picker small {
+  color: var(--text-2);
+  line-height: 1.5;
+}
+
+.ai-managed-workflow-picker .field-warning {
+  color: var(--warning, #a15c00);
+}
+
 .ai-workspace-primary .book-workflow-card {
   margin: 0;
   padding: 0;

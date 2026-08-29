@@ -9,6 +9,8 @@ function workflow(status: string): BookAnalysisWorkflow {
     id: 'workflow-1',
     novelId: 'book-1',
     workflowType: 'book_ai_tts',
+    workflowDefinitionId: 'moya.ai.tts.book-preparation',
+    workflowVersion: '1.0.0',
     runtime: 'hosted',
     providerId: 'mock',
     planHash: 'plan-hash',

@@ -46,7 +46,7 @@ describe('ReaderChrome bookmark action', () => {
       bookmarks: [],
       highlights: [],
       addonOpen: false,
-      addonTab: 'info',
+      addonTab: 'outline',
       overlays: { settingsOpen: false, syncPanelOpen: false, importOpen: false },
       canRestoreSavedPosition: false,
       statsVisible: false,

@@ -7,6 +7,8 @@ function workflow(status: string, outcome: BookAnalysisWorkflow['readiness']['ou
     id: 'workflow-1',
     novelId: 'novel-1',
     workflowType: 'full_book_analysis',
+    workflowDefinitionId: 'moya.ai.tts.book-preparation',
+    workflowVersion: '1.0.0',
     runtime: 'native',
     providerId: 'gemini',
     planHash: 'plan-hash',

@@ -569,7 +569,7 @@ function mapRow(row: AnalysisInputRevisionRow): AnalysisInputRevision {
     ...envelope,
     windowSpec: windowSpec(row.window_spec),
     sourceSnapshot: parsedSource,
-    graphSnapshot: normalizeCharacterGraphSnapshot(row.graph_snapshot, row.book_id),
+    graphSnapshot: normalizeCharacterGraphSnapshot(row.graph_snapshot, row.book_id, { trustUserConfirmed: true }),
     correctionsSnapshot: corrections(row.corrections_snapshot),
     episodeContextSnapshot: episodeContext(row.episode_context_snapshot),
     renderSpec: row.render_spec === null ? undefined : normalizeTTSRenderSpec(row.render_spec),

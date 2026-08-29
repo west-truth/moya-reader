@@ -19,6 +19,8 @@ const workflow: RemoteBookAIWorkflow = {
   id: 'workflow-1',
   novelId: 'book-1',
   workflowType: 'book_ai_tts',
+  workflowDefinitionId: 'moya.ai.tts.book-preparation',
+  workflowVersion: '1.0.0',
   providerId: 'openai',
   modelId: 'gpt-test',
   planHash: 'plan-hash',
@@ -56,6 +58,8 @@ describe('RemoteBookAnalysisWorkflowGateway', () => {
     await expect(
       gateway.start({
         bookId: 'book-1',
+        workflowDefinitionId: 'moya.ai.tts.book-preparation',
+        workflowVersion: '1.0.0',
         providerId: 'openai',
         modelId: 'gpt-test',
         providerOptions: { requestProfileId: 'default' },
@@ -76,6 +80,8 @@ describe('RemoteBookAnalysisWorkflowGateway', () => {
 
     expect(client.startBookAIWorkflow).toHaveBeenCalledWith({
       bookId: 'book-1',
+      workflowDefinitionId: 'moya.ai.tts.book-preparation',
+      workflowVersion: '1.0.0',
       providerId: 'openai',
       modelId: 'gpt-test',
     });

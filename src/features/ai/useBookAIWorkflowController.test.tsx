@@ -3,6 +3,10 @@ import { describe, expect, it, vi } from 'vitest';
 import type { BookAIWorkflowPlan } from '../../providers/book-ai-workflow-plan';
 import { BookAnalysisWorkflowNotFoundError, type BookAnalysisWorkflow } from './book-analysis-workflow-gateway';
 import {
+  ConfiguredBookAITTSPreparationRunner,
+  GatewayBookAITTSPreparationRunner,
+} from './book-ai-tts-preparation-runner';
+import {
   useBookAIWorkflowController,
   type BookAIWorkflowControllerInput,
   type BookAIWorkflowIdStore,
@@ -23,6 +27,8 @@ function workflow(bookId: string): BookAnalysisWorkflow {
     id: `workflow-${bookId}`,
     novelId: bookId,
     workflowType: 'book_ai_tts',
+    workflowDefinitionId: 'moya.ai.tts.book-preparation',
+    workflowVersion: '1.0.0',
     runtime: 'hosted',
     providerId: 'test',
     planHash: `plan-${bookId}`,
@@ -105,10 +111,11 @@ describe('book AI workflow controller', () => {
       set: vi.fn(),
       delete: vi.fn(),
     };
+    const runner = new GatewayBookAITTSPreparationRunner(gateway);
     let controller!: ReturnType<typeof useBookAIWorkflowController>;
     function Harness() {
       controller = useBookAIWorkflowController({
-        gateway,
+        runner,
         bookId: 'book-a',
         chapterIds: [],
         beforeRun: vi.fn(async () => true),
@@ -133,6 +140,67 @@ describe('book AI workflow controller', () => {
     await act(async () => renderer.unmount());
   });
 
+  it('migrates an official workflow id into the definition-version storage scope', async () => {
+    const values = new Map([
+      ['noveldesk.book_ai_workflow.hosted.moya.ai.tts.book-preparation.book-a', 'workflow-book-a'],
+    ]);
+    const localStorage = {
+      getItem: vi.fn((key: string) => values.get(key) ?? null),
+      setItem: vi.fn((key: string, value: string) => values.set(key, value)),
+      removeItem: vi.fn((key: string) => values.delete(key)),
+    };
+    vi.stubGlobal('window', { localStorage });
+
+    const restored = workflow('book-a');
+    const gateway = {
+      runtime: 'hosted' as const,
+      supportsTTSCacheReadiness: true,
+      getPlan: vi.fn(),
+      start: vi.fn(),
+      get: vi.fn(async () => restored),
+      retry: vi.fn(),
+      cancel: vi.fn(),
+    };
+    const base = new GatewayBookAITTSPreparationRunner(gateway);
+    const runner = new ConfiguredBookAITTSPreparationRunner(
+      'moya.ai.tts.book-preparation',
+      '1.0.0',
+      base,
+      {},
+      { restoresLegacyWorkflowIds: true },
+    );
+    let renderer!: ReactTestRenderer;
+    function Harness() {
+      useBookAIWorkflowController({
+        runner,
+        bookId: 'book-a',
+        chapterIds: [],
+        beforeRun: vi.fn(async () => true),
+        onTerminal: vi.fn(async () => true),
+        onCancelled: vi.fn(async () => undefined),
+        openAIAddon: vi.fn(),
+        notify: vi.fn(),
+      });
+      return null;
+    }
+
+    try {
+      await act(async () => {
+        renderer = create(<Harness />);
+        await Promise.resolve();
+      });
+
+      expect(gateway.get).toHaveBeenCalledWith('workflow-book-a', expect.any(AbortSignal));
+      expect(values.get('noveldesk.book_ai_workflow.hosted.moya.ai.tts.book-preparation.1.0.0.book-a')).toBe(
+        'workflow-book-a',
+      );
+      expect(values.has('noveldesk.book_ai_workflow.hosted.moya.ai.tts.book-preparation.book-a')).toBe(false);
+      await act(async () => renderer.unmount());
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
   it('clears a stale native id and falls back to active workflow discovery', async () => {
     const active = { ...workflow('book-a'), runtime: 'native' as const };
     const gateway = {
@@ -152,10 +220,11 @@ describe('book AI workflow controller', () => {
       set: vi.fn(),
       delete: vi.fn(),
     };
+    const runner = new GatewayBookAITTSPreparationRunner(gateway);
     let controller!: ReturnType<typeof useBookAIWorkflowController>;
     function Harness() {
       controller = useBookAIWorkflowController({
-        gateway,
+        runner,
         bookId: 'book-a',
         chapterIds: [],
         beforeRun: vi.fn(async () => true),
@@ -192,10 +261,11 @@ describe('book AI workflow controller', () => {
       retry: vi.fn(),
       cancel: vi.fn(),
     };
+    const runner = new GatewayBookAITTSPreparationRunner(gateway);
     let controller!: ReturnType<typeof useBookAIWorkflowController>;
     function Harness() {
       controller = useBookAIWorkflowController({
-        gateway,
+        runner,
         bookId: 'book-a',
         chapterIds: [],
         beforeRun: vi.fn(async () => true),
@@ -249,10 +319,11 @@ describe('book AI workflow controller', () => {
       retry: vi.fn(),
       cancel: vi.fn(),
     };
+    const runner = new GatewayBookAITTSPreparationRunner(gateway);
     let controller!: ReturnType<typeof useBookAIWorkflowController>;
     function Harness() {
       controller = useBookAIWorkflowController({
-        gateway,
+        runner,
         bookId: 'book-a',
         chapterIds: [],
         beforeRun: vi.fn(async () => true),

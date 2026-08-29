@@ -44,6 +44,8 @@ async function firstTxtUnder(directory) {
 }
 
 const dryRun = hasArg('--dry-run');
+const browserUI = hasArg('--browser-ui') || process.env.HOSTED_AI_WORKFLOW_BROWSER_UI === '1';
+const deterministicSource = hasArg('--deterministic-source');
 const keepBook = hasArg('--keep-book') || process.env.HOSTED_AI_WORKFLOW_KEEP_BOOK === '1';
 const webBaseUrl = trimTrailingSlash(argValue('--web-url', process.env.HOSTED_WEB_URL ?? 'http://127.0.0.1:8080'));
 const apiBaseUrl = trimTrailingSlash(argValue('--api-url', process.env.HOSTED_API_URL ?? joinUrl(webBaseUrl, '/api')));
@@ -82,6 +84,12 @@ const targetLabelingCharacters = Number(
 const smokeId = `ai_workflow_smoke_${Date.now()}`;
 const syncPageLimit = 500;
 const maxSyncPages = 1000;
+const detailedSpeakerWorkflowId = 'moya.ai.tts.detailed.speaker-preparation';
+const managedWorkflowId = argValue(
+  '--managed-workflow-id',
+  process.env.HOSTED_AI_WORKFLOW_MANAGED_WORKFLOW_ID ?? 'moya.ai.tts.book-preparation',
+);
+let negotiatedSyncContract;
 
 function authHeaders(extra = {}) {
   return {
@@ -145,10 +153,35 @@ function assertSyncEvent(events, type, predicate) {
   assert(hasSyncEvent(events, type, predicate), `sync pull did not include expected ${type} event`);
 }
 
+async function negotiateSyncContract() {
+  const capabilities = await request('/sync/capabilities');
+  const supportedContracts = Array.isArray(capabilities.supportedContracts) ? capabilities.supportedContracts : [];
+  const contract = supportedContracts.find((candidate) => Number(candidate?.contractVersion) === 2);
+  assert(contract, 'sync capabilities do not include contract v2');
+  assert(typeof contract.idContract === 'string' && contract.idContract, 'sync v2 idContract is missing');
+  assert(typeof contract.hashContract === 'string' && contract.hashContract, 'sync v2 hashContract is missing');
+  negotiatedSyncContract = {
+    contractVersion: 2,
+    idContract: contract.idContract,
+    hashContract: contract.hashContract,
+  };
+}
+
+function syncPullPath(since) {
+  assert(negotiatedSyncContract, 'sync contract must be negotiated before pulling events');
+  const query = new URLSearchParams({
+    since: String(since),
+    contractVersion: String(negotiatedSyncContract.contractVersion),
+    idContract: negotiatedSyncContract.idContract,
+    hashContract: negotiatedSyncContract.hashContract,
+  });
+  return `/sync?${query.toString()}`;
+}
+
 async function syncCursorAtEnd() {
   let cursor = 0;
   for (let page = 0; page < maxSyncPages; page += 1) {
-    const response = await request(`/sync?since=${encodeURIComponent(String(cursor))}`);
+    const response = await request(syncPullPath(cursor));
     const events = syncEvents(response);
     const nextCursor = syncCursor(response, cursor);
     if (!events.length || nextCursor === cursor) return cursor;
@@ -162,7 +195,7 @@ async function pullSyncEventsSince(cursor) {
   let currentCursor = cursor;
   const allEvents = [];
   for (let page = 0; page < maxSyncPages; page += 1) {
-    const response = await request(`/sync?since=${encodeURIComponent(String(currentCursor))}`);
+    const response = await request(syncPullPath(currentCursor));
     const events = syncEvents(response);
     const nextCursor = syncCursor(response, currentCursor);
     allEvents.push(...events);
@@ -186,7 +219,7 @@ async function waitForImport(jobId) {
   throw new Error(`Import job timed out after ${timeoutMs}ms: ${JSON.stringify(lastJob)}`);
 }
 
-async function waitForWorkflow(workflowId) {
+async function waitForWorkflow(workflowId, { allowNeedsReview = false } = {}) {
   const startedAt = Date.now();
   let lastWorkflow;
   while (Date.now() - startedAt < timeoutMs) {
@@ -194,6 +227,7 @@ async function waitForWorkflow(workflowId) {
     const workflow = response.workflow;
     lastWorkflow = workflow;
     if (workflow?.status === 'succeeded') return workflow;
+    if (workflow?.status === 'needs_review' && allowNeedsReview) return workflow;
     if (['needs_review', 'failed', 'cancelled'].includes(workflow?.status)) {
       throw new Error(
         `AI workflow ended as ${workflow.status}/${workflow.stage}: ${workflow.errorMessage ?? workflow.errorCode ?? JSON.stringify(workflow.progress ?? {})}`,
@@ -205,6 +239,20 @@ async function waitForWorkflow(workflowId) {
 }
 
 async function readSourceText() {
+  if (deterministicSource) {
+    const chapters = Array.from({ length: 1 }, (_, chapterIndex) => {
+      const paragraphs = Array.from({ length: 4 }, (_, paragraphIndex) =>
+        paragraphIndex % 3 === 0
+          ? `강현우: 현우가 ${chapterIndex + 1}화 ${paragraphIndex + 1}번째 계획을 설명했다.`
+          : paragraphIndex % 3 === 1
+            ? `박민서: 민서가 ${chapterIndex + 1}화 ${paragraphIndex + 1}번째 답을 전했다.`
+            : `두 사람은 다음 장면으로 이동하며 상황을 정리했다.`,
+      );
+      return `제${chapterIndex + 1}화 검증 장면\n\n${paragraphs.join('\n\n')}`;
+    });
+    const text = chapters.join('\n\n');
+    return { sourcePath: '[deterministic managed-workflow fixture]', text, originalCharacters: text.length };
+  }
   const sourcePath = sourcePathArg ? path.resolve(sourcePathArg) : await firstTxtUnder(path.resolve(sourceDir));
   const text = await fs.readFile(sourcePath, 'utf8');
   const boundedText =
@@ -252,7 +300,184 @@ async function uploadAndImportBook(source) {
   return { bookId, byteLength: bytes.byteLength, totalChunks };
 }
 
-function mockVoiceProfiles(bookId) {
+async function launchBrowser() {
+  const { chromium } = await import('playwright-core');
+  const errors = [];
+  for (const channel of ['msedge', 'chrome', 'chromium']) {
+    try {
+      const browser = await chromium.launch({ channel, headless: true });
+      console.log(`Browser UI smoke channel: ${channel}`);
+      return browser;
+    } catch (error) {
+      errors.push(`${channel}: ${error instanceof Error ? error.message.split('\n')[0] : String(error)}`);
+    }
+  }
+  throw new Error(`Could not launch Edge/Chrome for hosted AI workflow UI smoke. ${errors.join(' | ')}`);
+}
+
+async function openBookReader(page, bookTitle) {
+  await page.goto(webBaseUrl, { waitUntil: 'domcontentloaded', timeout: timeoutMs });
+  await page.getByText('책장을 불러오는 중입니다').waitFor({ state: 'hidden', timeout: timeoutMs });
+  await page.getByRole('button', { name: `${bookTitle} 작품 상세 열기`, exact: true }).click({ timeout: timeoutMs });
+  await page
+    .getByRole('button', { name: /첫 화 보기|이어 읽기/u })
+    .first()
+    .click({ timeout: timeoutMs });
+  await page
+    .locator('.reader-viewport-layer.is-active .reader-paragraph:not(.is-loading):not(.is-error)')
+    .first()
+    .waitFor({ state: 'visible', timeout: timeoutMs });
+}
+
+async function openAIWorkflowSurface(page, options = {}) {
+  const screen = page.locator('.reader-screen');
+  if (!(await screen.getAttribute('class'))?.split(/\s+/u).includes('chrome-visible')) {
+    const viewport = page.locator('.reader-viewport-layer.is-active');
+    const box = await viewport.boundingBox();
+    assert(box, 'Reader viewport was unavailable while opening AI workflow tools');
+    await viewport.click({ position: { x: box.width / 2, y: box.height / 2 } });
+  }
+  await page.getByRole('button', { name: '부가 기능 열기', exact: true }).click({ timeout: timeoutMs });
+  await page.getByRole('tab', { name: 'AI', exact: true }).click({ timeout: timeoutMs });
+  const selector = page.locator('#ai-managed-workflow');
+  const initialSelection = await selector.inputValue();
+  let settingsSave;
+  if (options.select && initialSelection !== managedWorkflowId) {
+    settingsSave = page.waitForResponse(
+      (response) => response.request().method() === 'PUT' && response.url().endsWith('/api/settings'),
+      { timeout: timeoutMs },
+    );
+    await selector.selectOption(managedWorkflowId);
+  }
+  await page.locator(`[data-workflow-id="${managedWorkflowId}"]`).waitFor({ state: 'visible', timeout: timeoutMs });
+  if (settingsSave) {
+    const response = await settingsSave;
+    assert(response.ok(), `managed workflow selection save returned ${response.status()}`);
+  }
+  const selection = await selector.inputValue();
+  assert(selection === managedWorkflowId, `managed workflow selector resolved ${selection}`);
+}
+
+async function startWorkflowFromBrowser(bookId, bookTitle) {
+  const browser = await launchBrowser();
+  const context = await browser.newContext({ viewport: { width: 1440, height: 960 } });
+  if (authToken) {
+    await context.addInitScript(({ key, token }) => window.localStorage.setItem(key, token), {
+      key: 'noveldesk.apiAuthToken',
+      token: authToken,
+    });
+  }
+  const page = await context.newPage();
+  try {
+    await openBookReader(page, bookTitle);
+    await openAIWorkflowSurface(page, { select: true });
+    await page.route(`**/api/books/${encodeURIComponent(bookId)}/analysis-workflows`, async (route) => {
+      if (route.request().method() !== 'POST') {
+        await route.continue();
+        return;
+      }
+      const body = route.request().postDataJSON();
+      if (managedWorkflowId === detailedSpeakerWorkflowId) {
+        assert(
+          body.planOptions?.maxLabelingParagraphs === 2,
+          `alternate runner did not send maxLabelingParagraphs=2: ${JSON.stringify(body.planOptions)}`,
+        );
+      }
+      await route.continue({
+        postData: JSON.stringify({
+          ...body,
+          providerId: 'mock',
+          modelId: 'mock-segment-labeler-v1',
+          force: true,
+          planOptions: {
+            maxBundleChapters,
+            targetBundleCharacters,
+            maxLabelingParagraphs,
+            targetLabelingCharacters,
+            ...body.planOptions,
+          },
+        }),
+      });
+    });
+    const responsePromise = page.waitForResponse(
+      (response) =>
+        response.request().method() === 'POST' &&
+        response.url().includes(`/api/books/${encodeURIComponent(bookId)}/analysis-workflows`),
+      { timeout: timeoutMs },
+    );
+    await page.getByRole('button', { name: '작품 전체 분석 시작', exact: true }).click({ timeout: timeoutMs });
+    const response = await responsePromise;
+    assert(response.ok(), `browser workflow start returned ${response.status()}`);
+    const started = await response.json();
+    const workflowId = started.workflow?.id;
+    assert(typeof workflowId === 'string', 'browser workflow start did not return workflow id');
+    if (managedWorkflowId === detailedSpeakerWorkflowId) {
+      assert(
+        started.workflow?.plan?.labelingWindows?.length === 2,
+        `alternate runner plan produced ${started.workflow?.plan?.labelingWindows?.length ?? 'no'} labeling windows`,
+      );
+      console.log('ok alternate trusted runner applied its two-paragraph planning policy');
+    }
+    await page.close();
+    return { browser, context, workflowId, bookTitle };
+  } catch (error) {
+    await browser.close();
+    throw error;
+  }
+}
+
+async function verifyCompletedWorkflowInBrowser(session) {
+  const { context, bookTitle } = session;
+  const page = await context.newPage();
+  try {
+    await openBookReader(page, bookTitle);
+    await openAIWorkflowSurface(page);
+    await page.getByText('라벨과 음성 연결이 끝났습니다. 듣기용 음성을 준비할 수 있습니다.').waitFor({
+      state: 'visible',
+      timeout: timeoutMs,
+    });
+    await page.getByText('고급 정보', { exact: true }).click({ timeout: timeoutMs });
+    await page.getByText('Label/voice readiness passed', { exact: true }).waitFor({
+      state: 'visible',
+      timeout: timeoutMs,
+    });
+    await page.getByRole('tab', { name: '듣기', exact: true }).click({ timeout: timeoutMs });
+    const play = page.getByRole('button', { name: '재생', exact: true });
+    await play.waitFor({ state: 'visible', timeout: timeoutMs });
+    assert(!(await play.isDisabled()), 'basic/system TTS play action was disabled beside the completed workflow');
+    console.log('ok browser restored ready_for_tts evidence and kept basic/system TTS playback available');
+  } finally {
+    await page.close();
+  }
+}
+
+async function verifyWorkflowCancellationRoute(bookId) {
+  const started = await request(`/books/${encodeURIComponent(bookId)}/analysis-workflows`, {
+    method: 'POST',
+    ...jsonBody({
+      providerId: 'mock',
+      modelId: 'mock-segment-labeler-v1',
+      force: true,
+      planOptions: {
+        maxBundleChapters,
+        targetBundleCharacters,
+        maxLabelingParagraphs,
+        targetLabelingCharacters,
+      },
+    }),
+  });
+  const workflowId = started.workflow?.id;
+  assert(typeof workflowId === 'string', 'cancellation probe did not return a workflow id');
+  const cancelled = await request(`/analysis-workflows/${encodeURIComponent(workflowId)}/cancel`, {
+    method: 'POST',
+  });
+  assert(cancelled.workflow?.status === 'cancelled', 'workflow cancellation did not return cancelled state');
+  const restored = await request(`/analysis-workflows/${encodeURIComponent(workflowId)}`);
+  assert(restored.workflow?.status === 'cancelled', 'cancelled workflow was not durably restorable');
+  console.log('ok cancelled a queued hosted workflow and restored its durable cancelled state');
+}
+
+function mockVoiceProfiles(bookId, graphCharacters) {
   const now = new Date().toISOString();
   const profile = (id, role, label, characterId) => ({
     id: `voice_${bookId}_${id}`,
@@ -272,10 +497,21 @@ function mockVoiceProfiles(bookId) {
     profile('narrator', 'narrator', 'Mock narrator'),
     profile('system', 'system', 'Mock system'),
     profile('unknown', 'unknown', 'Mock unknown'),
-    profile('char_hyun', 'character', 'Mock char_hyun', 'char_hyun'),
-    profile('char_minseo', 'character', 'Mock char_minseo', 'char_minseo'),
-    profile('char_system', 'character', 'Mock char_system', 'char_system'),
+    ...graphCharacters.map((character, index) =>
+      profile(`character_${index + 1}`, 'character', `Mock ${character.canonicalName ?? character.id}`, character.id),
+    ),
   ];
+}
+
+async function waitForGeneratedCharacterGraph(bookId) {
+  const startedAt = Date.now();
+  while (Date.now() - startedAt < timeoutMs) {
+    const response = await request(`/books/${encodeURIComponent(bookId)}/character-graph`);
+    const graph = response.graph ?? response;
+    if (Array.isArray(graph.characters) && graph.characters.length >= 1) return graph;
+    await new Promise((resolve) => setTimeout(resolve, Math.min(pollIntervalMs, 250)));
+  }
+  throw new Error(`Generated Character Graph did not appear within ${timeoutMs}ms`);
 }
 
 async function run() {
@@ -291,8 +527,10 @@ async function run() {
   assert(ready.ok === true, 'readiness endpoint did not return ok=true');
   assert(ready.components?.database?.ok === true, 'readiness database check failed');
   assert(ready.components?.queue?.ok === true, 'readiness queue check failed');
+  await negotiateSyncContract();
 
   let bookId;
+  let browserSession;
   try {
     const imported = await uploadAndImportBook(source);
     bookId = imported.bookId;
@@ -324,32 +562,65 @@ async function run() {
     );
 
     const syncCursor = await syncCursorAtEnd();
-    const voices = await request(`/books/${encodeURIComponent(bookId)}/voice-profiles`, {
-      method: 'PUT',
-      ...jsonBody({ voiceProfiles: mockVoiceProfiles(bookId) }),
-    });
-    assert(voices.ok === true && voices.voiceProfiles?.length >= 6, 'voice profile save failed');
-    console.log('ok saved mock system voice profiles for readiness');
 
-    const started = await request(`/books/${encodeURIComponent(bookId)}/analysis-workflows`, {
-      method: 'POST',
-      ...jsonBody({
-        providerId: 'mock',
-        modelId: 'mock-segment-labeler-v1',
-        force: true,
-        planOptions: {
-          maxBundleChapters,
-          targetBundleCharacters,
-          maxLabelingParagraphs,
-          targetLabelingCharacters,
-        },
-      }),
-    });
-    const workflowId = started.workflow?.id;
-    assert(typeof workflowId === 'string', 'analysis workflow start did not return workflow id');
-    console.log(`ok started hosted AI workflow ${workflowId}`);
+    let workflowId;
+    if (browserUI) {
+      const library = await request('/books');
+      const importedBook = library.books?.find((book) => book.id === bookId);
+      assert(typeof importedBook?.title === 'string', 'imported browser smoke book was absent from the library');
+      browserSession = await startWorkflowFromBrowser(bookId, importedBook.title);
+      workflowId = browserSession.workflowId;
+      console.log(`ok started hosted AI workflow ${workflowId} from managed browser UI`);
+    } else {
+      const started = await request(`/books/${encodeURIComponent(bookId)}/analysis-workflows`, {
+        method: 'POST',
+        ...jsonBody({
+          providerId: 'mock',
+          modelId: 'mock-segment-labeler-v1',
+          force: true,
+          planOptions: {
+            maxBundleChapters,
+            targetBundleCharacters,
+            maxLabelingParagraphs,
+            targetLabelingCharacters,
+          },
+        }),
+      });
+      workflowId = started.workflow?.id;
+      assert(typeof workflowId === 'string', 'analysis workflow start did not return workflow id');
+      console.log(`ok started hosted AI workflow ${workflowId}`);
+    }
 
-    const workflow = await waitForWorkflow(workflowId);
+    let workflow = await waitForWorkflow(workflowId, { allowNeedsReview: true });
+    if (workflow.status === 'needs_review') {
+      console.log(
+        `ok initial workflow reached review before voice assignment (${workflow.errorCode ?? 'needs_review'})`,
+      );
+      const generatedGraph = await waitForGeneratedCharacterGraph(bookId);
+      const voices = await request(`/books/${encodeURIComponent(bookId)}/voice-profiles`, {
+        method: 'PUT',
+        ...jsonBody({ voiceProfiles: mockVoiceProfiles(bookId, generatedGraph.characters) }),
+      });
+      assert(
+        voices.ok === true && voices.voiceProfiles?.length >= 3 + generatedGraph.characters.length,
+        'voice profile save failed',
+      );
+      console.log('ok saved mock system voice profiles after analysis artifact promotion');
+      assert(
+        workflow.errorCode === 'tts_readiness_missing_voice_profiles',
+        `workflow reached unexpected review state ${workflow.errorCode ?? workflow.errorMessage ?? 'needs_review'}`,
+      );
+      await request(`/analysis-workflows/${encodeURIComponent(workflowId)}/retry`, {
+        method: 'POST',
+        ...jsonBody({ action: 'retry_same_request' }),
+      });
+      console.log('ok retried workflow after satisfying TTS voice readiness');
+      workflow = await waitForWorkflow(workflowId);
+    }
+    assert(
+      workflow.status === 'succeeded',
+      `workflow ended as ${workflow.status}/${workflow.stage}: ${workflow.errorMessage ?? workflow.errorCode ?? ''}`,
+    );
     assert(
       workflow.stage === 'ready_for_tts' || workflow.stage === 'audio_cache_ready',
       `workflow ended at unexpected stage ${workflow.stage}`,
@@ -405,7 +676,10 @@ async function run() {
       (event, payload) => event.book_id === bookId && payload.segments?.length >= 1,
     );
     console.log('ok sync pull exposed AI/TTS voice, graph, and segment metadata events');
+    if (browserSession) await verifyCompletedWorkflowInBrowser(browserSession);
+    await verifyWorkflowCancellationRoute(bookId);
   } finally {
+    if (browserSession) await browserSession.browser.close();
     if (bookId && !keepBook) {
       await request(`/books/${encodeURIComponent(bookId)}`, { method: 'DELETE' });
       console.log('ok cleaned up AI workflow smoke book');

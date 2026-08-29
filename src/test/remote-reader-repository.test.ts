@@ -6,6 +6,7 @@ import {
   RemoteMutationProtocolError,
   RemoteReaderRepository,
 } from '../repositories/remote-reader-repository';
+import { defaultSettings } from '../repositories/reader-defaults';
 import { RemoteApiClient, RemoteApiError } from '../services/remote/remote-api-client';
 
 const now = '2026-07-05T00:00:00.000Z';
@@ -301,6 +302,30 @@ function hostedClient() {
 }
 
 describe('RemoteReaderRepository', () => {
+  it('preserves hosted AI workflow preferences while merging reader defaults', async () => {
+    const client = {
+      getSettings: vi.fn(async () => ({
+        settings: {
+          aiWorkflows: {
+            schemaVersion: 1,
+            defaultWorkflowId: 'moya.ai.analysis.character-bundle',
+            bookOverrides: { book_1: 'example.ai.alternate-workflow' },
+          },
+        },
+      })),
+    } as unknown as RemoteApiClient;
+    const repository = new RemoteReaderRepository(client);
+
+    await expect(repository.getSettings()).resolves.toMatchObject({
+      theme: defaultSettings.theme,
+      aiWorkflows: {
+        schemaVersion: 1,
+        defaultWorkflowId: 'moya.ai.analysis.character-bundle',
+        bookOverrides: { book_1: 'example.ai.alternate-workflow' },
+      },
+    });
+  });
+
   it('maps hosted books, page data, and reader annotations through the repository boundary', async () => {
     const client = hostedClient();
     const repository = new RemoteReaderRepository(client);

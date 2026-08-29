@@ -19,6 +19,7 @@ export const defaultSettings: ReaderSettings = {
   ttsSpeed: 1,
   ttsPlayback: DEFAULT_TTS_PLAYBACK_SETTINGS,
   readingProfile: DEFAULT_READING_PROFILE,
+  aiWorkflows: { schemaVersion: 1, bookOverrides: {} },
   gestureBindings: DEFAULT_GESTURE_BINDINGS,
   keepScreenChrome: false,
 };

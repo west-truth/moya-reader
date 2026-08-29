@@ -46,7 +46,8 @@
 - 연속 스크롤, 페이지 보기, 양면 보기와 우→좌 만화 진행
 - 시스템 음성, 선택형 서버 TTS, 캐시와 전역 미니 플레이어
 - 원본 파일 다운로드, 백업·복원과 개인 서버 동기화
-- 선택형 AI 화자 분석과 등장인물별 음성 설정
+- 연결된 Dropbox, Google Drive 선택 파일과 Suwayomi/Mihon source를 탐색하는 Source Hub
+- 켜고 끌 수 있는 bundled 신뢰 익스텐션과 선택형 AI 화자 분석·등장인물별 음성 설정
 
 브라우저 화면은 외부 AI/TTS 서비스에 직접 요청하지 않습니다. 외부 provider를 사용할 때는 서버 worker 또는
 네이티브 보안 adapter를 거칩니다.
@@ -135,6 +136,11 @@ S3_SECRET_ACCESS_KEY=
 빈 `DATABASE_URL`은 `POSTGRES_*`에서, 빈 `S3_*`는 `MINIO_ROOT_*`에서 자동으로 파생되므로 같은 비밀번호를
 중복 입력하다 어긋날 일이 없습니다. 외부 PostgreSQL/S3를 사용할 때만 직접 채우십시오. `.env`는 Git에
 올리지 마십시오.
+
+Dropbox/Google 외부 소스를 사용할 때는 `.env.example`의 `MOYA_DROPBOX_*` 또는 `MOYA_GOOGLE_DRIVE_*` 공개
+식별자를 채웁니다. 이 값은 Docker Web 컨테이너가 시작될 때 `/runtime-config.js`로 주입되므로 이미지 rebuild
+없이 컨테이너 재생성만으로 바꿀 수 있습니다. app/client secret, Bearer token과 AI/TTS provider key는
+`MOYA_*` 공개 설정에 넣으면 안 됩니다.
 
 이미 PostgreSQL volume에 데이터가 있다면 `.env`의 비밀번호만 바꾸면 안 됩니다. 먼저 컨테이너 안의
 `psql`에서 해당 role 비밀번호를 바꾸고, 그 다음 `.env`를 같은 값으로 맞춰야 합니다. 데이터가 있는 서버에서
@@ -299,6 +305,24 @@ reverse proxy가 같은 서버에서 실행된다면 `WEB_BIND_ADDRESS=127.0.0.1
 MinIO API, TTS 서비스 포트를 직접 열면 안 됩니다. 처음 웹 화면을 열면 동기화 패널에 같은 Bearer token을
 저장하십시오. 연결 검사는 공개 `/ready`와 보호된 sync API를 모두 확인하며, token 저장 뒤 실패한 책장은
 자동으로 다시 불러옵니다.
+
+### 선택 기능: Suwayomi/Mihon source
+
+사용자 소유 Suwayomi Server에 설치한 Mihon 호환 source를 모야의 `설정 → 소스`와 Source Hub에서 탐색할 수
+있습니다. Moya Web과 Suwayomi를 같은 Nginx Proxy Manager Docker network에 붙이는 선택형 profile은 다음과
+같이 시작합니다.
+
+```bash
+docker network create npm_proxy # 같은 이름의 network가 이미 있으면 생략
+docker compose -f compose.yaml -f compose.public.yaml -f compose.suwayomi.yaml config --quiet
+docker compose -f compose.yaml -f compose.public.yaml -f compose.suwayomi.yaml up -d --build
+```
+
+실행 전 `.env`에 `SUWAYOMI_AUTH_USERNAME`, `SUWAYOMI_AUTH_PASSWORD`와 외부 HTTPS origin인
+`MOYA_SUWAYOMI_DEFAULT_URL`을 설정해야 합니다. Suwayomi port는 host에 직접 publish되지 않으며 NPM은 기본
+alias `moya-suwayomi:4567`로 연결합니다. 데이터와 설치 source는 `suwayomi-data` volume에 남으므로 일반
+업데이트에 `docker compose down -v`를 사용하면 안 됩니다. 전체 NPM/WireGuard·OAuth 설정은
+[개인 배포 예제](docs/operations/nginx-proxy-manager-wireguard.md)를 따르십시오.
 
 ## 선택 기능: 로컬 한국어 TTS
 
@@ -470,7 +494,10 @@ curl http://127.0.0.1:8080/ready
 
 - [처음 설치부터 업데이트·백업까지](docs/operations/docker-compose-guide-ko.md)
 - [Docker Compose 기술 운영 문서](docs/operations/docker-compose-deployment.md)
+- [WireGuard + Nginx Proxy Manager + Suwayomi 배포](docs/operations/nginx-proxy-manager-wireguard.md)
 - [Hosted provider 운영 경계](docs/operations/hosted-provider-admission.md)
+- [신뢰 익스텐션 v1 개발 가이드](docs/architecture/trusted-extensions.md)
+- [외부 작품 소스 아키텍처](docs/architecture/external-library-sources.md)
 - [Windows·Android 네이티브 빌드 가이드](docs/platforms/native-build-guide-ko.md)
 
 ## 현재 제한 사항
@@ -480,6 +507,10 @@ curl http://127.0.0.1:8080/ready
 - RAR/7z는 단일 볼륨 중심이며 매우 큰 solid archive와 암호화 archive는 추가 검증이 필요합니다.
 - OCR 정확도와 처리 시간은 스캔 품질, 언어 data와 서버 자원에 따라 달라집니다.
 - CPU MeloTTS는 상용 cloud TTS보다 느릴 수 있습니다.
+- 현재 익스텐션은 소스와 함께 검토·빌드되는 trusted 기능입니다. 임의 community package 설치·sandbox는 아직
+  제공하지 않습니다.
+- Suwayomi v1은 회차 한 개를 Library의 CBZ 문서 한 개로 가져옵니다. 여러 회차를 한 작품 아래 누적하는
+  serial-comic 모델은 후속 작업입니다.
 - 인터넷 공개 운영에는 HTTPS, 방화벽, 접근 통제, monitoring과 복구가 검증된 backup이 필요합니다.
 - 데스크톱 installer와 signed Android package는 아직 공개 배포되지 않았습니다.
 

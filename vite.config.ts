@@ -36,6 +36,6 @@ export default defineConfig({
     format: 'es',
   },
   test: {
-    exclude: [...configDefaults.exclude, 'handoff/**'],
+    exclude: [...configDefaults.exclude, 'handoff/**', 'scripts/public-release-sync.test.mjs'],
   },
 });

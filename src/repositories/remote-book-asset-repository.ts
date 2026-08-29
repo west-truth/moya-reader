@@ -33,7 +33,8 @@ function coverMetadata(row: JsonRecord): BookAssetMetadata {
     id: text(row, 'id'),
     bookId: text(row, 'book_id'),
     kind: 'cover',
-    provenance: provenance === 'generated_preview' ? 'generated_preview' : 'user_supplied',
+    provenance:
+      provenance === 'approved_enrichment' || provenance === 'generated_preview' ? provenance : 'user_supplied',
     status: 'active',
     storageKey: text(row, 'storage_key') || text(row, 'id'),
     fileName: text(row, 'file_name') || undefined,

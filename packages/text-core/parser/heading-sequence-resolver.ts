@@ -293,6 +293,40 @@ function* scanLines(text: string): Generator<ScannedLine> {
   }
 }
 
+const explicitEpisodeUnit =
+  /(?:\d{1,5}|[영공일이삼사오육칠팔구십백천만零〇一二三四五六七八九十百千万萬两兩]+)\s*(?:화|話|话|회|回)(?:\s|$|[.:：\-–—_「『《〈(（[【])/i;
+
+function suppressWeakHeadingsNestedInExplicitEpisodes(
+  candidates: readonly HeadingMatch[],
+  accepted: Set<HeadingMatch>,
+): void {
+  const explicitEpisodes = candidates
+    .filter(
+      (candidate) =>
+        accepted.has(candidate) &&
+        !candidate.requiresSequence &&
+        candidate.number !== undefined &&
+        explicitEpisodeUnit.test(candidate.title),
+    )
+    .sort((left, right) => left.lineStart - right.lineStart);
+
+  for (let index = 0; index < explicitEpisodes.length - 1; index += 1) {
+    const current = explicitEpisodes[index]!;
+    const next = explicitEpisodes[index + 1]!;
+    if (sequenceFamily(current.family) !== sequenceFamily(next.family) || next.number !== current.number! + 1) continue;
+
+    for (const candidate of candidates) {
+      if (
+        candidate.requiresSequence &&
+        candidate.lineStart > current.lineStart &&
+        candidate.lineStart < next.lineStart
+      ) {
+        accepted.delete(candidate);
+      }
+    }
+  }
+}
+
 export function resolveChapterHeadings(
   text: string,
   options: ResolveHeadingOptions = { mode: 'auto' },
@@ -347,6 +381,8 @@ export function resolveChapterHeadings(
       allowUntitledTrailingHighRisk: true,
     });
   }
+
+  suppressWeakHeadingsNestedInExplicitEpisodes(candidates, accepted);
 
   return candidates.filter((candidate) => accepted.has(candidate));
 }

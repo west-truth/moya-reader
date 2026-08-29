@@ -169,6 +169,33 @@ describe('remote data safety repositories', () => {
     );
   });
 
+  it('keeps approved enrichment provenance when hydrating a hosted cover', async () => {
+    const blob = new Blob(['jpeg'], { type: 'image/jpeg' });
+    const client = {
+      getBookCoverMetadata: vi.fn(async () => ({
+        cover: {
+          id: 'cover_approved',
+          book_id: 'book_1',
+          provenance: 'approved_enrichment',
+          storage_key: 'user/book_1/covers/approved.jpg',
+          file_name: 'approved.jpg',
+          content_type: 'image/jpeg',
+          byte_length: blob.size,
+          content_hash: 'sha256:approved',
+          pixel_width: 480,
+          pixel_height: 720,
+          created_at: '2026-08-24T00:00:00.000Z',
+        },
+      })),
+      getBookCover: vi.fn(async () => ({ blob, headers: new Headers() })),
+    } as unknown as RemoteApiClient;
+    const repository = new RemoteBookAssetRepository(client);
+
+    await expect(repository.getActiveCover('book_1')).resolves.toMatchObject({
+      metadata: { id: 'cover_approved', provenance: 'approved_enrichment' },
+    });
+  });
+
   it('treats an authored-cover race as a skipped generated preview', async () => {
     const client = {
       saveBookCover: vi.fn(async () => {

@@ -105,6 +105,10 @@ async function main() {
     if (includeAIWorkflow) {
       const aiWorkflowArgs = [
         'scripts/hosted-ai-workflow-smoke.mjs',
+        '--browser-ui',
+        '--deterministic-source',
+        '--managed-workflow-id',
+        'moya.ai.tts.detailed.speaker-preparation',
         '--web-url',
         webUrl,
         '--api-url',

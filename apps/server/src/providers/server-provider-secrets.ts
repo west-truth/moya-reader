@@ -10,6 +10,8 @@ import type {
 } from '../../../../src/providers/provider-jobs';
 import type { ServerConfig } from '../config.js';
 import type { ServerProviderCatalog } from './server-provider-catalog.js';
+import { serverAIProviderTransportRegistry } from './server-ai-provider-factory.js';
+import { serverTTSProviderTransportRegistry } from './server-tts-provider-factory.js';
 
 export type ProviderSecretName = 'api_key' | 'access_token' | 'credential_path' | 'endpoint_url';
 
@@ -44,29 +46,13 @@ type Queryable = Pick<pg.Pool, 'query'>;
 
 const keyVersion = 'local-aes-256-gcm-v1';
 
-const secretNameByProvider: Record<ProviderSettingsScope, Record<string, ProviderSecretName | undefined>> = {
-  llm_labeling: {
-    openai: 'api_key',
-    'gemini-ai-studio': 'api_key',
-    'gemini-vertex': 'credential_path',
-    'gemini-agent-platform': 'credential_path',
-    anthropic: 'api_key',
-  },
-  tts_synthesis: {
-    'openai-tts': 'api_key',
-    elevenlabs: 'api_key',
-    'gemini-tts': 'api_key',
-    'gemini-vertex-tts': 'credential_path',
-    'google-cloud-tts': 'access_token',
-    'local-endpoint': 'endpoint_url',
-  },
-};
-
 export function defaultProviderSecretName(
   scope: ProviderSettingsScope,
   providerId: string,
 ): ProviderSecretName | undefined {
-  return secretNameByProvider[scope]?.[providerId];
+  return scope === 'llm_labeling'
+    ? serverAIProviderTransportRegistry.get(providerId)?.secretName
+    : serverTTSProviderTransportRegistry.get(providerId)?.secretName;
 }
 
 export function providerSupportsUserSecret(

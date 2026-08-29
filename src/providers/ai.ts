@@ -207,12 +207,33 @@ function detectSegmentType(text: string): LabeledSegment['type'] {
   return 'narration';
 }
 
-function inferSpeakerId(text: string, type: LabeledSegment['type'], index: number): string {
+function inferSpeakerId(
+  text: string,
+  type: LabeledSegment['type'],
+  index: number,
+  knownCharacters: readonly Character[],
+): string {
   if (type === 'system_message') return 'system';
   if (type === 'narration' || type === 'author_note' || type === 'sfx') return 'narrator';
-  if (text.includes('팀장') || text.includes('민서')) return 'char_minseo';
-  if (text.includes('현우') || text.includes('강 대리')) return 'char_hyun';
-  return index % 2 === 0 ? 'char_hyun' : 'unknown';
+  const matchedCharacter = knownCharacters.find((character) =>
+    [character.canonicalName, ...character.aliases].some((name) => name && text.includes(name)),
+  );
+  if (matchedCharacter) return matchedCharacter.id;
+  const template =
+    text.includes('팀장') || text.includes('민서')
+      ? mockCharacters[1]
+      : text.includes('현우') || text.includes('강 대리')
+        ? mockCharacters[0]
+        : undefined;
+  if (template) {
+    const matchingKnownCharacter = knownCharacters.find((character) =>
+      [character.canonicalName, ...character.aliases].some((name) =>
+        [template.canonicalName, ...template.aliases].includes(name),
+      ),
+    );
+    return matchingKnownCharacter?.id ?? template.id;
+  }
+  return index % 2 === 0 ? (knownCharacters[0]?.id ?? 'char_hyun') : 'unknown';
 }
 
 export class MockAIProvider implements AIProvider {
@@ -220,21 +241,26 @@ export class MockAIProvider implements AIProvider {
   readonly displayName = 'Mock AI (로컬)';
 
   async labelChapterSegments(input: LabelChapterSegmentsInput): Promise<ChapterLabelingResult> {
-    const characters: Character[] = mockCharacters.map((character, index) => ({
-      ...character,
-      novelId: input.novelId,
-      color: mockColors[index % mockColors.length],
-      confidence: 0.74 + index * 0.06,
-      description:
-        character.id === 'char_system'
-          ? '상태창과 시스템 메시지를 읽는 보조 음성입니다.'
-          : 'Mock 분석으로 추정한 등장인물입니다. 실제 LLM 요청은 발생하지 않습니다.',
-      isUserConfirmed: false,
-    }));
+    const pinnedCharacters = input.characterGraph?.characters ?? input.knownCharacters ?? [];
+    const characters: Character[] =
+      pinnedCharacters.length > 0
+        ? [...pinnedCharacters]
+        : mockCharacters.map((character, index) => ({
+            ...character,
+            novelId: input.novelId,
+            color: mockColors[index % mockColors.length],
+            confidence: 0.74 + index * 0.06,
+            description:
+              character.id === 'char_system'
+                ? '상태창과 시스템 메시지를 읽는 보조 음성입니다.'
+                : 'Mock 분석으로 추정한 등장인물입니다. 실제 LLM 요청은 발생하지 않습니다.',
+            isUserConfirmed: false,
+          }));
+    const characterSpeakerIds = characters.map((character) => character.id);
 
     const segments = input.paragraphs.map<LabeledSegment>((paragraph, index) => {
       const type = detectSegmentType(paragraph.text);
-      const speakerId = inferSpeakerId(paragraph.text, type, index);
+      const speakerId = inferSpeakerId(paragraph.text, type, index, characters);
       const confidence = speakerId === 'unknown' ? 0.48 : type === 'narration' ? 0.98 : 0.76;
       const segmentTextHash = segmentTextIntegrityHash(paragraph.text);
       return {
@@ -255,7 +281,7 @@ export class MockAIProvider implements AIProvider {
         segmentTextHash,
         type,
         speakerId,
-        candidateSpeakers: speakerId === 'unknown' ? ['char_hyun', 'char_minseo'] : [speakerId],
+        candidateSpeakers: speakerId === 'unknown' ? characterSpeakerIds.slice(0, 2) : [speakerId],
         listenerIds: [],
         emotion: type === 'system_message' ? 'system' : 'neutral',
         confidence,

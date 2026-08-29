@@ -324,6 +324,8 @@ describe('AI analysis workflow routes', () => {
     const workflow = response.json().workflow;
     expect(workflow).toMatchObject({
       novelId: 'book_1',
+      workflowDefinitionId: 'moya.ai.tts.book-preparation',
+      workflowVersion: '1.0.0',
       providerId: 'mock',
       modelId: 'mock-segment-labeler-v1',
       status: 'running',
@@ -343,7 +345,7 @@ describe('AI analysis workflow routes', () => {
     await app.close();
   });
 
-  it('reuses an active hosted book AI workflow instead of starting duplicate provider jobs', async () => {
+  it('rejects active plan drift and reuses only an exact hosted workflow identity', async () => {
     vi.stubEnv('AI_PROVIDER_ENABLED', 'mock');
     const activeWorkflow = {
       id: 'workflow_active',
@@ -460,15 +462,43 @@ describe('AI analysis workflow routes', () => {
     } as unknown as Queue;
     const app = await appWithAIRoutes(pool, providerQueue);
 
-    const response = await app.inject({
+    const conflictResponse = await app.inject({
       method: 'POST',
       url: '/api/books/book_1/analysis-workflows',
       payload: { planOptions: { targetBundleCharacters: 15000, maxLabelingParagraphs: 2 } },
     });
 
-    expect(response.statusCode, response.body).toBe(200);
-    expect(response.json().workflow).toMatchObject({
+    expect(conflictResponse.statusCode, conflictResponse.body).toBe(409);
+    expect(conflictResponse.json()).toMatchObject({
+      errorCode: 'active_workflow_identity_conflict',
+      activeWorkflow: {
+        workflowId: 'workflow_active',
+        workflowDefinitionId: 'moya.ai.tts.book-preparation',
+        workflowVersion: '1.0.0',
+        planHash: 'sha256:legacy-three-stage-plan',
+      },
+      requestedWorkflow: {
+        workflowDefinitionId: 'moya.ai.tts.book-preparation',
+        workflowVersion: '1.0.0',
+      },
+    });
+
+    activeWorkflow.plan_hash = conflictResponse.json().requestedWorkflow.planHash;
+    const reuseResponse = await app.inject({
+      method: 'POST',
+      url: '/api/books/book_1/analysis-workflows',
+      payload: {
+        workflowDefinitionId: 'moya.ai.tts.book-preparation',
+        workflowVersion: '1.0.0',
+        planOptions: { targetBundleCharacters: 15000, maxLabelingParagraphs: 2 },
+      },
+    });
+
+    expect(reuseResponse.statusCode, reuseResponse.body).toBe(200);
+    expect(reuseResponse.json().workflow).toMatchObject({
       id: 'workflow_active',
+      workflowDefinitionId: 'moya.ai.tts.book-preparation',
+      workflowVersion: '1.0.0',
       status: 'running',
       stage: 'building_graph',
     });
@@ -477,6 +507,29 @@ describe('AI analysis workflow routes', () => {
       expect.stringContaining('insert into provider_jobs'),
       expect.anything(),
     );
+    await app.close();
+  });
+
+  it('rejects unsupported or partial hosted workflow definition references before provider work', async () => {
+    const pool = { query: vi.fn() } as unknown as pg.Pool;
+    const app = await appWithAIRoutes(pool);
+
+    const unsupported = await app.inject({
+      method: 'POST',
+      url: '/api/books/book_1/analysis-workflows',
+      payload: { workflowDefinitionId: 'community.workflow', workflowVersion: '1.0.0' },
+    });
+    const partial = await app.inject({
+      method: 'POST',
+      url: '/api/books/book_1/analysis-workflows',
+      payload: { workflowDefinitionId: 'moya.ai.tts.book-preparation' },
+    });
+
+    expect(unsupported.statusCode).toBe(400);
+    expect(unsupported.json()).toMatchObject({ errorCode: 'unsupported_workflow_definition' });
+    expect(partial.statusCode).toBe(400);
+    expect(partial.json()).toMatchObject({ errorCode: 'unsupported_workflow_definition' });
+    expect(pool.query).not.toHaveBeenCalled();
     await app.close();
   });
 

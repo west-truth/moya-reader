@@ -41,6 +41,19 @@ describe('AI TTS cache routes', () => {
         }
         if (sql.includes('update provider_jobs') && sql.includes("set status = 'cancelled'")) {
           expect(sql).toContain('update provider_job_attempts attempt');
+          const [jobUpdate, attemptUpdate] = sql.split('cancelled_attempt as');
+          for (const attemptField of [
+            'outcome_state',
+            'billing_state',
+            'normalized_error_code',
+            'reconcile_after',
+            'lease_expires_at',
+          ]) {
+            expect(jobUpdate).not.toContain(attemptField);
+            expect(attemptUpdate).toContain(attemptField);
+          }
+          expect(attemptUpdate).toContain("outcome_state = 'cancelled'");
+          expect(attemptUpdate).toContain('attempt.dispatch_started_at');
           expect(sql).toContain('current_attempt_id is not distinct from $6');
           expect(params?.[5]).toMatch(/^provider_attempt_/);
           jobRow.status = 'cancelled';

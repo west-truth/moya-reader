@@ -110,6 +110,14 @@ services:
     build:
       context: .
       dockerfile: deploy/web.Dockerfile
+    environment:
+      # Browser-visible public identifiers only. Secrets belong in api/worker or their secure stores.
+      MOYA_DROPBOX_APP_KEY: ${MOYA_DROPBOX_APP_KEY:-${VITE_DROPBOX_APP_KEY:-}}
+      MOYA_DROPBOX_SOURCE_APP_KEY: ${MOYA_DROPBOX_SOURCE_APP_KEY:-${VITE_DROPBOX_SOURCE_APP_KEY:-}}
+      MOYA_GOOGLE_DRIVE_CLIENT_ID: ${MOYA_GOOGLE_DRIVE_CLIENT_ID:-${VITE_GOOGLE_DRIVE_CLIENT_ID:-}}
+      MOYA_GOOGLE_DRIVE_APP_ID: ${MOYA_GOOGLE_DRIVE_APP_ID:-${VITE_GOOGLE_DRIVE_APP_ID:-}}
+      MOYA_GOOGLE_DRIVE_DEVELOPER_KEY: ${MOYA_GOOGLE_DRIVE_DEVELOPER_KEY:-${VITE_GOOGLE_DRIVE_DEVELOPER_KEY:-}}
+      MOYA_SUWAYOMI_DEFAULT_URL: ${MOYA_SUWAYOMI_DEFAULT_URL:-${VITE_SUWAYOMI_DEFAULT_URL:-}}
     ports:
       - '${WEB_BIND_ADDRESS:-127.0.0.1}:8080:80'
     depends_on:

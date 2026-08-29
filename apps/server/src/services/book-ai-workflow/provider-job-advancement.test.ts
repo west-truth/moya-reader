@@ -230,6 +230,12 @@ describe('book AI workflow service', () => {
     ];
     const pool = {
       query: vi.fn(async (sql: string, params?: unknown[]) => {
+        if (sql.includes('speaker-workflow:ownership')) return { rows: [{ allowed: true }] };
+        if (sql.includes('speaker-workflow:load-active-provenance')) return { rows: [] };
+        if (sql.includes('speaker-workflow:insert-provenance')) {
+          const rows = JSON.parse(String(params?.[1])) as Array<{ id: string }>;
+          return { rowCount: rows.length, rows: rows.map(({ id }) => ({ id })) };
+        }
         if (sql.includes('from book_ai_workflows') && sql.includes('where id = $1')) return { rows: [workflow] };
         if (sql.includes('from book_ai_workflow_jobs wj')) return { rows: links };
         if (sql.includes('from paragraph_search') && sql.includes('where book_id = $1')) {

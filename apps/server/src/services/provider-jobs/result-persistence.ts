@@ -1,7 +1,7 @@
 import pg from 'pg';
 import type { Chapter } from '@noveldesk/contracts';
 import { analysisOutputIntegrityHash, analysisRunId as createAnalysisRunId } from '@noveldesk/text-core/identity/ai';
-import { syncEventId, syncPayloadIntegrityHash } from '@noveldesk/text-core/identity/sync';
+import { aggregateSyncEntityId, syncEventId, syncPayloadIntegrityHash } from '@noveldesk/text-core/identity/sync';
 import { normalizeCharacterGraphSnapshot } from '../../../../../src/providers/character-graph-snapshot';
 import { materializeLabelingSegmentProsody } from '../../../../../src/providers/analysis-review-correction';
 import type {
@@ -256,7 +256,7 @@ export async function persistChapterLabelingResult(
         seed: `character_graph_updated:${job.id}:${analysisRunId}:${eventCreatedAt}`,
         type: 'character_graph_updated',
         entityType: 'character_graph',
-        entityId: `character_graph_${job.book_id}`,
+        entityId: aggregateSyncEntityId({ entityType: 'character_graph', novelId: job.book_id }),
         payload: graphPayload,
         createdAt: eventCreatedAt,
       });
@@ -269,7 +269,11 @@ export async function persistChapterLabelingResult(
       seed: `chapter_segments_updated:${job.id}:${analysisRunId}:${eventCreatedAt}`,
       type: 'chapter_segments_updated',
       entityType: 'chapter_segments',
-      entityId: `chapter_segments_${chapter.id}`,
+      entityId: aggregateSyncEntityId({
+        entityType: 'chapter_segments',
+        novelId: job.book_id,
+        chapterId: chapter.id,
+      }),
       payload: segmentsPayload,
       createdAt: eventCreatedAt,
     });
@@ -398,7 +402,7 @@ export async function persistCharacterGraphMergeResult(
       seed: `character_graph_updated:${job.id}:${analysisRunId}:${eventCreatedAt}`,
       type: 'character_graph_updated',
       entityType: 'character_graph',
-      entityId: `character_graph_${job.book_id}`,
+      entityId: aggregateSyncEntityId({ entityType: 'character_graph', novelId: job.book_id }),
       payload: graphPayload,
       createdAt: eventCreatedAt,
     });

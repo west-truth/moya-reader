@@ -106,6 +106,8 @@ function descriptor(
 ): NativeAnalysisWorkflowDescriptorInput {
   return {
     workflowId: 'workflow-1',
+    workflowDefinitionId: 'moya.ai.tts.book-preparation',
+    workflowVersion: '1.0.0',
     novelId: NOVEL_ID,
     contentRevisionId: 'revision-1',
     planHash: 'sha256:plan-1',
@@ -160,7 +162,7 @@ describe('native analysis workflow descriptor store', () => {
     expect(await repository.deleteNativeAnalysisWorkflowDescriptor(input.workflowId)).toBe(false);
   });
 
-  it('keeps the legacy fingerprint payload unchanged when no labeling contract is stored', () => {
+  it('includes durable workflow identity in newly written descriptor fingerprints', () => {
     const input = descriptor();
     expect(nativeAnalysisWorkflowDescriptorFingerprint(input)).toBe(
       structuredIntegrityHash({
@@ -170,8 +172,41 @@ describe('native analysis workflow descriptor store', () => {
         planHash: input.planHash,
         plan: input.plan,
         provider: input.provider,
+        workflowDefinitionId: input.workflowDefinitionId,
+        workflowVersion: input.workflowVersion,
       }),
     );
+  });
+
+  it('validates the legacy fingerprint before projecting the official default workflow identity', async () => {
+    const input = descriptor();
+    const legacyPayload = {
+      workflowId: input.workflowId,
+      novelId: input.novelId,
+      contentRevisionId: input.contentRevisionId,
+      planHash: input.planHash,
+      plan: input.plan,
+      provider: input.provider,
+    };
+    const db = await openReaderDb();
+    const tx = db.transaction(NATIVE_ANALYSIS_STORES.descriptors, 'readwrite');
+    tx.objectStore(NATIVE_ANALYSIS_STORES.descriptors).put({
+      ...legacyPayload,
+      descriptorFingerprint: structuredIntegrityHash(legacyPayload),
+      createdAt: '2026-07-13T00:00:00.000Z',
+      updatedAt: '2026-07-13T00:00:00.000Z',
+    });
+    await new Promise<void>((resolve, reject) => {
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => reject(tx.error);
+      tx.onabort = () => reject(tx.error);
+    });
+
+    await expect(getNativeAnalysisWorkflowDescriptor(input.workflowId)).resolves.toMatchObject({
+      workflowDefinitionId: 'moya.ai.tts.book-preparation',
+      workflowVersion: '1.0.0',
+      descriptorFingerprint: structuredIntegrityHash(legacyPayload),
+    });
   });
 
   it('pins a versioned labeling contract and rejects stored contract tampering', async () => {
