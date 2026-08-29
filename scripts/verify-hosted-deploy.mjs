@@ -261,6 +261,10 @@ check(
   includes(files.webDockerfile, 'COPY packages/contracts/package.json packages/contracts/package.json') &&
     includes(
       files.webDockerfile,
+      'COPY packages/document-series-core/package.json packages/document-series-core/package.json',
+    ) &&
+    includes(
+      files.webDockerfile,
       'COPY packages/extension-contracts/package.json packages/extension-contracts/package.json',
     ) &&
     includes(files.webDockerfile, 'COPY packages/text-core/package.json packages/text-core/package.json'),
@@ -313,6 +317,11 @@ check(
   'server Dockerfile installs and copies shared workspaces',
   includes(files.serverDockerfile, 'COPY packages/contracts/package.json packages/contracts/package.json') &&
     includes(files.serverDockerfile, 'COPY packages/contracts packages/contracts') &&
+    includes(
+      files.serverDockerfile,
+      'COPY packages/document-series-core/package.json packages/document-series-core/package.json',
+    ) &&
+    includes(files.serverDockerfile, 'COPY packages/document-series-core packages/document-series-core') &&
     includes(
       files.serverDockerfile,
       'COPY packages/extension-contracts/package.json packages/extension-contracts/package.json',

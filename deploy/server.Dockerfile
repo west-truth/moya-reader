@@ -6,6 +6,7 @@ RUN corepack enable
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
 COPY apps/server/package.json apps/server/package.json
 COPY packages/contracts/package.json packages/contracts/package.json
+COPY packages/document-series-core/package.json packages/document-series-core/package.json
 COPY packages/extension-contracts/package.json packages/extension-contracts/package.json
 COPY packages/epub-core/package.json packages/epub-core/package.json
 COPY packages/fixed-document-core/package.json packages/fixed-document-core/package.json
@@ -14,6 +15,7 @@ RUN pnpm install --frozen-lockfile
 
 COPY apps/server apps/server
 COPY packages/contracts packages/contracts
+COPY packages/document-series-core packages/document-series-core
 COPY packages/extension-contracts packages/extension-contracts
 COPY packages/epub-core packages/epub-core
 COPY packages/fixed-document-core packages/fixed-document-core
