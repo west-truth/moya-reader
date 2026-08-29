@@ -60,6 +60,7 @@ import {
 } from '../storage/db';
 import { getTrashedNovels, purgeNovel, restoreNovelFromTrash } from '../storage/library-catalog-store';
 import type { BookContentRevisionRecord } from '../storage/content-revisions';
+import type { SyncTombstone } from '../storage/sync-event-store';
 
 function requestToPromise<T>(request: IDBRequest<T>): Promise<T> {
   return new Promise((resolve, reject) => {
@@ -78,6 +79,12 @@ async function getContentRevisions(novelId: string): Promise<BookContentRevision
   return requestToPromise<BookContentRevisionRecord[]>(
     tx.objectStore('book_content_revisions').index('novelId').getAll(novelId),
   );
+}
+
+async function getSyncTombstones(): Promise<SyncTombstone[]> {
+  const db = await openReaderDb();
+  const tx = db.transaction('sync_tombstones', 'readonly');
+  return requestToPromise<SyncTombstone[]>(tx.objectStore('sync_tombstones').getAll());
 }
 
 function parsedNovel(id: string, title: string): ParsedNovel {
@@ -315,14 +322,8 @@ describe('IndexedDB reader storage', () => {
     expect(pages).toHaveLength(1);
     expect(page?.paragraphs.map((item) => item.index)).toEqual([1, 2]);
     expect(paragraph).toMatchObject({ id: 'novel-a:paragraph:1', text: '첫 문단' });
-    expect(rawParagraphRef).toMatchObject({
-      id: 'novel-a:paragraph:1',
-      text: '',
-      pageIndex: 0,
-      textStorageMode: 'page',
-    });
-    expect(searchRows).toHaveLength(2);
-    expect(searchRows[0]).toMatchObject({ paragraphId: 'novel-a:paragraph:1', pageIndex: 0, paragraphIndex: 1 });
+    expect(rawParagraphRef).toBeUndefined();
+    expect(searchRows).toHaveLength(0);
     expect(pages[0].paragraphs.map((paragraph) => paragraph.index)).toEqual([1, 2]);
     expect(paragraphs.map((paragraph) => paragraph.index)).toEqual([1, 2]);
     expect(bookmarks.map((item) => item.id)).toEqual(['bookmark-a']);
@@ -439,12 +440,7 @@ describe('IndexedDB reader storage', () => {
       id: `novel-batch:paragraph:${totalParagraphs}`,
       text: `문단 ${totalParagraphs}`,
     });
-    expect(rawParagraphRef).toMatchObject({
-      id: `novel-batch:paragraph:${totalParagraphs}`,
-      text: '',
-      pageIndex: 2,
-      textStorageMode: 'page',
-    });
+    expect(rawParagraphRef).toBeUndefined();
   });
 
   it('saves parser import output without requiring a full ParsedNovel paragraph array', async () => {
@@ -605,7 +601,7 @@ describe('IndexedDB reader storage', () => {
     expect(chapters[0]).toMatchObject({ id: original.chapters[0].id, paragraphCount: 2 });
     expect(pages).toHaveLength(1);
     expect(pages[0].paragraphs.map((paragraph) => paragraph.text)).toEqual(['첫 문단', '둘째 문단']);
-    expect(searchRows).toHaveLength(2);
+    expect(searchRows).toHaveLength(0);
     expect(await getParagraph(`${original.novel.id}:paragraph:3`)).toBeUndefined();
     expect(await getContentRevisions(original.novel.id)).toEqual(originalRevisions);
     expect(await listSyncOutbox()).toEqual(originalOutbox);
@@ -634,7 +630,7 @@ describe('IndexedDB reader storage', () => {
     expect(await getNovel(original.novel.id)).toMatchObject({ id: original.novel.id, title: 'parser original' });
     expect(await getChapters(original.novel.id)).toHaveLength(1);
     expect(pages).toHaveLength(1);
-    expect(searchRows).toHaveLength(2);
+    expect(searchRows).toHaveLength(0);
     expect(await getParagraph(`${original.novel.id}:paragraph:3`)).toBeUndefined();
     expect(await searchBookParagraphs(original.novel.id, original.paragraphs[0].text, 5)).toHaveLength(1);
     expect(await listSyncOutbox()).toEqual(originalOutbox);
@@ -652,7 +648,7 @@ describe('IndexedDB reader storage', () => {
     const searchRows = await getParagraphSearchRows(replacement.novel.id);
 
     expect(pages).toHaveLength(1);
-    expect(searchRows).toHaveLength(2);
+    expect(searchRows).toHaveLength(0);
     expect(await getParagraph(`${replacement.novel.id}:paragraph:3`)).toBeUndefined();
     expect(await searchBookParagraphs(replacement.novel.id, staleText, 5)).toEqual([]);
   });
@@ -669,7 +665,7 @@ describe('IndexedDB reader storage', () => {
     const searchRows = await getParagraphSearchRows(replacement.novel.id);
 
     expect(pages).toHaveLength(1);
-    expect(searchRows).toHaveLength(2);
+    expect(searchRows).toHaveLength(0);
     expect(await getParagraph(`${replacement.novel.id}:paragraph:3`)).toBeUndefined();
     expect(await searchBookParagraphs(replacement.novel.id, staleText, 5)).toEqual([]);
   });
@@ -1121,11 +1117,20 @@ describe('IndexedDB reader storage', () => {
     expect(await getBookmarks('novel-a')).toHaveLength(1);
     expect(await getHighlights('novel-a')).toHaveLength(1);
     expect((await listSyncOutbox('pending')).map((item) => item.event.type)).toContain('book_trashed');
+    expect(await getSyncTombstones()).toContainEqual(
+      expect.objectContaining({
+        id: 'book:novel-a',
+        entityType: 'book',
+        vaultBookId: 'novel-a',
+        bookHash: 'novel-a:normalized',
+      }),
+    );
 
     await restoreNovelFromTrash('novel-a', trashed?.metadataRevision);
     expect((await getNovels()).map((novel) => novel.id).sort()).toEqual(['novel-a', 'novel-b']);
     const restored = await getNovel('novel-a');
     expect(restored?.deletedAt).toBeUndefined();
+    expect((await getSyncTombstones()).find((item) => item.id === 'book:novel-a')).toBeUndefined();
 
     await deleteNovel('novel-a');
     const trashedAgain = await getNovel('novel-a');
@@ -1141,5 +1146,13 @@ describe('IndexedDB reader storage', () => {
     expect(await getNovel('novel-b')).toBeDefined();
     expect(await getChapters('novel-b')).toHaveLength(1);
     expect((await listSyncOutbox('pending')).map((item) => item.event.type)).toContain('book_purged');
+    expect(await getSyncTombstones()).toContainEqual(
+      expect.objectContaining({
+        id: 'book:novel-a',
+        entityType: 'book',
+        vaultBookId: 'novel-a',
+        bookHash: 'novel-a:normalized',
+      }),
+    );
   });
 });

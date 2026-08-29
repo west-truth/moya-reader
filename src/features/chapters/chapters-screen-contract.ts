@@ -36,6 +36,7 @@ export interface ChaptersScreenActions {
     openSettings(): void;
     openSync(): void;
     openImport(): void;
+    openChapterAppend(): void;
     openStructureEditor(): void;
     openMetadata(): void;
   };

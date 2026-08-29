@@ -1,0 +1,31 @@
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "webnovel-metadata-collector"
+version = "0.1.0"
+description = "웹소설 제목으로 공개 메타데이터와 표지 URL을 조회하는 API"
+license = "Apache-2.0"
+requires-python = ">=3.11"
+dependencies = [
+    "beautifulsoup4>=4.13,<5",
+    "fastapi>=0.116,<1",
+    "httpx>=0.28,<1",
+    "lxml>=5.4,<7",
+    "uvicorn[standard]>=0.35,<1",
+]
+
+[project.optional-dependencies]
+auth = [
+    "playwright>=1.58,<2",
+]
+bundle = [
+    "pyinstaller>=6.15,<7",
+]
+dev = [
+    "pytest>=8.4,<10",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

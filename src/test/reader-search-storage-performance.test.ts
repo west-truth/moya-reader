@@ -96,6 +96,19 @@ describe('reader search storage performance', () => {
     expect(page.scannedTextCharacters).toBeLessThanOrEqual(READER_SEARCH_SCAN_TEXT_BUDGET + maxParagraphLength);
     expect(getAllSpy).not.toHaveBeenCalled();
 
+    const abortParsed = singleChapterFixture();
+    abortParsed.paragraphs = abortParsed.paragraphs.map((paragraph) => ({
+      ...paragraph,
+      text: `abort-cursor-row-${paragraph.index}`,
+      textHash: `abort-paragraph-hash-${paragraph.index}`,
+    }));
+    abortParsed.novel.totalCharacters = abortParsed.paragraphs.reduce(
+      (total, paragraph) => total + paragraph.text.length,
+      0,
+    );
+    abortParsed.chapters[0].characterCount = abortParsed.novel.totalCharacters;
+    await saveImportedNovel(abortParsed, { batchPageCount: 4 });
+
     const controller = new AbortController();
     const transactionAbortSpy = vi.spyOn(IDBTransaction.prototype, 'abort');
     const cursorContinueSpy = vi.spyOn(IDBCursor.prototype, 'continue').mockImplementation(() => {

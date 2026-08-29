@@ -2,6 +2,7 @@ import type { Novel, ReaderSettings } from '../domain/types';
 import { defaultSettings } from '../repositories/reader-defaults';
 import { bookProgressFromChapterProgress } from './content-revision-remote-state';
 import { storedNovel } from './content-revision-store';
+import { ContentRevisionConflictError } from './content-revisions';
 import {
   deleteByIndexInTransaction,
   getByIndex,
@@ -79,6 +80,14 @@ export async function saveReadingPosition(input: SaveReadingPositionInput): Prom
   if (!novel) {
     await done;
     return;
+  }
+  if (
+    input.expectedContentRevisionId !== undefined &&
+    novel.activeContentRevisionId !== input.expectedContentRevisionId
+  ) {
+    tx.abort();
+    await done.catch(() => undefined);
+    throw new ContentRevisionConflictError('Content revision changed before reader position was saved');
   }
   novelStore.put(
     storedNovel({
@@ -184,7 +193,8 @@ export async function getSettings(): Promise<ReaderSettings> {
 export async function saveSettings(settings: ReaderSettings): Promise<void> {
   const db = await openReaderDb();
   const tx = db.transaction(['settings', 'devices', 'sync_outbox', 'sync_state'], 'readwrite');
-  tx.objectStore('settings').put(settings);
-  await queueSyncEventInTransaction(tx, 'settings_updated', jsonValue({ settings }), { entityId: settings.id });
+  const next = { ...settings, cloudVaultUpdatedAt: new Date().toISOString() } satisfies ReaderSettings;
+  tx.objectStore('settings').put(next);
+  await queueSyncEventInTransaction(tx, 'settings_updated', jsonValue({ settings: next }), { entityId: settings.id });
   await transactionDone(tx);
 }

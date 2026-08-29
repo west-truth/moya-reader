@@ -2,6 +2,7 @@ import type { Chapter, Novel, ParagraphPage } from '../domain/types';
 import type { ReadingPosition } from '../sync/types';
 import { upgradeContentRevisionStores } from './content-revision-migration';
 import {
+  cleanupStaleImportArtifacts,
   pageBackedParagraphRef,
   putParagraphSearchRowsForPage,
   storedChapter,
@@ -31,7 +32,7 @@ import { READER_PAGE_MAP_STORE, upgradeReaderPageMapStore } from './reader-page-
 import { BOOK_ENRICHMENT_STORES, upgradeBookEnrichmentStores } from './book-enrichment-schema';
 
 export const READER_DB_NAME = 'noveldesk-reader';
-export const READER_DB_VERSION = 36;
+export const READER_DB_VERSION = 38;
 
 export type ReaderStoreName =
   | 'novels'
@@ -315,13 +316,13 @@ function upgrade(db: IDBDatabase, transaction: IDBTransaction, oldVersion: numbe
   }
   if (!db.objectStoreNames.contains('sync_state')) createStore(db, 'sync_state');
 
-  upgradeContentRevisionStores(db);
+  upgradeContentRevisionStores(db, transaction);
   upgradeIdV2MigrationStores(db);
   upgradeNativeAnalysisWorkflowStores(db);
   upgradeLabelMutationStores(db);
   upgradeCharacterGraphV2Stores(db);
   upgradeReaderAnchorQuarantineStore(db);
-  upgradeBookAssetStores(db);
+  upgradeBookAssetStores(db, transaction);
   upgradeBackupStores(db);
   upgradeChapterStructureStores(db);
   upgradeLibraryManagementStores(db, transaction);
@@ -364,6 +365,9 @@ export function openReaderDb(): Promise<IDBDatabase> {
       try {
         // Reads remain blocked until a pending book-level cutover finishes, while the progress store stays observable.
         await runIdV2MigrationsInDatabase(db);
+        // Crash cleanup is deliberately age-gated and bounded so startup never
+        // turns into a full-library maintenance pass.
+        await cleanupStaleImportArtifacts(db).catch(() => undefined);
         resolve(db);
       } catch (error) {
         db.close();

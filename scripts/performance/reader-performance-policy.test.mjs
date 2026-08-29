@@ -3,6 +3,7 @@ import {
   PHASE6_DEFAULT_TIMING_BUDGETS,
   PHASE6_STRICT_INVARIANTS,
   evaluatePhase6PerformanceReport,
+  phase6ImportPhaseTimings,
   phase6TimingBudgets,
 } from './reader-performance-policy.mjs';
 
@@ -50,6 +51,7 @@ function passingReport() {
       totalMs: 12000,
       progressEventCount: 20,
       progressStatuses: ['reading', 'decoding', 'writing', 'ready'],
+      phaseTimings: { parseMs: 4000, bodyWriteMs: 6000, activationMs: 1500 },
       maximumProgressGapMs: 800,
       eventLoop: { maximumGapMs: 70, tickCount: 10, durationMs: 1000 },
       storage: {
@@ -85,6 +87,21 @@ function passingReport() {
 }
 
 describe('Phase 6 reader performance report policy', () => {
+  it('derives parse, body-write, and activation durations from worker subphases', () => {
+    expect(
+      phase6ImportPhaseTimings({
+        startedAt: 100,
+        progress: [
+          { at: 180, status: 'decoding', subphase: 'decoding_text' },
+          { at: 300, status: 'writing', subphase: 'staging_chapters' },
+          { at: 700, status: 'writing', subphase: 'writing_pages' },
+          { at: 900, status: 'writing', subphase: 'activating_revision' },
+        ],
+        terminal: { at: 1100, type: 'complete' },
+      }),
+    ).toEqual({ parseMs: 200, bodyWriteMs: 600, activationMs: 200 });
+  });
+
   it('accepts a complete report within the generous timing budgets', () => {
     expect(evaluatePhase6PerformanceReport(passingReport())).toEqual([]);
   });
@@ -97,6 +114,13 @@ describe('Phase 6 reader performance report policy', () => {
     expect(evaluatePhase6PerformanceReport(report).map((item) => item.code)).toEqual(
       expect.arrayContaining(['IMPORT_TOTAL_TIMEOUT', 'IMPORT_EVENT_LOOP_STALL', 'IMPORT_CANCELLATION_TIMEOUT']),
     );
+  });
+
+  it('rejects reports that do not contain complete import subphase timings', () => {
+    const report = passingReport();
+    report.import.phaseTimings.activationMs = null;
+
+    expect(evaluatePhase6PerformanceReport(report).map((item) => item.code)).toContain('IMPORT_PHASE_TIMING_MISSING');
   });
 
   it('keeps DOM and search correctness strict when timing budgets are overridden', () => {

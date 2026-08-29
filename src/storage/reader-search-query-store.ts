@@ -21,10 +21,14 @@ import {
 import {
   activeRevisionIdForChapter,
   getLegacyChapters,
-  getRevisionChapters,
+  getLogicalRevisionChapters,
   readableLegacyChapter,
 } from './content-revision-read-handle';
-import type { ParagraphSearchRow, RevisionParagraphSearchRow } from './content-revision-store';
+import type {
+  ParagraphSearchRow,
+  RevisionParagraphPageRow,
+  RevisionParagraphSearchRow,
+} from './content-revision-store';
 import { getItem } from './indexeddb-transaction';
 import { openReaderDb } from './reader-database';
 
@@ -177,10 +181,19 @@ function scanRevisionRows(
     textBudget: input.textBudget,
     rowValue: (row) => ({
       paragraph: row.paragraph,
-      textLower: row.textLower,
+      textLower: row.textLower ?? row.paragraph.text.toLocaleLowerCase(),
       position: { paragraphIndex: row.paragraphIndex, pageIndex: row.pageIndex },
     }),
   });
+}
+
+function revisionPageRange(contentRevisionId: string, chapterId: string, pageIndex: number | undefined): IDBKeyRange {
+  return IDBKeyRange.bound(
+    [contentRevisionId, chapterId, pageIndex ?? 0],
+    [contentRevisionId, chapterId, Number.MAX_SAFE_INTEGER],
+    false,
+    false,
+  );
 }
 
 function scanIndexedRows(input: ChapterScanInput, position: ScanPosition | undefined): Promise<ScanSlice> {
@@ -196,7 +209,7 @@ function scanIndexedRows(input: ChapterScanInput, position: ScanPosition | undef
     textBudget: input.textBudget,
     rowValue: (row) => ({
       paragraph: row.paragraph,
-      textLower: row.textLower,
+      textLower: row.textLower ?? row.paragraph.text.toLocaleLowerCase(),
       position: { paragraphIndex: row.paragraphIndex, pageIndex: row.pageIndex },
     }),
   });
@@ -298,6 +311,83 @@ function scanPageRows(input: ChapterScanInput, position: ScanPosition | undefine
   });
 }
 
+function scanRevisionPageRows(
+  input: ChapterScanInput,
+  contentRevisionId: string,
+  position: ScanPosition | undefined,
+): Promise<ScanSlice> {
+  throwIfReaderSearchAborted(input.signal);
+  const tx = input.db.transaction('book_content_paragraph_pages', 'readonly');
+  const request = tx
+    .objectStore('book_content_paragraph_pages')
+    .index('contentRevisionId_chapterId_pageIndex')
+    .openCursor(revisionPageRange(contentRevisionId, input.chapterId, position?.pageIndex));
+
+  return new Promise((resolve, reject) => {
+    const paragraphs: Paragraph[] = [];
+    let nextPosition = position;
+    let exhausted = false;
+    let scannedRows = 0;
+    let scannedTextCharacters = 0;
+    let settled = false;
+
+    const cleanup = () => input.signal.removeEventListener('abort', abort);
+    const fail = (error: unknown) => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      reject(error);
+    };
+    const abort = () => {
+      try {
+        tx.abort();
+      } catch {
+        fail(readerAbortError(input.signal));
+      }
+    };
+
+    input.signal.addEventListener('abort', abort, { once: true });
+    request.onerror = () => fail(request.error ?? new Error('IndexedDB revision page search cursor failed.'));
+    tx.onerror = () => fail(tx.error ?? new Error('IndexedDB revision page search transaction failed.'));
+    tx.onabort = () => fail(input.signal.aborted ? readerAbortError(input.signal) : tx.error);
+    tx.oncomplete = () => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      resolve({ paragraphs, position: nextPosition, exhausted, scannedRows, scannedTextCharacters });
+    };
+    request.onsuccess = () => {
+      if (input.signal.aborted) {
+        abort();
+        return;
+      }
+      const cursor = request.result;
+      if (!cursor) {
+        exhausted = true;
+        return;
+      }
+      const page = cursor.value as RevisionParagraphPageRow;
+      const afterParagraph = page.pageIndex === position?.pageIndex ? position.paragraphIndex : -1;
+      for (const paragraph of page.paragraphs) {
+        if (paragraph.index <= afterParagraph) continue;
+        const textLower = paragraph.text.toLocaleLowerCase();
+        nextPosition = { pageIndex: page.pageIndex, paragraphIndex: paragraph.index };
+        scannedRows += 1;
+        scannedTextCharacters += textLower.length;
+        if (textLower.includes(input.normalizedQuery)) paragraphs.push(paragraph);
+        if (
+          scannedRows >= Math.min(READER_SEARCH_CURSOR_SLICE_ROWS, input.rowBudget) ||
+          scannedTextCharacters >= input.textBudget ||
+          paragraphs.length >= input.matchLimit
+        ) {
+          return;
+        }
+      }
+      cursor.continue();
+    };
+  });
+}
+
 async function yieldSearchTurn(signal: AbortSignal): Promise<void> {
   await new Promise<void>((resolve) => setTimeout(resolve, 0));
   throwIfReaderSearchAborted(signal);
@@ -338,7 +428,7 @@ async function scanChapterPage(input: ChapterScanInput): Promise<ChapterScanPage
       rowBudget: input.rowBudget - scannedRows,
       textBudget: input.textBudget - scannedTextCharacters,
     };
-    const slice =
+    let slice =
       source === 'revision' && resolved.contentRevisionId
         ? await scanRevisionRows(sliceInput, resolved.contentRevisionId, position)
         : source === 'indexed'
@@ -346,6 +436,9 @@ async function scanChapterPage(input: ChapterScanInput): Promise<ChapterScanPage
           : source === 'pages'
             ? await scanPageRows(sliceInput, position)
             : await scanLegacyRows(sliceInput, position);
+    if (source === 'revision' && resolved.contentRevisionId && slice.exhausted && slice.scannedRows === 0) {
+      slice = await scanRevisionPageRows(sliceInput, resolved.contentRevisionId, position);
+    }
     paragraphs.push(...slice.paragraphs);
     scannedRows += slice.scannedRows;
     scannedTextCharacters += slice.scannedTextCharacters;
@@ -439,7 +532,7 @@ async function chaptersForBook(novelId: string): Promise<Chapter[]> {
   const novel = await getItem<Novel>('novels', novelId);
   const db = await openReaderDb();
   const chapters = novel?.activeContentRevisionId
-    ? await getRevisionChapters(db, novel.activeContentRevisionId)
+    ? await getLogicalRevisionChapters(db, novel.activeContentRevisionId)
     : await getLegacyChapters(db, novelId);
   return sortedChapters(chapters);
 }

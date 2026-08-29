@@ -38,6 +38,7 @@ import {
 import { labelMutationSegmentHash } from './providers/label-mutation-contract';
 import { runGuardedAppBootstrap, useAppBootstrap } from './app/hooks/use-app-bootstrap';
 import { useAppRuntime } from './app/runtime/RuntimeProvider';
+import { useOptionalSelfHostAuth } from './features/auth/SelfHostAccountGate';
 import { useAnnotationsController } from './features/annotations/useAnnotationsController';
 import { BookWorkspaceScreens } from './features/book-workspace/BookWorkspaceScreens';
 import { BookWorkspaceStatsPanel } from './features/book-workspace/book-workspace-lazy-panels';
@@ -93,10 +94,16 @@ import { useLibraryFolderController } from './features/library-folders/useLibrar
 import { useExternalSourceController } from './features/external-sources/useExternalSourceController';
 import { useBackupController } from './features/backup/useBackupController';
 import { useCloudVaultController } from './features/cloud-vault/useCloudVaultController';
+import { initialCloudVaultMutationRevisions, type CloudVaultMutationKind } from './cloud-vault/sync-policy';
 import { useChapterStructureController } from './features/chapter-structure/useChapterStructureController';
 import { useLibraryManagementController } from './features/library/useLibraryManagementController';
 import { BookEnrichmentService } from './features/book-enrichment/book-enrichment-service';
 import { useBookEnrichmentController } from './features/book-enrichment/useBookEnrichmentController';
+import { useBookEnrichmentAutomation } from './features/book-enrichment/useBookEnrichmentAutomation';
+import {
+  WEBNOVEL_METADATA_ENRICHMENT_EXTENSION_ID,
+  WEBNOVEL_METADATA_ENRICHMENT_PROVIDER_ID,
+} from './extensions/builtin/webnovel-metadata-enrichment-extension';
 import type { SyncConnectionTestState } from './features/sync/sync-panel-contract';
 import {
   acceptRemoteSyncState as acceptRemoteSyncStateMutation,
@@ -238,7 +245,7 @@ import {
   saveStoredSyncApiBaseUrl,
   testSyncApiConnection,
 } from './repositories/reader-runtime';
-import { apiAuthTokenUsesAndroidKeystore, storedApiAuthTokenConfigured } from './platform/secure-credentials';
+import { apiAuthTokenUsesNativeSecureStore, storedApiAuthTokenConfigured } from './platform/secure-credentials';
 import { RemoteMutationConflictError } from './repositories/remote-reader-repository';
 import { type SyncOutboxItem, type SyncState } from './sync/types';
 import {
@@ -332,6 +339,7 @@ function chaptersForBundleAnalysis(chapters: Chapter[], currentChapter: Chapter 
 }
 
 export default function App() {
+  const selfHostAuth = useOptionalSelfHostAuth();
   const {
     defaultAIProvider: aiProvider,
     defaultTTSProvider: systemTTS,
@@ -378,6 +386,7 @@ export default function App() {
   );
   const dropboxExternalSourceAppKey =
     appPublicRuntimeConfig.dropbox.sourceAppKey ?? appPublicRuntimeConfig.dropbox.appKey;
+  const dropboxCloudVaultAppKey = appPublicRuntimeConfig.dropbox.appKey ?? appPublicRuntimeConfig.dropbox.sourceAppKey;
   const dropboxExternalSourceBroker = useMemo(
     () => new DropboxSourceAccountBroker(DROPBOX_EXTERNAL_SOURCE_ID, dropboxExternalSourceAppKey, externalSourceState),
     [dropboxExternalSourceAppKey, externalSourceState],
@@ -537,6 +546,7 @@ export default function App() {
     message?: string;
   }>({ status: 'loading' });
   const [syncOutbox, setSyncOutbox] = useState<SyncOutboxItem[]>([]);
+  const [cloudVaultMutationRevisions, setCloudVaultMutationRevisions] = useState(initialCloudVaultMutationRevisions);
   const [syncPanelOpen, setSyncPanelOpen] = useState(false);
   const [syncFlushing, setSyncFlushing] = useState(false);
   const [syncApiBaseUrlDraft, setSyncApiBaseUrlDraft] = useState(
@@ -561,12 +571,12 @@ export default function App() {
   const remoteAutoRefreshBusyRef = useRef(false);
   const remoteAutoRefreshGenerationRef = useRef(0);
   const providerSettingsAutoLoadKeyRef = useRef<string>();
-  const readerMutationCommittedRef = useRef<() => Promise<unknown>>(async () => undefined);
+  const readerMutationCommittedRef = useRef<(kind?: CloudVaultMutationKind) => Promise<unknown>>(async () => undefined);
   const readerPersistenceErrorRef = useRef<(error: unknown) => Promise<boolean>>(async () => false);
   const readerSettingsController = useReaderSettingsDraft({
     repository: readerRepository,
     initialSettings: defaultSettings,
-    onSaved: () => readerMutationCommittedRef.current(),
+    onSaved: () => readerMutationCommittedRef.current('settings'),
     onSaveError: async (error) => {
       if (!(await readerPersistenceErrorRef.current(error))) {
         showToast('읽기 설정을 저장하지 못했습니다.', 'danger');
@@ -587,7 +597,7 @@ export default function App() {
     readerProgress,
     openChapter: (chapter, position) =>
       bookWorkspace.openChapter(chapter, { restore: true, novel: selectedNovel, position }),
-    onMutationCommitted: () => readerMutationCommittedRef.current(),
+    onMutationCommitted: () => readerMutationCommittedRef.current('annotations'),
     onPersistenceError: (error) => readerPersistenceErrorRef.current(error),
     notify: showToast,
   });
@@ -893,6 +903,7 @@ export default function App() {
       if (cancelled || !position) return;
       restoredNativeUtteranceRef.current = utteranceId;
       setTTSListeningPosition(position);
+      await readerMutationCommittedRef.current('progress');
     };
     void restoreExactListeningAnchor().catch(() => {
       // Media playback remains controllable if a best-effort cursor write fails.
@@ -967,6 +978,7 @@ export default function App() {
             });
             if (cancelled) return;
             setTTSListeningPosition(migrated);
+            await readerMutationCommittedRef.current('progress');
             clearTTSPlaybackResume(bookId);
           }
           setTTSResumeRecord(loaded);
@@ -975,6 +987,7 @@ export default function App() {
         if (loaded) clearTTSPlaybackResume(bookId);
         if (durable && durable.contentRevisionId !== contentRevisionId) {
           await clearListeningPosition(bookId);
+          await readerMutationCommittedRef.current('progress');
         }
         setTTSListeningPosition(undefined);
         setTTSResumeRecord(undefined);
@@ -1091,7 +1104,7 @@ export default function App() {
   const {
     connectedSyncController,
     flushSyncState,
-    refreshAfterLocalMutation,
+    refreshAfterLocalMutation: refreshConnectedAfterLocalMutation,
     refreshNovels,
     refreshRemoteServerState,
     refreshSyncState,
@@ -1118,6 +1131,14 @@ export default function App() {
       },
     },
   });
+  const refreshAfterLocalMutation = useCallback(
+    async (kind: CloudVaultMutationKind = 'library') => {
+      const result = await refreshConnectedAfterLocalMutation();
+      setCloudVaultMutationRevisions((current) => ({ ...current, [kind]: current[kind] + 1 }));
+      return result;
+    },
+    [refreshConnectedAfterLocalMutation],
+  );
   const bookEnrichmentService = useMemo(
     () =>
       libraryCatalogRepository && bookAssetRepository
@@ -1135,6 +1156,39 @@ export default function App() {
     service: bookEnrichmentService,
     refreshNovels,
     refreshAfterMutation: refreshAfterLocalMutation,
+    notify: showToast,
+  });
+  const webNovelMetadataCollector = extensionRuntime.webNovelMetadataCollector;
+  const webNovelMetadataCollectorSnapshot = useSyncExternalStore(
+    webNovelMetadataCollector.subscribe,
+    webNovelMetadataCollector.getSnapshot,
+    webNovelMetadataCollector.getSnapshot,
+  );
+  const webNovelMetadataExtensionEnabled =
+    extensionSnapshots.find((extension) => extension.id === WEBNOVEL_METADATA_ENRICHMENT_EXTENSION_ID)?.enabled ===
+    true;
+  useEffect(() => {
+    if (!webNovelMetadataExtensionEnabled) {
+      webNovelMetadataCollector.disconnect();
+      void webNovelMetadataCollector.stopManagedRuntime();
+    }
+  }, [webNovelMetadataCollector, webNovelMetadataExtensionEnabled]);
+  useEffect(() => {
+    if (webNovelMetadataExtensionEnabled && webNovelMetadataCollectorSnapshot.connectionState === 'disconnected') {
+      void webNovelMetadataCollector.connect();
+    }
+  }, [webNovelMetadataCollector, webNovelMetadataCollectorSnapshot.connectionState, webNovelMetadataExtensionEnabled]);
+  const bookEnrichmentAutomation = useBookEnrichmentAutomation({
+    ready: bootstrapState.status === 'ready',
+    enabled: webNovelMetadataExtensionEnabled,
+    books: novels,
+    runner: bookEnrichmentService,
+    providerId: WEBNOVEL_METADATA_ENRICHMENT_PROVIDER_ID,
+    automaticLookup: webNovelMetadataCollectorSnapshot.settings.automaticLookup,
+    automaticApply: webNovelMetadataCollectorSnapshot.settings.automaticApply,
+    refreshLibrary: async () => {
+      await Promise.all([refreshNovels(), refreshAfterLocalMutation()]);
+    },
     notify: showToast,
   });
   const libraryManagement = useLibraryManagementController({
@@ -1200,16 +1254,19 @@ export default function App() {
   });
   const cloudVault = useCloudVaultController({
     repository: readerRepository,
+    assets: bookAssetRepository,
+    importService,
     catalog: libraryCatalogRepository,
     personalization: personalizationRepository,
     deviceId: localDeviceId,
     serverSyncConnected: Boolean(syncService),
     refreshLibrary: async () => {
-      await refreshNovels();
+      await Promise.all([refreshNovels(), libraryManagement.refresh()]);
     },
     notify: showToast,
     confirm: (message) => window.confirm(message),
-    dropboxAppKey: appPublicRuntimeConfig.dropbox.appKey,
+    dropboxAppKey: dropboxCloudVaultAppKey,
+    localMutationRevisions: cloudVaultMutationRevisions,
   });
 
   const chapterStructureFeature = useChapterStructureController({
@@ -1223,15 +1280,25 @@ export default function App() {
     notify: showToast,
   });
 
+  const openImportedSeriesRef = useRef<(novel: Novel) => Promise<void>>();
   const importFeature = useImportController({
     importService,
     documentIo,
+    assets: bookAssetRepository,
     getNovel: (id) => readerRepository.getNovel(id),
     listNovels: () => readerRepository.listNovels(),
+    listChapters: (novelId) => readerRepository.listChapters(novelId),
     onImportCommitted: async (novel) => {
       await refreshNovels();
       await refreshAfterLocalMutation();
-      if (novel) await bookWorkspace.openNovel((await readerRepository.getNovel(novel.id)) ?? novel);
+      if (novel) {
+        const fresh = (await readerRepository.getNovel(novel.id)) ?? novel;
+        if (fresh.format === 'image_archive' && (fresh.documentSectionCount ?? 0) > 0) {
+          await openImportedSeriesRef.current?.(fresh);
+        } else {
+          await bookWorkspace.openNovel(fresh);
+        }
+      }
     },
     notify: showToast,
   });
@@ -1252,9 +1319,14 @@ export default function App() {
     hostContext: externalSourceHostContext,
     state: externalSourceState,
     importService,
+    assets: bookAssetRepository,
     extensionRevision: extensionRevision + externalSourceBrokerRevision,
     getNovel: (id) => readerRepository.getNovel(id),
-    openNovel: (novel) => bookWorkspace.openNovel(novel),
+    listChapters: (novelId) => readerRepository.listChapters(novelId),
+    openNovel: (novel, target) =>
+      target?.documentSectionId
+        ? bookWorkspace.openDocumentSection(novel, target.documentSectionId)
+        : bookWorkspace.openNovel(novel),
     listNovels: () => readerRepository.listNovels(),
     onLibraryChanged: async () => {
       await refreshNovels();
@@ -1263,6 +1335,7 @@ export default function App() {
     notify: showToast,
     confirm: (message) => window.confirm(message),
   });
+  openImportedSeriesRef.current = externalSourceFeature.showLocalSeries;
   const importBusy = importFeature.busy;
 
   const latestRemoteRefreshRef = useRef(refreshRemoteServerState);
@@ -1639,7 +1712,7 @@ export default function App() {
           },
         });
         const reloadError = commitAiTtsSyncMutation(result, expectedNovelId, expectedChapterId);
-        await refreshAfterLocalMutation();
+        await refreshAfterLocalMutation('aiTts');
         if (reloadError) showToast(`변경은 저장했지만 화면을 새로고치지 못했습니다: ${reloadError}`, 'warning');
         showToast(`${group.title} 선택 병합을 적용했습니다.`, 'success');
         return true;
@@ -1792,7 +1865,7 @@ export default function App() {
     try {
       await saveStoredApiAuthToken(normalized);
       setApiAuthTokenConfigured(Boolean(normalized));
-      if (apiAuthTokenUsesAndroidKeystore()) setApiAuthTokenDraft('');
+      if (apiAuthTokenUsesNativeSecureStore()) setApiAuthTokenDraft('');
       showToast(normalized ? '서버 인증 토큰을 저장했습니다.' : '서버 인증 토큰을 지웠습니다.', 'success');
       if (readerRuntime.mode === 'remote') {
         retryAppBootstrap();
@@ -2289,7 +2362,7 @@ export default function App() {
       voiceProfilesRef.current = nextProfiles;
       setVoiceProfiles(nextProfiles);
       bookAIWorkflowController.invalidateTTSReadiness();
-      void refreshAfterLocalMutation();
+      void refreshAfterLocalMutation('aiTts');
     },
     notify: showToast,
   });
@@ -2443,7 +2516,28 @@ export default function App() {
     bookAIWorkflowLoading;
   const aiTtsSyncSummary = summarizeAiTtsSyncConflicts(syncOutbox);
   const connectedProviderLocalMetadataPending = Boolean(syncService && aiTtsSyncSummary.unsentCount > 0);
-  const syncTone = syncStatusTone(syncState);
+  const syncUiState = readerRuntime.mode === 'remote' || syncService ? syncState : undefined;
+  const cloudVaultProviderName = cloudVault.providerKind === 'dropbox' ? 'Dropbox' : '로컬 폴더';
+  const syncLabel =
+    cloudVault.activity === 'syncing'
+      ? '동기화 중'
+      : cloudVault.activity !== 'idle'
+        ? '확인 중'
+        : cloudVault.connected && cloudVault.config?.lastError
+          ? `${cloudVaultProviderName} 확인 필요`
+          : cloudVault.connected
+            ? `${cloudVaultProviderName} · ${cloudVault.config?.autoSync === false ? '수동' : '자동'}`
+            : syncUiState
+              ? syncStatusLabel(syncUiState)
+              : '연결 안 됨';
+  const syncTone =
+    cloudVault.activity !== 'idle'
+      ? 'syncing'
+      : cloudVault.connected && cloudVault.config?.lastError
+        ? 'danger'
+        : cloudVault.connected
+          ? 'ready'
+          : syncStatusTone(syncUiState);
   const loadSyncRemoteSnapshot = useCallback(
     (group: AiTtsSyncConflictGroup) => {
       if (!syncApiClient) return Promise.reject(new Error('동기화 서버가 연결되지 않았습니다.'));
@@ -2781,7 +2875,7 @@ export default function App() {
       const nextCharacters = result.characters.length > 0 ? result.characters : knownCharacters;
       const nextNovel = { ...selectedNovel, analysisStatus: 'ready' as const, updatedAt: new Date().toISOString() };
       await readerRepository.patchNovelMetadata(bookId, { analysisStatus: nextNovel.analysisStatus });
-      await refreshAfterLocalMutation();
+      await refreshAfterLocalMutation('aiTts');
       if (activeNovelIdRef.current === bookId && activeChapterIdRef.current === chapterId) {
         setSegmentsState(result.segments);
         setCharacters(nextCharacters);
@@ -2903,7 +2997,7 @@ export default function App() {
       if (result.characters.length > 0) {
         await readerRepository.saveCharacters(bookId, result.characters, { expectedRevision: expectedGraphRevision });
       }
-      await refreshAfterLocalMutation();
+      await refreshAfterLocalMutation('aiTts');
       const freshNovel = await readerRepository.getNovel(bookId);
       if (activeNovelIdRef.current === bookId && activeChapterIdRef.current === chapterId) {
         setSegmentsState(result.segments);
@@ -3102,7 +3196,7 @@ export default function App() {
       });
       if (execution.controller.signal.aborted) throw new DOMException('Aborted', 'AbortError');
       await readerRepository.saveCharacterGraph(bookId, graph, { expectedRevision: expectedGraphRevision });
-      await refreshAfterLocalMutation();
+      await refreshAfterLocalMutation('aiTts');
       if (activeNovelIdRef.current === bookId) {
         setCharacters(graph.characters);
         const loadedVoiceProfiles = await readerRepository.listVoiceProfiles(bookId);
@@ -3350,7 +3444,7 @@ export default function App() {
     setCharacters(result.characters);
     const nextNovel = { ...selectedNovel, analysisStatus: 'mock_ready' as const };
     await readerRepository.patchNovelMetadata(selectedNovel.id, { analysisStatus: nextNovel.analysisStatus });
-    await refreshAfterLocalMutation();
+    await refreshAfterLocalMutation('aiTts');
     setSelectedNovel(nextNovel);
     setReaderMode('analysis');
     setAddonOpen(true);
@@ -3437,7 +3531,7 @@ export default function App() {
           },
         ],
       });
-      await refreshAfterLocalMutation();
+      await refreshAfterLocalMutation('aiTts');
     } catch (error) {
       console.error(error);
       showToast('라벨 교정 저장에 실패했습니다.', 'danger');
@@ -3511,7 +3605,7 @@ export default function App() {
         await readerRepository.saveVoiceProfiles(novelId, nextProfiles, {
           expectedRevision: voiceProfilesRevision(previousProfiles),
         });
-        await refreshAfterLocalMutation();
+        await refreshAfterLocalMutation('aiTts');
       });
     voiceProfileSaveQueueRef.current = saveTask.catch(() => undefined);
     try {
@@ -3586,7 +3680,7 @@ export default function App() {
         await readerRepository.saveVoiceProfiles(novelId, nextProfiles, {
           expectedRevision: voiceProfilesRevision(previousProfiles),
         });
-        await refreshAfterLocalMutation();
+        await refreshAfterLocalMutation('aiTts');
       });
     voiceProfileSaveQueueRef.current = saveTask.catch(() => undefined);
     try {
@@ -3670,7 +3764,7 @@ export default function App() {
         await readerRepository.saveVoiceProfiles(novelId, nextProfiles, {
           expectedRevision: voiceProfilesRevision(previousProfiles),
         });
-        await refreshAfterLocalMutation();
+        await refreshAfterLocalMutation('aiTts');
       });
     voiceProfileSaveQueueRef.current = saveTask.catch(() => undefined);
     try {
@@ -4684,6 +4778,7 @@ export default function App() {
             },
           });
           setTTSListeningPosition(position);
+          await readerMutationCommittedRef.current('progress');
         } catch {
           // Playback remains available when a best-effort cursor write fails.
         }
@@ -4708,7 +4803,7 @@ export default function App() {
     if (stopAtChapterEnd || ttsPlaybackSettings.chapterEndBehavior === 'stop' || !nextChapter) {
       ttsExecutionController.finishSession(sessionId);
       clearTTSPlaybackResume(chapter.novelId);
-      void clearListeningPosition(chapter.novelId);
+      void clearListeningPosition(chapter.novelId).then(() => readerMutationCommittedRef.current('progress'));
       setTTSListeningPosition(undefined);
       setTTSResumeRecord(undefined);
       if (!nextChapter && ttsPlaybackSettings.chapterEndBehavior === 'continue') {
@@ -5178,6 +5273,7 @@ export default function App() {
           },
         });
         setTTSListeningPosition(position);
+        await readerMutationCommittedRef.current('progress');
         ttsExecutionController.setItemActive(sessionId, true);
         try {
           let providerPlayed = false;
@@ -5342,6 +5438,7 @@ export default function App() {
     if (!chapter) {
       clearTTSPlaybackResume(selectedNovel.id);
       await clearListeningPosition(selectedNovel.id);
+      await readerMutationCommittedRef.current('progress');
       setTTSListeningPosition(undefined);
       setTTSResumeRecord(undefined);
       showToast('저장된 TTS 위치가 현재 책에 없어 새로 시작합니다.', 'warning');
@@ -5824,7 +5921,7 @@ export default function App() {
             chapter: currentChapter,
             projection: bookWorkspaceProjection,
             annotationCount: bookmarks.length + highlights.length + notes.length,
-            syncLabel: syncStatusLabel(syncState),
+            syncLabel,
             returnToChapters: bookWorkspace.returnToChapters,
             openSettings: openReaderSettings,
             openSync: () => setSyncPanelOpen(true),
@@ -5841,12 +5938,13 @@ export default function App() {
         projection={bookWorkspaceProjection}
         libraryDrop={{ ...importFeature.libraryDrop, importBusy }}
         bootstrap={{ ...bootstrapState, retry: retryAppBootstrap }}
-        sync={{ label: syncStatusLabel(syncState), tone: syncTone }}
+        sync={{ label: syncLabel, tone: syncTone }}
         annotationTotals={{ bookmarks: bookmarks.length, highlights: highlights.length, notes: notes.length }}
         openSync={() => setSyncPanelOpen(true)}
         openSettings={openReaderSettings}
         openBackup={backupFeature.openPanel}
         openImport={importFeature.open}
+        openChapterAppend={importFeature.openChapterAppend}
         openLibraryFolders={libraryFolderFeature.show}
         externalSources={externalSourceFeature}
         openExternalSourceSettings={openExternalSourceSettings}
@@ -6010,9 +6108,15 @@ export default function App() {
             novel={selectedNovel}
             chapters={chapters}
             readingPosition={localReadingPosition}
+            initialChapterId={bookWorkspaceState.fixedDocumentOpenChapterId}
             repository={readerRepository}
             assets={bookAssetRepository}
-            onBack={() => bookWorkspace.setView('library')}
+            onBack={() => {
+              bookWorkspace.setView('library');
+              if (externalSourceFeature.localSeriesNovel?.id === selectedNovel.id) {
+                void externalSourceFeature.showLocalSeries(selectedNovel);
+              }
+            }}
             onPageSettled={bookWorkspace.saveFixedDocumentPage}
             onGeneratedCover={(cover) => {
               const applyCover = (current: Novel) =>
@@ -6096,7 +6200,7 @@ export default function App() {
               />
               <aside className="settings-panel sync-panel" aria-busy="true">
                 <header>
-                  <h2>동기화 상태</h2>
+                  <h2>동기화</h2>
                   <button className="icon-btn" onClick={() => setSyncPanelOpen(false)} aria-label="동기화 패널 닫기">
                     <X size={18} />
                   </button>
@@ -6129,7 +6233,7 @@ export default function App() {
               syncConnectionTest,
               apiAuthTokenDraft,
               apiAuthTokenConfigured,
-              apiAuthTokenStorage: apiAuthTokenUsesAndroidKeystore() ? 'android_keystore' : 'browser_storage',
+              apiAuthTokenStorage: apiAuthTokenUsesNativeSecureStore() ? 'native_secure_store' : 'browser_storage',
               mergeSelections: syncMergeSelections.selections,
             }}
             actions={{
@@ -6170,8 +6274,13 @@ export default function App() {
             personalizationRepository={personalizationRepository}
             platformRuntime={platformRuntime}
             providerExecutionRuntime={providerExecutionRuntime}
+            selfHostAccount={selfHostAuth?.account}
+            logoutSelfHostAccount={selfHostAuth?.logout}
             extensions={extensionSnapshots}
             externalSources={externalSourceFeature}
+            webNovelMetadataCollector={webNovelMetadataCollector}
+            bookEnrichmentAutomation={bookEnrichmentAutomation}
+            libraryCount={novels.length}
             initialTab={settingsInitialTab}
             updateProfile={changeReadingProfile}
             setBookOverrideEnabled={setReadingBookOverrideEnabled}

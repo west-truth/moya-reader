@@ -133,6 +133,15 @@
 }
 
 .reader-paginated-root {
+  --reader-pagination-page-height: calc(100dvh - var(--reader-content-inset-top) - var(--reader-content-inset-bottom));
+  --reader-pagination-image-max-height: max(
+    4rem,
+    min(70vh, 56rem, calc(var(--reader-pagination-page-height) - 3em - var(--reading-paragraph-spacing) - 2px))
+  );
+  --reader-pagination-heading-image-max-height: max(
+    4rem,
+    min(70vh, 56rem, calc(var(--reader-pagination-page-height) - 10rem - 3em - var(--reading-paragraph-spacing) - 2px))
+  );
   position: relative;
   display: block;
   overflow: hidden;
@@ -216,17 +225,37 @@
 }
 
 .reader-pagination-image-measure {
-  width: min(100%, 32rem);
-  height: min(42vh, 22rem);
+  width: 100%;
+  height: var(--reader-pagination-image-max-height);
   margin: 1.5em auto;
 }
 
-.reader-paginated-page .reader-epub-image,
-.reader-paginated-page .reader-image-placeholder {
-  width: min(100%, 32rem);
-  height: min(42vh, 22rem);
-  max-height: calc(100% - 3rem);
+.reader-pagination-measure.has-chapter-heading .reader-pagination-image-measure {
+  height: var(--reader-pagination-heading-image-max-height);
+}
+
+.reader-paginated-page .reader-epub-image {
+  width: auto;
+  height: auto;
+  max-width: 100%;
+  max-height: var(--reader-pagination-image-max-height);
   object-fit: contain;
+}
+
+.reader-paginated-page .reader-image-placeholder {
+  width: 100%;
+  height: var(--reader-pagination-image-max-height);
+  max-height: var(--reader-pagination-image-max-height);
+  object-fit: contain;
+}
+
+.reader-paginated-page.has-chapter-heading .reader-epub-image {
+  max-height: var(--reader-pagination-heading-image-max-height);
+}
+
+.reader-paginated-page.has-chapter-heading .reader-image-placeholder {
+  height: var(--reader-pagination-heading-image-max-height);
+  max-height: var(--reader-pagination-heading-image-max-height);
 }
 
 .reader-pagination-status {

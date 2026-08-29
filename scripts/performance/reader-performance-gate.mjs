@@ -15,6 +15,7 @@ import { PHASE6_FIXTURE_BYTES, generatePhase6LargeNovelFixture } from './phase6-
 import {
   PHASE6_DEFAULT_TIMING_BUDGETS,
   evaluatePhase6PerformanceReport,
+  phase6ImportPhaseTimings,
   phase6ConsoleSummary,
   phase6TimingBudgets,
 } from './reader-performance-policy.mjs';
@@ -103,6 +104,7 @@ function installBrowserInstrumentation({ heartbeatIntervalMs }) {
           this.phase6Run.progress.push({
             at: now(),
             status: progress.status,
+            subphase: progress.subphase,
             bytesRead: progress.bytesRead,
             totalBytes: progress.totalBytes,
             chaptersDetected: progress.chaptersDetected,
@@ -299,11 +301,13 @@ function maximumProgressGap(run) {
 }
 
 async function selectFixture(page, fixturePath) {
-  const input = page.locator('input[type="file"]').first();
-  if ((await input.count()) === 0) {
-    await page.locator('.floating-import').click();
-    await input.waitFor({ state: 'attached' });
+  const importDialog = page.locator('.modal.import-dialog');
+  if ((await importDialog.count()) === 0 || !(await importDialog.isVisible().catch(() => false))) {
+    await page.locator('button[aria-label="\ucc45 \uac00\uc838\uc624\uae30"]:visible').first().click();
+    await importDialog.waitFor({ state: 'visible' });
   }
+  const input = importDialog.locator('input[type="file"]').first();
+  await input.waitFor({ state: 'attached' });
   await input.setInputFiles([]);
   await input.setInputFiles(fixturePath);
   const modal = page
@@ -373,6 +377,7 @@ async function runFullImport(page, fixturePath, timeoutMs) {
     workerFileBytes: run.fileBytes,
     progressEventCount: run.progress.length,
     progressStatuses: [...new Set(run.progress.map((event) => event.status))],
+    phaseTimings: phase6ImportPhaseTimings(run),
     maximumProgressGapMs: maximumProgressGap(run),
     eventLoop,
     storage: await inspectReaderDatabase(page),
@@ -576,7 +581,12 @@ async function measureSearchCancellation(page, uniqueQuery, timeoutMs) {
 }
 
 async function runReaderAndSearchGate(page, imported, fixture, budgets) {
-  await page.getByRole('button', { name: '\uc774\uc5b4 \uc77d\uae30' }).first().click();
+  await page
+    .getByRole('button', {
+      name: /(?:\uc774\uc5b4 \uc77d\uae30|\uccab \ud654 \ubcf4\uae30|\uc774\uc5b4 \ubcf4\uae30|\ubb38\uc11c \uc5f4\uae30)$/u,
+    })
+    .first()
+    .click();
   await page.locator('.reader-scroll').waitFor({ state: 'visible', timeout: budgets.readerNavigationMs * 2 });
   await page
     .locator('.reader-paragraph')

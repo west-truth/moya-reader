@@ -6,6 +6,7 @@ import type { TrustedBookEnrichmentProviderContribution } from '../../extensions
 import {
   BOOK_ENRICHMENT_CANDIDATE_SCHEMA_VERSION,
   BOOK_ENRICHMENT_METADATA_FIELDS,
+  type BookEnrichmentAutomationHint,
   type BookEnrichmentCandidate,
   type BookEnrichmentCandidateDraft,
   type BookEnrichmentMetadataField,
@@ -63,6 +64,41 @@ function boundedOptionalText(value: unknown, field: string, maxLength: number): 
   return normalized || undefined;
 }
 
+function proposalGroupId(draft: BookEnrichmentCandidateDraft): string | undefined {
+  return boundedOptionalText(draft.proposalGroupId, 'proposalGroupId', 256);
+}
+
+const automationMatchTypes = new Set([
+  'exact_identity',
+  'exact_title_and_author',
+  'exact_title',
+  'fuzzy_title',
+  'ambiguous',
+]);
+const automationMetadataQualities = new Set(['full', 'partial']);
+
+function automationHint(draft: BookEnrichmentCandidateDraft): BookEnrichmentAutomationHint | undefined {
+  if (!draft.automation) return undefined;
+  const reasons = [...new Set(draft.automation.reasons.map((reason) => reason.trim()).filter(Boolean))];
+  if (reasons.length > 12 || reasons.some((reason) => reason.length > 160)) {
+    throw new Error('Book enrichment automation reasons are invalid.');
+  }
+  const matchType = boundedOptionalText(draft.automation.matchType, 'automation.matchType', 80);
+  const metadataQuality = boundedOptionalText(draft.automation.metadataQuality, 'automation.metadataQuality', 80);
+  if (matchType && !automationMatchTypes.has(matchType))
+    throw new Error('Book enrichment automation match type is invalid.');
+  if (metadataQuality && !automationMetadataQualities.has(metadataQuality)) {
+    throw new Error('Book enrichment automation metadata quality is invalid.');
+  }
+  return {
+    autoApplyEligible: draft.automation.autoApplyEligible === true,
+    matchType: matchType as BookEnrichmentAutomationHint['matchType'],
+    metadataQuality: metadataQuality as BookEnrichmentAutomationHint['metadataQuality'],
+    reasons,
+    authenticatedSearch: draft.automation.authenticatedSearch === true,
+  };
+}
+
 function candidateProvenance(
   provider: TrustedBookEnrichmentProviderContribution,
   draft: BookEnrichmentCandidateDraft,
@@ -97,6 +133,7 @@ function candidateProvenance(
     sourceLabel: boundedOptionalText(draft.sourceLabel, 'sourceLabel', 300),
     sourceUrl: boundedOptionalText(draft.sourceUrl, 'sourceUrl', 2_048),
     licenseSummary: boundedOptionalText(draft.licenseSummary, 'licenseSummary', 1_000),
+    automation: automationHint(draft),
   };
 }
 
@@ -137,6 +174,7 @@ async function prepareMetadataCandidate(
     status: 'pending',
     baseMetadataRevision: snapshot.metadataRevision,
     baseContentRevisionId: snapshot.contentRevisionId,
+    proposalGroupId: proposalGroupId(draft),
     baseValues,
     patch: patch as BookEnrichmentMetadataValues,
     provenance: candidateProvenance(provider, draft, generatedAt),
@@ -177,6 +215,7 @@ async function prepareCoverCandidate(
     status: 'pending',
     baseMetadataRevision: snapshot.metadataRevision,
     baseContentRevisionId: snapshot.contentRevisionId,
+    proposalGroupId: proposalGroupId(draft),
     baseCover: snapshot.cover,
     cover,
     derivationFingerprint,

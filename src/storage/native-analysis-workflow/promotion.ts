@@ -18,7 +18,12 @@ import type {
   ApplyLabelCorrectionsResultV2,
   LabelMutationOperationReceiptV2,
 } from '../../providers/label-mutation-contract';
-import type { RevisionParagraphPageRow, RevisionParagraphRefRow } from '../content-revision-store';
+import {
+  pageBackedParagraphRef,
+  type RevisionParagraphPageRow,
+  type RevisionParagraphRefRow,
+} from '../content-revision-store';
+import { revisionScopedStorageId } from '../content-revisions';
 import { requestToPromise, transactionDone } from '../indexeddb-transaction';
 import { LABEL_MUTATION_STORES } from '../label-mutation-schema';
 import { openReaderDb } from '../reader-database';
@@ -77,6 +82,21 @@ interface StoredReviewPromotionReceipt extends LabelMutationOperationReceiptV2 {
   readonly id: string;
   readonly novelId: string;
   readonly chapterId: string;
+}
+
+function materializeParagraphRefsFromPages(
+  contentRevisionId: string,
+  storedRows: readonly RevisionParagraphRefRow[],
+  pageRows: readonly RevisionParagraphPageRow[],
+): RevisionParagraphRefRow[] {
+  if (storedRows.length) return [...storedRows];
+  return pageRows.flatMap((page) =>
+    page.paragraphs.map((paragraph) => ({
+      ...pageBackedParagraphRef(paragraph, page.pageIndex),
+      storageId: revisionScopedStorageId(contentRevisionId, paragraph.id),
+      contentRevisionId,
+    })),
+  );
 }
 
 function reviewPromotionResult(receipt: StoredReviewPromotionReceipt): ApplyLabelCorrectionsResultV2 {
@@ -332,7 +352,7 @@ async function promoteLabelWindow(
   const generated = validateGeneratedSegments(artifact);
   if (typeof generated === 'string') return stoppedResult(tx, artifact, 'quarantined', generated);
   const chapterId = artifact.chapterId!;
-  const [paragraphRows, pageRows] = await Promise.all([
+  const [storedParagraphRows, pageRows] = await Promise.all([
     requestToPromise<RevisionParagraphRefRow[]>(
       tx
         .objectStore('book_content_paragraphs')
@@ -346,6 +366,7 @@ async function promoteLabelWindow(
         .getAll([contentRevisionId, chapterId]),
     ),
   ]);
+  const paragraphRows = materializeParagraphRefsFromPages(contentRevisionId, storedParagraphRows, pageRows);
   const sourceIndex = buildNativeLabelSourceIndex(artifact, contentRevisionId, paragraphRows, pageRows);
   if (!sourceIndex.ok) {
     return stoppedResult(tx, artifact, sourceIndex.stale ? 'stale' : 'quarantined', sourceIndex.reason);
@@ -597,7 +618,7 @@ export async function promoteNativeAnalysisReview(
     const generated = validateGeneratedSegments(validationArtifact);
     if (typeof generated === 'string') throw new Error(`Native analysis review candidate is invalid: ${generated}`);
 
-    const [paragraphRows, pageRows] = await Promise.all([
+    const [storedParagraphRows, pageRows] = await Promise.all([
       requestToPromise<RevisionParagraphRefRow[]>(
         tx
           .objectStore('book_content_paragraphs')
@@ -611,6 +632,11 @@ export async function promoteNativeAnalysisReview(
           .getAll([artifact.expectedContentRevisionId, artifact.chapterId]),
       ),
     ]);
+    const paragraphRows = materializeParagraphRefsFromPages(
+      artifact.expectedContentRevisionId,
+      storedParagraphRows,
+      pageRows,
+    );
     const sourceIndex = buildNativeLabelSourceIndex(
       validationArtifact,
       artifact.expectedContentRevisionId,

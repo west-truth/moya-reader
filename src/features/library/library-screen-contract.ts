@@ -8,6 +8,18 @@ import type { ResponsiveLayoutMode } from '../book-workspace/useResponsiveLayout
 
 type MaybePromise = void | Promise<void>;
 
+export interface LibraryExternalWorkView {
+  readonly id: string;
+  readonly title: string;
+  readonly author?: string;
+  readonly thumbnailUrl?: string;
+  readonly sourceLabel?: string;
+  readonly availableReleaseCount: number;
+  readonly newReleaseCount: number;
+  readonly addedAt: string;
+  readonly updatedAt: string;
+}
+
 export interface LibraryScreenModel {
   bootstrap: {
     status: 'loading' | 'ready' | 'failed';
@@ -30,7 +42,9 @@ export interface LibraryScreenModel {
       id: ExtensionContributionId;
       title: string;
       kind: 'cloud_file' | 'catalog';
+      newReleaseCount?: number;
     }[];
+    libraryWorks?: readonly LibraryExternalWorkView[];
   };
   filter: LibraryFilter;
   sort: LibrarySort;
@@ -101,6 +115,8 @@ export interface LibraryScreenActions {
     addSample(): MaybePromise;
     editMetadata(novel: Novel): void;
     toggleSelected(novel: Novel): void;
+    openExternal(workId: string): MaybePromise;
+    removeExternal(workId: string): MaybePromise;
   };
 }
 

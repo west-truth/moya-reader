@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import type { CSSProperties } from 'react';
 import type { Chapter, Paragraph, ReaderAnchor, ReaderPageBoundary } from '../../domain/types';
 import { PARAGRAPHS_PER_PAGE } from '../../repositories/reader-defaults';
 import type { ReaderRepository } from '../../repositories/reader-repository';
@@ -26,7 +27,7 @@ import {
   type ReaderPageFragment,
 } from './reader-pagination-model';
 
-const PAGINATION_RENDERER_VERSION = 'reader-pagination-v5-chapter-heading';
+const PAGINATION_RENDERER_VERSION = 'reader-pagination-v6-responsive-images';
 const PAGE_MAP_CACHE_LIMIT = 24;
 const PAGE_FRAGMENT_CACHE_LIMIT = 12;
 const PAGE_PREFETCH_RADIUS = 2;
@@ -194,6 +195,7 @@ function resetMeasurementPage(
   includeChapterHeading: boolean,
 ): void {
   measure.replaceChildren();
+  measure.classList.toggle('has-chapter-heading', includeChapterHeading);
   if (includeChapterHeading) measure.append(measurementChapterHeading(chapter));
 }
 
@@ -1182,10 +1184,23 @@ export function PaginatedReaderViewport(
     };
   }, [api, apiRef, onApiReady]);
 
+  const paginationStyle = useMemo(
+    () =>
+      dimensions.height > 0
+        ? ({ '--reader-pagination-page-height': `${dimensions.height}px` } as CSSProperties)
+        : undefined,
+    [dimensions.height],
+  );
+  const outgoingShowsChapterHeading =
+    outgoingFragments[0]?.paragraphIndex === 0 && outgoingFragments[0]?.startOffset === 0;
+  const currentShowsChapterHeading =
+    (currentBoundary?.start.blockIndex ?? -1) === 0 && currentBoundary?.start.offset === 0;
+
   return (
     <section
       className={`reader-scroll reader-viewport-layer ${isActive ? 'is-active' : 'is-inactive'} font-${settings.font} mode-${mode} reader-paginated-root`}
       ref={rootRef}
+      style={paginationStyle}
       tabIndex={isActive ? 0 : -1}
       aria-hidden={!isActive}
       data-reader-layer="paginated"
@@ -1215,10 +1230,11 @@ export function PaginatedReaderViewport(
         className={`reader-pagination-stage${transitionDirection ? ` turn-${transitionDirection > 0 ? 'next' : 'previous'}` : ''}`}
       >
         {outgoingFragments.length > 0 && (
-          <article key={`outgoing-${transitionSequence}`} className="reader-document reader-paginated-page is-outgoing">
-            {outgoingFragments[0]?.paragraphIndex === 0 && outgoingFragments[0]?.startOffset === 0 && (
-              <ReaderChapterHeading chapter={chapterHeading} />
-            )}
+          <article
+            key={`outgoing-${transitionSequence}`}
+            className={`reader-document reader-paginated-page is-outgoing${outgoingShowsChapterHeading ? ' has-chapter-heading' : ''}`}
+          >
+            {outgoingShowsChapterHeading && <ReaderChapterHeading chapter={chapterHeading} />}
             {outgoingFragments.map((fragment, index) => (
               <ReaderParagraphRow
                 key={`${fragment.paragraph.id}:${fragment.startOffset}:${index}`}
@@ -1242,7 +1258,7 @@ export function PaginatedReaderViewport(
         <article
           key={`current-${transitionSequence}`}
           ref={pageRef}
-          className="reader-document reader-paginated-page is-current"
+          className={`reader-document reader-paginated-page is-current${currentShowsChapterHeading ? ' has-chapter-heading' : ''}`}
           data-page-start-index={currentBoundary?.start.blockIndex}
           data-page-start-offset={currentBoundary?.start.offset}
           data-page-start-id={currentBoundary?.start.blockId}
@@ -1250,9 +1266,7 @@ export function PaginatedReaderViewport(
           data-page-end-offset={currentBoundary?.end.offset}
           onMouseUp={() => onSelectionChanged(api.getSelection())}
         >
-          {(currentBoundary?.start.blockIndex ?? -1) === 0 && currentBoundary?.start.offset === 0 && (
-            <ReaderChapterHeading chapter={chapterHeading} />
-          )}
+          {currentShowsChapterHeading && <ReaderChapterHeading chapter={chapterHeading} />}
           {pageFragments.map((fragment, index) => (
             <ReaderParagraphRow
               key={`${fragment.paragraph.id}:${fragment.startOffset}:${index}`}

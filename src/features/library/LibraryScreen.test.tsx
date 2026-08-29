@@ -1,5 +1,6 @@
 import { isValidElement, type ReactElement, type ReactNode } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
+import { act, create, type ReactTestRenderer } from 'react-test-renderer';
 import { describe, expect, it, vi } from 'vitest';
 import type { Novel } from '../../domain/types';
 import { LibraryScreen, type LibraryScreenActions, type LibraryScreenModel } from './LibraryScreen';
@@ -25,6 +26,15 @@ function collectHostElements(node: ReactNode): HostElement[] {
 
   const children = collectHostElements(element.props.children as ReactNode);
   return typeof element.type === 'string' ? [element as HostElement, ...children] : children;
+}
+
+function renderedText(node: { children: readonly unknown[] }): string {
+  return node.children
+    .map((child) =>
+      typeof child === 'string' ? child : typeof child === 'object' && child ? renderedText(child as never) : '',
+    )
+    .join('')
+    .trim();
 }
 
 const readState: NovelReadStateSelectors = {
@@ -106,6 +116,8 @@ function actions(): LibraryScreenActions {
       addSample: vi.fn(),
       editMetadata: vi.fn(),
       toggleSelected: vi.fn(),
+      openExternal: vi.fn(),
+      removeExternal: vi.fn(),
     },
   };
 }
@@ -115,7 +127,7 @@ function model(novels: Novel[], overrides: Partial<LibraryScreenModel> = {}): Li
     bootstrap: { status: 'ready' },
     drop: { active: false, importBusy: false },
     query: '',
-    sync: { label: '로컬', tone: 'local' },
+    sync: { label: '연결 안 됨', tone: 'local' },
     externalSources: { active: false, busy: false, sources: [] },
     filter: 'all',
     sort: 'recent',
@@ -145,6 +157,54 @@ function model(novels: Novel[], overrides: Partial<LibraryScreenModel> = {}): Li
 }
 
 describe('LibraryScreen', () => {
+  it('renders one explicit sync entry with the current provider state', () => {
+    const markup = renderToStaticMarkup(
+      <LibraryScreen model={model([], { sync: { label: 'Dropbox · 자동', tone: 'ready' } })} actions={actions()} />,
+    );
+
+    expect(markup).toContain('class="library-sync-entry ready"');
+    expect(markup).toContain('aria-label="동기화 열기: Dropbox · 자동"');
+    expect(markup).toContain('<strong>동기화</strong><small>Dropbox · 자동</small>');
+    expect(markup).not.toContain('동기화 상태 열기');
+  });
+
+  it('renders a Suwayomi library work as a normal library card before any chapter is downloaded', () => {
+    const screenActions = actions();
+    const markup = renderToStaticMarkup(
+      <LibraryScreen
+        model={model([], {
+          externalSources: {
+            active: false,
+            busy: false,
+            sources: [],
+            libraryWorks: [
+              {
+                id: 'external-work-1',
+                title: '서른의 봄',
+                author: '작가',
+                thumbnailUrl: 'http://localhost:4567/cover.jpg',
+                sourceLabel: '네이버 웹툰',
+                availableReleaseCount: 15,
+                newReleaseCount: 2,
+                addedAt: '2026-08-26T00:00:00.000Z',
+                updatedAt: '2026-08-26T00:00:00.000Z',
+              },
+            ],
+          },
+        })}
+        actions={screenActions}
+      />,
+    );
+
+    expect(markup).toContain('서른의 봄');
+    expect(markup).toContain('네이버 웹툰');
+    expect(markup).toContain('새 회차 2개');
+    expect(markup).toContain('서른의 봄 원격 회차 열기');
+    expect(markup).not.toContain('>회차 보기<');
+    expect(markup).toContain('1권');
+    expect(markup).not.toContain('읽을 파일을 책장에 추가하세요');
+  });
+
   it('shows connected sources in the sidebar without the former topbar shortcut', () => {
     const screenActions = actions();
     const unavailableMarkup = renderToStaticMarkup(<LibraryScreen model={model([novel()])} actions={screenActions} />);
@@ -264,7 +324,18 @@ describe('LibraryScreen', () => {
     expect(markup).toContain('미독 작품');
     expect(markup).toContain('읽는 중');
     expect(markup).toContain('미독');
+    expect(markup).toContain('class="book-format-overlay">TXT</span>');
+    expect(markup).not.toContain('book-status-label');
     expect(markup.match(/<article class="book-card/g)).toHaveLength(2);
+  });
+
+  it('uses the real archive extension for the cover overlay', () => {
+    const archive = novel({ sourceFileName: '로컬 만화.zip', format: 'image_archive' });
+    const markup = renderToStaticMarkup(<LibraryScreen model={model([archive])} actions={actions()} />);
+
+    expect(markup).toContain('class="book-format-overlay">ZIP</span>');
+    expect(markup).not.toContain('IMAGE_ARCHIVE');
+    expect(markup).not.toContain('IMAGE ZIP');
   });
 
   it.each(['grid', 'list'] as const)(
@@ -469,6 +540,35 @@ describe('LibraryScreen', () => {
       target: { value: 'favorite' },
     });
     expect(screenActions.controls.setFilter).toHaveBeenCalledWith('favorite');
+  });
+
+  it('offers bookshelf creation immediately above sync in the mobile more menu', () => {
+    const screenActions = actions();
+    const screenModel = model([novel()], {
+      presentation: {
+        layoutMode: 'mobile',
+        focusedBookId: undefined,
+        inspectorOpen: false,
+        shelfBookCounts: new Map(),
+      },
+    });
+    let renderer!: ReactTestRenderer;
+    act(() => {
+      renderer = create(<LibraryScreen model={screenModel} actions={screenActions} />);
+    });
+    act(() => renderer.root.findByProps({ 'aria-label': '더보기' }).props.onClick());
+    const more = renderer.root.findByProps({ 'aria-label': '추가 작업' });
+    const buttons = more.findAllByType('button');
+    const labels = buttons.map(renderedText);
+
+    expect(labels).toContain('폴더 가져오기');
+    const syncIndex = labels.findIndex((label) => label.startsWith('동기화'));
+    expect(labels.indexOf('책장 추가')).toBe(syncIndex - 1);
+    vi.stubGlobal('window', { setTimeout: (action: () => void) => action() });
+    act(() => buttons[labels.indexOf('책장 추가')]!.props.onClick());
+    expect(screenActions.controls.openShelves).toHaveBeenCalledOnce();
+    act(() => renderer.unmount());
+    vi.unstubAllGlobals();
   });
 
   it('opens the chapter list when a mobile book item is activated', () => {

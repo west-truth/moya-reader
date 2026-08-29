@@ -21,8 +21,10 @@ export interface PlatformCapabilities {
 }
 
 interface RuntimeWindowLike {
+  readonly isTauri?: boolean;
   readonly __TAURI__?: unknown;
   readonly __TAURI_INTERNALS__?: unknown;
+  readonly location?: { readonly hostname?: string; readonly protocol?: string };
   readonly navigator?: {
     readonly userAgent?: string;
     readonly platform?: string;
@@ -34,7 +36,13 @@ interface RuntimeWindowLike {
 }
 
 function runtimeHasTauri(windowLike: RuntimeWindowLike | undefined): boolean {
-  return Boolean(windowLike?.__TAURI_INTERNALS__ || windowLike?.__TAURI__);
+  return Boolean(
+    windowLike?.isTauri ||
+    windowLike?.__TAURI_INTERNALS__ ||
+    windowLike?.__TAURI__ ||
+    windowLike?.location?.hostname === 'tauri.localhost' ||
+    windowLike?.location?.protocol === 'tauri:',
+  );
 }
 
 function runtimeLooksMobile(windowLike: RuntimeWindowLike | undefined): boolean {

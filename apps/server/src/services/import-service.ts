@@ -5,6 +5,7 @@ import { ServerConfig } from '../config.js';
 import { createS3Client, putRawBookObject } from './object-storage.js';
 import { parseNovelFileForImport } from '@noveldesk/text-core/parser';
 import { materializeEpubImport, parseEpub } from '@noveldesk/epub-core';
+import { hasDocumentSeriesManifest, materializeDocumentSeriesArchive } from '@noveldesk/document-series-core';
 import {
   materializePdfImport,
   materializeStreamingImageArchiveImport,
@@ -43,8 +44,7 @@ export function normalizeCoverSeedForPersistence(value: number): number {
   if (!Number.isFinite(value)) return 0;
   const integer = Math.trunc(value);
   return (
-    ((integer % POSITIVE_SIGNED_INTEGER_MODULUS) + POSITIVE_SIGNED_INTEGER_MODULUS) %
-    POSITIVE_SIGNED_INTEGER_MODULUS
+    ((integer % POSITIVE_SIGNED_INTEGER_MODULUS) + POSITIVE_SIGNED_INTEGER_MODULUS) % POSITIVE_SIGNED_INTEGER_MODULUS
   );
 }
 
@@ -661,7 +661,14 @@ export async function processImportJob(
     await assertImportExecutionActive(pool, jobId, attempt.executionId);
     let arrayBuffer: ArrayBuffer | undefined = arrayBufferFromBuffer(buffer);
     let parsed: ParsedNovelImport;
-    if (/\.epub$/i.test(session.file_name)) {
+    const sourceBlob = new Blob([arrayBuffer]);
+    if (/\.zip$/i.test(session.file_name) && (await hasDocumentSeriesManifest(sourceBlob))) {
+      parsed = await materializeDocumentSeriesArchive(sourceBlob, {
+        fileName: session.file_name,
+        clientBookId: session.client_book_id ?? undefined,
+        sourceContentHash,
+      });
+    } else if (/\.epub$/i.test(session.file_name)) {
       parsed = materializeEpubImport(await parseEpub(new Blob([arrayBuffer], { type: 'application/epub+zip' })), {
         fileName: session.file_name,
         sourceBytes: new Uint8Array(arrayBuffer),
@@ -740,8 +747,9 @@ export async function processImportJob(
         if (failed) throw failed.reason;
         storedAssets.push(
           ...outcomes
-            .filter((outcome): outcome is PromiseFulfilledResult<(typeof storedAssets)[number]> =>
-              outcome.status === 'fulfilled',
+            .filter(
+              (outcome): outcome is PromiseFulfilledResult<(typeof storedAssets)[number]> =>
+                outcome.status === 'fulfilled',
             )
             .map((outcome) => outcome.value),
         );

@@ -1,4 +1,5 @@
 import type {
+  BookEnrichmentApprovalIntent,
   BookEnrichmentApprovalReceipt,
   BookEnrichmentCandidate,
 } from '../features/book-enrichment/book-enrichment-contract';
@@ -18,10 +19,21 @@ export interface BookEnrichmentRepository {
     status: BookEnrichmentCandidate['status'],
     reason?: string,
   ): Promise<BookEnrichmentCandidate | undefined>;
+  stageApprovalIntent(candidateId: string, intent: BookEnrichmentApprovalIntent): Promise<BookEnrichmentCandidate>;
+  resolveApprovalIntent(
+    candidateId: string,
+    operationId: string,
+    outcome: 'pending' | 'stale',
+    reason?: string,
+  ): Promise<BookEnrichmentCandidate | undefined>;
   recordApproval(
     candidateId: string,
     receipt: BookEnrichmentApprovalReceipt,
+    expectedApprovalOperationId?: string,
   ): Promise<BookEnrichmentCandidate | undefined>;
   recordUndo(receipt: BookEnrichmentApprovalReceipt): Promise<void>;
-  markCompetingCandidatesStale(bookId: string, baseMetadataRevision: number, exceptCandidateId: string): Promise<void>;
+  reconcileCandidatesAfterApproval(
+    approvedCandidate: BookEnrichmentCandidate,
+    appliedMetadataRevision: number,
+  ): Promise<void>;
 }

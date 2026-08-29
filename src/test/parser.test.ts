@@ -226,6 +226,130 @@ describe('novel parser', () => {
     expect(parsed.chapters[1]?.normalizedText).toContain('2. 두 번째 장');
   });
 
+  it('does not create extra chapters from a repeated hash subtitle inside exporter-numbered chapters', async () => {
+    const body = (marker: string) => `${marker} ${'본문이 충분히 이어진다. '.repeat(8)}`;
+    const parsed = await parseNovelFile(
+      '중복 표식.txt',
+      toBuffer(`00001 #1 하늘산맥
+
+#1 하늘산맥
+
+${body('첫 번째 본문')}
+
+00002 #1 하늘산맥
+
+${body('두 번째 본문')}
+
+00003 #1 하늘산맥
+
+${body('세 번째 본문')}
+
+00004 #2 내 이름은 유릭
+
+#2 내 이름은 유릭.
+
+${body('네 번째 본문')}
+
+00005 #2 내 이름은 유릭
+
+${body('다섯 번째 본문')}`),
+      'utf-8',
+    );
+
+    expect(parsed.chapters.map((chapter) => chapter.title)).toEqual([
+      '00001 #1 하늘산맥',
+      '00002 #1 하늘산맥',
+      '00003 #1 하늘산맥',
+      '00004 #2 내 이름은 유릭',
+      '00005 #2 내 이름은 유릭',
+    ]);
+    expect(parsed.chapters.every((chapter) => chapter.characterCount > 0)).toBe(true);
+    expect(parsed.chapters[0]?.normalizedText).toContain('#1 하늘산맥');
+    expect(parsed.chapters[3]?.normalizedText).toContain('#2 내 이름은 유릭.');
+  });
+
+  it('folds an empty repeated base heading into the first episode part without merging later parts', async () => {
+    const body = (marker: string) => `${marker} ${'장면과 대화가 충분히 이어진다. '.repeat(8)}`;
+    const parsed = await parseNovelFile(
+      '파트 중복 표식.txt',
+      toBuffer(`Episode 2. 주인공 (4)
+
+${body('네 번째 파트')}
+
+Episode 2. 주인공 (5)
+
+${body('다섯 번째 파트')}
+
+Episode 3. 계약 (1)
+
+Episode 3. 계약
+
+${body('첫 번째 파트')}
+
+Episode 3. 계약 (2)
+
+${body('두 번째 파트')}
+
+Episode 3. 계약 (3)
+
+${body('세 번째 파트')}`),
+      'utf-8',
+    );
+
+    expect(parsed.chapters.map((chapter) => chapter.title)).toEqual([
+      'Episode 2. 주인공 (4)',
+      'Episode 2. 주인공 (5)',
+      'Episode 3. 계약 (1)',
+      'Episode 3. 계약 (2)',
+      'Episode 3. 계약 (3)',
+    ]);
+    expect(parsed.chapters.every((chapter) => chapter.characterCount > 0)).toBe(true);
+    expect(parsed.chapters[2]?.normalizedText).toContain('Episode 3. 계약');
+  });
+
+  it('removes zero-length duplicate boundaries after long chapters and folds a short author note', async () => {
+    const body = (marker: string) => `${marker} ${'정상 본문이 충분히 이어진다. '.repeat(40)}`;
+    const parsed = await parseNovelFile(
+      '짧은 중복 경계.txt',
+      toBuffer(`Episode 9. 전지적 개복치 (1)
+
+${body('첫 번째 파트')}
+
+Episode 9. 전지적 개복치 (1)
+
+Episode 9. 전지적 개복치 (2)
+
+${body('두 번째 파트')}
+
+Episode 9. 전지적 개복치 (2)
+
+Episode 9. 전지적 개복치 (3)
+
+${body('세 번째 파트')}
+
+Episode 9. 전지적 개복치 (3)
+
+작가 후기
+
+짧은 공지입니다.
+
+Episode 10. 다음 이야기 (1)
+
+${body('다음 화 본문')}`),
+      'utf-8',
+    );
+
+    expect(parsed.chapters.map((chapter) => chapter.title)).toEqual([
+      'Episode 9. 전지적 개복치 (1)',
+      'Episode 9. 전지적 개복치 (2)',
+      'Episode 9. 전지적 개복치 (3)',
+      'Episode 10. 다음 이야기 (1)',
+    ]);
+    expect(parsed.chapters.every((chapter) => chapter.characterCount > 0)).toBe(true);
+    expect(parsed.chapters[2]?.normalizedText).toContain('작가 후기');
+    expect(parsed.chapters[2]?.normalizedText).toContain('짧은 공지입니다.');
+  });
+
   it('keeps title-only documents as one chapter named after the file', async () => {
     const parsed = await parseNovelFile(
       '푸른 밤.txt',

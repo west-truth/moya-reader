@@ -2,11 +2,39 @@
 
 Status: implemented v1
 
-Last verified: 2026-08-21
+Last verified: 2026-08-27
 
 이 문서는 모야의 파일 형식별 import, 저장, 읽기 UI와 아직 지원하지 않는 범위를 정리한다.
 텍스트 계열과 고정 레이아웃 계열은 같은 책장·진행 위치·백업 경계를 사용하지만, 읽기 화면은 서로 다른
 renderer를 사용한다.
+
+## 2026-08-27 ZIP 문서 묶음 가져오기
+
+- 바깥 `.zip` 하나에 들어 있는 TXT/Markdown 문서 묶음 또는 EPUB 묶음을 일반 파일 선택과 `회차 추가`에서
+  가져올 수 있다. 압축을 탐색하는 것만으로 작품을 여러 권 만들지 않고, 기존 document-series 계획을 거쳐
+  하나의 작품과 회차 목록으로 저장한다.
+- 바깥 ZIP 이름을 작품명 fallback으로 사용하고 내부 상대 경로는 자연순으로 정렬한다. 원본 문서는
+  `*.moya.zip` source package 안에 그대로 보존되며 중복·충돌·실패 시 기존 작품을 보존하는 경계도 직접
+  선택한 문서와 같다.
+- 문서 512개, 개별 512 MiB, 전체 1 GiB와 압축률 250배 한도를 적용한다. 절대/상위 경로와 중복 경로를
+  거부하고 암호 ZIP은 기존 archive password 입력을 사용한다. 이미지 archive의 단일 README는 문서 묶음으로
+  오인하지 않는다.
+- EPUB과 TXT/Markdown이 한 ZIP에 섞이면 작품의 최종 형식과 EPUB asset semantics가 모호하므로 자동 병합하지
+  않고 형식별 ZIP으로 분리하도록 안내한다. RAR/7z 안의 문서 묶음과 재귀 압축은 이번 범위에 포함하지 않는다.
+
+## 2026-08-26 로컬 회차 추가와 저장 경계
+
+- TXT, Markdown과 EPUB 모두 기존 작품에 회차를 추가하는 제품 흐름을 제공한다. 가져온 원본은 계속 하나의
+  작품 source archive로 갱신되고 Reader에는 통합된 회차 목록으로 보인다.
+- TXT/Markdown은 기존 회차 prefix의 index, ID, title, text hash와 count가 모두 같을 때 신규 회차의 chapter,
+  paragraph page, ref와 search row만 `append_delta`로 저장한다. 기존 회차의 ID가 유지되므로 읽기 위치를 다시
+  매핑하지 않으며 실패·취소 시 이전 active revision과 source archive를 유지한다.
+- EPUB 회차 추가 기능은 동일하지만 현재 저장은 전체 revision 교체다. EPUB paragraph의 image asset, inline
+  semantics와 source locator를 포함하는 구조 fingerprint가 아직 없으므로 chapter text hash만으로 기존 회차를
+  재사용하지 않는다. 이는 기능 제한이 아니라 잘못된 삽화 연결을 피하기 위한 성능 fallback이다.
+- 일반 local import는 16-page IndexedDB batch, staging count 누적, chapter-only domain head와 page-canonical
+  revision body를 사용한다. Document-series append도 저장 단계는 신규 회차 크기에 비례하지만, 현재 archive 생성과 parser는
+  기존 source를 다시 읽는다. 전체 회차 수와 무관한 완전한 append pipeline은 후속 최적화다.
 
 ## 지원 형식
 
@@ -20,27 +48,51 @@ renderer를 사용한다.
 EPUB은 이번 작업에서 새로 만든 기능이 아니다. 기존 `packages/epub-core`와 공통 Reader 경로를 유지하고
 회귀 테스트를 추가했다. 새 기능의 중심은 PDF와 이미지 ZIP/CBZ다.
 
-### EPUB 삽화와 표지 처리 경계
+### EPUB 삽화 처리 경계
 
 - spine XHTML의 로컬 `<img>`와 SVG wrapper 안의 `<image>`가 참조하는 JPEG/PNG/GIF/WebP를 찾는다. 이미지가
   `<p>`, heading, list item 또는 blockquote 안에 감싸진 일반적인 EPUB2 구조도 별도 image block으로 보존한다.
-- 외부 URL과 본문에서 사용하지 않는 manifest 이미지는 가져오지 않는다.
+- 외부 URL과 본문에서 사용하지 않는 manifest 이미지는 가져오지 않으며 OPF `cover-image`는 별도로 보존한다.
 - 각 삽화는 `epub_resource` asset으로 저장되고 image paragraph의 `assetId`가 이를 가리킨다. Local은
   IndexedDB, Hosted는 S3/MinIO object와 PostgreSQL `book_assets.byte_length bigint`를 사용한다.
+- Reader는 asset을 필요할 때 Blob URL로 열어 본문 위치에 렌더링하고 화면에서 사라지면 URL을 해제한다.
+- Scroll/page mode 모두 삽화의 intrinsic size와 비율을 유지하고 reader content width와 70vh/56rem을 공통
+  ceiling으로 사용한다. Page mode는 실제 stage height를 넘을 때만 추가 축소하고 chapter heading이 함께 있는
+  첫 page는 heading/margin 공간을 예약한다. 조판 measurement placeholder도 같은 ceiling을 사용한다.
+- 현재 EPUB 안전 한도는 entry 4,000개, 개별 해제 파일 32 MiB, 전체 해제 크기 128 MiB, 압축률 250배다.
+  서버의 원본 upload 기본 한도 500 MiB와는 별도이며, 이 범위를 넘는 image-heavy EPUB은 archive bomb과
+  저메모리 기기 보호를 위해 명시적으로 거부한다.
+- SVG 자체가 vector 삽화인 경우와 AVIF는 아직 보존하지 않는다. SVG를 추가할 때는 script/external reference
+  sanitization을 먼저 두고, 128 MiB보다 큰 EPUB은 모든 이미지를 동시에 materialize하지 않는 streaming
+  asset ingestion으로 확장한다.
 - 표지는 EPUB3 manifest의 `cover-image`, EPUB2 `<meta name="cover">`, OPF guide의 cover document 순으로 찾고,
   선언이 없는 legacy 파일만 `cover*` image 관례를 보수적으로 사용한다. cover document가 XHTML/SVG wrapper면
   그 안의 첫 로컬 image manifest item을 실제 표지 asset으로 저장한다.
-- Reader는 asset을 필요할 때 Blob URL로 열어 본문 위치에 렌더링하고 화면에서 사라지면 URL을 해제한다.
-- 현재 EPUB 안전 한도는 entry 4,000개, 개별 해제 파일 32 MiB, 전체 해제 크기 128 MiB, 압축률 250배다.
-  서버의 원본 upload 기본 한도 500 MiB와는 별도다.
 - Hosted 대형 파일은 2 MiB resumable chunk를 사용한다. Worker는 eager EPUB image asset을 4개씩 저장하고,
-  object-storage bucket readiness와 orphan reservation을 asset마다 반복하지 않는다. 원본 archive 보존과
-  import transaction 경계는 유지한다.
-- SVG 자체가 vector 삽화인 경우와 AVIF, 128 MiB보다 큰 streaming EPUB asset ingestion은 아직 지원하지 않는다.
+  object-storage bucket readiness와 orphan reservation을 asset마다 반복하지 않는다. 원본 archive 보존,
+  streaming archive page path와 import transaction 경계는 유지한다.
 
-2026-08-21 실제 EPUB2 표본 점검에서 `<p><img .../></p>` 삽화가 empty text paragraph의 조기 반환에 가려지던
-문제를 수정했다. 약 8.5 MiB 표본의 표지 1장/삽화 1장과 약 20.2 MiB 표본의 표지 1장/삽화 12장이 모두
-manifest resource, image block과 cover asset으로 연결되는 것을 확인했다. 원본 표본은 저장소에 포함하지 않는다.
+2026-08-21에는 EPUB normalized-text hash의 마지막 8 hex를 그대로 cover seed로 사용해 PostgreSQL signed
+`integer` 최대값을 넘을 수 있던 Hosted import 오류를 수정했다. EPUB core가 처음부터 31-bit 양수 범위의
+결정적 seed를 만들고 server persistence 경계도 같은 범위로 정규화한다. 이 오류는 삽화 byte length가 아니라
+표지 색상용 seed에서 발생했으며, 별도 256 KiB 삽화와 표지를 함께 보존하고 image block을 asset에 연결하는
+회귀 fixture로 경로를 확인한다.
+
+같은 날 실제 EPUB2 두 권을 점검해, Novelpia Dumper 계열의 `<p><img .../></p>` 삽화가 paragraph의 조기 반환에
+가려지던 문제를 수정했다. 약 8.5 MiB 표본의 표지 1장/삽화 1장과 약 20.2 MiB 표본의 표지 1장/삽화 12장이
+모두 manifest resource, image block과 cover asset으로 연결되는 것을 원본 파일로 확인했다. 원본 파일은
+fixture나 저장소에 포함하지 않는다.
+
+EPUB2 본문은 XHTML 1.1 DTD를 선언하면서 XML 기본 entity가 아닌 `&nbsp;`, `&copy;` 등을 사용하는 경우가
+흔하다. container/OPF/NCX와 archive path는 계속 strict XML·안전 검사를 적용하되, spine 본문·EPUB3 nav·cover
+document만 strict parse 실패 시 local HTML parser로 복구한다. 이 fallback은 외부 DTD나 URL을 fetch하지 않으며
+기존 script/form/iframe 및 remote image 제외 정책을 그대로 통과한다. UTF-8 외에는 BOM이 명시된 UTF-16LE/BE를
+지원하고 manifest media type의 대소문자와 `charset` parameter를 정규화한다.
+
+2026-08-21 실제 약 1.0 MiB EPUB2에서 128개 본문 파일의 `&nbsp;` 948개 때문에 첫 화가 손상 XML로 오인되던
+문제를 이 경계로 수정했다. 전체 128화/29,990개 paragraph, 표지 포함 resource 2개와 image block 2개를 끝까지
+materialize했다. 같은 parser로 앞선 약 8.5 MiB/20.2 MiB 실제 EPUB도 각각 282화/274화, 모든 본문·표지와
+1개/12개 삽화를 다시 확인했다.
 
 ## 구현 경계
 
@@ -66,6 +118,11 @@ archive 내부 경로를 유지한다.
 Desktop/넓은 화면에서는 제목, 페이지 목록, 현재 페이지 입력, 단일/연속 보기, 확대/축소, 페이지/너비
 맞춤, 90도 회전, 이전/다음 이동과 하단 진행률을 제공한다. 키보드 방향키, Page Up/Down과 Space도 페이지를
 이동한다.
+
+이미지 archive의 `세로 연속`은 기존 페이지 여백과 그림자를 유지한다. `경계 없는 세로 연속`은 같은
+virtualized page window와 현재 위치 추적을 재사용하되 virtualizer gap, article padding, page shadow와
+비현재 페이지 흐림을 제거한다. 이미지 load 뒤 실제 article 높이를 다시 측정하므로 desktop과 mobile 모두
+인접 페이지가 0px 간격으로 맞닿는다. 화면 맞춤과 crop/색 보정은 별도 설정으로 그대로 적용된다.
 
 720px 이하에서는 페이지 sidebar, 연속 보기와 부가 control을 감추고 제목, 확대/축소, 페이지 맞춤,
 현재 페이지와 진행도만 남긴다. 좌우 swipe로 페이지를 넘긴다. 이는 Android에 별도 UI를 복제하지 않고
@@ -108,8 +165,8 @@ PDF도 1~5,000페이지 범위만 받는다. PDF.js와 이미지 page cache는 l
 
 이 항목들은 reflowable Reader 기능을 억지로 고정 문서에 노출하기보다 별도 후속 slice로 구현한다.
 
-source range, virtual page layout, PDF text/OCR/annotation/TTS, comic spread와 RAR/7z 구현은 아래 현재 구조와
-각 기능 source/test 경계를 기준으로 유지한다.
+위 후속 범위의 source range, virtual page layout, PDF text/OCR/annotation/TTS, comic spread와 RAR/7z 구현
+순서는 [Document & Listening v2 구현 계획](../project/document-listening-v2/README.md)을 따른다.
 
 ## 2026-08-01 foundation update
 
@@ -232,3 +289,48 @@ ready OCR page below that threshold is skipped by normal playback, previous/next
 native PDF text is not filtered. This is a TTS projection fence only: the derived revision remains available for
 search, copy, annotation and user inspection, and the source PDF is untouched. Starting from an explicitly selected
 rejected block stops with a re-OCR message rather than silently advancing.
+
+## 2026-08-26 local serialized image-archive import
+
+Local comics can now enter the same logical work → release → page model as connected Suwayomi works. The importer
+accepts either separately selected ZIP/CBZ/RAR/CBR/7z release archives or one outer ZIP/CBZ whose immediate children
+are ZIP/CBZ release archives. It deliberately rejects recursive nesting and a container that mixes direct images with
+child archives instead of guessing which structure the user intended.
+
+`serial-release-name.ts` extracts conservative work and release identities from common Korean, Japanese and English
+forms such as `12화`, `제12화`, `3권`, `第2巻 第12話`, `Chapter 12`, `v01 c012` and `S02E03`. A bare number is accepted
+only with parent-title evidence. Ambiguous names such as years, version suffixes and unmatched numeric titles stay a
+single ordinary archive; loose normalization exists for later metadata search but never triggers an automatic merge.
+
+The import dialog shows the inferred title and every proposed release before writing. An exact normalized-title match
+may be selected as the append target, and a serialized-work detail offers an explicit `로컬 회차 추가` action. Exact
+content hashes are skipped. A matching release identity with different bytes is reported as a conflict and preserves
+the existing release. New pages are assembled by the format-neutral `series-image-archive` service, which is also used
+by the Suwayomi adapter, then committed through the existing same-book atomic content-revision boundary.
+
+The aggregate still uses `moya-series.json` for compatibility. This checkpoint does not inspect nested RAR/7z outer
+containers, auto-merge already separate Library works, replace a conflicting release, or fetch metadata/covers. Those
+remain explicit follow-ups rather than filename-driven destructive behavior.
+
+## 2026-08-26 local TXT and EPUB chapter append
+
+Chapter append is a local Library capability rather than a Suwayomi-specific action. TXT/Markdown and EPUB works now
+expose `회차 추가` from their normal work detail. An ordinary single image archive also enters the local serialized
+detail as its first release, so it can be promoted without first originating from an external source.
+
+Text and EPUB sources cannot use the image aggregate. The shared `document-series-core` package therefore stores each
+original file byte-for-byte in a bounded `*.moya.zip` package together with a manifest that records its format,
+content hash, parser settings and the exact source chapter indices accepted into the work. Browser and Hosted import
+both detect this manifest before treating a ZIP as an image archive, materialize every source through the existing
+TXT/Markdown or EPUB parser, and commit one ordinary `txt`, `markdown` or `epub` Novel through the same atomic content
+revision boundary.
+
+Incoming normalized chapter titles and text hashes are compared before package construction. An exact title+content
+identity is skipped; an equal normalized chapter title with different content is a conflict and keeps the existing chapter. Existing legacy TXT splitting must
+be reproducible under its supported parser modes before promotion, otherwise append fails closed. EPUB embedded
+resources, source semantics and every retained source file remain available; stable source-scoped chapter and
+paragraph IDs preserve existing anchors when later sources are appended.
+
+This does not silently combine different format families, merge already independent Library records, or replace a
+conflicting chapter. Filename extraction proposes a work identity and ordering, but an explicit work-detail action or
+confirmed exact-title target remains the authority to append.

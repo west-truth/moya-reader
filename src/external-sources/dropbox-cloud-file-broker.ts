@@ -21,7 +21,7 @@ const MAX_FILE_NAME_LENGTH = 512;
 const MAX_PATH_LENGTH = 4_096;
 const MAX_QUERY_LENGTH = 256;
 const SUPPORTED_IMPORT_FILE = /\.(txt|md|markdown|epub|pdf|zip|cbz|rar|cbr|7z|cb7)$/i;
-const HIDDEN_APP_FILE_NAMES = new Set(['noveldesk-vault-v1.enc.json']);
+const HIDDEN_APP_ENTRY_NAMES = new Set(['noveldesk-vault-v1.enc.json', 'content']);
 
 export const DROPBOX_EXTERNAL_SOURCE_SCOPES = ['files.metadata.read', 'files.content.read'] as const;
 export const DROPBOX_EXTERNAL_SOURCE_MAX_DOWNLOAD_BYTES = 512 * 1024 * 1024;
@@ -332,7 +332,7 @@ function parsePage(
     .map((item) =>
       normalizeMetadata(kind === 'search' ? unwrapSearchMetadata(item) : item, connectorId, accountConnectionId),
     )
-    .filter((item) => !HIDDEN_APP_FILE_NAMES.has(item.title));
+    .filter((item) => !HIDDEN_APP_ENTRY_NAMES.has(item.title));
   const nextCursor = page.has_more
     ? encodeCursor(kind, page.cursor, cursorContext ?? { accountConnectionId, parentRef: '' })
     : undefined;

@@ -68,6 +68,8 @@ export interface NovelMetadataPatch {
 
 export interface SaveReadingPositionInput {
   readonly novelId: string;
+  /** Rejects a delayed reader write after the displayed body revision was replaced. */
+  readonly expectedContentRevisionId?: string;
   readonly chapterId: string;
   readonly scrollTop: number;
   readonly chapterProgress: number;

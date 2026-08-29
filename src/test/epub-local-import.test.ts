@@ -7,6 +7,9 @@ import { RepositoryBackedReaderDocumentRepository } from '../repositories/reader
 import { IndexedDbBackupRepository } from '../storage/indexeddb-backup-repository';
 import { resetReaderDbForTests } from '../storage/db';
 import { saveParsedNovelImport } from '../storage/db';
+import { openReaderDb } from '../storage/reader-database';
+import { requestToPromise, transactionDone } from '../storage/indexeddb-transaction';
+import type { BookContentRevisionRecord } from '../storage/content-revisions';
 
 afterEach(() => resetReaderDbForTests());
 
@@ -76,6 +79,39 @@ describe('local EPUB import persistence', () => {
       metadata: { kind: 'epub_resource', provenance: 'epub_embedded' },
     });
 
+    const reimportDocument: EpubDocument = {
+      ...document,
+      sections: [
+        document.sections[0],
+        {
+          href: 'OEBPS/chapter-2.xhtml',
+          title: '둘째 장',
+          blocks: [
+            { kind: 'heading', plainText: '둘째 장', sourceLocator: 'epubcfi(/6/4!/4/2)' },
+            { kind: 'paragraph', plainText: '추가 본문', sourceLocator: 'epubcfi(/6/4!/4/4)' },
+          ],
+        },
+      ],
+    };
+    const cancelledReimport = materializeEpubImport(reimportDocument, {
+      fileName: 'local.epub',
+      sourceBytes: new TextEncoder().encode('epub-source-cancelled'),
+      clientBookId: parsed.novel.id,
+      now: '2026-07-13T00:30:00.000Z',
+    });
+    await expect(
+      saveParsedNovelImport(cancelledReimport, {
+        allowAppendDelta: true,
+        shouldCancel: () => true,
+      }),
+    ).rejects.toMatchObject({ name: 'AbortError' });
+    const preservedResource = await assets.getEmbeddedResource(parsed.novel.id, imageAssetId!);
+    expect(preservedResource).toMatchObject({ metadata: { status: 'active' } });
+    expect(new Uint8Array(await preservedResource!.blob.arrayBuffer())).toEqual(resourceBytes);
+    expect(await assets.getActiveCover(parsed.novel.id)).toMatchObject({
+      metadata: { provenance: 'epub_embedded', status: 'active' },
+    });
+
     const userCover = await assets.saveCover(parsed.novel.id, {
       blob: new Blob([new Uint8Array([1, 2, 3])], { type: 'image/png' }),
       fileName: 'custom-cover.png',
@@ -87,29 +123,24 @@ describe('local EPUB import persistence', () => {
       positionX: 50,
       positionY: 50,
     });
-    const reimport = materializeEpubImport(
-      {
-        ...document,
-        sections: [
-          {
-            ...document.sections[0],
-            blocks: [
-              ...document.sections[0].blocks,
-              { kind: 'paragraph', plainText: '추가 본문', sourceLocator: 'epubcfi(/6/2!/4/6)' },
-            ],
-          },
-        ],
-      },
-      {
-        fileName: 'local.epub',
-        sourceBytes: new TextEncoder().encode('epub-source-v2'),
-        clientBookId: parsed.novel.id,
-        now: '2026-07-13T01:00:00.000Z',
-      },
-    );
-    await saveParsedNovelImport(reimport);
+    const reimport = materializeEpubImport(reimportDocument, {
+      fileName: 'local.epub',
+      sourceBytes: new TextEncoder().encode('epub-source-v2'),
+      clientBookId: parsed.novel.id,
+      now: '2026-07-13T01:00:00.000Z',
+    });
+    await saveParsedNovelImport(reimport, { allowAppendDelta: true });
 
-    expect(await reader.getNovel(parsed.novel.id)).toMatchObject({ coverAssetId: userCover.id });
+    const reimportedNovel = await reader.getNovel(parsed.novel.id);
+    expect(reimportedNovel).toMatchObject({ coverAssetId: userCover.id, totalChapters: 2 });
+    const db = await openReaderDb();
+    const revisionTx = db.transaction('book_content_revisions', 'readonly');
+    const activeRevision = await requestToPromise<BookContentRevisionRecord | undefined>(
+      revisionTx.objectStore('book_content_revisions').get(reimportedNovel!.activeContentRevisionId!),
+    );
+    await transactionDone(revisionTx);
+    expect(activeRevision).toMatchObject({ actual: { chapterCount: 2 } });
+    expect(activeRevision?.composition).toBeUndefined();
     expect(await assets.getActiveCover(parsed.novel.id)).toMatchObject({
       metadata: { id: userCover.id, provenance: 'user_supplied' },
     });

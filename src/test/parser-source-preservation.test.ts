@@ -6,10 +6,6 @@ function toBuffer(text: string): ArrayBuffer {
   return new TextEncoder().encode(text).buffer as ArrayBuffer;
 }
 
-function withoutParserWhitespace(text: string): string {
-  return text.replace(/\s/g, '');
-}
-
 async function collectImportParagraphs(source: ParsedNovelImportChapterSource): Promise<Paragraph[]> {
   const paragraphs: Paragraph[] = [];
   for await (const item of source) paragraphs.push(...item.paragraphs);
@@ -20,24 +16,23 @@ function expectNormalizedSourceCoverage(chapters: Chapter[], paragraphs: Paragra
   expect(chapters.length).toBeGreaterThan(0);
 
   let nextNormalizedOffset = 0;
-  const resultText: string[] = [];
   for (const chapter of chapters) {
     expect(chapter.rawStartOffset).toBe(nextNormalizedOffset);
     expect(chapter.rawEndOffset).toBeGreaterThanOrEqual(chapter.rawStartOffset);
     nextNormalizedOffset = chapter.rawEndOffset;
-
-    if (chapter.title !== '머리말') resultText.push(chapter.title);
-    resultText.push(
-      ...paragraphs.filter((paragraph) => paragraph.chapterId === chapter.id).map((paragraph) => paragraph.text),
-    );
+    for (const paragraph of paragraphs.filter((item) => item.chapterId === chapter.id)) {
+      expect(normalizedText.slice(chapter.rawStartOffset, chapter.rawEndOffset)).toContain(paragraph.text);
+    }
   }
 
   expect(nextNormalizedOffset).toBe(normalizedText.length);
-  expect(withoutParserWhitespace(resultText.join('\n'))).toBe(withoutParserWhitespace(normalizedText));
+  expect(chapters.map((chapter) => normalizedText.slice(chapter.rawStartOffset, chapter.rawEndOffset)).join('')).toBe(
+    normalizedText,
+  );
 }
 
 describe('novel parser source preservation', () => {
-  it('preserves a short prefix before the first heading as a preface chapter', async () => {
+  it('folds a short prefix into the first real chapter without losing source text', async () => {
     const parsed = await parseNovelFile(
       '짧은 머리말.txt',
       toBuffer(`업로드 공지: 맞춤법 교정본입니다.
@@ -48,15 +43,15 @@ describe('novel parser source preservation', () => {
       'utf-8',
     );
 
-    expect(parsed.chapters.map((chapter) => chapter.title)).toEqual(['머리말', '제 1화 시작']);
+    expect(parsed.chapters.map((chapter) => chapter.title)).toEqual(['제 1화 시작']);
     expect(parsed.chapters[0]).toMatchObject({
-      normalizedText: '업로드 공지: 맞춤법 교정본입니다.',
-      paragraphCount: 1,
+      normalizedText: expect.stringContaining('업로드 공지: 맞춤법 교정본입니다.'),
+      paragraphCount: 3,
     });
     expectNormalizedSourceCoverage(parsed.chapters, parsed.paragraphs, parsed.novel.normalizedText);
   });
 
-  it('preserves an empty heading as chapter metadata without inventing body text', async () => {
+  it('folds an empty heading into the previous chapter without losing its source line', async () => {
     const parsed = await parseNovelFile(
       '빈 화.txt',
       toBuffer(`제 1화 시작
@@ -71,12 +66,8 @@ describe('novel parser source preservation', () => {
       'utf-8',
     );
 
-    expect(parsed.chapters.map((chapter) => chapter.title)).toEqual([
-      '제 1화 시작',
-      '제 2화 비어 있는 방',
-      '제 3화 귀환',
-    ]);
-    expect(parsed.chapters[1]).toMatchObject({ normalizedText: '', characterCount: 0, paragraphCount: 0 });
+    expect(parsed.chapters.map((chapter) => chapter.title)).toEqual(['제 1화 시작', '제 3화 귀환']);
+    expect(parsed.chapters[0]?.normalizedText).toContain('제 2화 비어 있는 방');
     expectNormalizedSourceCoverage(parsed.chapters, parsed.paragraphs, parsed.novel.normalizedText);
   });
 
@@ -102,7 +93,7 @@ The third body follows another producer format while preserving every non-whites
     expectNormalizedSourceCoverage(parsed.chapters, parsed.paragraphs, parsed.novel.normalizedText);
   });
 
-  it('preserves prefix and empty-heading content in the one-shot import result', async () => {
+  it('folds prefix and empty-heading content into the one-shot import result', async () => {
     const source = `개정판 업로드 공지입니다.
 
 제 1화 시작
@@ -118,23 +109,16 @@ The third body follows another producer format while preserving every non-whites
     const paragraphs = await collectImportParagraphs(parsed.consumeChapterParagraphs());
 
     expect(parsed.novel).toMatchObject({ rawText: '', normalizedText: '' });
-    expect(parsed.chapters.map((chapter) => chapter.title)).toEqual([
-      '머리말',
-      '제 1화 시작',
-      '제 2화 비어 있는 방',
-      '제 3화 귀환',
-    ]);
-    expect(parsed.chapters[2]).toMatchObject({ characterCount: 0, paragraphCount: 0 });
+    expect(parsed.chapters.map((chapter) => chapter.title)).toEqual(['제 1화 시작', '제 3화 귀환']);
+    expect(paragraphs.map((paragraph) => paragraph.text)).toContain('제 2화 비어 있는 방');
     expectNormalizedSourceCoverage(parsed.chapters, paragraphs, normalizeNovelText(source));
   });
 
   it('keeps legacy raw offset fields mapped to normalized character offsets', async () => {
     const rawText = '\uFEFF공지\r\n\r\n제 1화 시작\r\n\r\n본문\t끝';
     const parsed = await parseNovelFile('offset.txt', toBuffer(rawText), 'utf-8');
-    const headingOffset = parsed.novel.normalizedText.indexOf('제 1화 시작');
-
-    expect(parsed.chapters[1].rawStartOffset).toBe(headingOffset);
-    expect(parsed.chapters[1].rawStartOffset).not.toBe(rawText.indexOf('제 1화 시작'));
-    expect(parsed.novel.normalizedText.slice(parsed.chapters[1].rawStartOffset)).toBe('제 1화 시작\n\n본문  끝');
+    expect(parsed.chapters[0].rawStartOffset).toBe(0);
+    expect(parsed.chapters[0].rawEndOffset).toBe(parsed.novel.normalizedText.length);
+    expect(parsed.chapters[0].normalizedText).toBe('공지\n\n제 1화 시작\n\n본문  끝');
   });
 });

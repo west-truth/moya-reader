@@ -54,6 +54,10 @@ export const PUBLIC_FORBIDDEN_EXTENSIONS = new Set([
 ]);
 
 export const PUBLIC_REQUIRED_PRODUCT_SOURCES = [
+  'compose.metadata-collector.yaml',
+  'compose.metadata-collector-auth.yaml',
+  'deploy/metadata-collector.Dockerfile',
+  'deploy/metadata-collector-auth.Dockerfile',
   'assets/branding/moya-app-icon.png',
   'assets/branding/moya-wordmark.png',
   'assets/branding/README.md',
@@ -86,11 +90,15 @@ export const PUBLIC_REQUIRED_PRODUCT_SOURCES = [
   'src-tauri/gen/android/gradle/wrapper/gradle-wrapper.jar',
   'src-tauri/gen/android/app/src/main/AndroidManifest.xml',
   'scripts/build-android-arm64-debug.mjs',
+  'scripts/build-webnovel-metadata-collector-sidecar.mjs',
   'scripts/generate-brand-assets.mjs',
+  'scripts/generate-webnovel-metadata-collector-license-inventory.py',
   'scripts/public-release-boundary.mjs',
   'scripts/sync-tauri-android-document-io-plugin.mjs',
   'scripts/sync-tauri-android-provider-secret-plugin.mjs',
   'scripts/verify-mobile-readiness.mjs',
+  'services/webnovel-metadata-collector/pyproject.toml',
+  'services/webnovel-metadata-collector/app/sidecar.py',
   'LICENSE',
   'THIRD_PARTY_NOTICES.md',
 ];

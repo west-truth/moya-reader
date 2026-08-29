@@ -34,6 +34,12 @@ export interface ImportFileInput {
   encoding: EncodingMode;
   chapterSplitMode?: ChapterSplitMode;
   clientBookId?: string;
+  /**
+   * Optional pre-activation fence used by trusted restore paths. Supporting
+   * implementations must reject before replacing canonical content when the
+   * parsed normalized body does not match this value.
+   */
+  expectedNormalizedTextHash?: string;
   /** Request-scoped only. Implementations must not persist or log this value. */
   archivePassword?: string;
 }
@@ -50,6 +56,7 @@ export interface ImportController {
 
 export interface ImportService {
   readonly supportsArchivePassword?: boolean;
+  readonly supportsExpectedNormalizedTextHash?: boolean;
   importFile(input: ImportFileInput, onProgress: (progress: ImportProgress) => void): ImportController;
 }
 

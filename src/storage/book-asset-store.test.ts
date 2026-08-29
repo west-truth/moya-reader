@@ -17,6 +17,7 @@ import { integrityHash } from '../domain/id-hash-contract';
 import { OriginalSourceMismatchError } from '../repositories/book-asset-repository';
 import { parseNovelTextForSample } from '../domain/parser';
 import { saveImportedNovel } from './db';
+import type { SyncTombstone } from './sync-event-store';
 
 async function blobCount(): Promise<number> {
   const db = await openReaderDb();
@@ -24,6 +25,16 @@ async function blobCount(): Promise<number> {
   return new Promise((resolve, reject) => {
     const request = tx.objectStore(BOOK_ASSET_STORES.blobs).count();
     request.onsuccess = () => resolve(request.result);
+    request.onerror = () => reject(request.error);
+  });
+}
+
+async function lifecycleTombstones(): Promise<SyncTombstone[]> {
+  const db = await openReaderDb();
+  const tx = db.transaction('sync_tombstones', 'readonly');
+  return new Promise((resolve, reject) => {
+    const request = tx.objectStore('sync_tombstones').getAll();
+    request.onsuccess = () => resolve(request.result as SyncTombstone[]);
     request.onerror = () => reject(request.error);
   });
 }
@@ -154,6 +165,28 @@ describe('book asset store', () => {
 
     await removeBookCover(parsed.novel.id, 1);
     expect(await getActiveBookCover(parsed.novel.id)).toBeUndefined();
+    expect(await lifecycleTombstones()).toContainEqual(
+      expect.objectContaining({
+        id: `cover:${parsed.novel.id}`,
+        entityType: 'cover',
+        vaultBookId: parsed.novel.id,
+        bookHash: parsed.novel.normalizedTextHash,
+      }),
+    );
+
+    await saveBookCover(parsed.novel.id, {
+      blob,
+      fileName: 'cover.webp',
+      contentType: 'image/webp',
+      contentHash,
+      pixelWidth: 800,
+      pixelHeight: 1200,
+      fit: 'crop',
+      positionX: 40,
+      positionY: 60,
+      expectedMetadataRevision: 2,
+    });
+    expect((await lifecycleTombstones()).find((item) => item.id === `cover:${parsed.novel.id}`)).toBeUndefined();
   });
 
   it('replaces stale generated previews but never overwrites a user cover', async () => {

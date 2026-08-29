@@ -5,6 +5,7 @@ export const API_AUTH_TOKEN_STORAGE_KEY = 'noveldesk.apiAuthToken';
 export const APP_CREDENTIAL_KEYS = {
   serverApiToken: 'server_api_token',
   cloudVaultDropboxOAuth: 'cloud_vault_dropbox_oauth',
+  cloudVaultPassphrase: 'cloud_vault_passphrase',
 } as const;
 
 export type AppCredentialKey = (typeof APP_CREDENTIAL_KEYS)[keyof typeof APP_CREDENTIAL_KEYS];
@@ -12,7 +13,7 @@ export type AppCredentialKey = (typeof APP_CREDENTIAL_KEYS)[keyof typeof APP_CRE
 export interface AppCredentialStatus {
   readonly key: AppCredentialKey;
   readonly configured: boolean;
-  readonly source?: 'android_keystore';
+  readonly source?: 'android_keystore' | 'desktop_secure_store';
 }
 
 export interface NativeCredentialGateway {
@@ -68,7 +69,7 @@ function removeStorage(storage: LocalStorageLike | undefined, key: string): void
   try {
     storage?.removeItem(key);
   } catch {
-    // Android migration and restricted browser contexts remain usable without legacy cleanup.
+    // Native migration and restricted browser contexts remain usable without legacy cleanup.
   }
 }
 
@@ -78,13 +79,17 @@ export class AppCredentialStore {
 
   constructor(private readonly dependencies: AppCredentialStoreDependencies) {}
 
-  get usesAndroidKeystore(): boolean {
+  get usesNativeSecureStore(): boolean {
+    return this.dependencies.runtime.hasTauri;
+  }
+
+  get usesNativeServerTokenStore(): boolean {
     return this.dependencies.runtime.kind === 'tauri-mobile';
   }
 
   async initialize(): Promise<void> {
     if (this.initialized) return;
-    if (!this.usesAndroidKeystore) {
+    if (!this.usesNativeServerTokenStore) {
       this.initialized = true;
       return;
     }
@@ -106,12 +111,12 @@ export class AppCredentialStore {
   }
 
   serverTokenDraft(): string {
-    if (this.usesAndroidKeystore) return '';
+    if (this.usesNativeServerTokenStore) return '';
     return readStorage(this.dependencies.storage, API_AUTH_TOKEN_STORAGE_KEY);
   }
 
   serverTokenForRequest(): string | undefined {
-    if (this.usesAndroidKeystore) return this.serverApiToken;
+    if (this.usesNativeServerTokenStore) return this.serverApiToken;
     return readStorage(this.dependencies.storage, API_AUTH_TOKEN_STORAGE_KEY) || undefined;
   }
 
@@ -121,7 +126,7 @@ export class AppCredentialStore {
 
   async saveServerToken(value: string): Promise<void> {
     const normalized = value.trim();
-    if (this.usesAndroidKeystore) {
+    if (this.usesNativeServerTokenStore) {
       const native = this.requireNativeGateway();
       if (normalized) {
         await native.set(APP_CREDENTIAL_KEYS.serverApiToken, normalized);
@@ -144,7 +149,7 @@ export class AppCredentialStore {
   }
 
   async getCloudVaultDropboxCredential(): Promise<string | undefined> {
-    if (!this.usesAndroidKeystore) return undefined;
+    if (!this.usesNativeSecureStore) return undefined;
     const native = this.requireNativeGateway();
     const status = await native.status(APP_CREDENTIAL_KEYS.cloudVaultDropboxOAuth);
     if (!status.configured) return undefined;
@@ -152,20 +157,40 @@ export class AppCredentialStore {
   }
 
   async saveCloudVaultDropboxCredential(value: string): Promise<void> {
-    if (!this.usesAndroidKeystore) {
-      throw new Error('Native Cloud Vault credential storage is available only on Android.');
+    if (!this.usesNativeSecureStore) {
+      throw new Error('Native Cloud Vault credential storage is unavailable.');
     }
     await this.requireNativeGateway().set(APP_CREDENTIAL_KEYS.cloudVaultDropboxOAuth, value);
   }
 
   async deleteCloudVaultDropboxCredential(): Promise<void> {
-    if (!this.usesAndroidKeystore) return;
+    if (!this.usesNativeSecureStore) return;
     await this.requireNativeGateway().delete(APP_CREDENTIAL_KEYS.cloudVaultDropboxOAuth);
+  }
+
+  async getCloudVaultPassphrase(): Promise<string | undefined> {
+    if (!this.usesNativeSecureStore) return undefined;
+    const native = this.requireNativeGateway();
+    const status = await native.status(APP_CREDENTIAL_KEYS.cloudVaultPassphrase);
+    if (!status.configured) return undefined;
+    return native.get(APP_CREDENTIAL_KEYS.cloudVaultPassphrase);
+  }
+
+  async saveCloudVaultPassphrase(value: string): Promise<void> {
+    if (!this.usesNativeSecureStore) {
+      throw new Error('Native Cloud Vault credential storage is unavailable.');
+    }
+    await this.requireNativeGateway().set(APP_CREDENTIAL_KEYS.cloudVaultPassphrase, value);
+  }
+
+  async deleteCloudVaultPassphrase(): Promise<void> {
+    if (!this.usesNativeSecureStore) return;
+    await this.requireNativeGateway().delete(APP_CREDENTIAL_KEYS.cloudVaultPassphrase);
   }
 
   private requireNativeGateway(): NativeCredentialGateway {
     if (!this.dependencies.nativeGateway) {
-      throw new Error('Android secure credential storage is unavailable.');
+      throw new Error('Native secure credential storage is unavailable.');
     }
     return this.dependencies.nativeGateway;
   }
@@ -184,7 +209,7 @@ function globalStorage(): LocalStorageLike | undefined {
 async function createDefaultStore(): Promise<AppCredentialStore> {
   const runtime = detectPlatformRuntime();
   const storage = globalStorage();
-  if (runtime.kind !== 'tauri-mobile') return new AppCredentialStore({ runtime, storage });
+  if (!runtime.hasTauri) return new AppCredentialStore({ runtime, storage });
   try {
     const { invoke } = await import('@tauri-apps/api/core');
     return new AppCredentialStore({
@@ -227,24 +252,40 @@ export function storedApiAuthTokenConfigured(): boolean {
   return currentDefaultStore().serverTokenConfigured();
 }
 
-export function apiAuthTokenUsesAndroidKeystore(): boolean {
-  return currentDefaultStore().usesAndroidKeystore;
+export function apiAuthTokenUsesNativeSecureStore(): boolean {
+  return detectPlatformRuntime().kind === 'tauri-mobile';
 }
 
 export async function saveApiAuthToken(value: string): Promise<void> {
   await (await ensureDefaultStore()).saveServerToken(value);
 }
 
-export async function getAndroidCloudVaultDropboxCredential(): Promise<string | undefined> {
+export function cloudVaultUsesNativeSecureStore(): boolean {
+  return detectPlatformRuntime().hasTauri;
+}
+
+export async function getNativeCloudVaultDropboxCredential(): Promise<string | undefined> {
   return (await ensureDefaultStore()).getCloudVaultDropboxCredential();
 }
 
-export async function saveAndroidCloudVaultDropboxCredential(value: string): Promise<void> {
+export async function saveNativeCloudVaultDropboxCredential(value: string): Promise<void> {
   await (await ensureDefaultStore()).saveCloudVaultDropboxCredential(value);
 }
 
-export async function deleteAndroidCloudVaultDropboxCredential(): Promise<void> {
+export async function deleteNativeCloudVaultDropboxCredential(): Promise<void> {
   await (await ensureDefaultStore()).deleteCloudVaultDropboxCredential();
+}
+
+export async function getNativeCloudVaultPassphrase(): Promise<string | undefined> {
+  return (await ensureDefaultStore()).getCloudVaultPassphrase();
+}
+
+export async function saveNativeCloudVaultPassphrase(value: string): Promise<void> {
+  await (await ensureDefaultStore()).saveCloudVaultPassphrase(value);
+}
+
+export async function deleteNativeCloudVaultPassphrase(): Promise<void> {
+  await (await ensureDefaultStore()).deleteCloudVaultPassphrase();
 }
 
 export function resetAppCredentialStoreForTests(): void {

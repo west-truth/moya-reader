@@ -76,7 +76,7 @@ function LibraryEmptyState({ model, actions }: LibraryScreenProps) {
     >
       <FileText size={40} />
       <h2>읽을 파일을 책장에 추가하세요</h2>
-      <p>TXT, Markdown, EPUB, PDF와 ZIP/CBZ, RAR/CBR, 7z/CB7 이미지 archive를 지원합니다.</p>
+      <p>TXT·Markdown·EPUB 묶음 ZIP과 PDF, ZIP/CBZ·RAR/CBR·7z/CB7 이미지 archive를 지원합니다.</p>
       <div className="empty-actions">
         <button className="primary-btn" onClick={actions.header.openImport}>
           <Upload size={18} /> 파일 가져오기
@@ -150,7 +150,8 @@ export function LibraryScreen({ model, actions }: LibraryScreenProps) {
                 <>
                   <RecentReadingBand model={model} actions={actions} />
                   <LibraryControls model={model} actions={actions} />
-                  {model.collection.visibleBooks.length === 0 ? (
+                  {model.collection.visibleBooks.length === 0 &&
+                  (model.externalSources.libraryWorks?.length ?? 0) === 0 ? (
                     <LibraryEmptyState model={model} actions={actions} />
                   ) : (
                     <LibraryBookCollection model={model} actions={actions} />

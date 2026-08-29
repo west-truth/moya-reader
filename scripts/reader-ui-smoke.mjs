@@ -3,6 +3,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import process from 'node:process';
 import { chromium } from 'playwright-core';
+import { findTemporaryLoopbackPort } from './lib/temporary-loopback-port.mjs';
 
 const args = process.argv.slice(2).filter((arg) => arg !== '--');
 
@@ -16,7 +17,9 @@ function argValue(name, fallback) {
   return fallback;
 }
 
-const baseUrl = argValue('--url', process.env.READER_UI_SMOKE_URL ?? 'http://127.0.0.1:1420');
+const externalBaseUrl = argValue('--url', process.env.READER_UI_SMOKE_URL ?? '');
+const ownedPort = externalBaseUrl ? undefined : await findTemporaryLoopbackPort();
+const baseUrl = externalBaseUrl || `http://127.0.0.1:${ownedPort}`;
 const explicitChannel = argValue('--channel', process.env.READER_UI_BROWSER_CHANNEL ?? '');
 const timeoutMs = Number(argValue('--timeout-ms', process.env.READER_UI_SMOKE_TIMEOUT_MS ?? '45000'));
 const headed = hasArg('--headed');
@@ -57,8 +60,9 @@ async function waitForReachable(url, deadlineMs) {
 }
 
 function startDevServer() {
-  log('\n$ pnpm dev');
-  const child = spawn('pnpm', ['dev'], {
+  const commandArgs = ['exec', 'vite', '--host', '127.0.0.1', '--port', String(ownedPort), '--strictPort'];
+  log(`\n$ pnpm ${commandArgs.join(' ')}`);
+  const child = spawn('pnpm', commandArgs, {
     cwd: process.cwd(),
     env: process.env,
     shell: process.platform === 'win32',
@@ -86,7 +90,10 @@ async function stopDevServer(server) {
 }
 
 async function withServer(callback) {
-  if (await isReachable(baseUrl)) {
+  if (externalBaseUrl) {
+    if (!(await isReachable(baseUrl))) {
+      throw new Error(`The supplied Reader UI server is not reachable at ${baseUrl}`);
+    }
     log(`Using existing dev server at ${baseUrl}`);
     return callback();
   }

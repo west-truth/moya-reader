@@ -3,6 +3,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import process from 'node:process';
 import { chromium } from 'playwright-core';
+import { findTemporaryLoopbackPort } from './lib/temporary-loopback-port.mjs';
 
 const args = process.argv.slice(2).filter((arg) => arg !== '--');
 
@@ -26,7 +27,9 @@ const paragraphsPerChapter = positiveInteger(
   argValue('--paragraphs-per-chapter', process.env.LOCAL_LARGE_IMPORT_PARAGRAPHS_PER_CHAPTER ?? '240'),
   240,
 );
-const baseUrl = argValue('--url', process.env.LOCAL_LARGE_IMPORT_URL ?? 'http://127.0.0.1:1420');
+const externalBaseUrl = argValue('--url', process.env.LOCAL_LARGE_IMPORT_URL ?? '');
+const ownedPort = externalBaseUrl ? undefined : await findTemporaryLoopbackPort();
+const baseUrl = externalBaseUrl || `http://127.0.0.1:${ownedPort}`;
 const explicitChannel = argValue('--channel', process.env.READER_UI_BROWSER_CHANNEL ?? '');
 const timeoutMs = positiveInteger(
   argValue('--timeout-ms', process.env.LOCAL_LARGE_IMPORT_TIMEOUT_MS ?? '240000'),
@@ -81,8 +84,9 @@ async function waitForReachable(url, deadlineMs) {
 }
 
 function startDevServer() {
-  log('\n$ pnpm dev');
-  const child = spawn('pnpm', ['dev'], {
+  const commandArgs = ['exec', 'vite', '--host', '127.0.0.1', '--port', String(ownedPort), '--strictPort'];
+  log(`\n$ pnpm ${commandArgs.join(' ')}`);
+  const child = spawn('pnpm', commandArgs, {
     cwd: process.cwd(),
     env: process.env,
     shell: process.platform === 'win32',
@@ -93,8 +97,27 @@ function startDevServer() {
   return child;
 }
 
+async function stopDevServer(server) {
+  if (server.exitCode !== null || server.killed) return;
+  if (process.platform !== 'win32') {
+    server.kill('SIGTERM');
+    return;
+  }
+  await new Promise((resolve) => {
+    const killer = spawn('taskkill', ['/pid', String(server.pid), '/t', '/f'], {
+      stdio: 'ignore',
+      windowsHide: true,
+    });
+    killer.once('error', resolve);
+    killer.once('exit', resolve);
+  });
+}
+
 async function withServer(callback) {
-  if (await isReachable(baseUrl)) {
+  if (externalBaseUrl) {
+    if (!(await isReachable(baseUrl))) {
+      throw new Error(`The supplied large-import server is not reachable at ${baseUrl}`);
+    }
     log(`Using existing dev server at ${baseUrl}`);
     return callback();
   }
@@ -105,7 +128,7 @@ async function withServer(callback) {
     return await callback();
   } finally {
     if (keepServer) log('Keeping dev server running.');
-    else server.kill();
+    else await stopDevServer(server);
   }
 }
 

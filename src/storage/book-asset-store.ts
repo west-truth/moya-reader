@@ -19,6 +19,7 @@ import { requestToPromise, transactionDone } from './indexeddb-transaction';
 import { BOOK_ASSET_STORES, type StoredBookAsset, type StoredBookAssetBlob } from './book-asset-schema';
 import { openReaderDb } from './reader-database';
 import { jsonValue, queueSyncEventInTransaction } from './sync-event-store';
+import type { SyncTombstone } from './sync-event-store';
 
 function assetId(contentRevisionId: string): string {
   return `source_asset_${contentRevisionId}`;
@@ -26,6 +27,24 @@ function assetId(contentRevisionId: string): string {
 
 function blobId(contentHash: string): string {
   return `asset_blob_${contentHash}`;
+}
+
+function coverVaultTombstoneId(novel: Novel): string {
+  return `cover:${novel.cloudVaultBookId ?? novel.id}`;
+}
+
+function coverVaultTombstone(novel: Novel, deletedAt: string): SyncTombstone {
+  const vaultBookId = novel.cloudVaultBookId ?? novel.id;
+  return {
+    id: `cover:${vaultBookId}`,
+    entityType: 'cover',
+    entityId: vaultBookId,
+    novelId: novel.id,
+    vaultBookId,
+    bookHash: novel.normalizedTextHash,
+    deletedAt,
+    createdAt: deletedAt,
+  };
 }
 
 export async function stageOriginalSourceAsset(input: OriginalSourceAssetInput): Promise<BookAssetMetadata> {
@@ -94,11 +113,29 @@ export async function stageEmbeddedBookAssets(
   const done = transactionDone(tx);
   const assetStore = tx.objectStore(BOOK_ASSET_STORES.assets);
   const blobStore = tx.objectStore(BOOK_ASSET_STORES.blobs);
+  const incomingIds: string[] = [];
   for (const asset of assets) {
     if (asset.bookId !== bookId || (asset.provenance !== 'epub_embedded' && asset.provenance !== 'archive_embedded')) {
       tx.abort();
       await done.catch(() => undefined);
       throw new Error('Embedded document resource identity does not match the imported book.');
+    }
+    const existingAsset = await requestToPromise<StoredBookAsset | undefined>(assetStore.get(asset.id));
+    // A user/enrichment cover can supersede an identical embedded cover. Keep that row untouched until
+    // the new content revision is atomically activated instead of turning a failed import into a mutation.
+    if (
+      (existingAsset?.status === 'active' || existingAsset?.status === 'superseded') &&
+      existingAsset.bookId === bookId &&
+      existingAsset.kind === asset.kind &&
+      existingAsset.contentHash === asset.contentHash
+    ) {
+      incomingIds.push(asset.id);
+      continue;
+    }
+    if (existingAsset) {
+      tx.abort();
+      await done.catch(() => undefined);
+      throw new Error(`Embedded document asset ${asset.id} conflicts with an existing asset.`);
     }
     const storageKey = blobId(asset.contentHash);
     if (!(await requestToPromise<StoredBookAssetBlob | undefined>(blobStore.get(storageKey)))) {
@@ -126,9 +163,10 @@ export async function stageEmbeddedBookAssets(
       pageIndex: asset.pageIndex,
       createdAt: now,
     } satisfies StoredBookAsset);
+    incomingIds.push(asset.id);
   }
   await done;
-  return assets.map((asset) => asset.id);
+  return incomingIds;
 }
 
 export async function exportEmbeddedBookAsset(
@@ -227,7 +265,15 @@ export async function saveBookCover(bookId: string, input: BookCoverAssetInput):
     activatedAt: now,
   };
   const tx = db.transaction(
-    ['novels', BOOK_ASSET_STORES.assets, BOOK_ASSET_STORES.blobs, 'devices', 'sync_outbox', 'sync_state'],
+    [
+      'novels',
+      BOOK_ASSET_STORES.assets,
+      BOOK_ASSET_STORES.blobs,
+      'sync_tombstones',
+      'devices',
+      'sync_outbox',
+      'sync_state',
+    ],
     'readwrite',
   );
   const done = transactionDone(tx);
@@ -275,10 +321,13 @@ export async function saveBookCover(bookId: string, input: BookCoverAssetInput):
     coverFit: input.fit,
     coverPositionX: input.positionX,
     coverPositionY: input.positionY,
+    coverUpdatedAt: now,
+    coverRemovedAt: undefined,
     metadataRevision: actualRevision + 1,
     updatedAt: now,
   };
   novelStore.put(next);
+  tx.objectStore('sync_tombstones').delete(coverVaultTombstoneId(novel));
   await queueSyncEventInTransaction(
     tx,
     'book_updated',
@@ -317,7 +366,15 @@ export async function saveApprovedEnrichmentBookCover(
     activatedAt: now,
   };
   const tx = db.transaction(
-    ['novels', BOOK_ASSET_STORES.assets, BOOK_ASSET_STORES.blobs, 'devices', 'sync_outbox', 'sync_state'],
+    [
+      'novels',
+      BOOK_ASSET_STORES.assets,
+      BOOK_ASSET_STORES.blobs,
+      'sync_tombstones',
+      'devices',
+      'sync_outbox',
+      'sync_state',
+    ],
     'readwrite',
   );
   const done = transactionDone(tx);
@@ -361,10 +418,13 @@ export async function saveApprovedEnrichmentBookCover(
     coverFit: input.fit,
     coverPositionX: input.positionX,
     coverPositionY: input.positionY,
+    coverUpdatedAt: now,
+    coverRemovedAt: undefined,
     metadataRevision: actualRevision + 1,
     updatedAt: now,
   };
   novelStore.put(next);
+  tx.objectStore('sync_tombstones').delete(coverVaultTombstoneId(novel));
   await queueSyncEventInTransaction(
     tx,
     'book_updated',
@@ -416,7 +476,10 @@ export async function restoreApprovedEnrichmentBookCover(
   }
 
   const db = await openReaderDb();
-  const tx = db.transaction(['novels', BOOK_ASSET_STORES.assets, 'devices', 'sync_outbox', 'sync_state'], 'readwrite');
+  const tx = db.transaction(
+    ['novels', BOOK_ASSET_STORES.assets, 'sync_tombstones', 'devices', 'sync_outbox', 'sync_state'],
+    'readwrite',
+  );
   const done = transactionDone(tx);
   const novelStore = tx.objectStore('novels');
   const assetStore = tx.objectStore(BOOK_ASSET_STORES.assets);
@@ -456,10 +519,14 @@ export async function restoreApprovedEnrichmentBookCover(
     coverFit: previous ? input.previousFit : undefined,
     coverPositionX: previous ? input.previousPositionX : undefined,
     coverPositionY: previous ? input.previousPositionY : undefined,
+    coverUpdatedAt: previous ? now : undefined,
+    coverRemovedAt: previous ? undefined : now,
     metadataRevision: input.expectedMetadataRevision + 1,
     updatedAt: now,
   };
   novelStore.put(next);
+  if (previous) tx.objectStore('sync_tombstones').delete(coverVaultTombstoneId(novel));
+  else tx.objectStore('sync_tombstones').put(coverVaultTombstone(novel, now));
   await queueSyncEventInTransaction(
     tx,
     'book_updated',
@@ -478,7 +545,10 @@ export async function saveGeneratedBookCover(
   const now = new Date().toISOString();
   const id = persistentId128('generated_cover_asset', [bookId, input.derivationFingerprint]);
   const storageKey = blobId(input.contentHash);
-  const tx = db.transaction(['novels', BOOK_ASSET_STORES.assets, BOOK_ASSET_STORES.blobs], 'readwrite');
+  const tx = db.transaction(
+    ['novels', BOOK_ASSET_STORES.assets, BOOK_ASSET_STORES.blobs, 'sync_tombstones'],
+    'readwrite',
+  );
   const done = transactionDone(tx);
   const novelStore = tx.objectStore('novels');
   const assetStore = tx.objectStore(BOOK_ASSET_STORES.assets);
@@ -508,7 +578,10 @@ export async function saveGeneratedBookCover(
         coverFit: 'contain',
         coverPositionX: 50,
         coverPositionY: 50,
+        coverUpdatedAt: new Date().toISOString(),
+        coverRemovedAt: undefined,
       } satisfies Novel);
+      tx.objectStore('sync_tombstones').delete(coverVaultTombstoneId(novel));
     }
     await done;
     return current;
@@ -556,7 +629,10 @@ export async function saveGeneratedBookCover(
     coverFit: 'contain',
     coverPositionX: 50,
     coverPositionY: 50,
+    coverUpdatedAt: new Date().toISOString(),
+    coverRemovedAt: undefined,
   } satisfies Novel);
+  tx.objectStore('sync_tombstones').delete(coverVaultTombstoneId(novel));
   await done;
   return metadata;
 }
@@ -564,7 +640,15 @@ export async function saveGeneratedBookCover(
 export async function removeBookCover(bookId: string, expectedMetadataRevision?: number): Promise<void> {
   const db = await openReaderDb();
   const tx = db.transaction(
-    ['novels', BOOK_ASSET_STORES.assets, BOOK_ASSET_STORES.blobs, 'devices', 'sync_outbox', 'sync_state'],
+    [
+      'novels',
+      BOOK_ASSET_STORES.assets,
+      BOOK_ASSET_STORES.blobs,
+      'sync_tombstones',
+      'devices',
+      'sync_outbox',
+      'sync_state',
+    ],
     'readwrite',
   );
   const done = transactionDone(tx);
@@ -602,10 +686,13 @@ export async function removeBookCover(bookId: string, expectedMetadataRevision?:
     coverFit: undefined,
     coverPositionX: undefined,
     coverPositionY: undefined,
+    coverUpdatedAt: undefined,
+    coverRemovedAt: now,
     metadataRevision: actualRevision + 1,
     updatedAt: now,
   };
   novelStore.put(next);
+  tx.objectStore('sync_tombstones').put(coverVaultTombstone(novel, now));
   await queueSyncEventInTransaction(
     tx,
     'book_updated',

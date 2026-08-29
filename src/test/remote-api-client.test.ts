@@ -20,6 +20,18 @@ describe('RemoteApiClient auth headers', () => {
     vi.unstubAllGlobals();
   });
 
+  it('notifies the hosted account boundary when a protected request loses its session', async () => {
+    const unauthorized = vi.fn();
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => new Response('{"error":"unauthorized"}', { status: 401 })),
+    );
+    const client = new RemoteApiClient('/api', { onUnauthorized: unauthorized });
+
+    await expect(client.listBooks()).rejects.toMatchObject({ status: 401 });
+    expect(unauthorized).toHaveBeenCalledOnce();
+  });
+
   it('adds a bearer token from the auth token provider', async () => {
     let token = 'first-token';
     const fetchMock = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) => jsonResponse({ books: [] }));

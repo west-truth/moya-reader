@@ -113,6 +113,150 @@ export function ImportDialog({ controller }: ImportDialogProps) {
             <p className="field-help">서버 가져오기는 현재 암호 없는 압축 파일만 지원합니다.</p>
           )}
           {controller.duplicateBusy && <p className="field-help">기존 서재와 중복 여부를 확인하고 있습니다.</p>}
+          {controller.seriesError && (
+            <div className="import-series-error" role="alert">
+              <AlertTriangle size={16} />
+              <span>{controller.seriesError}</span>
+            </div>
+          )}
+          {controller.seriesInspection && (
+            <section className="import-series-panel" aria-label="연재 작품 가져오기 계획">
+              <div className="import-series-heading">
+                <div>
+                  <strong>연재 작품으로 가져오기</strong>
+                  <span>
+                    {controller.seriesInspection.sourceKind === 'nested_package'
+                      ? '바깥 압축파일 안의 회차를 찾았습니다.'
+                      : '선택한 압축파일을 한 작품의 회차로 묶습니다.'}
+                  </span>
+                </div>
+                <em>{controller.seriesInspection.workTitle}</em>
+              </div>
+              {!controller.seriesTargetLocked && controller.seriesInspection.candidateNovels.length > 0 && (
+                <label className="import-series-target">
+                  <span>가져올 위치</span>
+                  <select
+                    value={controller.seriesTargetNovelId ?? ''}
+                    disabled={controller.seriesBusy || controller.busy}
+                    onChange={(event) => void controller.setSeriesTargetNovel(event.target.value || undefined)}
+                  >
+                    <option value="">새 작품으로 추가</option>
+                    {controller.seriesInspection.candidateNovels.map((novel) => (
+                      <option key={novel.id} value={novel.id}>
+                        기존 “{novel.title}”에 회차 추가
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              )}
+              {controller.seriesTargetLocked && controller.seriesPlan?.targetNovel && (
+                <p className="import-series-target-locked">
+                  기존 “{controller.seriesPlan.targetNovel.title}”에 새 회차만 추가합니다.
+                </p>
+              )}
+              {controller.seriesPlan && (
+                <>
+                  <div className="import-series-summary">
+                    <span className="is-add">새 회차 {controller.seriesPlan.addCount}개</span>
+                    <span>중복 {controller.seriesPlan.duplicateCount}개</span>
+                    <span className={controller.seriesPlan.conflictCount ? 'is-conflict' : undefined}>
+                      충돌 {controller.seriesPlan.conflictCount}개
+                    </span>
+                  </div>
+                  <div className="import-series-release-list">
+                    {controller.seriesPlan.releases.slice(0, 8).map((release) => (
+                      <div key={`${release.id}:${release.originalName}`} data-state={release.disposition}>
+                        <span>{release.parsed.releaseTitle}</span>
+                        <small>{release.pageCount}페이지</small>
+                        <em>
+                          {release.disposition === 'add'
+                            ? '추가'
+                            : release.disposition === 'duplicate'
+                              ? '중복 제외'
+                              : '기존 회차 보존'}
+                        </em>
+                      </div>
+                    ))}
+                    {controller.seriesPlan.releases.length > 8 && (
+                      <p>외 {controller.seriesPlan.releases.length - 8}개 회차</p>
+                    )}
+                  </div>
+                  {controller.seriesPlan.conflictCount > 0 && (
+                    <p className="import-series-conflict-note">
+                      같은 회차 번호지만 내용이 다른 항목은 자동 교체하지 않고 기존 회차를 보존합니다.
+                    </p>
+                  )}
+                </>
+              )}
+            </section>
+          )}
+          {controller.documentSeriesInspection && (
+            <section className="import-series-panel" aria-label="문서 회차 병합 계획">
+              <div className="import-series-heading">
+                <div>
+                  <strong>로컬 작품에 회차로 가져오기</strong>
+                  <span>선택한 원본은 그대로 보존하고 새 회차만 작품에 추가합니다.</span>
+                </div>
+                <em>{controller.documentSeriesInspection.workTitle}</em>
+              </div>
+              {!controller.seriesTargetLocked && controller.documentSeriesInspection.candidateNovels.length > 0 && (
+                <label className="import-series-target">
+                  <span>가져올 위치</span>
+                  <select
+                    value={controller.seriesTargetNovelId ?? ''}
+                    disabled={controller.seriesBusy || controller.busy}
+                    onChange={(event) => void controller.setSeriesTargetNovel(event.target.value || undefined)}
+                  >
+                    <option value="">새 작품으로 추가</option>
+                    {controller.documentSeriesInspection.candidateNovels.map((novel) => (
+                      <option key={novel.id} value={novel.id}>
+                        기존 “{novel.title}”에 회차 추가
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              )}
+              {controller.seriesTargetLocked && controller.documentSeriesPlan?.targetNovel && (
+                <p className="import-series-target-locked">
+                  기존 “{controller.documentSeriesPlan.targetNovel.title}”에 새 회차만 추가합니다.
+                </p>
+              )}
+              {controller.documentSeriesPlan && (
+                <>
+                  <div className="import-series-summary">
+                    <span className="is-add">새 회차 {controller.documentSeriesPlan.addCount}개</span>
+                    <span>중복 {controller.documentSeriesPlan.duplicateCount}개</span>
+                    <span className={controller.documentSeriesPlan.conflictCount ? 'is-conflict' : undefined}>
+                      충돌 {controller.documentSeriesPlan.conflictCount}개
+                    </span>
+                  </div>
+                  <div className="import-series-release-list">
+                    {controller.documentSeriesPlan.chapters.slice(0, 12).map((chapter) => (
+                      <div key={chapter.id} data-state={chapter.disposition}>
+                        <span>{chapter.title}</span>
+                        <small>{formatCount(chapter.paragraphCount)}문단</small>
+                        <em>
+                          {chapter.disposition === 'add'
+                            ? '추가'
+                            : chapter.disposition === 'duplicate'
+                              ? '중복 제외'
+                              : '기존 회차 보존'}
+                        </em>
+                      </div>
+                    ))}
+                    {controller.documentSeriesPlan.chapters.length > 12 && (
+                      <p>외 {controller.documentSeriesPlan.chapters.length - 12}개 회차</p>
+                    )}
+                  </div>
+                  {controller.documentSeriesPlan.conflictCount > 0 && (
+                    <p className="import-series-conflict-note">
+                      제목은 같지만 본문이 다른 회차는 자동 교체하지 않고 기존 회차를 보존합니다.
+                    </p>
+                  )}
+                </>
+              )}
+            </section>
+          )}
           {controller.duplicateConflicts.length > 0 && (
             <div className="import-duplicate-list" aria-label="가져오기 중복 처리">
               {controller.duplicateConflicts.map((conflict) => (
@@ -170,9 +314,20 @@ export function ImportDialog({ controller }: ImportDialogProps) {
               className="primary-btn"
               type="button"
               onClick={() => void controller.startPendingImport()}
-              disabled={controller.busy || controller.duplicateBusy}
+              disabled={
+                controller.busy ||
+                controller.duplicateBusy ||
+                controller.seriesBusy ||
+                Boolean(controller.seriesInspection && !controller.seriesPlan) ||
+                Boolean(controller.documentSeriesInspection && !controller.documentSeriesPlan)
+              }
             >
-              <Upload size={16} /> 가져오기 시작
+              <Upload size={16} />{' '}
+              {controller.seriesPlan?.targetNovel || controller.documentSeriesPlan?.targetNovel
+                ? '새 회차 추가'
+                : controller.seriesPlan || controller.documentSeriesPlan
+                  ? '연재 작품 가져오기'
+                  : '가져오기 시작'}
             </button>
           </div>
           <ImportPreviewPanel controller={controller} />

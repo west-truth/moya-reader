@@ -22,6 +22,18 @@ export interface StoredContentRevisionCounts extends ContentRevisionCounts {
   searchRowCount: number;
 }
 
+export interface AppendDeltaContentRevisionComposition {
+  readonly kind: 'append_delta';
+  /**
+   * Physical revisions that together form this logical revision. The list is
+   * flattened in reading order and always ends with the owning revision ID.
+   */
+  readonly componentRevisionIds: readonly string[];
+  readonly logicalCounts: StoredContentRevisionCounts;
+}
+
+export type ContentRevisionComposition = AppendDeltaContentRevisionComposition;
+
 export interface BookContentRevisionRecord {
   id: string;
   novelId: string;
@@ -33,7 +45,10 @@ export interface BookContentRevisionRecord {
   baseActiveRevisionId?: string;
   baseNovelPresent: boolean;
   expected: ContentRevisionExpectedCounts;
+  /** Counts committed atomically with staging batches. Older staging rows may not have this field. */
+  stagedCounts?: StoredContentRevisionCounts;
   actual?: StoredContentRevisionCounts;
+  composition?: ContentRevisionComposition;
   createdAt: string;
   activatedAt?: string;
 }
@@ -50,6 +65,65 @@ export class ContentRevisionConflictError extends Error {
     super(message);
     this.name = 'ContentRevisionConflictError';
   }
+}
+
+function assertStoredCounts(value: StoredContentRevisionCounts, label: string): void {
+  assertNonNegativeInteger(value.chapterCount, `${label} chapter count`);
+  assertNonNegativeInteger(value.pageCount, `${label} page count`);
+  assertNonNegativeInteger(value.paragraphCount, `${label} paragraph count`);
+  assertNonNegativeInteger(value.paragraphRefCount, `${label} paragraph ref count`);
+  assertNonNegativeInteger(value.searchRowCount, `${label} search row count`);
+  assertEqual(value.paragraphRefCount, value.paragraphCount, `${label} paragraph ref count`);
+  assertEqual(value.searchRowCount, value.paragraphCount, `${label} search row count`);
+}
+
+export function contentRevisionComponentIds(revision: BookContentRevisionRecord): readonly string[] {
+  const composition = revision.composition;
+  if (!composition) return [revision.id];
+  if (composition.kind !== 'append_delta') {
+    throw new ContentRevisionValidationError(`Unsupported content revision composition for ${revision.id}`);
+  }
+  const ids = composition.componentRevisionIds;
+  if (
+    ids.length === 0 ||
+    ids.some((id) => typeof id !== 'string' || !id.trim()) ||
+    new Set(ids).size !== ids.length ||
+    ids[ids.length - 1] !== revision.id
+  ) {
+    throw new ContentRevisionValidationError(`Invalid append-delta component revisions for ${revision.id}`);
+  }
+  assertStoredCounts(composition.logicalCounts, `content revision ${revision.id} logical`);
+  return ids;
+}
+
+export function logicalContentRevisionCounts(
+  revision: BookContentRevisionRecord,
+): StoredContentRevisionCounts | undefined {
+  if (revision.composition) {
+    contentRevisionComponentIds(revision);
+    return revision.composition.logicalCounts;
+  }
+  return revision.actual;
+}
+
+export function createAppendDeltaContentRevisionComposition(input: {
+  readonly revisionId: string;
+  readonly baseRevision: BookContentRevisionRecord;
+  readonly logicalCounts: StoredContentRevisionCounts;
+}): AppendDeltaContentRevisionComposition {
+  if (!input.revisionId.trim()) {
+    throw new ContentRevisionValidationError('Append-delta revision ID is required');
+  }
+  const baseComponents = contentRevisionComponentIds(input.baseRevision);
+  if (baseComponents.includes(input.revisionId)) {
+    throw new ContentRevisionValidationError(`Append-delta revision ${input.revisionId} already exists in its base`);
+  }
+  assertStoredCounts(input.logicalCounts, `content revision ${input.revisionId} logical`);
+  return {
+    kind: 'append_delta',
+    componentRevisionIds: [...baseComponents, input.revisionId],
+    logicalCounts: { ...input.logicalCounts },
+  };
 }
 
 interface ChapterValidationState {
@@ -128,6 +202,7 @@ export function createContentRevisionValidationState(input: {
 
   const chapterById = new Map<string, ChapterValidationState>();
   let declaredParagraphCount = 0;
+  const firstChapterIndex = chapters[0]?.index ?? 1;
   chapters.forEach((chapter, offset) => {
     if (chapter.novelId !== novel.id) {
       throw new ContentRevisionValidationError(`chapter ${chapter.id} belongs to another novel`);
@@ -135,7 +210,7 @@ export function createContentRevisionValidationState(input: {
     if (chapterById.has(chapter.id)) {
       throw new ContentRevisionValidationError(`duplicate chapter ID ${chapter.id}`);
     }
-    if (chapter.index !== offset + 1) {
+    if (chapter.index !== firstChapterIndex + offset) {
       throw new ContentRevisionValidationError(`chapter index continuity mismatch at ${chapter.id}`);
     }
     assertNonNegativeInteger(chapter.paragraphCount, `chapter ${chapter.id} paragraph count`);

@@ -80,6 +80,7 @@ export class AppExtensionManager<TReaderAddonContext, TAnalysisWorkflowContext> 
     AppExtensionRegistration<TReaderAddonContext, TAnalysisWorkflowContext>
   >();
   private readonly listeners = new Set<() => void>();
+  private readonly activationErrors = new Map<ExtensionContributionId, string>();
   private revision = 0;
 
   constructor(
@@ -90,13 +91,28 @@ export class AppExtensionManager<TReaderAddonContext, TAnalysisWorkflowContext> 
     for (const registration of [...registrations].sort((left, right) =>
       left.definition.manifest.id.localeCompare(right.definition.manifest.id),
     )) {
+      // `TrustedExtensionDefinition` executes in the application JavaScript realm. Until a
+      // separate worker/iframe host exists, accepting a "sandboxed" registration here would
+      // only label unisolated code as isolated. Fail closed instead of creating that illusion.
+      if (registration.trustLevel === 'sandboxed') {
+        const extensionId = registration.definition.manifest.id;
+        this.registrations.set(extensionId, registration);
+        this.activationErrors.set(extensionId, '커뮤니티 익스텐션 격리 실행 환경이 아직 제공되지 않습니다.');
+        this.enablement.setEnabled(extensionId, false);
+        continue;
+      }
       if (!this.registry.register(registration.definition)) continue;
       this.registrations.set(registration.definition.manifest.id, registration);
     }
     for (const registration of this.registrations.values()) {
       const manifest = registration.definition.manifest;
-      if (this.enablement.isEnabled(manifest.id, registration.defaultEnabled)) this.registry.activate(manifest.id);
-      else this.registry.disable(manifest.id);
+      if (this.enablement.isEnabled(manifest.id, registration.defaultEnabled)) {
+        if (!this.registry.activate(manifest.id)) {
+          this.rememberActivationError(manifest.id);
+          this.enablement.setEnabled(manifest.id, false);
+          this.registry.disable(manifest.id);
+        }
+      } else this.registry.disable(manifest.id);
     }
   }
 
@@ -115,10 +131,20 @@ export class AppExtensionManager<TReaderAddonContext, TAnalysisWorkflowContext> 
   setEnabled(extensionId: ExtensionContributionId, enabled: boolean): boolean {
     const registration = this.registrations.get(extensionId);
     if (!registration || (!registration.canDisable && !enabled)) return false;
-    const changed = this.isEnabled(extensionId) !== enabled;
-    this.enablement.setEnabled(extensionId, enabled);
+    const previousEnabled = this.isEnabled(extensionId);
+    const changed = previousEnabled !== enabled;
     const accepted = enabled ? this.registry.activate(extensionId) : this.registry.disable(extensionId);
-    if (!accepted) return false;
+    if (!accepted) {
+      // Activation can leave a failed lifecycle snapshot. Restore the pre-toggle runtime and
+      // persisted choice together so the checkbox, contributions and next launch agree.
+      this.rememberActivationError(extensionId);
+      this.enablement.setEnabled(extensionId, previousEnabled);
+      if (!previousEnabled) this.registry.disable(extensionId);
+      this.publish();
+      return false;
+    }
+    this.activationErrors.delete(extensionId);
+    this.enablement.setEnabled(extensionId, enabled);
     if (changed) this.publish();
     return true;
   }
@@ -137,11 +163,11 @@ export class AppExtensionManager<TReaderAddonContext, TAnalysisWorkflowContext> 
           origin: registration.origin,
           trustLevel: registration.trustLevel,
           defaultEnabled: registration.defaultEnabled,
-          canDisable: registration.canDisable,
+          canDisable: registration.trustLevel === 'sandboxed' ? false : registration.canDisable,
           beta: registration.beta ?? false,
           enabled: this.isEnabled(manifest.id),
           state: lifecycle?.state ?? 'failed',
-          errorMessage: lifecycle?.errorMessage,
+          errorMessage: lifecycle?.errorMessage ?? this.activationErrors.get(manifest.id),
           permissions: manifest.permissions,
           contributions: contributionSummaries(manifest),
         } satisfies AppExtensionSnapshot;
@@ -160,5 +186,10 @@ export class AppExtensionManager<TReaderAddonContext, TAnalysisWorkflowContext> 
   private publish(): void {
     this.revision += 1;
     for (const listener of this.listeners) listener();
+  }
+
+  private rememberActivationError(extensionId: ExtensionContributionId): void {
+    const message = this.registry.getSnapshots().find((snapshot) => snapshot.id === extensionId)?.errorMessage;
+    if (message) this.activationErrors.set(extensionId, message);
   }
 }

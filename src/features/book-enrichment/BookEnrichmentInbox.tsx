@@ -1,5 +1,5 @@
 import type { ExtensionContributionId } from '@noveldesk/extension-contracts';
-import { Check, RefreshCw, RotateCcw, Sparkles, X } from 'lucide-react';
+import { Check, ChevronDown, ExternalLink, RefreshCw, RotateCcw, Sparkles, X } from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
 import type { Novel } from '../../domain/types';
 import { formatDateTime } from '../../utils/format';
@@ -39,6 +39,23 @@ function providerTitle(provenance: BookEnrichmentProvenance, controller: BookEnr
   );
 }
 
+function safeSourceUrl(value?: string): string | undefined {
+  if (!value) return undefined;
+  try {
+    const parsed = new URL(value);
+    return parsed.protocol === 'https:' && !parsed.username && !parsed.password ? parsed.toString() : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+const matchTypeLabels: Record<string, string> = {
+  exact_title_and_author: '제목·작가 정확히 일치',
+  exact_title: '제목 정확히 일치',
+  fuzzy_title: '유사 제목',
+  ambiguous: '일치 결과 재검토 필요',
+};
+
 function ProvenanceSource({
   provenance,
   controller,
@@ -47,12 +64,22 @@ function ProvenanceSource({
   controller: BookEnrichmentController;
 }) {
   const title = providerTitle(provenance, controller);
+  const sourceUrl = safeSourceUrl(provenance.sourceUrl);
   return (
     <div className="enrichment-candidate-source">
       <strong>{title}</strong>
       {provenance.sourceLabel && provenance.sourceLabel !== title && <span>출처 {provenance.sourceLabel}</span>}
+      {provenance.automation?.matchType && (
+        <span>{matchTypeLabels[provenance.automation.matchType] ?? provenance.automation.matchType}</span>
+      )}
+      {provenance.automation?.authenticatedSearch && <span>로그인 검색</span>}
       {provenance.licenseSummary && <span>사용 조건 {provenance.licenseSummary}</span>}
       {provenance.confidence !== undefined && <span>신뢰도 {Math.round(provenance.confidence * 100)}%</span>}
+      {sourceUrl && (
+        <a href={sourceUrl} target="_blank" rel="noreferrer">
+          원본 페이지 <ExternalLink size={12} aria-hidden="true" />
+        </a>
+      )}
     </div>
   );
 }
@@ -111,10 +138,7 @@ function approvalState(
   ) {
     return 'record-only';
   }
-  return (book.metadataRevision ?? 0) === approval.appliedMetadataRevision &&
-    snapshotMatchesBook(book, approval.after, approval.selectedFields)
-    ? 'available'
-    : 'changed';
+  return snapshotMatchesBook(book, approval.after, approval.selectedFields) ? 'available' : 'changed';
 }
 
 function coverSnapshotLabel(snapshot: Extract<BookEnrichmentMutationSnapshot, { kind: 'cover' }>): string {
@@ -176,11 +200,12 @@ function ApprovalHistory({
 }) {
   if (approvals.length === 0) return null;
   return (
-    <div className="enrichment-history" aria-labelledby="book-enrichment-history-heading">
-      <div className="enrichment-history-heading">
-        <h3 id="book-enrichment-history-heading">적용 기록</h3>
+    <details className="enrichment-history">
+      <summary className="enrichment-history-heading">
+        <h3>적용 기록</h3>
         <span>{approvals.length}개</span>
-      </div>
+        <ChevronDown size={15} aria-hidden="true" />
+      </summary>
       <div className="enrichment-history-list">
         {approvals.map((receipt) => {
           const state = approvalState(book, receipt, controller.receipts);
@@ -210,7 +235,7 @@ function ApprovalHistory({
           );
         })}
       </div>
-    </div>
+    </details>
   );
 }
 
@@ -398,8 +423,10 @@ export function BookEnrichmentInbox({
   const [providerId, setProviderId] = useState<ExtensionContributionId | ''>(
     controller.providers[0]?.descriptor.id ?? '',
   );
+  const [expanded, setExpanded] = useState(false);
   const loadCandidates = controller.load;
   useEffect(() => void loadCandidates(book.id), [book.id, loadCandidates]);
+  useEffect(() => setExpanded(false), [book.id]);
   useEffect(() => {
     if (!controller.providers.some((provider) => provider.descriptor.id === providerId)) {
       setProviderId(controller.providers[0]?.descriptor.id ?? '');
@@ -415,6 +442,9 @@ export function BookEnrichmentInbox({
   const approvals = controller.receipts
     .filter((receipt) => receipt.bookId === book.id && receipt.action !== 'undo')
     .sort((left, right) => right.appliedAt.localeCompare(left.appliedAt));
+  useEffect(() => {
+    if (visibleCandidates.length > 0 || controller.error) setExpanded(true);
+  }, [controller.error, visibleCandidates.length]);
   if (
     !controller.available ||
     (controller.providers.length === 0 && visibleCandidates.length === 0 && approvals.length === 0)
@@ -422,14 +452,27 @@ export function BookEnrichmentInbox({
     return null;
   }
   return (
-    <section className="metadata-section book-enrichment-inbox" aria-labelledby="book-enrichment-heading">
+    <section
+      className={`metadata-section book-enrichment-inbox${expanded ? ' is-expanded' : ' is-collapsed'}`}
+      aria-labelledby="book-enrichment-heading"
+    >
       <div className="metadata-section-heading enrichment-heading-row">
-        <div>
-          <h2 id="book-enrichment-heading">
+        <button
+          className="enrichment-collapse-toggle"
+          type="button"
+          aria-expanded={expanded}
+          aria-controls="book-enrichment-content"
+          onClick={() => setExpanded((current) => !current)}
+        >
+          <span id="book-enrichment-heading">
             <Sparkles size={17} /> 추천 정보
-          </h2>
-          <p>추천은 후보로만 저장되며, 선택해서 승인하기 전에는 작품 정보가 바뀌지 않습니다.</p>
-        </div>
+          </span>
+          <small>
+            {visibleCandidates.length > 0 ? `검토 ${visibleCandidates.length}개` : '새 추천 없음'}
+            {approvals.length > 0 ? ` · 적용 기록 ${approvals.length}개` : ''}
+          </small>
+          <ChevronDown size={16} aria-hidden="true" />
+        </button>
         {controller.providers.length > 0 && (
           <div className="enrichment-provider-runner">
             {controller.providers.length > 1 && (
@@ -449,41 +492,51 @@ export function BookEnrichmentInbox({
               className="ghost-btn"
               type="button"
               disabled={controller.busy || !providerId}
-              onClick={() => providerId && void controller.propose(book.id, providerId)}
+              onClick={() => {
+                setExpanded(true);
+                if (providerId) void controller.propose(book.id, providerId);
+              }}
             >
-              <RefreshCw size={15} className={controller.busy ? 'spin' : undefined} /> 추천 찾기
+              <RefreshCw size={15} className={controller.busy ? 'spin' : undefined} /> 정보 찾기
             </button>
           </div>
         )}
       </div>
-      {controller.error && <p className="field-help warning">{controller.error}</p>}
-      {visibleCandidates.length === 0 && controller.providers.length > 0 ? (
-        <p className="enrichment-empty">아직 검토할 추천이 없습니다.</p>
-      ) : visibleCandidates.length > 0 ? (
-        <div className="enrichment-candidate-list">
-          {visibleCandidates.map((candidate) =>
-            candidate.kind === 'metadata' ? (
-              <MetadataCandidateCard
-                key={candidate.id}
-                candidate={candidate}
-                controller={controller}
-                manualDraftDirty={manualDraftDirty}
-                onApplied={onApplied}
-              />
-            ) : (
-              <CoverCandidateCard
-                key={candidate.id}
-                book={book}
-                candidate={candidate}
-                controller={controller}
-                manualDraftDirty={manualDraftDirty}
-                onApplied={onApplied}
-              />
-            ),
-          )}
-        </div>
-      ) : null}
-      <ApprovalHistory book={book} controller={controller} manualDraftDirty={manualDraftDirty} approvals={approvals} />
+      <div id="book-enrichment-content" className="enrichment-content" hidden={!expanded}>
+        {controller.error && <p className="field-help warning">{controller.error}</p>}
+        {visibleCandidates.length === 0 && controller.providers.length > 0 ? (
+          <p className="enrichment-empty">새로 검토할 추천이 없습니다.</p>
+        ) : visibleCandidates.length > 0 ? (
+          <div className="enrichment-candidate-list">
+            {visibleCandidates.map((candidate) =>
+              candidate.kind === 'metadata' ? (
+                <MetadataCandidateCard
+                  key={candidate.id}
+                  candidate={candidate}
+                  controller={controller}
+                  manualDraftDirty={manualDraftDirty}
+                  onApplied={onApplied}
+                />
+              ) : (
+                <CoverCandidateCard
+                  key={candidate.id}
+                  book={book}
+                  candidate={candidate}
+                  controller={controller}
+                  manualDraftDirty={manualDraftDirty}
+                  onApplied={onApplied}
+                />
+              ),
+            )}
+          </div>
+        ) : null}
+        <ApprovalHistory
+          book={book}
+          controller={controller}
+          manualDraftDirty={manualDraftDirty}
+          approvals={approvals}
+        />
+      </div>
     </section>
   );
 }

@@ -27,6 +27,28 @@ describe('platform runtime detection', () => {
     });
   });
 
+  it('recognizes the public Tauri v2 release flag', () => {
+    const runtime = detectPlatformRuntime({
+      isTauri: true,
+      navigator: { userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)' },
+    });
+
+    expect(runtime).toMatchObject({
+      kind: 'tauri-desktop',
+      hasTauri: true,
+      isMobileWebView: false,
+    });
+  });
+
+  it('recognizes the packaged Tauri production origin', () => {
+    const runtime = detectPlatformRuntime({
+      location: { hostname: 'tauri.localhost', protocol: 'http:' },
+      navigator: { userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)' },
+    });
+
+    expect(runtime).toMatchObject({ kind: 'tauri-desktop', hasTauri: true });
+  });
+
   it('does not treat Android Tauri WebView as the desktop secure-store runtime', () => {
     const runtime = detectPlatformRuntime({
       __TAURI__: {},

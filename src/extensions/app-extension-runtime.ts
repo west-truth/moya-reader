@@ -1,8 +1,10 @@
 import type { TrustedAnalysisWorkflowHostContext } from './analysis-workflow-host-context';
 import type { BookAITTSPreparationRunner } from '../features/ai/book-ai-tts-preparation-runner';
+import { WebNovelMetadataCollectorBroker } from '../services/webnovel-metadata-collector-broker';
 import { bookAITTSRunnerRegistration } from './builtin/book-ai-tts-workflow-extension';
 import { moyaAITrustedExtension } from './builtin/moya-ai-extension';
 import { readerInfoTrustedExtension } from './builtin/reader-info-extension';
+import { createWebNovelMetadataEnrichmentTrustedExtension } from './builtin/webnovel-metadata-enrichment-extension';
 import type { TrustedReaderAddonHostContext } from './reader-addon-host-context';
 import { AppExtensionManager, type AppExtensionRegistration } from './app-extension-manager';
 import { ExtensionEnablementStore } from './extension-enablement-store';
@@ -19,6 +21,7 @@ export interface AppExtensionRuntime {
   >;
   readonly manager: AppExtensionManager<TrustedReaderAddonHostContext, TrustedAnalysisWorkflowHostContext>;
   readonly bookAITTSRunners: TrustedWorkflowRunnerRegistry<BookAITTSPreparationRunner>;
+  readonly webNovelMetadataCollector: WebNovelMetadataCollectorBroker;
 }
 
 export interface AppExtensionRuntimeDependencies {
@@ -32,6 +35,7 @@ export interface AppExtensionRuntimeDependencies {
   >[];
   readonly enablementStore?: ExtensionEnablementStore;
   readonly bookAITTSRunnerRegistrations?: readonly TrustedWorkflowRunnerRegistration<BookAITTSPreparationRunner>[];
+  readonly webNovelMetadataCollector?: WebNovelMetadataCollectorBroker;
   /** Source-owned fixtures supplied by an explicit development bootstrap. */
   readonly additionalTrustedRegistrations?: readonly AppExtensionRegistration<
     TrustedReaderAddonHostContext,
@@ -40,6 +44,7 @@ export interface AppExtensionRuntimeDependencies {
 }
 
 export function createAppExtensionRuntime(dependencies: AppExtensionRuntimeDependencies = {}): AppExtensionRuntime {
+  const webNovelMetadataCollector = dependencies.webNovelMetadataCollector ?? new WebNovelMetadataCollectorBroker();
   const trustedExtensions = new TrustedExtensionRegistry<
     TrustedReaderAddonHostContext,
     TrustedAnalysisWorkflowHostContext
@@ -72,6 +77,15 @@ export function createAppExtensionRuntime(dependencies: AppExtensionRuntimeDepen
             beta: true,
             description: 'AI 분석과 화자·캐릭터 음성 준비 기능을 제공합니다.',
           },
+          {
+            definition: createWebNovelMetadataEnrichmentTrustedExtension(webNovelMetadataCollector),
+            origin: 'bundled' as const,
+            trustLevel: 'trusted' as const,
+            defaultEnabled: false,
+            canDisable: true,
+            beta: true,
+            description: '내장 수집기에서 웹소설 표지와 작품 정보를 찾아 검토 후보로 만듭니다.',
+          },
           ...(dependencies.additionalTrustedRegistrations ?? []),
         ]);
   const manager = new AppExtensionManager(trustedExtensions, registrations, dependencies.enablementStore);
@@ -85,5 +99,5 @@ export function createAppExtensionRuntime(dependencies: AppExtensionRuntimeDepen
     }
     bookAITTSRunners.register(registration);
   }
-  return { trustedExtensions, manager, bookAITTSRunners };
+  return { trustedExtensions, manager, bookAITTSRunners, webNovelMetadataCollector };
 }

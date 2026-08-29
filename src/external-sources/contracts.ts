@@ -1,4 +1,94 @@
 export type ExternalSourceKind = 'cloud_file' | 'catalog';
+export type ExternalSourceBrowseMode = 'popular' | 'latest' | 'search';
+
+export type ExternalSourceFilterValue =
+  boolean | number | string | { readonly index: number; readonly ascending: boolean };
+
+export interface ExternalSourceFilterChange {
+  readonly position: number;
+  readonly groupPosition?: number;
+  readonly value: ExternalSourceFilterValue;
+}
+
+export type ExternalSourceFilterDefinition =
+  | {
+      readonly id: string;
+      readonly position: number;
+      readonly groupPosition?: number;
+      readonly kind: 'header';
+      readonly label: string;
+    }
+  | {
+      readonly id: string;
+      readonly position: number;
+      readonly groupPosition?: number;
+      readonly kind: 'separator';
+      readonly label?: string;
+    }
+  | {
+      readonly id: string;
+      readonly position: number;
+      readonly groupPosition?: number;
+      readonly kind: 'checkbox';
+      readonly label: string;
+      readonly defaultValue: boolean;
+    }
+  | {
+      readonly id: string;
+      readonly position: number;
+      readonly groupPosition?: number;
+      readonly kind: 'select';
+      readonly label: string;
+      readonly options: readonly string[];
+      readonly defaultValue: number;
+    }
+  | {
+      readonly id: string;
+      readonly position: number;
+      readonly groupPosition?: number;
+      readonly kind: 'sort';
+      readonly label: string;
+      readonly options: readonly string[];
+      readonly defaultValue: { readonly index: number; readonly ascending: boolean };
+    }
+  | {
+      readonly id: string;
+      readonly position: number;
+      readonly groupPosition?: number;
+      readonly kind: 'text';
+      readonly label: string;
+      readonly defaultValue: string;
+    }
+  | {
+      readonly id: string;
+      readonly position: number;
+      readonly groupPosition?: number;
+      readonly kind: 'tri_state';
+      readonly label: string;
+      readonly defaultValue: 'IGNORE' | 'INCLUDE' | 'EXCLUDE';
+    };
+
+export interface ExternalSourceBrowseState {
+  readonly activeMode: ExternalSourceBrowseMode;
+  readonly availableModes: readonly ExternalSourceBrowseMode[];
+  readonly filters?: readonly ExternalSourceFilterDefinition[];
+}
+
+export interface ExternalSourceCollectionDescriptor {
+  readonly remoteId: string;
+  readonly title: string;
+  readonly author?: string;
+  readonly description?: string;
+  readonly tags?: readonly string[];
+  readonly status?: string;
+  readonly sourceLabel?: string;
+}
+
+export interface ExternalSourceReleaseDescriptor {
+  readonly title: string;
+  readonly chapterNumber?: number;
+  readonly sourceOrder?: number;
+}
 
 export interface ExternalItemKey {
   readonly connectorId: string;
@@ -21,6 +111,9 @@ export interface ExternalItemSummary {
   readonly updatedAt?: string;
   /** Display-only remote cover/icon URL. Import still requires an explicit download action. */
   readonly thumbnailUrl?: string;
+  /** Optional work/release identity used to aggregate serial catalog downloads into one local work. */
+  readonly collection?: ExternalSourceCollectionDescriptor;
+  readonly release?: ExternalSourceReleaseDescriptor;
   /** Opaque provider reference used only to enter a folder. */
   readonly navigationRef?: string;
   readonly importability: 'unknown' | 'supported' | 'unsupported';
@@ -42,6 +135,8 @@ export interface ExternalSourceListInput {
   readonly accountConnectionId?: string;
   readonly parentRef?: string;
   readonly query?: string;
+  readonly browseMode?: ExternalSourceBrowseMode;
+  readonly filters?: readonly ExternalSourceFilterChange[];
   readonly cursor?: string;
 }
 
@@ -49,6 +144,7 @@ export interface ExternalItemPage {
   readonly items: readonly ExternalItemSummary[];
   readonly nextCursor?: string;
   readonly detail?: ExternalSourceWorkDetail;
+  readonly browse?: ExternalSourceBrowseState;
 }
 
 export interface ExternalSourceDownloadRef {
@@ -134,11 +230,28 @@ export interface ExternalSourceLink {
   readonly id: string;
   readonly source: ExternalItemKey;
   readonly localBookId: string;
+  readonly collectionRemoteId?: string;
   readonly importedRemoteRevision?: string;
   readonly importedSourceContentHash?: string;
   readonly activeContentRevisionId?: string;
   readonly linkedAt: string;
   readonly lastCheckedAt?: string;
+  /**
+   * Durable intent written before a canonical import starts. If the app stops
+   * after content activation but before link finalization, the next projection
+   * can finish the link without downloading or importing the source again.
+   */
+  readonly pendingImport?: {
+    readonly operationId: string;
+    readonly stagedAt: string;
+    readonly hadExistingLink: boolean;
+    readonly previousActiveContentRevisionId?: string;
+    /** Exact source asset hash expected on the activated local revision. */
+    readonly expectedActiveSourceContentHash: string;
+    readonly collectionRemoteId?: string;
+    readonly importedRemoteRevision?: string;
+    readonly importedSourceContentHash?: string;
+  };
 }
 
 export interface ExternalCatalogCachePage {
@@ -149,6 +262,7 @@ export interface ExternalCatalogCachePage {
   readonly cursor?: string;
   readonly nextCursor?: string;
   readonly items: readonly ExternalItemSummary[];
+  readonly browse?: ExternalSourceBrowseState;
   readonly fetchedAt: string;
   readonly expiresAt: string;
   readonly schemaVersion: 1;

@@ -10,6 +10,8 @@ function controller(overrides: Partial<ImportFeatureController> = {}): ImportFea
     pendingFiles: [],
     duplicateBusy: false,
     duplicateConflicts: [],
+    seriesBusy: false,
+    seriesTargetLocked: false,
     encoding: 'auto',
     chapterSplitMode: 'auto',
     uploadSessions: [],
@@ -27,6 +29,7 @@ function controller(overrides: Partial<ImportFeatureController> = {}): ImportFea
       },
     },
     open: vi.fn(),
+    openChapterAppend: vi.fn(),
     close: vi.fn(),
     selectFiles: vi.fn(),
     pickFiles: vi.fn(),
@@ -37,6 +40,7 @@ function controller(overrides: Partial<ImportFeatureController> = {}): ImportFea
     setEncoding: vi.fn(),
     setChapterSplitMode: vi.fn(),
     setDuplicatePolicy: vi.fn(),
+    setSeriesTargetNovel: vi.fn(),
     setArchivePassword: vi.fn(),
     forgetUploadSession: vi.fn(),
     ...overrides,
@@ -123,5 +127,106 @@ describe('ImportDialog', () => {
 
     expect(markup).toContain('가져오기 실패');
     expect(markup).not.toContain('가져오는 중');
+  });
+
+  it('shows a local series add/duplicate/conflict plan before import', () => {
+    const file = new File(['chapter'], '서른의 봄 3화.cbz');
+    const parsed = {
+      original: file.name,
+      displayBaseName: '서른의 봄 3화',
+      workTitle: '서른의 봄',
+      normalizedWorkKey: '서른의 봄',
+      looseWorkKey: '서른의봄',
+      releaseTitle: '3화',
+      releaseKey: 'c:3',
+      chapterNumber: 3,
+      confidence: 'high' as const,
+      evidence: ['chapter'],
+    };
+    const inspection = {
+      sourceKind: 'nested_package' as const,
+      workTitle: '서른의 봄',
+      normalizedWorkKey: '서른의 봄',
+      confidence: 'high' as const,
+      releases: [
+        {
+          id: 'release-3',
+          file,
+          originalName: file.name,
+          parsed,
+          releaseKey: 'c:3',
+          contentHash: 'hash-3',
+          pageCount: 12,
+        },
+      ],
+      candidateNovels: [],
+      sourceFileNames: ['서른의 봄.zip'],
+    };
+    const markup = renderToStaticMarkup(
+      <ImportDialog
+        controller={controller({
+          pendingFiles: [file],
+          seriesInspection: inspection,
+          seriesPlan: {
+            inspection,
+            releases: [{ ...inspection.releases[0], disposition: 'add' }],
+            addCount: 1,
+            duplicateCount: 2,
+            conflictCount: 1,
+          },
+        })}
+      />,
+    );
+
+    expect(markup).toContain('연재 작품으로 가져오기');
+    expect(markup).toContain('새 회차 1개');
+    expect(markup).toContain('중복 2개');
+    expect(markup).toContain('충돌 1개');
+    expect(markup).toContain('연재 작품 가져오기');
+  });
+
+  it('shows a TXT or EPUB chapter merge plan for a local Library work', () => {
+    const file = new File(['제2화\n\n본문'], '작품 2화.txt', { type: 'text/plain' });
+    const inspection = {
+      workTitle: '작품',
+      normalizedWorkKey: '작품',
+      format: 'txt' as const,
+      sources: [],
+      chapters: [
+        {
+          id: 'chapter-2',
+          sourceId: 'source-2',
+          sourceTitle: '2화',
+          sourceFileName: file.name,
+          sourceChapterIndex: 1,
+          title: '제2화',
+          textHash: 'hash-2',
+          characterCount: 2,
+          paragraphCount: 1,
+        },
+      ],
+      candidateNovels: [],
+    };
+    const markup = renderToStaticMarkup(
+      <ImportDialog
+        controller={controller({
+          pendingFiles: [file],
+          documentSeriesInspection: inspection,
+          documentSeriesPlan: {
+            inspection,
+            targetChapters: [],
+            chapters: [{ ...inspection.chapters[0], disposition: 'add' }],
+            addCount: 1,
+            duplicateCount: 0,
+            conflictCount: 0,
+          },
+        })}
+      />,
+    );
+
+    expect(markup).toContain('로컬 작품에 회차로 가져오기');
+    expect(markup).toContain('선택한 원본은 그대로 보존');
+    expect(markup).toContain('제2화');
+    expect(markup).toContain('새 회차 1개');
   });
 });

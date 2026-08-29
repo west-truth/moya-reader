@@ -2,10 +2,16 @@ import { act, create, type ReactTestRenderer } from 'react-test-renderer';
 import { describe, expect, it, vi } from 'vitest';
 import type { ExtensionContributionId } from '@noveldesk/extension-contracts';
 import { sha256 } from '../../domain/hash';
-import type { Novel } from '../../domain/types';
-import type { ExternalSourceLink } from '../../external-sources/contracts';
-import type { ExternalSourceDefaultFolder, ExternalSourceLocalState } from '../../external-sources/local-state';
+import type { Chapter, Novel } from '../../domain/types';
+import type { ExternalSourceBrowseState, ExternalSourceLink } from '../../external-sources/contracts';
+import type {
+  ExternalSourceCatalogPreference,
+  ExternalSourceDefaultFolder,
+  ExternalSourceLocalState,
+  ExternalSourceSubscriptionRecord,
+} from '../../external-sources/local-state';
 import type { ImportService } from '../../services/import/import-service';
+import { testChapter } from '../book-workspace/book-workspace-test-fixtures';
 import {
   useExternalSourceController,
   type ExternalSourceController,
@@ -49,13 +55,21 @@ async function createHarness(input: {
   downloadedContent: string;
   importedContent?: Novel;
   importError?: Error;
+  getNovelErrorAfterImport?: boolean;
   localBookMissing?: boolean;
   defaultFolder?: ExternalSourceDefaultFolder;
   failFolderRef?: string;
   pickable?: boolean;
+  thumbnailUrl?: string;
+  chapters?: Chapter[];
+  supportsSubscriptions?: boolean;
+  subscriptions?: ExternalSourceSubscriptionRecord[];
+  catalogPreference?: ExternalSourceCatalogPreference;
+  browse?: ExternalSourceBrowseState;
 }) {
   const oldContent = '기존 원격 원문';
   const oldHash = await sha256(oldContent);
+  const downloadedHash = await sha256(input.downloadedContent);
   const currentNovel = novel({ sourceContentHash: oldHash });
   let currentLink: ExternalSourceLink = {
     id: 'external-link::fixture.source::fixture-account::work-1',
@@ -69,6 +83,8 @@ async function createHarness(input: {
   const saveLink = vi.fn(async (link: ExternalSourceLink) => {
     currentLink = link;
   });
+  let subscriptions = [...(input.subscriptions ?? [])];
+  let catalogPreference = input.catalogPreference;
   const state: ExternalSourceLocalState = {
     getOrCreateCredentialKey: vi.fn(),
     getCredential: vi.fn(async () => undefined),
@@ -82,6 +98,23 @@ async function createHarness(input: {
     getDefaultFolder: vi.fn(async () => input.defaultFolder),
     saveDefaultFolder: vi.fn(async () => undefined),
     deleteDefaultFolder: vi.fn(async () => undefined),
+    getCatalogPreference: vi.fn(async () => catalogPreference),
+    saveCatalogPreference: vi.fn(async (preference) => {
+      catalogPreference = preference;
+    }),
+    listSubscriptions: vi.fn(async (connectorId, accountConnectionId) =>
+      subscriptions.filter(
+        (record) =>
+          (!connectorId || record.connectorId === connectorId) &&
+          (accountConnectionId === undefined || record.accountConnectionId === accountConnectionId),
+      ),
+    ),
+    saveSubscription: vi.fn(async (record) => {
+      subscriptions = [...subscriptions.filter((item) => item.id !== record.id), record];
+    }),
+    deleteSubscription: vi.fn(async (id) => {
+      subscriptions = subscriptions.filter((item) => item.id !== id);
+    }),
     listSelectedItems: vi.fn(async () => []),
     saveSelectedItem: vi.fn(async () => undefined),
     deleteSelectedItem: vi.fn(async () => undefined),
@@ -92,7 +125,7 @@ async function createHarness(input: {
       input.importedContent ??
       novel({
         id: request.clientBookId ?? 'book-new',
-        sourceContentHash: 'new-source-hash',
+        sourceContentHash: downloadedHash,
         activeContentRevisionId: 'content-new',
       });
     return {
@@ -109,7 +142,7 @@ async function createHarness(input: {
           schemaVersion: 1,
           title: '개발용 소스',
           kind: 'catalog',
-          capabilities: ['browse', 'work-import'],
+          capabilities: ['browse', 'work-import', ...(input.supportsSubscriptions ? (['subscriptions'] as const) : [])],
           runtimes: ['web-direct'],
         },
       },
@@ -131,10 +164,17 @@ async function createHarness(input: {
             kind: 'work' as const,
             title: 'work.txt',
             mimeType: 'text/plain',
+            thumbnailUrl: input.thumbnailUrl,
             remoteRevision: 'remote-r2',
             importability: 'supported' as const,
           },
         ],
+        browse: input.browse
+          ? {
+              ...input.browse,
+              activeMode: listInput.browseMode ?? input.browse.activeMode,
+            }
+          : undefined,
       };
     }),
     downloadExternalSource: vi.fn(async () => ({
@@ -159,8 +199,13 @@ async function createHarness(input: {
       importService: { importFile },
       extensionRevision: 0,
       listNovels: async () => (input.localBookMissing ? [] : [currentNovel]),
-      getNovel: async (id) =>
-        latestImportedNovel?.id === id ? latestImportedNovel : id === currentNovel.id ? currentNovel : undefined,
+      listChapters: async () => input.chapters ?? [],
+      getNovel: async (id) => {
+        if (input.getNovelErrorAfterImport && latestImportedNovel?.id === id) {
+          throw new Error('fixture post-import read failed');
+        }
+        return latestImportedNovel?.id === id ? latestImportedNovel : id === currentNovel.id ? currentNovel : undefined;
+      },
       openNovel,
       onLibraryChanged,
       notify,
@@ -195,12 +240,56 @@ async function createHarness(input: {
     get currentLink() {
       return currentLink;
     },
+    get subscriptions() {
+      return subscriptions;
+    },
+    get catalogPreference() {
+      return catalogPreference;
+    },
     renderer,
     oldHash,
   };
 }
 
 describe('useExternalSourceController remote updates', () => {
+  it('applies extension filters through SEARCH even when the search query is empty', async () => {
+    const harness = await createHarness({
+      downloadedContent: '기존 원격 원문',
+      browse: {
+        activeMode: 'popular',
+        availableModes: ['popular', 'latest', 'search'],
+        filters: [
+          { id: '0', position: 0, kind: 'select', label: '장르', options: ['전체', '판타지'], defaultValue: 0 },
+        ],
+      },
+    });
+    act(() => harness.controller.setFilterValue('0', 1));
+    await act(async () => harness.controller.applyFilters());
+
+    expect(harness.registry.listExternalSource).toHaveBeenLastCalledWith(
+      SOURCE_ID,
+      expect.anything(),
+      expect.objectContaining({
+        query: undefined,
+        browseMode: 'search',
+        filters: [{ position: 0, groupPosition: undefined, value: 1 }],
+      }),
+      expect.any(AbortSignal),
+    );
+    expect(harness.controller.browse?.activeMode).toBe('search');
+    await act(async () => harness.renderer.unmount());
+  });
+
+  it('does not persist session-only blob thumbnail URLs in the source cache', async () => {
+    const harness = await createHarness({ downloadedContent: '기존 원격 원문', thumbnailUrl: 'blob:work-cover' });
+
+    expect(harness.state.saveCachePage).toHaveBeenCalledWith(
+      expect.objectContaining({ items: [expect.objectContaining({ thumbnailUrl: undefined })] }),
+    );
+    expect(harness.controller.items[0]?.thumbnailUrl).toBe('blob:work-cover');
+    await act(async () => harness.renderer.unmount());
+  });
+
   it('opens a source at its persisted account-specific default folder', async () => {
     const harness = await createHarness({
       downloadedContent: '기존 원격 원문',
@@ -312,6 +401,27 @@ describe('useExternalSourceController remote updates', () => {
     await act(async () => harness.renderer.unmount());
   });
 
+  it('opens a local serialized comic as a release list even without a remote collection link', async () => {
+    const chapters = [
+      testChapter(1, { documentSectionId: 'local:01', documentSectionTitle: '01화', documentSectionIndex: 1 }),
+      testChapter(2, { documentSectionId: 'local:02', documentSectionTitle: '02화', documentSectionIndex: 2 }),
+    ];
+    const harness = await createHarness({ downloadedContent: '기존 원격 원문', chapters });
+    const serialized = novel({ format: 'image_archive', documentSectionCount: 2, totalChapters: 2 });
+
+    await act(async () => {
+      await harness.controller.showLocalSeries(serialized);
+    });
+
+    expect(harness.controller.open).toBe(true);
+    expect(harness.controller.localSeriesNovel?.id).toBe(serialized.id);
+    expect(harness.controller.items).toMatchObject([
+      { title: '01화', importState: 'imported', localBookId: serialized.id },
+      { title: '02화', importState: 'imported', localBookId: serialized.id },
+    ]);
+    await act(async () => harness.renderer.unmount());
+  });
+
   it('opens a catalog work as a detail and chapter page without enabling folder pinning', async () => {
     const harness = await createHarness({ downloadedContent: '기존 원격 원문' });
     vi.mocked(harness.registry.listExternalSource).mockResolvedValueOnce({
@@ -349,6 +459,192 @@ describe('useExternalSourceController remote updates', () => {
     expect(harness.controller.items[0]).toEqual(expect.objectContaining({ title: '1화', importState: 'available' }));
     expect(harness.controller.currentLocationCanBeDefault).toBe(false);
     await act(async () => harness.renderer.unmount());
+  });
+
+  it('persists a catalog browse preference and restores it when reopening the source folder', async () => {
+    const preference: ExternalSourceCatalogPreference = {
+      id: 'external-source-catalog-preference::fixture.source::fixture-account::source:9',
+      connectorId: SOURCE_ID,
+      accountConnectionId: 'fixture-account',
+      parentRef: 'source:9',
+      browseMode: 'latest',
+      filterValues: { '0': 1 },
+      filters: [{ position: 0, value: 1 }],
+      updatedAt: '2026-08-26T00:00:00.000Z',
+      schemaVersion: 1,
+    };
+    const harness = await createHarness({ downloadedContent: '기존 원격 원문', catalogPreference: preference });
+    vi.mocked(harness.registry.listExternalSource).mockResolvedValueOnce({
+      items: [],
+      browse: { activeMode: 'latest', availableModes: ['popular', 'latest', 'search'] },
+    });
+
+    await act(async () => {
+      await harness.controller.openFolder({
+        ...harness.controller.items[0]!,
+        kind: 'folder',
+        navigationRef: 'source:9',
+        importability: 'unsupported',
+        importState: 'unsupported',
+      });
+    });
+
+    expect(harness.registry.listExternalSource).toHaveBeenLastCalledWith(
+      SOURCE_ID,
+      expect.anything(),
+      expect.objectContaining({ parentRef: 'source:9', browseMode: 'latest', filters: [{ position: 0, value: 1 }] }),
+      expect.any(AbortSignal),
+    );
+    expect(harness.controller.filterValues).toEqual({ '0': 1 });
+    await act(async () => harness.renderer.unmount());
+  });
+
+  it('adds a work to the library, detects later releases and selects only the new releases', async () => {
+    const harness = await createHarness({ downloadedContent: '기존 원격 원문', supportsSubscriptions: true });
+    const chapter = (id: number, title: string) => ({
+      key: { ...ITEM_KEY, remoteId: `chapter:${id}` },
+      kind: 'file' as const,
+      title,
+      mimeType: 'application/vnd.comicbook+zip',
+      formatHint: 'CBZ',
+      collection: { remoteId: 'manga:1', title: '연동 작품' },
+      release: { title, chapterNumber: id },
+      importability: 'supported' as const,
+    });
+    vi.mocked(harness.registry.listExternalSource).mockResolvedValueOnce({
+      detail: { title: '연동 작품', author: '작가', sourceLabel: '테스트 소스' },
+      items: [chapter(11, '11화')],
+    });
+    await act(async () => {
+      await harness.controller.openItem({
+        ...harness.controller.items[0]!,
+        kind: 'work',
+        title: '연동 작품',
+        navigationRef: 'manga:1',
+        importability: 'unsupported',
+        importState: 'unsupported',
+      });
+      await harness.controller.addCurrentWorkToLibrary();
+    });
+
+    expect(harness.controller.activeSubscription).toMatchObject({
+      title: '연동 작품',
+      knownReleaseIds: ['chapter:11'],
+      newReleaseIds: [],
+    });
+    expect(harness.controller.libraryWorks).toEqual([
+      expect.objectContaining({ title: '연동 작품', thumbnailUrl: undefined }),
+    ]);
+    vi.mocked(harness.registry.listExternalSource).mockResolvedValueOnce({
+      detail: { title: '연동 작품', author: '작가', sourceLabel: '테스트 소스' },
+      items: [chapter(11, '11화'), chapter(12, '12화')],
+    });
+    await act(async () => {
+      await harness.controller.refresh();
+    });
+
+    expect(harness.controller.activeSubscription?.newReleaseIds).toEqual(['chapter:12']);
+    expect(harness.controller.sources[0]?.newReleaseCount).toBe(1);
+    act(() => harness.controller.selectNewReleases());
+    expect(harness.controller.items).toMatchObject([
+      { key: { remoteId: 'chapter:11' }, selected: false },
+      { key: { remoteId: 'chapter:12' }, selected: true },
+    ]);
+    await act(async () => {
+      await harness.controller.acknowledgeNewReleases();
+    });
+    expect(harness.controller.activeSubscription?.newReleaseIds).toEqual([]);
+    await act(async () => harness.renderer.unmount());
+  });
+
+  it('adds a browsed Suwayomi work to the library without opening its detail screen', async () => {
+    const harness = await createHarness({ downloadedContent: '기존 원격 원문', supportsSubscriptions: true });
+    vi.mocked(harness.registry.listExternalSource).mockResolvedValueOnce({
+      detail: {
+        title: '원클릭 작품',
+        author: '작가',
+        thumbnailUrl: 'http://localhost:4567/cover.jpg',
+        sourceLabel: '테스트 소스',
+      },
+      items: [
+        {
+          key: { ...ITEM_KEY, remoteId: 'chapter:1' },
+          kind: 'file',
+          title: '1화',
+          collection: { remoteId: 'manga:quick', title: '원클릭 작품' },
+          release: { title: '1화', chapterNumber: 1 },
+          importability: 'supported',
+        },
+      ],
+    });
+
+    await act(async () => {
+      await harness.controller.addWorkToLibrary({
+        key: { ...ITEM_KEY, remoteId: 'manga:quick' },
+        kind: 'work',
+        title: '원클릭 작품',
+        navigationRef: 'manga:quick',
+        importability: 'unsupported',
+        selected: false,
+        importState: 'unsupported',
+      });
+    });
+
+    expect(harness.controller.detail).toBeUndefined();
+    expect(harness.controller.libraryWorks).toEqual([
+      expect.objectContaining({
+        title: '원클릭 작품',
+        thumbnailUrl: 'http://localhost:4567/cover.jpg',
+        knownReleaseIds: ['chapter:1'],
+      }),
+    ]);
+    expect(harness.notify).toHaveBeenCalledWith(expect.stringContaining('라이브러리에 추가했습니다'), 'success');
+    await act(async () => harness.renderer.unmount());
+  });
+
+  it('stores a session-only Suwayomi cover as persistent local image data when adding a work', async () => {
+    const harness = await createHarness({ downloadedContent: '기존 원격 원문', supportsSubscriptions: true });
+    const previousFetch = globalThis.fetch;
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(
+        async () =>
+          new Response(new Uint8Array([1, 2, 3]), {
+            status: 200,
+            headers: { 'Content-Type': 'image/png' },
+          }),
+      ),
+    );
+    vi.mocked(harness.registry.listExternalSource).mockResolvedValueOnce({
+      detail: {
+        title: '표지 저장 작품',
+        thumbnailUrl: 'blob:work-cover',
+        sourceLabel: '테스트 소스',
+      },
+      items: [],
+    });
+
+    try {
+      await act(async () => {
+        await harness.controller.addWorkToLibrary({
+          key: { ...ITEM_KEY, remoteId: 'manga:cover' },
+          kind: 'work',
+          title: '표지 저장 작품',
+          navigationRef: 'manga:cover',
+          importability: 'unsupported',
+          selected: false,
+          importState: 'unsupported',
+        });
+      });
+
+      expect(harness.controller.libraryWorks[0]?.thumbnailUrl).toBe('data:image/png;base64,AQID');
+      expect(harness.state.saveSubscription).toHaveBeenCalledWith(
+        expect.objectContaining({ thumbnailUrl: 'data:image/png;base64,AQID' }),
+      );
+    } finally {
+      vi.stubGlobal('fetch', previousFetch);
+      await act(async () => harness.renderer.unmount());
+    }
   });
 
   it('advances only the checked link revision when exact source bytes did not change', async () => {
@@ -410,12 +706,35 @@ describe('useExternalSourceController remote updates', () => {
       expect.objectContaining({ clientBookId: 'book-1' }),
       expect.any(Function),
     );
-    expect(harness.saveLink).not.toHaveBeenCalled();
+    expect(harness.saveLink).toHaveBeenCalled();
     expect(harness.currentLink).toMatchObject({
       importedRemoteRevision: 'remote-r1',
       activeContentRevisionId: 'content-old',
     });
+    expect(harness.currentLink.pendingImport).toBeUndefined();
     expect(harness.notify).toHaveBeenCalledWith(expect.stringContaining('기존 본문과 연결을 유지했습니다'), 'warning');
+    await act(async () => harness.renderer.unmount());
+  });
+
+  it('keeps the activated content link when the post-import refresh read fails', async () => {
+    const sourceContentHash = await sha256('적용 뒤 조회가 실패할 원문');
+    const harness = await createHarness({
+      downloadedContent: '적용 뒤 조회가 실패할 원문',
+      importedContent: novel({ sourceContentHash, activeContentRevisionId: 'content-new' }),
+      getNovelErrorAfterImport: true,
+    });
+
+    await act(async () => {
+      await harness.controller.importSelected();
+    });
+
+    expect(harness.currentLink).toMatchObject({
+      importedRemoteRevision: 'remote-r2',
+      importedSourceContentHash: sourceContentHash,
+      activeContentRevisionId: 'content-new',
+    });
+    expect(harness.currentLink.pendingImport).toBeUndefined();
+    expect(harness.notify).toHaveBeenCalledWith(expect.stringContaining('본문을 업데이트했습니다'), 'success');
     await act(async () => harness.renderer.unmount());
   });
 
@@ -429,8 +748,9 @@ describe('useExternalSourceController remote updates', () => {
       await harness.controller.importSelected();
     });
 
-    expect(harness.saveLink).not.toHaveBeenCalled();
+    expect(harness.saveLink).toHaveBeenCalled();
     expect(harness.currentLink.importedRemoteRevision).toBe('remote-r1');
+    expect(harness.currentLink.pendingImport).toBeUndefined();
     expect(harness.notify).toHaveBeenCalledWith(
       '가져오기를 취소했습니다. 취소된 작품은 기존 본문과 연결을 유지합니다.',
       'warning',

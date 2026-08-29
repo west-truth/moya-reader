@@ -45,8 +45,10 @@
 - PDF 원문 텍스트와 OCR 보조, 검색·선택·주석·TTS
 - 연속 스크롤, 페이지 보기, 양면 보기와 우→좌 만화 진행
 - 시스템 음성, 선택형 서버 TTS, 캐시와 전역 미니 플레이어
-- 원본 파일 다운로드, 백업·복원과 개인 서버 동기화
+- 원본 파일 다운로드, 백업·복원, Dropbox Cloud Vault 기반 기기 간 동기화
 - 연결된 Dropbox, Google Drive 선택 파일과 Suwayomi/Mihon source를 탐색하는 Source Hub
+- 연재 작품 단위 회차 누적, 로컬 회차 추가와 압축 파일 안의 TXT·EPUB 묶음 가져오기
+- 선택형 self-host 수집기를 통한 웹소설 표지·작품 정보 자동 보강
 - 켜고 끌 수 있는 bundled 신뢰 익스텐션과 선택형 AI 화자 분석·등장인물별 음성 설정
 
 브라우저 화면은 외부 AI/TTS 서비스에 직접 요청하지 않습니다. 외부 provider를 사용할 때는 서버 worker 또는
@@ -259,7 +261,8 @@ docker compose logs --tail=100 api worker
 ## WireGuard·LAN·인터넷에서 접속하기
 
 기본 Compose는 안전을 위해 웹 UI와 MinIO Console을 `127.0.0.1`에만 엽니다. WireGuard, LAN 또는 인터넷의
-다른 기기에서 접속하려면 HTTPS reverse proxy를 사용하고 public override로 Bearer 인증을 켭니다.
+다른 기기에서 접속하려면 HTTPS reverse proxy와 public override를 사용합니다. 첫 브라우저에서만 긴
+`READER_AUTH_TOKEN`을 초기 설정 코드로 입력해 소유자 계정을 만들고, 이후 기기는 아이디·비밀번호로 로그인합니다.
 
 먼저 긴 token을 만듭니다.
 
@@ -302,9 +305,23 @@ Ubuntu nginx를 사용한다면 [`deploy/host-nginx.example.conf`](deploy/host-n
 `wg0`만 허용하면 됩니다.
 
 reverse proxy가 같은 서버에서 실행된다면 `WEB_BIND_ADDRESS=127.0.0.1`을 유지하십시오. PostgreSQL, Redis,
-MinIO API, TTS 서비스 포트를 직접 열면 안 됩니다. 처음 웹 화면을 열면 동기화 패널에 같은 Bearer token을
-저장하십시오. 연결 검사는 공개 `/ready`와 보호된 sync API를 모두 확인하며, token 저장 뒤 실패한 책장은
-자동으로 다시 불러옵니다.
+MinIO API, TTS 서비스 포트를 직접 열면 안 됩니다. 첫 접속에서는 `READER_AUTH_TOKEN`을 초기 설정 코드로
+사용해 소유자 계정을 만들고, 이후에는 30일 HttpOnly 세션으로 자동 로그인됩니다. 토큰은 자동화와 비상
+복구용으로만 보관하며 각 브라우저에 반복 저장하지 않습니다.
+
+### 선택 기능: 웹소설 표지·작품 정보
+
+`설정 → 익스텐션 → 웹소설 표지·작품 정보`를 self-host Web에서도 사용하려면 수집기 override를 추가합니다.
+
+```bash
+docker compose -f compose.yaml -f compose.metadata-collector.yaml up -d --build
+```
+
+외부 접속 구성에서는 `compose.public.yaml` 뒤에 같은 override를 추가합니다. 수집기는 호스트 포트를 열지 않고
+기존 Moya `/api`를 통해서만 접근합니다. 19세 인증 검색이 필요할 때만 Chromium이 포함된
+`compose.metadata-collector-auth.yaml`을 마지막에 추가하십시오. 기본 Reader·동기화·공개 메타데이터 검색은
+인증용 override 없이 동작합니다. 자세한 설정과 보안 경계는
+[Docker Compose 한국어 가이드](docs/operations/docker-compose-guide-ko.md)를 참고하십시오.
 
 ### 선택 기능: Suwayomi/Mihon source
 
@@ -502,15 +519,15 @@ curl http://127.0.0.1:8080/ready
 
 ## 현재 제한 사항
 
-- 인증은 개인용 단일 bearer token 방식입니다.
+- 인증은 개인용 소유자 계정 하나만 지원하며 다중 사용자·권한 분리는 제공하지 않습니다.
 - DRM이 적용된 EPUB/PDF는 지원하지 않습니다.
 - RAR/7z는 단일 볼륨 중심이며 매우 큰 solid archive와 암호화 archive는 추가 검증이 필요합니다.
 - OCR 정확도와 처리 시간은 스캔 품질, 언어 data와 서버 자원에 따라 달라집니다.
 - CPU MeloTTS는 상용 cloud TTS보다 느릴 수 있습니다.
 - 현재 익스텐션은 소스와 함께 검토·빌드되는 trusted 기능입니다. 임의 community package 설치·sandbox는 아직
   제공하지 않습니다.
-- Suwayomi v1은 회차 한 개를 Library의 CBZ 문서 한 개로 가져옵니다. 여러 회차를 한 작품 아래 누적하는
-  serial-comic 모델은 후속 작업입니다.
+- Suwayomi/Mihon 연동은 별도 Suwayomi Server가 필요하며 source별 검색·필터 품질은 해당 source 구현에
+  영향을 받습니다.
 - 인터넷 공개 운영에는 HTTPS, 방화벽, 접근 통제, monitoring과 복구가 검증된 backup이 필요합니다.
 - 데스크톱 installer와 signed Android package는 아직 공개 배포되지 않았습니다.
 

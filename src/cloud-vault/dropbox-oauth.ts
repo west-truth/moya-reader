@@ -5,6 +5,7 @@ const CALLBACK_CHANNEL = 'noveldesk-dropbox-oauth-callback-channel';
 const POPUP_NAME = 'noveldesk-dropbox-oauth';
 const REDIRECT_PENDING_KEY = 'noveldesk.dropbox.oauth.redirect.v1';
 const REDIRECT_PENDING_MAX_AGE_MS = 10 * 60 * 1_000;
+export const DESKTOP_DROPBOX_REDIRECT_URI = 'http://127.0.0.1:53682/oauth/dropbox';
 let redirectCompletionPromise: Promise<DropboxCredential | undefined> | undefined;
 
 export interface DropboxOAuthCallbackMessage {
@@ -40,14 +41,18 @@ async function prepareDropboxAuthorization(input: {
   readonly appKey: string;
   readonly redirectUri?: string;
   readonly scopes?: readonly string[];
+  readonly allowDesktopRedirect?: boolean;
 }): Promise<{ authorizeUrl: string; state: string; verifier: string; redirectUri: string }> {
   const redirectUri = input.redirectUri ?? defaultDropboxRedirectUri();
   if (!redirectUri) throw new Error('Dropbox OAuth currently requires an HTTP or HTTPS web origin.');
   const parsedRedirectUri = new URL(redirectUri);
-  if (
-    !['http:', 'https:'].includes(parsedRedirectUri.protocol) ||
-    parsedRedirectUri.origin !== globalThis.location.origin
-  ) {
+  const currentLocation = globalThis.location;
+  const currentOriginRedirect =
+    Boolean(currentLocation) &&
+    ['http:', 'https:'].includes(parsedRedirectUri.protocol) &&
+    parsedRedirectUri.origin === currentLocation.origin;
+  const desktopRedirect = input.allowDesktopRedirect && redirectUri === DESKTOP_DROPBOX_REDIRECT_URI;
+  if (!currentOriginRedirect && !desktopRedirect) {
     throw new Error('Dropbox OAuth redirect must use the current web origin.');
   }
   const verifier = randomValue(48);
@@ -66,6 +71,50 @@ async function prepareDropboxAuthorization(input: {
   }
   if (scopes.length > 0) authorize.searchParams.set('scope', scopes.join(' '));
   return { authorizeUrl: authorize.toString(), state, verifier, redirectUri };
+}
+
+interface DesktopDropboxOAuthCallback {
+  readonly accessToken: string;
+  readonly refreshToken?: string;
+  readonly expiresIn?: number;
+  readonly accountId: string;
+}
+
+/** Uses the operating-system browser and a fixed loopback callback in packaged desktop builds. */
+export async function connectDropboxWithDesktopBrowser(input: {
+  readonly appKey: string;
+  readonly scopes?: readonly string[];
+  readonly fetchImpl?: typeof fetch;
+}): Promise<DropboxCredential> {
+  const prepared = await prepareDropboxAuthorization({
+    ...input,
+    redirectUri: DESKTOP_DROPBOX_REDIRECT_URI,
+    allowDesktopRedirect: true,
+  });
+  const { invoke } = await import('@tauri-apps/api/core');
+  const credential = await invoke<DesktopDropboxOAuthCallback>('desktop_dropbox_oauth_authorize', {
+    authorizeUrl: prepared.authorizeUrl,
+    expectedState: prepared.state,
+    codeVerifier: prepared.verifier,
+  });
+  if (!credential.accessToken || !credential.accountId) {
+    throw new Error('Dropbox authorization did not return an account.');
+  }
+  if (
+    credential.expiresIn !== undefined &&
+    (!Number.isSafeInteger(credential.expiresIn) || credential.expiresIn <= 0 || credential.expiresIn > 31_536_000)
+  ) {
+    throw new Error('Dropbox token expiry is invalid.');
+  }
+  return {
+    accessToken: credential.accessToken,
+    refreshToken: credential.refreshToken,
+    expiresAt:
+      credential.expiresIn === undefined
+        ? undefined
+        : new Date(Date.now() + credential.expiresIn * 1_000).toISOString(),
+    accountId: credential.accountId,
+  };
 }
 
 function cleanDropboxCallbackQuery(): void {

@@ -1,7 +1,7 @@
 # Docker Compose deployment
 
 Status: current
-Last verified: 2026-08-24
+Last verified: 2026-08-29
 
 This is the operational reference for the self-host web/API/worker stack. The default deployment is intentionally
 loopback-only. Public exposure requires the fail-closed override and a separate TLS-terminating reverse proxy.
@@ -38,8 +38,8 @@ Named volumes that must not be removed casually:
 - `redis-data`
 - `minio-data`
 - `server-data`
+- `metadata-collector-data` when the optional metadata collector is enabled
 - `local-tts-models` when the optional local TTS override is used
-- `suwayomi-data` when the optional Suwayomi/Mihon source override is used
 
 `server-data` contains active resumable upload chunks and, when `PROVIDER_SECRET_ENCRYPTION_KEY` is empty, the generated
 key that decrypts hosted provider secrets. Successful imports delete their temporary chunks immediately. Failed upload
@@ -84,6 +84,66 @@ Intermediate BullMQ attempts remain queued/retrying in PostgreSQL and only the f
 Redis queue, object storage, and a fresh worker heartbeat. This separation lets the worker start without a dependency
 cycle while preventing uploads from looking ready when no process can consume them.
 
+## Optional webnovel cover and metadata collector
+
+Enable the trusted `웹소설 표지·작품 정보` extension in self-host Web with the optional Compose override:
+
+```bash
+docker compose -f compose.yaml -f compose.metadata-collector.yaml config --quiet
+docker compose -f compose.yaml -f compose.metadata-collector.yaml up -d --build
+```
+
+For public ingress, append the same override after `compose.public.yaml`; no collector-specific proxy setting is
+added.
+
+```bash
+docker compose -f compose.yaml -f compose.public.yaml -f compose.metadata-collector.yaml up -d --build
+```
+
+The override starts a non-root Python service without a host port and sets only the API container's internal
+`WEBNOVEL_METADATA_COLLECTOR_URL`. Browser code calls the authenticated same-origin
+`/api/integrations/webnovel-metadata` gateway. The gateway allowlists health, resolve, batch-resolve and bounded cover
+download routes; it never forwards the browser cookie or Authorization header to the Python service.
+
+This path is independent of the outer TLS proxy. Nginx Proxy Manager, Caddy, Traefik, host nginx or direct loopback
+access all use the existing Moya Web ingress and `/api` route. Do not expose port 8000, create a collector domain or
+put the internal service URL in `runtime-config.js`. Without the override, the gateway returns a bounded 503 only for
+the extension and the rest of Moya remains available.
+
+The default container installs the public metadata dependencies only and deliberately reports adult authentication
+unavailable. Deployments that need authenticated 19+ search can add the separate auth layer after the core collector:
+
+```bash
+docker compose \
+  -f compose.yaml \
+  -f compose.metadata-collector.yaml \
+  -f compose.metadata-collector-auth.yaml \
+  up -d --build
+```
+
+For public ingress, insert `compose.public.yaml` after `compose.yaml` and keep the two collector overrides in the order
+shown. The auth image adds Playwright, Chromium and Xvfb, uses 1 GiB shared memory and defaults to a 1536 MiB container
+limit. It is intentionally not part of the base or public-metadata profile.
+
+The user operates the dedicated browser through bounded JPEG frames and allowlisted click, text, key, scroll and basic
+navigation actions under the existing authenticated Moya API. It does not add a host port, domain, WebSocket or proxy
+route. Browser cookies and Moya Authorization/session headers are never forwarded between those boundaries. Login
+keystrokes do traverse the user's Moya connection to the dedicated browser, so use trusted loopback/WireGuard or HTTPS,
+not plaintext HTTP over an untrusted network. Moya does not persist those inputs in application settings or the server
+database.
+
+The collector is attached to a dedicated bridge network rather than the database/Redis/MinIO network. Remote-browser
+requests reject non-Web URLs, single-label/internal hosts, literal or DNS-resolved non-global addresses; service workers
+and WebSockets are disabled for that profile. The API remains dual-homed only so its bounded gateway can reach the
+collector. This is application defense in depth, not a substitute for host firewall/egress policy when the Docker host
+can reach sensitive private networks.
+
+The browser profile and cookies remain in the private `metadata-collector-data` volume. They are not Cloud Vault data
+and are not included in ordinary device sync. Current self-host scope is one owner account and one collector profile.
+`Login complete` enables the platform but is not proof that its session or adult verification succeeded; live-account
+search still needs operator verification. Use the extension's session-delete action before transferring or retiring a
+server.
+
 ## Optional Korean local TTS
 
 Start the core stack first. Build the optional model separately, then apply the override only after that build succeeds:
@@ -124,7 +184,7 @@ source commit but does not redistribute the downloaded model in the default web/
 
 ## Public HTTPS deployment
 
-Do not expose the base stack by merely changing `WEB_BIND_ADDRESS`. Set a long random token, then use the public
+Do not expose the base stack by merely changing `WEB_BIND_ADDRESS`. Set a long random owner-setup/recovery token, then use the public
 override behind Caddy, nginx, Traefik or another TLS proxy on the same host:
 
 Set these values in `.env`:
@@ -140,31 +200,20 @@ Then run `docker compose -f compose.yaml -f compose.public.yaml config --quiet` 
 `docker compose -f compose.yaml -f compose.public.yaml up -d --build`.
 
 The public override sets `SERVER_EXPOSURE=external` and uses required-variable interpolation, so Compose fails before
-startup when the bearer token, PostgreSQL password or MinIO credentials are absent. The API derives its internal
+startup when the one-time owner setup/recovery token, PostgreSQL password or MinIO credentials are absent. The API derives its internal
 database and object-storage credentials from those same required values unless explicit external infrastructure values
 are supplied. A web UI and `/api` served from the same host are accepted as same-origin without a CORS entry. Set
 `CORS_ALLOWED_ORIGINS` only for an actual cross-origin browser client. Keep
-`WEB_BIND_ADDRESS=127.0.0.1` when the TLS reverse proxy runs on the same host. Save the same bearer token in the Moya
-sync/server connection panel; saving it retries a failed first bootstrap automatically.
+`WEB_BIND_ADDRESS=127.0.0.1` when the TLS reverse proxy runs on the same host. On the first browser only, enter the
+`READER_AUTH_TOKEN` as the setup code and create the single owner username/password. Later devices use that account and
+receive a 30-day `HttpOnly; Secure; SameSite=Strict` session cookie, so the recovery token is not copied into each browser.
+Create the owner account before exposing a new DNS name beyond loopback or the private WireGuard boundary.
 
 The Ubuntu host nginx reference is [`deploy/host-nginx.example.conf`](../../deploy/host-nginx.example.conf). It proxies
 only to `127.0.0.1:8080`, allows 32 MiB ordinary requests and 512 MiB backup archives, disables request buffering for
 uploads/backups, and preserves the public scheme. Replace its domain and certificate paths, validate with `nginx -t`,
 then reload nginx. Moya browser uploads use 2 MiB resumable chunks, so the committed 32 MiB ordinary-request limit is
 required; nginx's usual 1 MiB default is not sufficient.
-For WireGuard-only access, bind nginx to the server's WireGuard address or allow 443 only on `wg0`; do not publish
-Compose port 8080 or the storage/database ports to the VPN or public interfaces.
-
-### Browser-visible runtime configuration
-
-The Web container generates `/runtime-config.js` on every start from an explicit allowlist: Dropbox app identifiers,
-Google Drive OAuth/Picker identifiers, and the default Suwayomi origin. This lets a self-host change those public values
-without rebuilding the image. Nginx marks the file `no-store`, the service worker bypasses it, and the application loads
-it before its module bundle.
-
-Only the `MOYA_DROPBOX_*`, `MOYA_GOOGLE_DRIVE_*`, and `MOYA_SUWAYOMI_DEFAULT_URL` values documented in `.env.example`
-belong in this boundary. Never add an app/client secret, Reader bearer token, provider credential or arbitrary process
-environment value. Local Vite/Tauri development retains the corresponding `VITE_*` fallbacks.
 
 To combine public deployment and local TTS, keep the same core-first boundary:
 
@@ -173,28 +222,6 @@ docker compose -f compose.yaml -f compose.public.yaml up -d --build
 docker compose -f compose.yaml -f compose.public.yaml -f compose.local-tts.yaml build tts-model
 docker compose -f compose.yaml -f compose.public.yaml -f compose.local-tts.yaml up -d --no-build
 ```
-
-## Optional Suwayomi/Mihon source runtime
-
-`compose.suwayomi.yaml` adds the official stable Suwayomi Server as a compatibility runtime for Mihon sources already
-installed by the operator. It publishes no host port. Moya Web and Suwayomi join a pre-created external Docker network
-used by Nginx Proxy Manager and expose the default aliases `moya-web:80` and `moya-suwayomi:4567` there.
-
-Set explicit `SUWAYOMI_AUTH_USERNAME` and `SUWAYOMI_AUTH_PASSWORD`; the overlay fails during Compose interpolation when
-either is absent. The default `ui_login` mode persists sealed tokens in Moya. `basic_auth` is also supported, but its
-password remains session-only in the browser. Suwayomi data lives under the `suwayomi-data` named volume at the
-official container data path. The overlay intentionally does not force an extension-store environment value, so the
-WebUI-owned setting survives container recreation.
-
-```bash
-docker network create npm_proxy # omit when it already exists
-docker compose -f compose.yaml -f compose.public.yaml -f compose.suwayomi.yaml config --quiet
-docker compose -f compose.yaml -f compose.public.yaml -f compose.suwayomi.yaml up -d --build
-```
-
-Use a separate trusted HTTPS origin for Suwayomi and set it as `MOYA_SUWAYOMI_DEFAULT_URL`. Subpath hosting is not
-supported by the current root-relative GraphQL/chapter contract. The complete Nginx Proxy Manager, WireGuard, OAuth
-origin and update example is [Nginx Proxy Manager + WireGuard deployment](nginx-proxy-manager-wireguard.md).
 
 ## Vertex credentials
 
@@ -235,7 +262,6 @@ Static/config checks:
 pnpm check:hosted
 docker compose config --quiet
 docker compose -f compose.yaml -f compose.local-tts.yaml config --quiet
-docker compose -f compose.yaml -f compose.public.yaml -f compose.suwayomi.yaml config --quiet
 pnpm check:hosted:e2e -- --public
 ```
 

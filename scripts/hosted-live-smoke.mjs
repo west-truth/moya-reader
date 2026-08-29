@@ -181,16 +181,51 @@ async function verifyProtectedApiBoundary() {
   });
   assert(publicReady.ok, `public readiness without a token returned ${publicReady.status}`);
   const endpoint = joinUrl(apiBaseUrl, '/sync/capabilities');
-  const unauthenticated = await fetch(endpoint, { headers: browserOrigin ? { Origin: browserOrigin } : undefined });
-  assert(
-    unauthenticated.status === 401,
-    `protected API without a token returned ${unauthenticated.status}, expected 401`,
-  );
+  const publicHeaders = browserOrigin ? { Origin: browserOrigin } : undefined;
+  const statusResponse = await fetch(joinUrl(apiBaseUrl, '/auth/status'), { headers: publicHeaders });
+  assert(statusResponse.ok, `owner account status returned ${statusResponse.status}`);
+  const accountStatus = await statusResponse.json();
+
+  let unauthenticated = await fetch(endpoint, { headers: publicHeaders });
+  if (accountStatus.setupRequired === true) {
+    assert(
+      unauthenticated.status === 503,
+      `protected API before owner setup returned ${unauthenticated.status}, expected 503`,
+    );
+    const setupFailure = await unauthenticated.json();
+    assert(setupFailure.error === 'account_setup_required', 'pre-setup protected API did not explain owner setup');
+
+    const registration = await fetch(joinUrl(apiBaseUrl, '/auth/register'), {
+      method: 'POST',
+      headers: { ...publicHeaders, 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        username: 'moya-ci-owner',
+        displayName: 'Moya CI Owner',
+        password: 'moya-ci-owner-password',
+        setupCode: authToken,
+      }),
+    });
+    const registrationText = await registration.text();
+    assert(
+      registration.status === 201,
+      `owner account registration returned ${registration.status}: ${registrationText}`,
+    );
+    const cookie = registration.headers.get('set-cookie')?.split(';', 1)[0];
+    assert(cookie, 'owner account registration did not issue a session cookie');
+    const session = await fetch(joinUrl(apiBaseUrl, '/auth/session'), {
+      headers: { ...publicHeaders, Cookie: cookie },
+    });
+    assert(session.ok, `owner session cookie probe returned ${session.status}`);
+    unauthenticated = await fetch(endpoint, { headers: publicHeaders });
+    console.log('ok created the owner account and restored its session cookie');
+  }
+
+  assert(unauthenticated.status === 401, `protected API without a session returned ${unauthenticated.status}`);
   const wrongToken = await fetch(endpoint, {
     headers: authHeaders({ Authorization: `Bearer ${authToken}-wrong` }),
   });
   assert(wrongToken.status === 401, `protected API with a wrong token returned ${wrongToken.status}, expected 401`);
-  console.log('ok readiness is public and protected API rejects missing and incorrect bearer tokens');
+  console.log('ok readiness is public and protected API rejects missing sessions and incorrect recovery tokens');
 }
 
 function syncPullPath(since) {

@@ -283,4 +283,266 @@ describe('cloud vault merge', () => {
     expect(merged.books[0]?.chapters.map((item) => item.id)).toEqual(['chapter-local', 'chapter-remote']);
     expect(merged.books[0]?.paragraphs.map((item) => item.id)).toEqual(['paragraph-local', 'paragraph-remote']);
   });
+
+  it('keeps one stable book across content hash revisions and promotes a legacy hash match', () => {
+    const older = '2026-08-01T00:00:00.000Z';
+    const newer = '2026-08-02T00:00:00.000Z';
+    const remoteBook = {
+      ...book({ updatedAt: older }),
+      identity: {
+        ...book({ updatedAt: older }).identity,
+        vaultBookId: 'vault-shared',
+        normalizedTextHash: 'old-content-hash',
+      },
+    };
+    const localBook = {
+      ...book({ updatedAt: newer }),
+      identity: {
+        ...book({ updatedAt: newer }).identity,
+        vaultBookId: 'vault-shared',
+        normalizedTextHash: 'new-content-hash',
+      },
+    };
+    const merged = mergeCloudVaultSnapshots(snapshot('local', localBook), snapshot('remote', remoteBook), newer);
+    expect(merged.books).toHaveLength(1);
+    expect(merged.books[0]?.identity).toMatchObject({
+      vaultBookId: 'vault-shared',
+      normalizedTextHash: 'new-content-hash',
+    });
+
+    const legacyLocal = book({ updatedAt: newer });
+    const promoted = mergeCloudVaultSnapshots(
+      snapshot('local', legacyLocal),
+      snapshot('remote', {
+        ...book({ updatedAt: older }),
+        identity: { ...book({ updatedAt: older }).identity, vaultBookId: 'vault-established' },
+      }),
+      newer,
+    );
+    expect(promoted.books).toHaveLength(1);
+    expect(promoted.books[0]?.identity.vaultBookId).toBe('vault-established');
+  });
+
+  it('selects body ownership independently from newer library metadata', () => {
+    const older = '2026-08-01T00:00:00.000Z';
+    const middle = '2026-08-02T00:00:00.000Z';
+    const newer = '2026-08-03T00:00:00.000Z';
+    const localNewBody: CloudVaultBookV1 = {
+      ...book({ updatedAt: older }),
+      identity: {
+        ...book({ updatedAt: older }).identity,
+        vaultBookId: 'vault-shared',
+        normalizedTextHash: 'new-body',
+        title: 'old metadata title',
+      },
+      revisions: {
+        ...book({ updatedAt: older }).revisions,
+        contentAt: newer,
+        contentDeviceId: 'device-a',
+      },
+      chapters: [{ id: 'chapter-new', index: 0, title: 'new', textHash: 'new-chapter' }],
+      sourceObject: {
+        kind: 'source',
+        objectKey: `content/v1/sha256/${'a'.repeat(64)}`,
+        contentHash: `sha256:${'a'.repeat(64)}`,
+        byteLength: 10,
+        contentType: 'text/plain',
+        fileName: 'new.txt',
+      },
+    };
+    const remoteNewMetadata: CloudVaultBookV1 = {
+      ...book({ updatedAt: middle }),
+      identity: {
+        ...book({ updatedAt: middle }).identity,
+        vaultBookId: 'vault-shared',
+        normalizedTextHash: 'old-body',
+        title: 'new metadata title',
+      },
+      revisions: {
+        ...book({ updatedAt: middle }).revisions,
+        contentAt: older,
+        contentDeviceId: 'device-b',
+      },
+      chapters: [{ id: 'chapter-old', index: 0, title: 'old', textHash: 'old-chapter' }],
+      sourceObject: {
+        kind: 'source',
+        objectKey: `content/v1/sha256/${'b'.repeat(64)}`,
+        contentHash: `sha256:${'b'.repeat(64)}`,
+        byteLength: 9,
+        contentType: 'text/plain',
+        fileName: 'old.txt',
+      },
+    };
+
+    const merged = mergeCloudVaultSnapshots(
+      snapshot('device-a', localNewBody),
+      snapshot('device-b', remoteNewMetadata),
+      newer,
+    );
+
+    expect(merged.books[0]?.identity).toMatchObject({
+      title: 'new metadata title',
+      normalizedTextHash: 'new-body',
+    });
+    expect(merged.books[0]?.revisions).toMatchObject({ contentAt: newer, contentDeviceId: 'device-a' });
+    expect(merged.books[0]?.chapters.map((chapter) => chapter.id)).toEqual(['chapter-new']);
+    expect(merged.books[0]?.sourceObject?.fileName).toBe('new.txt');
+  });
+
+  it('uses the content clock for newer raw sources even when normalized text is unchanged', () => {
+    const older = '2026-08-01T00:00:00.000Z';
+    const newer = '2026-08-02T00:00:00.000Z';
+    const local: CloudVaultBookV1 = {
+      ...book({ updatedAt: older }),
+      identity: { ...book({ updatedAt: older }).identity, vaultBookId: 'vault-shared', format: 'epub' },
+      revisions: {
+        ...book({ updatedAt: older }).revisions,
+        contentAt: newer,
+        contentDeviceId: 'device-new-source',
+      },
+      chapters: [{ id: 'chapter-local', index: 0, title: 'local', textHash: 'same-chapter' }],
+      sourceObject: {
+        kind: 'source',
+        objectKey: `content/v1/sha256/${'c'.repeat(64)}`,
+        contentHash: `sha256:${'c'.repeat(64)}`,
+        byteLength: 12,
+        contentType: 'application/epub+zip',
+        fileName: 'updated.epub',
+      },
+    };
+    const remote: CloudVaultBookV1 = {
+      ...book({ updatedAt: newer }),
+      identity: { ...book({ updatedAt: newer }).identity, vaultBookId: 'vault-shared', format: 'txt' },
+      revisions: {
+        ...book({ updatedAt: newer }).revisions,
+        contentAt: older,
+        contentDeviceId: 'device-old-source',
+      },
+      chapters: [{ id: 'chapter-remote', index: 0, title: 'remote', textHash: 'same-chapter' }],
+      sourceObject: {
+        kind: 'source',
+        objectKey: `content/v1/sha256/${'d'.repeat(64)}`,
+        contentHash: `sha256:${'d'.repeat(64)}`,
+        byteLength: 9,
+        contentType: 'text/plain',
+        fileName: 'old.txt',
+      },
+    };
+
+    const merged = mergeCloudVaultSnapshots(snapshot('local', local), snapshot('remote', remote), newer);
+
+    expect(merged.books[0]?.identity.format).toBe('epub');
+    expect(merged.books[0]?.sourceObject?.fileName).toBe('updated.epub');
+    expect(merged.books[0]?.chapters.map((chapter) => chapter.id)).toEqual(['chapter-local', 'chapter-remote']);
+
+    const pendingUpload = mergeCloudVaultSnapshots(
+      snapshot('local', { ...local, sourceObject: undefined }),
+      snapshot('remote', remote),
+      newer,
+    );
+    expect(pendingUpload.books[0]?.sourceObject).toBeUndefined();
+  });
+
+  it('merges listening position by its own clock', () => {
+    const older = '2026-08-01T00:00:00.000Z';
+    const newer = '2026-08-02T00:00:00.000Z';
+    const position = (updatedAt: string, pageIndex: number) => ({
+      id: 'listening-position',
+      bookId: 'book-a',
+      chapterId: 'chapter-a',
+      anchor: { kind: 'fixed_page' as const, bookId: 'book-a', pageIndex, pageHash: `page-${pageIndex}` },
+      queueItemFingerprint: `queue-${pageIndex}`,
+      contentRevisionId: 'revision-a',
+      settingsFingerprint: 'settings-a',
+      deviceId: 'device-a',
+      updatedAt,
+    });
+    const local = snapshot('local', { ...book({ updatedAt: newer }), listeningPosition: position(newer, 2) });
+    const remote = snapshot('remote', { ...book({ updatedAt: older }), listeningPosition: position(older, 1) });
+
+    expect(mergeCloudVaultSnapshots(local, remote, newer).books[0]?.listeningPosition?.anchor).toMatchObject({
+      pageIndex: 2,
+    });
+  });
+
+  it('propagates book and cover deletion while allowing a newer restore or replacement', () => {
+    const older = '2026-08-01T00:00:00.000Z';
+    const deletedAt = '2026-08-02T00:00:00.000Z';
+    const restoredAt = '2026-08-03T00:00:00.000Z';
+    const withCover = {
+      ...book({ updatedAt: older }),
+      identity: { ...book({ updatedAt: older }).identity, vaultBookId: 'vault-a', coverUpdatedAt: older },
+      coverObject: {
+        kind: 'cover' as const,
+        objectKey: 'content/v1/sha256/cover',
+        contentHash: `sha256:${'a'.repeat(64)}`,
+        byteLength: 1,
+        contentType: 'image/png',
+        fileName: 'cover.png',
+      },
+    };
+    const remote = {
+      ...snapshot('remote', withCover),
+      books: [],
+      tombstones: [
+        {
+          id: 'book:vault-a',
+          entityType: 'book' as const,
+          entityId: 'vault-a',
+          vaultBookId: 'vault-a',
+          bookHash: 'same-book-hash',
+          deletedAt,
+        },
+        {
+          id: 'cover:vault-a',
+          entityType: 'cover' as const,
+          entityId: 'vault-a',
+          vaultBookId: 'vault-a',
+          bookHash: 'same-book-hash',
+          deletedAt,
+        },
+      ],
+    };
+    expect(mergeCloudVaultSnapshots(snapshot('local', withCover), remote, deletedAt).books).toEqual([]);
+
+    const restored = {
+      ...withCover,
+      identity: { ...withCover.identity, updatedAt: restoredAt, coverUpdatedAt: restoredAt },
+      revisions: { ...withCover.revisions, metadataAt: restoredAt },
+    };
+    const mergedRestore = mergeCloudVaultSnapshots(snapshot('local', restored), remote, restoredAt);
+    expect(mergedRestore.books).toHaveLength(1);
+    expect(mergedRestore.books[0]?.coverObject).toBeDefined();
+  });
+
+  it('keeps a shelf membership re-added after its deletion tombstone', () => {
+    const item = book({ updatedAt: '2026-08-01T00:00:00.000Z' });
+    const local = {
+      ...snapshot('local', item),
+      shelfMemberships: [
+        {
+          id: 'membership-a',
+          shelfId: 'shelf-a',
+          bookHash: item.identity.normalizedTextHash,
+          createdAt: '2026-08-03T00:00:00.000Z',
+        },
+      ],
+    };
+    const remote = {
+      ...snapshot('remote', item),
+      shelfMemberships: [],
+      tombstones: [
+        {
+          id: 'shelf_membership:membership-a',
+          entityType: 'shelf_membership' as const,
+          entityId: 'membership-a',
+          bookHash: item.identity.normalizedTextHash,
+          shelfId: 'shelf-a',
+          deletedAt: '2026-08-02T00:00:00.000Z',
+        },
+      ],
+    };
+
+    expect(mergeCloudVaultSnapshots(local, remote).shelfMemberships).toHaveLength(1);
+  });
 });

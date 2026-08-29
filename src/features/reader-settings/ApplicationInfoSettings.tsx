@@ -12,6 +12,7 @@ import {
 } from 'lucide-react';
 import packageMetadata from '../../../package.json';
 import type { PlatformRuntimeInfo, PlatformRuntimeKind, ProviderExecutionRuntimeKind } from '../../platform/runtime';
+import type { SelfHostAccount } from '../auth/self-host-auth-client';
 
 const archiveBackends = [
   {
@@ -40,6 +41,8 @@ const archiveBackends = [
 interface ApplicationInfoSettingsProps {
   readonly platformRuntime: PlatformRuntimeInfo;
   readonly providerExecutionRuntime: ProviderExecutionRuntimeKind;
+  readonly selfHostAccount?: SelfHostAccount;
+  readonly logoutSelfHostAccount?: () => Promise<void>;
 }
 
 interface RuntimeHelpItem {
@@ -168,6 +171,21 @@ export function ApplicationInfoSettings(props: ApplicationInfoSettingsProps) {
           </dl>
         </div>
       </section>
+
+      {props.selfHostAccount && props.logoutSelfHostAccount && (
+        <section aria-labelledby="self-host-account-title">
+          <h3 id="self-host-account-title">개인 서버 계정</h3>
+          <div className="application-info-account">
+            <div>
+              <strong>{props.selfHostAccount.displayName}</strong>
+              <span>@{props.selfHostAccount.username} · 이 기기에서 자동 로그인 중</span>
+            </div>
+            <button type="button" className="ghost-btn" onClick={() => void props.logoutSelfHostAccount?.()}>
+              로그아웃
+            </button>
+          </div>
+        </section>
+      )}
 
       <section aria-labelledby="platform-help-title">
         <h3 id="platform-help-title">플랫폼별 동작</h3>

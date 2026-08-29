@@ -1,0 +1,17 @@
+# Optional authenticated-search layer for compose.metadata-collector.yaml.
+# Apply this file after the base metadata collector override. It replaces the
+# lightweight image with Playwright/Chromium but still exposes no host port.
+services:
+  api:
+    environment:
+      WEBNOVEL_METADATA_COLLECTOR_REMOTE_AUTH_ENABLED: 'true'
+
+  metadata-collector:
+    build:
+      context: .
+      dockerfile: deploy/metadata-collector-auth.Dockerfile
+    environment:
+      MOYA_COLLECTOR_REMOTE_AUTH: '1'
+      MOYA_COLLECTOR_REMOTE_AUTH_HEADLESS: '0'
+    shm_size: 1gb
+    mem_limit: ${METADATA_COLLECTOR_AUTH_MEMORY_LIMIT:-1536m}

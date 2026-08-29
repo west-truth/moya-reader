@@ -297,6 +297,34 @@ describe('browser import worker pipeline', () => {
     expect(await listSyncOutbox()).toEqual([]);
   });
 
+  it('rejects an expected normalized hash mismatch before canonical rows are staged', async () => {
+    const source = chapterFixture(2, 10);
+    const buffer = toBuffer(source);
+
+    await expect(
+      runBrowserImportPipeline({
+        jobId: 'cloud-vault-hash-fence',
+        fileName: 'cloud-vault-replacement.txt',
+        buffer,
+        totalBytes: buffer.byteLength,
+        encoding: 'utf-8',
+        chapterSplitMode: 'mixed',
+        expectedNormalizedTextHash: 'not-the-parsed-hash',
+        onProgress: () => undefined,
+        yieldControl: async () => undefined,
+      }),
+    ).rejects.toThrow('Cloud Vault');
+
+    expect(await getNovels()).toEqual([]);
+    expect(await revisionStoreCounts()).toEqual({
+      book_content_revisions: 0,
+      book_content_chapters: 0,
+      book_content_paragraphs: 0,
+      book_content_paragraph_pages: 0,
+      book_content_paragraph_search: 0,
+    });
+  });
+
   it('aborts and removes staged rows when cancellation starts before revision activation', async () => {
     const source = chapterFixture(4, 20);
     const buffer = toBuffer(source);

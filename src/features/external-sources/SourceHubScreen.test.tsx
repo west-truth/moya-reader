@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from 'vitest';
 import type { LibraryScreenProps } from '../library/library-screen-contract';
 import SourceHubScreen from './SourceHubScreen';
 import type { ExternalSourceController } from './useExternalSourceController';
+import { testNovel } from '../book-workspace/book-workspace-test-fixtures';
 
 function controller(overrides: Partial<ExternalSourceController> = {}): ExternalSourceController {
   return {
@@ -37,21 +38,39 @@ function controller(overrides: Partial<ExternalSourceController> = {}): External
     query: '',
     stale: false,
     detail: undefined,
+    localSeriesSourceId: undefined,
+    browse: undefined,
+    filterValues: {},
     breadcrumbs: [{ label: '전체' }],
     currentFolderIsDefault: false,
     currentLocationCanBeDefault: false,
     canPickItems: false,
     canRemoveItems: false,
+    subscriptions: [],
+    libraryWorks: [],
+    activeSubscription: undefined,
+    checkingSubscriptions: false,
+    canSubscribeCurrentWork: false,
+    isWorkInLibrary: vi.fn(() => false),
+    addWorkToLibrary: vi.fn(async () => undefined),
+    addCurrentWorkToLibrary: vi.fn(async () => undefined),
+    removeLibraryWork: vi.fn(async () => undefined),
     show: vi.fn(),
+    showLocalSeries: vi.fn(async () => undefined),
     close: vi.fn(),
     selectSource: vi.fn(async () => undefined),
     setQuery: vi.fn(),
     search: vi.fn(async () => undefined),
+    setBrowseMode: vi.fn(async () => undefined),
+    setFilterValue: vi.fn(),
+    applyFilters: vi.fn(async () => undefined),
+    resetFilters: vi.fn(async () => undefined),
     refresh: vi.fn(async () => undefined),
     loadMore: vi.fn(async () => undefined),
     toggleItem: vi.fn(),
     selectAllSupported: vi.fn(),
     importItem: vi.fn(async () => undefined),
+    importAndOpen: vi.fn(async () => undefined),
     importSelected: vi.fn(async () => undefined),
     openImported: vi.fn(async () => undefined),
     cancel: vi.fn(),
@@ -64,6 +83,12 @@ function controller(overrides: Partial<ExternalSourceController> = {}): External
     clearDefaultFolder: vi.fn(async () => undefined),
     pickItems: vi.fn(async () => undefined),
     removeItem: vi.fn(async () => undefined),
+    subscribeCurrentWork: vi.fn(async () => undefined),
+    unsubscribeCurrentWork: vi.fn(async () => undefined),
+    acknowledgeNewReleases: vi.fn(async () => undefined),
+    selectNewReleases: vi.fn(),
+    checkSubscriptions: vi.fn(async () => undefined),
+    openSubscription: vi.fn(async () => undefined),
     ...overrides,
   };
 }
@@ -74,7 +99,7 @@ const library = {
     filter: 'all',
     sort: 'recent',
     viewMode: 'grid',
-    sync: { label: '로컬', tone: 'local' },
+    sync: { label: '연결 안 됨', tone: 'local' },
     externalSources: {
       active: true,
       activeSourceId: 'fixture.source',
@@ -90,6 +115,7 @@ const library = {
   actions: {
     presentation: { goHome: vi.fn() },
     controls: { setFilter: vi.fn(), setShelf: vi.fn() },
+    books: { continueReading: vi.fn(), toggleFavorite: vi.fn(), editMetadata: vi.fn() },
     header: {
       setQuery: vi.fn(),
       openImport: vi.fn(),
@@ -104,6 +130,22 @@ const library = {
 } as unknown as LibraryScreenProps;
 
 describe('SourceHubScreen', () => {
+  it('labels an empty-query extension search as filter results', () => {
+    const markup = renderToStaticMarkup(
+      <SourceHubScreen
+        controller={controller({
+          query: '',
+          browse: { activeMode: 'search', availableModes: ['popular', 'search'], filters: [] },
+        })}
+        library={library}
+        openSourceSettings={vi.fn()}
+      />,
+    );
+
+    expect(markup).toContain('필터 결과');
+    expect(markup).not.toContain('검색 결과');
+  });
+
   it('renders a connected catalog as a first-class library-style card screen', () => {
     const markup = renderToStaticMarkup(
       <SourceHubScreen controller={controller({ stale: true })} library={library} openSourceSettings={vi.fn()} />,
@@ -115,6 +157,9 @@ describe('SourceHubScreen', () => {
     expect(markup).toContain('테스트 작가');
     expect(markup).toContain('저장된 목록');
     expect(markup).toContain('라이브러리로 추가');
+    const coverMarkup = markup.match(/<div class="source-hub-card-cover"[^>]*>(.*?)<\/div>/s)?.[1] ?? '';
+    expect(coverMarkup).not.toContain('외부 작품');
+    expect(coverMarkup).not.toContain('TXT');
     expect(markup).not.toContain('role="dialog"');
   });
 
@@ -153,7 +198,7 @@ describe('SourceHubScreen', () => {
     expect(markup).toContain('업데이트</button>');
   });
 
-  it('renders Suwayomi work navigation and chapter detail without pretending chapters are one local series', () => {
+  it('renders Suwayomi work navigation and explains that selected chapters accumulate in one local series', () => {
     const browseMarkup = renderToStaticMarkup(
       <SourceHubScreen
         controller={controller({
@@ -164,9 +209,28 @@ describe('SourceHubScreen', () => {
               kind: 'catalog',
               origin: 'built_in',
               connection: { state: 'connected', label: 'Local Suwayomi' },
+              supportsSubscriptions: true,
+              newReleaseCount: 2,
             },
           ],
           activeSourceId: 'moya.external.suwayomi',
+          subscriptions: [
+            {
+              id: 'subscription-1',
+              connectorId: 'moya.external.suwayomi',
+              collectionRemoteId: 'manga:1',
+              navigationRef: 'manga:1',
+              title: '라이브러리 작품',
+              sourceLabel: '테스트 소스',
+              knownReleaseIds: ['chapter:1', 'chapter:2'],
+              newReleaseIds: ['chapter:2'],
+              availableReleaseCount: 2,
+              lastCheckedAt: '2026-08-26T00:00:00.000Z',
+              createdAt: '2026-08-25T00:00:00.000Z',
+              updatedAt: '2026-08-26T00:00:00.000Z',
+              schemaVersion: 1,
+            },
+          ],
           items: [
             {
               key: { connectorId: 'moya.external.suwayomi', remoteId: 'manga:1' },
@@ -181,6 +245,7 @@ describe('SourceHubScreen', () => {
         })}
         library={library}
         openSourceSettings={vi.fn()}
+        openLocalSeriesImport={vi.fn()}
       />,
     );
     const detailMarkup = renderToStaticMarkup(
@@ -193,17 +258,42 @@ describe('SourceHubScreen', () => {
               kind: 'catalog',
               origin: 'built_in',
               connection: { state: 'connected', label: 'Local Suwayomi' },
+              supportsSubscriptions: true,
+              newReleaseCount: 1,
             },
           ],
           activeSourceId: 'moya.external.suwayomi',
-          detail: { title: '연동 작품', author: '작가', description: '작품 설명', tags: ['판타지'] },
+          detail: {
+            title: '연동 작품',
+            author: '작가',
+            description: '작품 설명',
+            tags: ['판타지'],
+            thumbnailUrl: 'http://localhost:4567/api/v1/manga/1/thumbnail',
+          },
           breadcrumbs: [{ label: '전체' }, { label: '연동 작품', parentRef: 'manga:1' }],
+          canSubscribeCurrentWork: true,
+          activeSubscription: {
+            id: 'subscription-1',
+            connectorId: 'moya.external.suwayomi',
+            collectionRemoteId: 'manga:1',
+            navigationRef: 'manga:1',
+            title: '연동 작품',
+            knownReleaseIds: ['chapter:11'],
+            newReleaseIds: ['chapter:11'],
+            availableReleaseCount: 1,
+            lastCheckedAt: '2026-08-26T00:00:00.000Z',
+            createdAt: '2026-08-25T00:00:00.000Z',
+            updatedAt: '2026-08-26T00:00:00.000Z',
+            schemaVersion: 1,
+          },
           items: [
             {
               key: { connectorId: 'moya.external.suwayomi', remoteId: 'chapter:11' },
               kind: 'file',
               title: '1화',
               formatHint: 'CBZ',
+              collection: { remoteId: 'manga:1', title: '연동 작품' },
+              release: { title: '1화', chapterNumber: 1 },
               importability: 'supported',
               selected: false,
               importState: 'available',
@@ -212,16 +302,35 @@ describe('SourceHubScreen', () => {
         })}
         library={library}
         openSourceSettings={vi.fn()}
+        openLocalSeriesImport={vi.fn()}
       />,
     );
 
-    expect(browseMarkup).toContain('탐색 가능');
-    expect(browseMarkup).toContain('작품·회차 보기');
+    expect(browseMarkup).not.toContain('탐색 가능');
+    expect(browseMarkup).not.toContain('작품·회차 보기');
+    expect(browseMarkup).toContain('작품 상세 열기');
+    expect(browseMarkup).toContain('라이브러리 추가');
     expect(browseMarkup).not.toContain('연동 작품 선택');
+    expect(browseMarkup).toContain('라이브러리에 추가한 작품');
+    expect(browseMarkup).toContain('새 회차 1');
+    expect(browseMarkup).toContain('새 회차 확인');
     expect(detailMarkup).toContain('작품 설명');
     expect(detailMarkup).toContain('회차</h2>');
-    expect(detailMarkup).toContain('현재는 회차별로 라이브러리에 추가됩니다');
+    expect(detailMarkup).not.toContain('선택한 회차는 하나의 연재 작품에 누적됩니다');
+    expect(detailMarkup).toContain('book-detail-hero');
+    expect(detailMarkup).toContain('detail-stats');
+    expect(detailMarkup).toContain('source-hub-release-list');
+    expect(detailMarkup).toContain('source-hub-release-list-head');
+    expect(detailMarkup).toContain('다운로드 후 보기');
+    expect(detailMarkup).toContain('source-hub-release-action');
+    expect(detailMarkup).not.toContain('source-hub-card-cover');
+    expect(detailMarkup).toContain('source-hub-remote-cover');
+    expect(detailMarkup).toContain('thumbnail');
+    expect(detailMarkup).toContain('연재 상태');
+    expect(detailMarkup).not.toContain('WEBTOON');
     expect(detailMarkup).not.toContain('기본 폴더로 설정');
+    expect(detailMarkup).toContain('라이브러리에서 제거');
+    expect(detailMarkup).toContain('새 회차 선택');
   });
 
   it('offers a persistent default-folder action only inside a nested folder', () => {
@@ -338,5 +447,82 @@ describe('SourceHubScreen', () => {
         <SourceHubScreen controller={disconnected} library={library} openSourceSettings={vi.fn()} />,
       ),
     ).toBe('');
+  });
+
+  it('keeps downloaded local release rows visible when no remote source is connected', () => {
+    const localNovel = testNovel({
+      format: 'image_archive',
+      title: '로컬 웹툰',
+      sourceFileName: '로컬 웹툰.cbz',
+      documentSectionCount: 1,
+      lastReadProgress: 0.4,
+    });
+    const titleEditor = {
+      editing: false,
+      draft: localNovel.title,
+      start: vi.fn(),
+      cancel: vi.fn(),
+      setDraft: vi.fn(),
+      save: vi.fn(),
+    };
+    const markup = renderToStaticMarkup(
+      <SourceHubScreen
+        controller={controller({
+          sources: [],
+          activeSourceId: undefined,
+          localSeriesNovel: localNovel,
+          localSeriesSourceId: undefined,
+          detail: { title: localNovel.title },
+          items: [
+            {
+              key: { connectorId: 'moya.local.serial', remoteId: 'local:01' },
+              kind: 'file',
+              title: '01화',
+              collection: { remoteId: `local-series:${localNovel.id}`, title: localNovel.title },
+              release: { title: '01화', sourceOrder: 1 },
+              importability: 'supported',
+              selected: false,
+              importState: 'imported',
+              localBookId: localNovel.id,
+              readingState: 'current',
+            },
+            {
+              key: { connectorId: 'moya.local.serial', remoteId: 'local:02' },
+              kind: 'file',
+              title: '02화',
+              collection: { remoteId: `local-series:${localNovel.id}`, title: localNovel.title },
+              release: { title: '02화', sourceOrder: 2 },
+              importability: 'supported',
+              selected: false,
+              importState: 'imported',
+              localBookId: localNovel.id,
+              readingState: 'unread',
+            },
+          ],
+        })}
+        library={library}
+        openSourceSettings={vi.fn()}
+        openLocalSeriesImport={vi.fn()}
+        localSeriesNovel={localNovel}
+        localSeriesTitleEditor={titleEditor}
+      />,
+    );
+
+    expect(markup).toContain('로컬 웹툰');
+    expect(markup).not.toContain('로컬 회차만 표시');
+    expect(markup).toContain('01화');
+    expect(markup).toContain('02화');
+    expect(markup).toContain('읽는 중');
+    expect(markup).toContain('안 읽음');
+    expect(markup).toContain('aria-current="location"');
+    expect(markup).toContain('source-hub-release-row is-current');
+    expect(markup).toContain('보기');
+    expect(markup).toContain('이어 보기');
+    expect(markup).toContain('즐겨찾기');
+    expect(markup).toContain('회차 추가');
+    expect(markup).toContain('제목 수정');
+    expect(markup).toContain('편집');
+    expect(markup).toContain('<dd>CBZ</dd>');
+    expect(markup).not.toContain('IMAGE_ARCHIVE');
   });
 });

@@ -70,6 +70,7 @@ export const EXTERNAL_SOURCE_CAPABILITIES = [
   'search',
   'work-details',
   'release-list',
+  'subscriptions',
   'cover-read',
   'file-download',
   'work-import',

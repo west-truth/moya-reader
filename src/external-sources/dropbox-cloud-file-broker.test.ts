@@ -46,6 +46,13 @@ describe('Dropbox cloud file broker', () => {
                 name: 'noveldesk-vault-v1.enc.json',
                 path_display: '/noveldesk-vault-v1.enc.json',
               }),
+              {
+                '.tag': 'folder',
+                id: 'id:vault-content',
+                name: 'content',
+                path_display: '/content',
+                path_lower: '/content',
+              },
             ],
             has_more: true,
             cursor: 'provider-cursor',

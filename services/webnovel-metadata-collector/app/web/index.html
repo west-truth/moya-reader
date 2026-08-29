@@ -1,0 +1,824 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="웹소설 제목으로 문피아, 네이버 시리즈, 카카오페이지, 노벨피아, 리디의 표지와 메타데이터를 확인합니다.">
+  <title>웹소설 표지 찾기</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --background: #f4f1ea;
+      --surface: #fffdf8;
+      --ink: #202522;
+      --muted: #6d736e;
+      --line: #ddd8cc;
+      --accent: #e75b3c;
+      --accent-dark: #bd3f27;
+      --green: #2c6e56;
+      --shadow: 0 18px 45px rgba(41, 43, 38, 0.09);
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      min-width: 320px;
+      min-height: 100vh;
+      color: var(--ink);
+      background:
+        radial-gradient(circle at 8% 4%, rgba(231, 91, 60, 0.12), transparent 30rem),
+        var(--background);
+      font-family: Pretendard, "Noto Sans KR", "Apple SD Gothic Neo", system-ui, sans-serif;
+    }
+
+    button, input { font: inherit; }
+
+    .page {
+      width: min(1050px, calc(100% - 40px));
+      margin: 0 auto;
+      padding: 70px 0 90px;
+    }
+
+    .eyebrow {
+      margin: 0 0 14px;
+      color: var(--accent-dark);
+      font-size: 13px;
+      font-weight: 800;
+      letter-spacing: 0.14em;
+      text-transform: uppercase;
+    }
+
+    h1 {
+      max-width: 760px;
+      margin: 0;
+      font-size: clamp(38px, 7vw, 72px);
+      line-height: 1.04;
+      letter-spacing: -0.06em;
+    }
+
+    .intro {
+      max-width: 620px;
+      margin: 20px 0 34px;
+      color: var(--muted);
+      font-size: 17px;
+      line-height: 1.75;
+    }
+
+    .search-form {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) minmax(150px, 0.42fr) auto;
+      gap: 10px;
+      max-width: 760px;
+      padding: 9px;
+      background: var(--surface);
+      border: 1px solid var(--line);
+      border-radius: 18px;
+      box-shadow: var(--shadow);
+    }
+
+    .search-form input {
+      width: 100%;
+      min-height: 54px;
+      padding: 0 18px;
+      color: var(--ink);
+      background: transparent;
+      border: 0;
+      outline: 0;
+      font-size: 17px;
+    }
+
+    .search-form input::placeholder { color: #a4a6a1; }
+
+    .search-form input + input { border-left: 1px solid var(--line); }
+
+    .search-form:focus-within {
+      border-color: rgba(231, 91, 60, 0.72);
+      box-shadow: 0 0 0 4px rgba(231, 91, 60, 0.11), var(--shadow);
+    }
+
+    .search-form button {
+      min-width: 112px;
+      padding: 0 22px;
+      color: #fff;
+      background: var(--accent);
+      border: 0;
+      border-radius: 12px;
+      cursor: pointer;
+      font-weight: 800;
+      transition: background 150ms ease, transform 150ms ease;
+    }
+
+    .search-form button:hover { background: var(--accent-dark); }
+    .search-form button:active { transform: translateY(1px); }
+    .search-form button:disabled { cursor: wait; opacity: 0.65; }
+
+    .search-note {
+      margin: 12px 4px 0;
+      color: var(--muted);
+      font-size: 13px;
+    }
+
+    .auth-settings { max-width: 760px; margin-top: 18px; }
+
+    .text-button {
+      padding: 0;
+      color: var(--accent-dark);
+      background: transparent;
+      border: 0;
+      cursor: pointer;
+      font-size: 13px;
+      font-weight: 800;
+    }
+
+    .auth-panel {
+      margin-top: 10px;
+      padding: 18px;
+      background: rgba(255, 253, 248, 0.72);
+      border: 1px solid var(--line);
+      border-radius: 16px;
+    }
+
+    .auth-description { margin: 0 0 15px; color: var(--muted); font-size: 13px; line-height: 1.6; }
+
+    .adult-option {
+      display: flex;
+      align-items: center;
+      gap: 9px;
+      margin-bottom: 14px;
+      font-size: 14px;
+      font-weight: 800;
+    }
+
+    .auth-platforms { display: grid; gap: 8px; }
+
+    .auth-platform {
+      display: grid;
+      grid-template-columns: minmax(120px, 1fr) auto auto;
+      align-items: center;
+      gap: 12px;
+      min-height: 42px;
+      padding: 7px 10px;
+      background: var(--surface);
+      border: 1px solid #e7e2d7;
+      border-radius: 11px;
+    }
+
+    .auth-platform-name { font-size: 14px; font-weight: 800; }
+    .auth-platform-state { color: var(--muted); font-size: 12px; }
+
+    .small-button {
+      min-height: 30px;
+      padding: 4px 10px;
+      color: var(--ink);
+      background: #efede6;
+      border: 0;
+      border-radius: 8px;
+      cursor: pointer;
+      font-size: 12px;
+      font-weight: 800;
+    }
+
+    .small-button:disabled { cursor: not-allowed; opacity: 0.5; }
+
+    .auth-enabled {
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      font-size: 12px;
+      white-space: nowrap;
+    }
+
+    .auth-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 14px; }
+    .auth-message { min-height: 18px; margin: 12px 0 0; color: var(--muted); font-size: 12px; }
+    .auth-message.error { color: #a33224; }
+
+    .status {
+      min-height: 28px;
+      margin: 38px 0 12px;
+      color: var(--muted);
+      font-size: 15px;
+    }
+
+    .status.error { color: #a33224; }
+
+    .result-header {
+      display: flex;
+      align-items: baseline;
+      justify-content: space-between;
+      gap: 20px;
+      margin: 0 0 18px;
+      padding-top: 8px;
+      border-top: 1px solid var(--line);
+    }
+
+    .result-header h2 {
+      margin: 20px 0 0;
+      font-size: 22px;
+      letter-spacing: -0.03em;
+    }
+
+    .result-count { color: var(--muted); font-size: 14px; }
+    .results { display: grid; gap: 18px; }
+
+    .result-card {
+      display: grid;
+      grid-template-columns: 156px minmax(0, 1fr);
+      gap: 24px;
+      min-height: 230px;
+      padding: 18px;
+      overflow: hidden;
+      background: var(--surface);
+      border: 1px solid var(--line);
+      border-radius: 20px;
+      box-shadow: 0 12px 32px rgba(41, 43, 38, 0.055);
+    }
+
+    .cover {
+      position: relative;
+      display: block;
+      width: 156px;
+      aspect-ratio: 2 / 3;
+      overflow: hidden;
+      color: var(--muted);
+      background: #e8e3d8;
+      border-radius: 12px;
+    }
+
+    .cover img { width: 100%; height: 100%; object-fit: cover; }
+
+    .cover.missing::after {
+      position: absolute;
+      inset: 0;
+      display: grid;
+      place-items: center;
+      content: "표지 없음";
+      font-size: 13px;
+    }
+
+    .card-body { display: flex; min-width: 0; flex-direction: column; padding: 4px 4px 2px 0; }
+
+    .badges { display: flex; flex-wrap: wrap; gap: 7px; margin-bottom: 12px; }
+
+    .badge {
+      display: inline-flex;
+      align-items: center;
+      min-height: 25px;
+      padding: 3px 9px;
+      color: var(--green);
+      background: #e6f0ea;
+      border-radius: 999px;
+      font-size: 12px;
+      font-weight: 800;
+    }
+
+    .badge.status-badge { color: #725725; background: #f3ead4; }
+
+    .title-link { color: inherit; text-decoration: none; }
+    .title-link:hover { color: var(--accent-dark); }
+
+    .result-title {
+      margin: 0;
+      font-size: clamp(22px, 3vw, 29px);
+      line-height: 1.25;
+      letter-spacing: -0.045em;
+    }
+
+    .author { margin: 7px 0 0; color: var(--muted); font-size: 14px; }
+
+    .metadata-tags {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 7px;
+      margin: 14px 0 0;
+    }
+
+    .metadata-tag {
+      padding: 4px 9px;
+      color: #5d625e;
+      background: #efede6;
+      border-radius: 999px;
+      font-size: 12px;
+      font-weight: 700;
+    }
+
+    .metadata-tag.genre { color: #725725; background: #f3ead4; }
+
+    .description {
+      display: -webkit-box;
+      margin: 18px 0;
+      overflow: hidden;
+      color: #4f554f;
+      font-size: 14px;
+      line-height: 1.7;
+      -webkit-box-orient: vertical;
+      -webkit-line-clamp: 3;
+    }
+
+    .card-footer {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      margin-top: auto;
+      color: var(--muted);
+      font-size: 13px;
+    }
+
+    .source-link { color: var(--accent-dark); font-weight: 750; text-decoration: none; }
+    .source-link:hover { text-decoration: underline; }
+
+    .empty {
+      padding: 50px 24px;
+      color: var(--muted);
+      text-align: center;
+      background: rgba(255, 253, 248, 0.55);
+      border: 1px dashed var(--line);
+      border-radius: 18px;
+    }
+
+    .visually-hidden {
+      position: absolute;
+      width: 1px;
+      height: 1px;
+      padding: 0;
+      overflow: hidden;
+      clip: rect(0, 0, 0, 0);
+      white-space: nowrap;
+      border: 0;
+    }
+
+    [hidden] { display: none !important; }
+
+    @media (max-width: 640px) {
+      .page { width: min(100% - 24px, 1050px); padding: 42px 0 60px; }
+      .search-form { grid-template-columns: 1fr; }
+      .search-form input + input { border-top: 1px solid var(--line); border-left: 0; }
+      .search-form button { min-height: 48px; }
+      .auth-platform { grid-template-columns: 1fr auto; }
+      .auth-platform-state { grid-column: 1 / -1; grid-row: 2; }
+      .result-card { grid-template-columns: 96px minmax(0, 1fr); gap: 16px; padding: 13px; }
+      .cover { width: 96px; }
+      .description { margin: 12px 0; -webkit-line-clamp: 4; }
+      .card-footer { align-items: flex-start; flex-direction: column; }
+    }
+  </style>
+</head>
+<body>
+  <main class="page">
+    <p class="eyebrow">Webnovel metadata collector</p>
+    <h1>작품명 하나로<br>표지와 정보를 찾습니다.</h1>
+    <p class="intro">문피아, 네이버 시리즈, 카카오페이지, 노벨피아, 리디를 동시에 조회해 가장 일치하는 작품 하나의 표지와 메타데이터를 보여드립니다.</p>
+
+    <form id="search-form" class="search-form">
+      <label class="visually-hidden" for="query">웹소설 작품명</label>
+      <input id="query" name="q" type="search" minlength="2" maxlength="100" placeholder="예: 재벌집 막내아들" autocomplete="off" required>
+      <label class="visually-hidden" for="author">작가명</label>
+      <input id="author" name="author" type="search" maxlength="100" placeholder="작가명 (선택)" autocomplete="off">
+      <button id="search-button" type="submit">찾기</button>
+    </form>
+    <p class="search-note">다섯 플랫폼 후보 병렬 검색 · 최종 후보 1건만 상세 조회 · DB 저장 없음</p>
+
+    <section class="auth-settings">
+      <button id="auth-toggle" class="text-button" type="button" aria-expanded="false">인증 검색 설정 ▾</button>
+      <div id="auth-panel" class="auth-panel" hidden>
+        <p class="auth-description">19세 작품은 일반 Chrome/Edge의 전용 창에서 사용자가 직접 로그인·성인 인증한 플랫폼만 검색합니다. 로그인 후 전용 창을 닫아야 검색할 수 있으며, 계정 비밀번호는 프로그램이 받거나 저장하지 않습니다.</p>
+        <label class="adult-option">
+          <input id="include-adult" type="checkbox" disabled>
+          검색할 때 19세 작품 포함
+        </label>
+        <div id="auth-platforms" class="auth-platforms">
+          <div class="auth-platform" data-platform="naver_series">
+            <span class="auth-platform-name">네이버 시리즈</span>
+            <span class="auth-platform-state">사용 안 함</span>
+            <span>
+              <button class="small-button open-login" type="button">로그인 창 열기</button>
+              <label class="auth-enabled"><input type="checkbox"> 로그인 완료·사용</label>
+            </span>
+          </div>
+          <div class="auth-platform" data-platform="kakao_page">
+            <span class="auth-platform-name">카카오페이지</span>
+            <span class="auth-platform-state">사용 안 함</span>
+            <span>
+              <button class="small-button open-login" type="button">로그인 창 열기</button>
+              <label class="auth-enabled"><input type="checkbox"> 로그인 완료·사용</label>
+            </span>
+          </div>
+          <div class="auth-platform" data-platform="novelpia">
+            <span class="auth-platform-name">노벨피아</span>
+            <span class="auth-platform-state">사용 안 함</span>
+            <span>
+              <button class="small-button open-login" type="button">로그인 창 열기</button>
+              <label class="auth-enabled"><input type="checkbox"> 로그인 완료·사용</label>
+            </span>
+          </div>
+          <div class="auth-platform" data-platform="ridi">
+            <span class="auth-platform-name">리디</span>
+            <span class="auth-platform-state">사용 안 함</span>
+            <span>
+              <button class="small-button open-login" type="button">로그인 창 열기</button>
+              <label class="auth-enabled"><input type="checkbox"> 로그인 완료·사용</label>
+            </span>
+          </div>
+        </div>
+        <div class="auth-actions">
+          <button id="close-auth-browser" class="small-button" type="button">로그인 브라우저 종료</button>
+          <button id="clear-auth-session" class="small-button" type="button">저장된 인증 세션 삭제</button>
+        </div>
+        <p id="auth-message" class="auth-message" role="status" aria-live="polite"></p>
+      </div>
+    </section>
+
+    <div id="status" class="status" role="status" aria-live="polite"></div>
+
+    <section id="result-section" hidden>
+      <div class="result-header">
+        <h2>선택 결과</h2>
+        <span id="result-count" class="result-count"></span>
+      </div>
+      <div id="results" class="results"></div>
+    </section>
+  </main>
+
+  <template id="result-template">
+    <article class="result-card">
+      <a class="cover" target="_blank" rel="noopener noreferrer">
+        <img loading="lazy">
+      </a>
+      <div class="card-body">
+        <div class="badges">
+          <span class="badge platform-badge"></span>
+          <span class="badge status-badge"></span>
+        </div>
+        <h3 class="result-title"><a class="title-link" target="_blank" rel="noopener noreferrer"></a></h3>
+        <p class="author"></p>
+        <div class="metadata-tags" aria-label="장르 및 태그"></div>
+        <p class="description"></p>
+        <div class="card-footer">
+          <span class="match-score"></span>
+          <a class="source-link" target="_blank" rel="noopener noreferrer">원본 페이지 보기 →</a>
+        </div>
+      </div>
+    </article>
+  </template>
+
+  <script>
+    const form = document.querySelector("#search-form");
+    const queryInput = document.querySelector("#query");
+    const authorInput = document.querySelector("#author");
+    const button = document.querySelector("#search-button");
+    const statusBox = document.querySelector("#status");
+    const resultSection = document.querySelector("#result-section");
+    const resultCount = document.querySelector("#result-count");
+    const resultsBox = document.querySelector("#results");
+    const resultTemplate = document.querySelector("#result-template");
+    const authToggle = document.querySelector("#auth-toggle");
+    const authPanel = document.querySelector("#auth-panel");
+    const authRows = [...document.querySelectorAll(".auth-platform")];
+    const includeAdultInput = document.querySelector("#include-adult");
+    const closeAuthBrowserButton = document.querySelector("#close-auth-browser");
+    const clearAuthSessionButton = document.querySelector("#clear-auth-session");
+    const authMessage = document.querySelector("#auth-message");
+    let authStatus = null;
+    let authUpdatePromise = Promise.resolve();
+    let authStatusReady = Promise.resolve();
+    const adultPreferenceKey = "webnovel.includeAdult";
+    let adultPreference = null;
+
+    try {
+      adultPreference = window.localStorage.getItem(adultPreferenceKey);
+    } catch {}
+    if (adultPreference !== null) {
+      includeAdultInput.checked = adultPreference === "true";
+    }
+
+    const statusLabels = {
+      ongoing: "연재 중",
+      completed: "완결",
+      hiatus: "휴재",
+    };
+
+    const platformLabels = {
+      munpia: "문피아",
+      naver_series: "네이버 시리즈",
+      kakao_page: "카카오페이지",
+      novelpia: "노벨피아",
+      novelpia_auth: "노벨피아 인증",
+      ridi: "리디",
+      ridi_auth: "리디 인증",
+      naver_series_auth: "네이버 시리즈 인증",
+      kakao_page_auth: "카카오페이지 인증",
+    };
+
+    const matchTypeLabels = {
+      exact_title_and_author: "제목·작가 정확히 일치",
+      exact_title: "제목 정확히 일치",
+      fuzzy_title: "유사 제목 일치",
+      ambiguous: "후보 구분 필요",
+    };
+
+    function validWebUrl(value) {
+      if (!value) return null;
+      try {
+        const url = new URL(value, window.location.href);
+        return ["http:", "https:"].includes(url.protocol) ? url.href : null;
+      } catch {
+        return null;
+      }
+    }
+
+    function setLoading(loading) {
+      form.setAttribute("aria-busy", String(loading));
+      button.disabled = loading;
+      button.textContent = loading ? "찾는 중…" : "찾기";
+    }
+
+    function showStatus(message, isError = false) {
+      statusBox.textContent = message;
+      statusBox.classList.toggle("error", isError);
+    }
+
+    function showAuthMessage(message, isError = false) {
+      authMessage.textContent = message;
+      authMessage.classList.toggle("error", isError);
+    }
+
+    function setAdultPreference(enabled) {
+      includeAdultInput.checked = enabled;
+      adultPreference = String(enabled);
+      try {
+        window.localStorage.setItem(adultPreferenceKey, adultPreference);
+      } catch {}
+    }
+
+    async function authRequest(url, options = {}) {
+      const response = await fetch(url, {
+        ...options,
+        headers: { "Content-Type": "application/json", ...(options.headers || {}) },
+      });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(data.detail || `HTTP ${response.status}`);
+      authStatus = data;
+      renderAuthStatus();
+      return data;
+    }
+
+    function renderAuthStatus() {
+      if (!authStatus) return;
+      const enabled = new Set(authStatus.enabled_platforms || []);
+      authRows.forEach((row) => {
+        const platform = row.dataset.platform;
+        const isEnabled = enabled.has(platform);
+        row.querySelector(".auth-platform-state").textContent = isEnabled ? "인증 검색 사용" : "사용 안 함";
+        row.querySelector(".auth-enabled input").checked = isEnabled;
+        row.querySelector(".auth-enabled input").disabled = !authStatus.available;
+        row.querySelector(".open-login").disabled = !authStatus.available;
+      });
+      includeAdultInput.disabled = !authStatus.available || enabled.size === 0;
+      if (!includeAdultInput.disabled && adultPreference === null) {
+        setAdultPreference(true);
+      }
+      closeAuthBrowserButton.disabled = !authStatus.browser_running;
+      clearAuthSessionButton.disabled = !authStatus.available;
+      if (!authStatus.available) {
+        showAuthMessage("인증 검색 구성요소가 없습니다. pip install -e .[auth] 실행 후 서버를 다시 시작해 주세요.", true);
+      } else if (authStatus.last_error) {
+        showAuthMessage(authStatus.last_error, true);
+      } else {
+        showAuthMessage("");
+      }
+    }
+
+    async function loadAuthStatus() {
+      try {
+        const response = await fetch("/api/v1/auth/status");
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        authStatus = await response.json();
+        renderAuthStatus();
+      } catch {
+        showAuthMessage("인증 검색 상태를 확인하지 못했습니다.", true);
+      }
+    }
+
+    authToggle.addEventListener("click", () => {
+      const opening = authPanel.hidden;
+      authPanel.hidden = !opening;
+      authToggle.setAttribute("aria-expanded", String(opening));
+      authToggle.textContent = `인증 검색 설정 ${opening ? "▴" : "▾"}`;
+    });
+
+    includeAdultInput.addEventListener("change", () => {
+      setAdultPreference(includeAdultInput.checked);
+    });
+
+    authRows.forEach((row) => {
+      const platform = row.dataset.platform;
+      row.querySelector(".open-login").addEventListener("click", async () => {
+        showAuthMessage(`${platformLabels[platform]} 로그인 창을 여는 중입니다.`);
+        try {
+          await authRequest(`/api/v1/auth/${platform}/open`, {
+            method: "POST",
+            body: JSON.stringify({ requested: true }),
+          });
+          showAuthMessage("일반 Chrome/Edge 전용 창에서 직접 로그인·성인 인증한 뒤 ‘로그인 완료·사용’을 체크하고, 검색 전에 전용 창을 닫아 주세요.");
+        } catch (error) {
+          showAuthMessage(error.message, true);
+        }
+      });
+
+      row.querySelector(".auth-enabled input").addEventListener("change", (event) => {
+        const enabled = event.target.checked;
+        event.target.disabled = true;
+        authUpdatePromise = (async () => {
+          try {
+            await authRequest(`/api/v1/auth/${platform}`, {
+              method: "PUT",
+              body: JSON.stringify({ enabled }),
+            });
+            if (enabled) setAdultPreference(true);
+            showAuthMessage(
+              enabled
+                ? `${platformLabels[platform]} 로그인을 확인했습니다. 바로 검색할 수 있습니다.`
+                : `${platformLabels[platform]} 인증 검색을 껐습니다.`
+            );
+          } catch (error) {
+            event.target.checked = !enabled;
+            showAuthMessage(error.message, true);
+          } finally {
+            event.target.disabled = !authStatus?.available;
+          }
+        })();
+      });
+    });
+
+    closeAuthBrowserButton.addEventListener("click", async () => {
+      try {
+        await authRequest("/api/v1/auth/browser/close", {
+          method: "POST",
+          body: JSON.stringify({ requested: true }),
+        });
+        showAuthMessage("로그인 브라우저를 종료했습니다. 저장된 세션은 이후 인증 검색에 사용됩니다.");
+      } catch (error) {
+        showAuthMessage(error.message, true);
+      }
+    });
+
+    clearAuthSessionButton.addEventListener("click", async () => {
+      if (!window.confirm("전용 브라우저의 로그인 세션을 모두 삭제할까요?")) return;
+      try {
+        await authRequest("/api/v1/auth/session", { method: "DELETE" });
+        setAdultPreference(false);
+        showAuthMessage("저장된 로그인 세션을 삭제했습니다.");
+      } catch (error) {
+        showAuthMessage(error.message, true);
+      }
+    });
+
+    function makeCard(item) {
+      const card = resultTemplate.content.firstElementChild.cloneNode(true);
+      const sourceUrl = validWebUrl(item.source_url);
+      const coverUrl = validWebUrl(item.cover_url);
+      const coverLink = card.querySelector(".cover");
+      const image = card.querySelector("img");
+      const titleLink = card.querySelector(".title-link");
+      const sourceLink = card.querySelector(".source-link");
+
+      card.querySelector(".platform-badge").textContent = platformLabels[item.platform] || item.platform;
+      card.querySelector(".status-badge").textContent = statusLabels[item.status] || "상태 미상";
+      titleLink.textContent = item.title;
+      card.querySelector(".author").textContent = item.author ? `글 ${item.author}` : "작가 정보 없음";
+      const metadataTags = card.querySelector(".metadata-tags");
+      const seenTerms = new Set();
+      const terms = [
+        ...(item.genres || []).map((value) => ({ value, genre: true })),
+        ...(item.tags || []).map((value) => ({ value, genre: false })),
+      ].filter(({ value }) => {
+        const key = String(value).trim().toLocaleLowerCase();
+        if (!key || seenTerms.has(key)) return false;
+        seenTerms.add(key);
+        return true;
+      });
+
+      if (terms.length) {
+        metadataTags.append(...terms.map(({ value, genre }) => {
+          const tag = document.createElement("span");
+          tag.className = `metadata-tag${genre ? " genre" : ""}`;
+          tag.textContent = genre ? `장르 · ${value}` : `#${value}`;
+          return tag;
+        }));
+      } else {
+        metadataTags.hidden = true;
+      }
+      card.querySelector(".description").textContent = item.description || "작품 소개 정보가 없습니다.";
+      card.querySelector(".match-score").textContent = `제목 일치도 ${Math.round((item.match_score || 0) * 100)}%`;
+
+      if (sourceUrl) {
+        coverLink.href = sourceUrl;
+        titleLink.href = sourceUrl;
+        sourceLink.href = sourceUrl;
+      } else {
+        coverLink.removeAttribute("href");
+        titleLink.removeAttribute("href");
+        sourceLink.hidden = true;
+      }
+
+      if (coverUrl) {
+        image.src = coverUrl;
+        image.alt = `${item.title} 표지`;
+        image.addEventListener("error", () => {
+          image.remove();
+          coverLink.classList.add("missing");
+        }, { once: true });
+      } else {
+        image.remove();
+        coverLink.classList.add("missing");
+      }
+
+      return card;
+    }
+
+    function renderResults(items) {
+      resultsBox.replaceChildren();
+      resultCount.textContent = `${items.length}건`;
+      resultSection.hidden = false;
+
+      if (!items.length) {
+        const empty = document.createElement("div");
+        empty.className = "empty";
+        empty.textContent = "일치하는 작품을 찾지 못했습니다. 제목을 조금 다르게 입력해 보세요.";
+        resultsBox.append(empty);
+        return;
+      }
+
+      resultsBox.append(...items.map(makeCard));
+    }
+
+    form.addEventListener("submit", async (event) => {
+      event.preventDefault();
+      const query = queryInput.value.trim();
+      const author = authorInput.value.trim();
+      if (query.length < 2) {
+        showStatus("작품명을 두 글자 이상 입력해 주세요.", true);
+        return;
+      }
+
+      setLoading(true);
+      resultSection.hidden = true;
+      showStatus(`“${query}” 작품을 찾고 있습니다.`);
+
+      try {
+        await authStatusReady;
+        await authUpdatePromise;
+        const params = new URLSearchParams({ q: query });
+        if (author) params.set("author", author);
+        if (includeAdultInput.checked && !includeAdultInput.disabled) {
+          params.set("include_adult", "true");
+        }
+        const response = await fetch(`/api/v1/resolve?${params}`);
+        const data = await response.json().catch(() => ({}));
+        if (!response.ok) throw new Error(data.detail || `HTTP ${response.status}`);
+        const failedNames = (data.failed_platforms || [])
+          .map((platform) => platformLabels[platform] || platform)
+          .join(", ");
+        const failureDetails = Object.entries(data.platform_errors || {})
+          .map(([platform, message]) => `${platformLabels[platform] || platform}: ${message}`)
+          .join(" / ");
+        const skippedNames = (data.skipped_platforms || [])
+          .map((platform) => platformLabels[platform] || platform)
+          .join(", ");
+
+        if (data.status === "found") {
+          renderResults(data.metadata ? [data.metadata] : []);
+          const match = matchTypeLabels[data.match_type] || "일치 후보";
+          const quality = data.metadata_quality === "partial" ? "축약 메타데이터" : "상세 메타데이터";
+          const failures = failureDetails
+            ? ` · 검색 실패: ${failureDetails}`
+            : failedNames ? ` · 검색 실패: ${failedNames}` : "";
+          const skipped = skippedNames ? ` · 조기 확정: ${skippedNames} 생략` : "";
+          const authenticated = data.authenticated_search ? " · 인증 검색 완료" : "";
+          showStatus(`${match} · ${quality} · 제목 일치도 ${Math.round((data.confidence || 0) * 100)}%${authenticated}${failures}${skipped}`);
+        } else if (data.status === "ambiguous") {
+          resultSection.hidden = true;
+          showStatus("동명 또는 유사한 작품이 있습니다. 작가명을 함께 입력해 주세요.", true);
+        } else if (data.status === "failed") {
+          resultSection.hidden = true;
+          const reason = failureDetails || failedNames || "원인을 확인하지 못했습니다.";
+          showStatus(`작품 검색에 실패했습니다. ${reason}`, true);
+        } else {
+          resultSection.hidden = true;
+          const failures = failedNames ? ` 검색하지 못한 플랫폼: ${failedNames}.` : "";
+          showStatus(`자동 적용할 만큼 일치하는 작품을 찾지 못했습니다.${failures}`, true);
+        }
+      } catch (error) {
+        resultSection.hidden = true;
+        showStatus(`검색 중 문제가 발생했습니다. ${error.message}`, true);
+      } finally {
+        setLoading(false);
+      }
+    });
+
+    authStatusReady = loadAuthStatus();
+  </script>
+</body>
+</html>

@@ -122,6 +122,30 @@ describe('BookWorkspaceController navigation', () => {
     expect(selectContinueChapter(chapters, testNovel(), undefined)?.id).toBe('chapter-1');
   });
 
+  it('opens a logical comic release at its first fixed-document page', async () => {
+    const novel = testNovel({ format: 'image_archive', documentSectionCount: 2 });
+    const chapters = [
+      testChapter(1, { documentSectionId: 'chapter:11', documentSectionTitle: '01화' }),
+      testChapter(2, { documentSectionId: 'chapter:11', documentSectionTitle: '01화' }),
+      testChapter(3, { documentSectionId: 'chapter:12', documentSectionTitle: '02화' }),
+    ];
+    const harness = createBookWorkspaceTestHarness({
+      novel,
+      chapters,
+      position: testPosition({ chapterId: 'chapter-1' }),
+    });
+    const controller = new BookWorkspaceController(harness.ports);
+
+    await controller.openDocumentSection(novel, 'chapter:12');
+
+    expect(controller.getSnapshot()).toMatchObject({
+      view: 'document',
+      selectedNovel: novel,
+      currentChapter: chapters[2],
+      fixedDocumentOpenChapterId: chapters[2]?.id,
+    });
+  });
+
   it('preserves the openChapter lifecycle ordering and prepares restore metadata before entering reader view', async () => {
     const novel = testNovel({ lastReadChapterId: 'chapter-2', lastReadOffset: 480 });
     const chapter = testChapter(2);

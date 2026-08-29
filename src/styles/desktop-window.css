@@ -1,0 +1,98 @@
+.desktop-window-shell {
+  --desktop-titlebar-height: 34px;
+  position: relative;
+  height: 100dvh;
+  min-height: 0;
+  overflow: hidden;
+  color: var(--app-text);
+  background: var(--app-canvas);
+}
+
+.desktop-window-frame {
+  position: fixed;
+  inset: 0 0 auto;
+  z-index: 140;
+  height: var(--desktop-titlebar-height);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  user-select: none;
+  color: var(--app-text-muted);
+  background: var(--app-surface-strong);
+  border-bottom: 1px solid var(--app-line);
+}
+
+.desktop-window-title {
+  padding-inline-start: 13px;
+  font-size: 12px;
+  font-weight: 650;
+  letter-spacing: -0.01em;
+}
+
+.desktop-window-controls {
+  align-self: stretch;
+  display: flex;
+}
+
+.desktop-window-controls button {
+  width: 46px;
+  height: 100%;
+  display: grid;
+  place-items: center;
+  padding: 0;
+  color: var(--app-text-muted);
+  background: transparent;
+  cursor: default;
+}
+
+.desktop-window-controls button:hover {
+  color: var(--app-text-strong);
+  background: var(--app-surface-hover);
+}
+
+.desktop-window-controls .desktop-window-close:hover {
+  color: #fff;
+  background: #c42b1c;
+}
+
+.desktop-window-content {
+  position: absolute;
+  inset: var(--desktop-titlebar-height) 0 0;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.desktop-window-content > .app-shell {
+  height: 100%;
+  min-height: 0;
+}
+
+.desktop-window-content :is(.library-screen, .chapters-screen, .reader-screen, .reader-scroll, .reader-viewport-stack) {
+  height: 100%;
+}
+
+.desktop-window-content .self-host-auth-screen {
+  min-height: 100%;
+}
+
+.desktop-window-content .top-progress,
+.desktop-window-content .reader-topbar {
+  top: var(--desktop-titlebar-height);
+}
+
+.desktop-window-content :is(.addon-panel, .settings-panel) {
+  top: var(--desktop-titlebar-height);
+  height: calc(100dvh - var(--desktop-titlebar-height));
+}
+
+.desktop-window-content :is(.modal-backdrop, .settings-layer, .modal-drawer-layer) {
+  top: var(--desktop-titlebar-height);
+}
+
+.desktop-window-content .modal-drawer {
+  min-height: 100%;
+}
+
+.desktop-window-content .fixed-doc-screen {
+  top: var(--desktop-titlebar-height);
+}

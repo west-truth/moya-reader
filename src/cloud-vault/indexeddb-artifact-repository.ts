@@ -23,11 +23,19 @@ import type { LibraryCatalogRepository } from '../repositories/library-catalog-r
 import type { ReaderPersonalizationRepository } from '../repositories/reader-personalization-repository';
 import type { ReaderRepository } from '../repositories/reader-repository';
 import { bookProgressFromChapterProgress } from '../storage/content-revision-remote-state';
-import { getAllByIndex, getAllRecords, requestToPromise, transactionDone } from '../storage/indexeddb-transaction';
+import {
+  getAllByIndex,
+  getAllRecords,
+  getItem,
+  requestToPromise,
+  transactionDone,
+} from '../storage/indexeddb-transaction';
 import { READER_PERSONALIZATION_STORES } from '../storage/reader-personalization-schema';
 import { openReaderDb } from '../storage/reader-database';
 import { DOCUMENT_LISTENING_STORES } from '../storage/document-listening-schema';
 import { getListeningPosition } from '../storage/listening-position-store';
+import { BOOK_ASSET_STORES, type StoredBookAsset } from '../storage/book-asset-schema';
+import type { BookContentRevisionRecord } from '../storage/content-revisions';
 import type { SyncTombstone } from '../storage/sync-event-store';
 import type { SyncOutboxItem } from '../sync/types';
 import {
@@ -114,7 +122,7 @@ function paragraphRefs(
 
 function scopedTombstones(
   tombstones: readonly SyncTombstone[],
-  novelHashById: ReadonlyMap<string, string>,
+  novelById: ReadonlyMap<string, Novel>,
   outbox: readonly SyncOutboxItem[],
 ): CloudVaultTombstoneV1[] {
   const removedMembershipShelfByEntity = new Map<string, string>();
@@ -128,6 +136,8 @@ function scopedTombstones(
   return tombstones
     .filter((item) =>
       [
+        'book',
+        'cover',
         'bookmark',
         'highlight',
         'note',
@@ -141,31 +151,48 @@ function scopedTombstones(
       ].includes(item.entityType),
     )
     .flatMap<CloudVaultTombstoneV1>((item): CloudVaultTombstoneV1[] => {
-      const bookHash = item.novelId ? novelHashById.get(item.novelId) : undefined;
+      const novel = item.novelId ? novelById.get(item.novelId) : undefined;
+      const bookHash = novel?.normalizedTextHash ?? item.bookHash;
+      const vaultBookId = novel ? (novel.cloudVaultBookId ?? novel.id) : item.vaultBookId;
       if (item.entityType === 'shelf_membership') {
         const shelfId = removedMembershipShelfByEntity.get(item.entityId);
         if (!bookHash || !shelfId) return [];
-        const entityId = vaultShelfMembershipId(shelfId, bookHash);
+        const entityId = vaultShelfMembershipId(shelfId, vaultBookId ?? bookHash);
         return [
           {
             id: `shelf_membership:${entityId}`,
             entityType: item.entityType,
             entityId,
             bookHash,
+            vaultBookId,
             shelfId,
+            deletedAt: item.deletedAt,
+          },
+        ];
+      }
+      if (item.entityType === 'book' || item.entityType === 'cover') {
+        if (!bookHash || !vaultBookId) return [];
+        return [
+          {
+            id: `${item.entityType}:${vaultBookId}`,
+            entityType: item.entityType,
+            entityId: vaultBookId,
+            bookHash,
+            vaultBookId,
             deletedAt: item.deletedAt,
           },
         ];
       }
       if (item.entityType === 'document_text_order_override') {
         if (!bookHash || !Number.isInteger(item.pageIndex) || item.pageIndex! < 0) return [];
-        const entityId = vaultDocumentTextOrderOverrideId(bookHash, item.pageIndex!);
+        const entityId = vaultDocumentTextOrderOverrideId(vaultBookId ?? bookHash, item.pageIndex!);
         return [
           {
             id: `document_text_order_override:${entityId}`,
             entityType: item.entityType,
             entityId,
             bookHash,
+            vaultBookId,
             pageIndex: item.pageIndex,
             deletedAt: item.deletedAt,
           },
@@ -177,22 +204,69 @@ function scopedTombstones(
           entityType: item.entityType,
           entityId: item.entityId,
           bookHash,
+          vaultBookId,
           deletedAt: item.deletedAt,
         },
       ];
     });
 }
 
-function vaultShelfMembershipId(shelfId: string, bookHash: string): string {
-  return persistentId128('cloud_vault_shelf_membership', [shelfId, bookHash]);
+function lifecycleTombstones(novels: readonly Novel[], outbox: readonly SyncOutboxItem[]): CloudVaultTombstoneV1[] {
+  const values = novels.flatMap((novel) => {
+    const vaultBookId = novel.cloudVaultBookId ?? novel.id;
+    const values: CloudVaultTombstoneV1[] = [];
+    if (novel.deletedAt) {
+      values.push({
+        id: `book:${vaultBookId}`,
+        entityType: 'book',
+        entityId: vaultBookId,
+        bookHash: novel.normalizedTextHash,
+        vaultBookId,
+        deletedAt: novel.deletedAt,
+      });
+    }
+    if (novel.coverRemovedAt) {
+      values.push({
+        id: `cover:${vaultBookId}`,
+        entityType: 'cover',
+        entityId: vaultBookId,
+        bookHash: novel.normalizedTextHash,
+        vaultBookId,
+        deletedAt: novel.coverRemovedAt,
+      });
+    }
+    return values;
+  });
+  for (const item of outbox) {
+    if (item.event.type !== 'book_purged') continue;
+    const payload = item.event.payload;
+    if (!payload || typeof payload !== 'object' || Array.isArray(payload)) continue;
+    const vaultBookId = typeof payload.vaultBookId === 'string' ? payload.vaultBookId : undefined;
+    const bookHash = typeof payload.vaultLegacyContentHash === 'string' ? payload.vaultLegacyContentHash : undefined;
+    const deletedAt = typeof payload.purgedAt === 'string' ? payload.purgedAt : item.event.createdAt;
+    if (!vaultBookId || !bookHash) continue;
+    values.push({
+      id: `book:${vaultBookId}`,
+      entityType: 'book',
+      entityId: vaultBookId,
+      bookHash,
+      vaultBookId,
+      deletedAt,
+    });
+  }
+  return values;
+}
+
+function vaultShelfMembershipId(shelfId: string, bookIdentity: string): string {
+  return persistentId128('cloud_vault_shelf_membership', [shelfId, bookIdentity]);
 }
 
 function localShelfMembershipId(shelfId: string, bookId: string): string {
   return persistentId128('shelf_membership', [shelfId, bookId]);
 }
 
-function vaultDocumentTextOrderOverrideId(bookHash: string, pageIndex: number): string {
-  return persistentId128('cloud_vault_document_text_order_override', [bookHash, String(pageIndex)]);
+function vaultDocumentTextOrderOverrideId(bookIdentity: string, pageIndex: number): string {
+  return persistentId128('cloud_vault_document_text_order_override', [bookIdentity, String(pageIndex)]);
 }
 
 function localDocumentTextOrderOverrideId(bookId: string, pageIndex: number): string {
@@ -201,6 +275,8 @@ function localDocumentTextOrderOverrideId(bookId: string, pageIndex: number): st
 
 interface CapturedBookParts {
   novel: Novel;
+  contentAt: string;
+  contentDeviceId: string;
   chapters: Chapter[];
   readingPosition?: ReadingPosition;
   listeningPosition?: ListeningPosition;
@@ -253,11 +329,17 @@ export class IndexedDbCloudVaultArtifactRepository implements CloudVaultArtifact
   }): Promise<CloudVaultSnapshotV1> {
     const generatedAt = input.capturedAt ?? new Date().toISOString();
     const novels = (await this.reader.listNovels()).filter((novel) => !novel.deletedAt);
+    // listNovels intentionally hides trash in some repository adapters. The
+    // local Vault adapter keeps deletion clocks from the canonical store.
+    const allLocalNovels = await getAllRecords<Novel>('novels');
     const outbox = await this.reader.listSyncOutbox();
     const tombstones = await getAllRecords<SyncTombstone>('sync_tombstones');
     const books: CloudVaultBookV1[] = [];
 
     for (const novel of novels) {
+      const activeContentRevision = novel.activeContentRevisionId
+        ? await getItem<BookContentRevisionRecord>('book_content_revisions', novel.activeContentRevisionId)
+        : undefined;
       const chapters = await this.reader.listChapters(novel.id);
       const readingPosition = await this.reader.getReadingPosition(novel.id);
       const listeningPosition = await getListeningPosition(novel.id);
@@ -309,6 +391,8 @@ export class IndexedDbCloudVaultArtifactRepository implements CloudVaultArtifact
       const paragraphs = await mapInBatches(referencedParagraphIds, (id) => this.reader.getParagraph(id));
       const parts: CapturedBookParts = {
         novel,
+        contentAt: activeContentRevision?.activatedAt ?? activeContentRevision?.createdAt ?? novel.createdAt,
+        contentDeviceId: input.deviceId,
         chapters,
         readingPosition,
         listeningPosition,
@@ -334,25 +418,33 @@ export class IndexedDbCloudVaultArtifactRepository implements CloudVaultArtifact
         : [[], []];
     const settings = input.scope.readerSettings ? await this.reader.getSettings() : undefined;
     const settingsUpdatedAt = input.scope.readerSettings
-      ? maxTimestamp(
+      ? (settings?.cloudVaultUpdatedAt ??
+        maxTimestamp(
           outbox.filter((item) => item.event.type === 'settings_updated').map((item) => item.event.createdAt),
-          generatedAt,
-        )
+        ))
       : undefined;
-    const novelHashById = new Map(novels.map((novel) => [novel.id, novel.normalizedTextHash]));
+    const novelById = new Map(allLocalNovels.map((novel) => [novel.id, novel]));
     const shelfMemberships: CloudVaultShelfMembershipV1[] = localShelfMemberships.flatMap((membership) => {
-      const bookHash = novelHashById.get(membership.bookId);
+      const novel = novelById.get(membership.bookId);
+      const bookHash = novel?.normalizedTextHash;
+      const vaultBookId = novel ? (novel.cloudVaultBookId ?? novel.id) : undefined;
       return bookHash
         ? [
             {
-              id: vaultShelfMembershipId(membership.shelfId, bookHash),
+              id: vaultShelfMembershipId(membership.shelfId, vaultBookId ?? bookHash),
               shelfId: membership.shelfId,
               bookHash,
+              vaultBookId,
               createdAt: membership.createdAt,
             },
           ]
         : [];
     });
+    const capturedTombstones = [
+      ...scopedTombstones(tombstones, novelById, outbox),
+      ...lifecycleTombstones(allLocalNovels, outbox),
+    ].sort((left, right) => left.deletedAt.localeCompare(right.deletedAt));
+    const vaultTombstones = [...new Map(capturedTombstones.map((item) => [item.id, item])).values()];
     return {
       format: CLOUD_VAULT_FORMAT,
       version: CLOUD_VAULT_VERSION,
@@ -362,21 +454,28 @@ export class IndexedDbCloudVaultArtifactRepository implements CloudVaultArtifact
       books,
       shelves,
       shelfMemberships,
-      tombstones: scopedTombstones(tombstones, novelHashById, outbox),
+      tombstones: vaultTombstones,
       settings,
       settingsUpdatedAt,
     };
   }
 
   async apply(snapshot: CloudVaultSnapshotV1): Promise<CloudVaultApplyReport> {
-    const localNovels = (await this.reader.listNovels()).filter((novel) => !novel.deletedAt);
+    // A live remote book may be a restore that supersedes this device's trash
+    // tombstone, so trashed rows must remain eligible for stable-id matching.
+    const localNovels = await getAllRecords<Novel>('novels');
     const localByHash = new Map(localNovels.map((novel) => [novel.normalizedTextHash, novel]));
+    const localByVaultId = new Map(
+      localNovels.flatMap((novel) => (novel.cloudVaultBookId ? [[novel.cloudVaultBookId, novel] as const] : [])),
+    );
     const prepared: PreparedBookApply[] = [];
     const waitingBookTitles: string[] = [];
     let quarantinedRecords = 0;
 
     for (const book of snapshot.books) {
-      const localNovel = localByHash.get(book.identity.normalizedTextHash);
+      const localNovel =
+        (book.identity.vaultBookId ? localByVaultId.get(book.identity.vaultBookId) : undefined) ??
+        localByHash.get(book.identity.normalizedTextHash);
       if (!localNovel) {
         waitingBookTitles.push(book.identity.title);
         continue;
@@ -406,17 +505,22 @@ export class IndexedDbCloudVaultArtifactRepository implements CloudVaultArtifact
       'shelf_memberships',
       READER_PERSONALIZATION_STORES.sessions,
       'settings',
+      BOOK_ASSET_STORES.assets,
+      BOOK_ASSET_STORES.blobs,
     ] as const;
     const tx = db.transaction([...stores], 'readwrite');
     let appliedRecords = 0;
 
     for (const book of prepared) appliedRecords += await this.applyPreparedBook(tx, book);
     if (snapshot.scope.library) {
-      appliedRecords += this.applyShelves(tx, snapshot.shelves, snapshot.shelfMemberships, localByHash);
+      appliedRecords += this.applyShelves(tx, snapshot.shelves, snapshot.shelfMemberships, localByHash, localByVaultId);
     }
-    appliedRecords += await this.applyTombstones(tx, snapshot.tombstones, localByHash, snapshot.scope);
+    appliedRecords += await this.applyTombstones(tx, snapshot.tombstones, localByHash, localByVaultId, snapshot.scope);
     if (snapshot.scope.readerSettings && snapshot.settings) {
-      tx.objectStore('settings').put(snapshot.settings);
+      tx.objectStore('settings').put({
+        ...snapshot.settings,
+        cloudVaultUpdatedAt: snapshot.settingsUpdatedAt ?? snapshot.settings.cloudVaultUpdatedAt,
+      });
       appliedRecords += 1;
     }
     await transactionDone(tx);
@@ -453,6 +557,7 @@ export class IndexedDbCloudVaultArtifactRepository implements CloudVaultArtifact
     return {
       identity: {
         bookId: novel.id,
+        vaultBookId: novel.cloudVaultBookId ?? novel.id,
         normalizedTextHash: novel.normalizedTextHash,
         activeContentRevisionId: novel.activeContentRevisionId,
         format: novel.format ?? 'txt',
@@ -463,11 +568,14 @@ export class IndexedDbCloudVaultArtifactRepository implements CloudVaultArtifact
         tags: novel.tags,
         description: novel.description,
         language: novel.language,
+        coverUpdatedAt: novel.coverUpdatedAt ?? (novel.coverAssetId ? novel.updatedAt : undefined),
         favorite: novel.favorite,
         metadataRevision: novel.metadataRevision ?? 0,
         updatedAt: novel.updatedAt,
       },
       revisions: {
+        contentAt: parts.contentAt,
+        contentDeviceId: parts.contentDeviceId,
         metadataAt: novel.updatedAt,
         readerAt: maxTimestamp(
           [parts.readingPosition?.updatedAt, parts.listeningPosition?.updatedAt],
@@ -495,7 +603,7 @@ export class IndexedDbCloudVaultArtifactRepository implements CloudVaultArtifact
       documentAnnotations: parts.documentAnnotations,
       documentTextOrderOverrides: parts.documentTextOrderOverrides.map((override) => ({
         ...override,
-        id: vaultDocumentTextOrderOverrideId(novel.normalizedTextHash, override.pageIndex),
+        id: vaultDocumentTextOrderOverrideId(novel.cloudVaultBookId ?? novel.id, override.pageIndex),
       })),
       readingSessions: parts.readingSessions,
       characters: parts.characters,
@@ -681,10 +789,17 @@ export class IndexedDbCloudVaultArtifactRepository implements CloudVaultArtifact
     const current = (await requestToPromise<Novel | undefined>(novelStore.get(prepared.novel.id))) ?? prepared.novel;
     const position = prepared.readingPosition;
     const listeningPosition = prepared.listeningPosition;
+    const restoreFromTrash = Boolean(
+      prepared.applyMetadata && current.deletedAt && prepared.identity.updatedAt > current.deletedAt,
+    );
+    const currentLifecycleState = restoreFromTrash
+      ? { ...current, deletedAt: undefined, deletedByDeviceId: undefined }
+      : current;
     let nextNovel =
-      prepared.applyMetadata && prepared.identity.updatedAt >= current.updatedAt
+      prepared.applyMetadata && prepared.identity.updatedAt >= currentLifecycleState.updatedAt
         ? {
-            ...current,
+            ...currentLifecycleState,
+            cloudVaultBookId: prepared.identity.vaultBookId ?? currentLifecycleState.cloudVaultBookId,
             title: prepared.identity.title,
             author: prepared.identity.author,
             seriesTitle: prepared.identity.seriesTitle,
@@ -692,11 +807,20 @@ export class IndexedDbCloudVaultArtifactRepository implements CloudVaultArtifact
             tags: prepared.identity.tags ? [...prepared.identity.tags] : undefined,
             description: prepared.identity.description,
             language: prepared.identity.language,
+            coverUpdatedAt: prepared.identity.coverUpdatedAt ?? current.coverUpdatedAt,
             favorite: prepared.identity.favorite,
             metadataRevision: Math.max(current.metadataRevision ?? 0, prepared.identity.metadataRevision),
             updatedAt: prepared.identity.updatedAt,
           }
-        : current;
+        : {
+            ...currentLifecycleState,
+            cloudVaultBookId: prepared.identity.vaultBookId ?? currentLifecycleState.cloudVaultBookId,
+          };
+    if (restoreFromTrash) {
+      tx.objectStore('sync_tombstones').delete(
+        `book:${prepared.identity.vaultBookId ?? current.cloudVaultBookId ?? current.id}`,
+      );
+    }
     if (position) {
       const existing = await requestToPromise<ReadingPosition | undefined>(
         tx.objectStore('reading_positions').index('novelId').get(current.id),
@@ -759,13 +883,16 @@ export class IndexedDbCloudVaultArtifactRepository implements CloudVaultArtifact
     shelves: readonly Shelf[],
     memberships: readonly CloudVaultShelfMembershipV1[],
     localByHash: ReadonlyMap<string, Novel>,
+    localByVaultId: ReadonlyMap<string, Novel>,
   ): number {
     const shelfStore = tx.objectStore('shelves');
     const membershipStore = tx.objectStore('shelf_memberships');
     for (const shelf of shelves) shelfStore.put(shelf);
     let applied = shelves.length;
     for (const membership of memberships) {
-      const localNovel = localByHash.get(membership.bookHash);
+      const localNovel =
+        (membership.vaultBookId ? localByVaultId.get(membership.vaultBookId) : undefined) ??
+        localByHash.get(membership.bookHash);
       if (!localNovel) continue;
       membershipStore.put({
         id: localShelfMembershipId(membership.shelfId, localNovel.id),
@@ -782,6 +909,7 @@ export class IndexedDbCloudVaultArtifactRepository implements CloudVaultArtifact
     tx: IDBTransaction,
     tombstones: readonly CloudVaultTombstoneV1[],
     localByHash: ReadonlyMap<string, Novel>,
+    localByVaultId: ReadonlyMap<string, Novel>,
     scope: CloudVaultSyncScope,
   ): Promise<number> {
     const storeByType = {
@@ -803,13 +931,90 @@ export class IndexedDbCloudVaultArtifactRepository implements CloudVaultArtifact
         ? (['bookmark', 'highlight', 'note', 'document_annotation', 'document_text_order_override'] as const)
         : []),
       ...(scope.aiTtsArtifacts ? (['user_correction'] as const) : []),
-      ...(scope.library ? (['shelf', 'shelf_membership'] as const) : []),
+      ...(scope.library ? (['book', 'shelf', 'shelf_membership'] as const) : []),
+      ...(scope.sourceFiles ? (['cover'] as const) : []),
     ]);
     let applied = 0;
     for (const tombstone of tombstones) {
       if (!enabledTypes.has(tombstone.entityType)) continue;
-      const localNovel = tombstone.bookHash ? localByHash.get(tombstone.bookHash) : undefined;
+      let localNovel =
+        (tombstone.vaultBookId ? localByVaultId.get(tombstone.vaultBookId) : undefined) ??
+        (tombstone.entityType === 'book' || tombstone.entityType === 'cover'
+          ? localByVaultId.get(tombstone.entityId)
+          : undefined) ??
+        (tombstone.bookHash ? localByHash.get(tombstone.bookHash) : undefined);
       if (tombstone.bookHash && !localNovel) continue;
+      if (localNovel && (tombstone.entityType === 'book' || tombstone.entityType === 'cover')) {
+        localNovel =
+          (await requestToPromise<Novel | undefined>(tx.objectStore('novels').get(localNovel.id))) ?? localNovel;
+      }
+      if (tombstone.entityType === 'book') {
+        if (!localNovel || localNovel.updatedAt > tombstone.deletedAt) continue;
+        tx.objectStore('novels').put({
+          ...localNovel,
+          cloudVaultBookId: localNovel.cloudVaultBookId ?? tombstone.entityId,
+          deletedAt: tombstone.deletedAt,
+          deletedByDeviceId: 'cloud_vault',
+          metadataRevision: (localNovel.metadataRevision ?? 0) + 1,
+          updatedAt: tombstone.deletedAt,
+        } satisfies Novel);
+        tx.objectStore('sync_tombstones').put({
+          id: `book:${tombstone.entityId}`,
+          entityType: 'book',
+          entityId: tombstone.entityId,
+          novelId: localNovel.id,
+          vaultBookId: tombstone.vaultBookId ?? tombstone.entityId,
+          bookHash: tombstone.bookHash ?? localNovel.normalizedTextHash,
+          deletedAt: tombstone.deletedAt,
+          createdAt: tombstone.deletedAt,
+        } satisfies SyncTombstone);
+        applied += 1;
+        continue;
+      }
+      if (tombstone.entityType === 'cover') {
+        if (
+          !localNovel ||
+          ((localNovel.coverRemovedAt ?? epoch) >= tombstone.deletedAt && !localNovel.coverAssetId) ||
+          (localNovel.coverUpdatedAt ?? epoch) > tombstone.deletedAt
+        ) {
+          continue;
+        }
+        const assetStore = tx.objectStore(BOOK_ASSET_STORES.assets);
+        const blobStore = tx.objectStore(BOOK_ASSET_STORES.blobs);
+        const active = await requestToPromise<StoredBookAsset[]>(
+          assetStore.index('bookId_kind_status').getAll([localNovel.id, 'cover', 'active']),
+        );
+        for (const asset of active) {
+          assetStore.delete(asset.id);
+          const remaining = await requestToPromise<number>(assetStore.index('storageKey').count(asset.storageKey));
+          if (remaining === 0) blobStore.delete(asset.storageKey);
+        }
+        tx.objectStore('novels').put({
+          ...localNovel,
+          cloudVaultBookId: localNovel.cloudVaultBookId ?? tombstone.entityId,
+          coverAssetId: undefined,
+          coverContentHash: undefined,
+          coverFit: undefined,
+          coverPositionX: undefined,
+          coverPositionY: undefined,
+          coverUpdatedAt: undefined,
+          coverRemovedAt: tombstone.deletedAt,
+          metadataRevision: (localNovel.metadataRevision ?? 0) + 1,
+          updatedAt: tombstone.deletedAt > localNovel.updatedAt ? tombstone.deletedAt : localNovel.updatedAt,
+        } satisfies Novel);
+        tx.objectStore('sync_tombstones').put({
+          id: `cover:${tombstone.entityId}`,
+          entityType: 'cover',
+          entityId: tombstone.entityId,
+          novelId: localNovel.id,
+          vaultBookId: tombstone.vaultBookId ?? tombstone.entityId,
+          bookHash: tombstone.bookHash ?? localNovel.normalizedTextHash,
+          deletedAt: tombstone.deletedAt,
+          createdAt: tombstone.deletedAt,
+        } satisfies SyncTombstone);
+        applied += 1;
+        continue;
+      }
       const entityId =
         tombstone.entityType === 'reading_position' && localNovel
           ? `reading_position_${localNovel.id}`

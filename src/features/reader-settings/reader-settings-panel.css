@@ -498,6 +498,266 @@
   font-size: 0.7rem;
 }
 
+.extension-custom-settings-body {
+  margin-top: 12px;
+}
+
+.webnovel-metadata-extension-settings {
+  display: grid;
+  gap: 10px;
+}
+
+.extension-detail-section {
+  display: grid;
+  gap: 11px;
+  padding: 12px;
+  background: var(--app-surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-control);
+}
+
+.extension-detail-section-heading,
+.extension-batch-panel,
+.extension-auth-platform-row,
+.extension-auth-browser-note {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.extension-detail-section-heading > div,
+.extension-batch-panel > div,
+.extension-auth-platform-row > div:first-child {
+  display: grid;
+  min-width: 0;
+  gap: 3px;
+}
+
+.extension-detail-section-heading strong,
+.extension-batch-panel strong,
+.extension-auth-platform-row strong {
+  color: var(--text);
+  font-size: 0.76rem;
+}
+
+.extension-detail-section-heading span,
+.extension-batch-panel span,
+.extension-auth-platform-row span,
+.extension-auth-browser-note span {
+  color: var(--text-2);
+  font-size: 0.68rem;
+  line-height: 1.5;
+}
+
+.extension-connection-state {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 5px;
+  padding: 4px 7px;
+  color: var(--text-2);
+  background: var(--app-surface-muted);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  font-size: 0.66rem;
+  font-weight: 700;
+}
+
+.extension-connection-state.is-connected {
+  color: var(--success);
+  border-color: color-mix(in srgb, var(--success) 35%, var(--border));
+}
+
+.extension-connection-state.is-unavailable {
+  color: var(--warning);
+  border-color: color-mix(in srgb, var(--warning) 35%, var(--border));
+}
+
+.extension-endpoint-form {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: end;
+  gap: 8px;
+}
+
+.extension-endpoint-form > label {
+  display: grid;
+  gap: 5px;
+  color: var(--text-2);
+  font-size: 0.68rem;
+}
+
+.extension-endpoint-form input {
+  width: 100%;
+  min-width: 0;
+  min-height: 36px;
+  padding: 0 10px;
+  color: var(--text);
+  background: var(--app-input);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-control);
+}
+
+.extension-inline-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+
+.extension-option-list,
+.extension-auth-platforms {
+  display: grid;
+  gap: 7px;
+}
+
+.extension-wide-toggle {
+  align-items: flex-start;
+  padding: 9px 10px;
+  background: var(--app-surface-muted);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-control);
+}
+
+.extension-wide-toggle input {
+  margin-top: 2px;
+}
+
+.extension-wide-toggle > span {
+  display: grid;
+  gap: 3px;
+}
+
+.extension-wide-toggle strong {
+  color: var(--text);
+  font-size: 0.72rem;
+}
+
+.extension-wide-toggle small {
+  color: var(--text-2);
+  font-size: 0.66rem;
+  line-height: 1.45;
+}
+
+.extension-batch-panel,
+.extension-auth-platform-row,
+.extension-auth-browser-note {
+  padding: 9px 10px;
+  background: var(--app-surface-muted);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-control);
+}
+
+.extension-batch-progress {
+  display: grid;
+  grid-template-columns: minmax(100px, 1fr) auto;
+  align-items: center;
+  gap: 9px;
+  color: var(--text-2);
+  font-size: 0.68rem;
+}
+
+.extension-batch-progress progress {
+  width: 100%;
+  accent-color: var(--primary);
+}
+
+.extension-auth-footer {
+  justify-content: space-between;
+}
+
+.collector-auth-browser-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: var(--layer-dialog);
+  display: grid;
+  place-items: center;
+  padding: 18px;
+  background: rgb(3 7 12 / 86%);
+}
+
+.collector-auth-browser-dialog {
+  display: grid;
+  width: min(1120px, 100%);
+  max-height: calc(100dvh - 36px);
+  padding: 12px;
+  overflow: auto;
+  background: var(--app-surface);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-panel);
+  box-shadow: var(--shadow);
+  gap: 10px;
+}
+
+.collector-auth-browser-dialog > header,
+.collector-auth-browser-dialog > footer,
+.collector-auth-browser-nav,
+.collector-auth-browser-input {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+
+.collector-auth-browser-dialog > header,
+.collector-auth-browser-dialog > footer {
+  justify-content: space-between;
+}
+
+.collector-auth-browser-dialog > header strong {
+  color: var(--text);
+  font-size: 0.78rem;
+}
+
+.collector-auth-browser-frame {
+  position: relative;
+  width: 100%;
+  min-height: 240px;
+  overflow: hidden;
+  background: #fff;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-control);
+  cursor: default;
+  outline: none;
+  touch-action: none;
+}
+
+.collector-auth-browser-frame:focus-visible {
+  border-color: var(--primary);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--primary) 25%, transparent);
+}
+
+.collector-auth-browser-frame img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  user-select: none;
+}
+
+.collector-auth-browser-loading {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  color: var(--text-2);
+  background: var(--app-surface-muted);
+  place-items: center;
+}
+
+.collector-auth-browser-input input {
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 38px;
+  padding: 0 10px;
+  color: var(--text);
+  background: var(--app-input);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-control);
+}
+
+.webnovel-metadata-extension-settings.is-disabled .extension-detail-section {
+  background: color-mix(in srgb, var(--app-surface) 78%, transparent);
+}
+
 .extension-settings-details {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -622,6 +882,34 @@
 .application-info-runtime-summary span {
   color: var(--text-2);
   font-size: 0.72rem;
+}
+
+.application-info-account {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  padding: 12px;
+  background: var(--app-surface-muted);
+  border: 1px solid var(--border);
+}
+
+.application-info-account > div {
+  display: grid;
+  min-width: 0;
+  gap: 3px;
+}
+
+.application-info-account strong {
+  font-size: 0.82rem;
+}
+
+.application-info-account span {
+  overflow: hidden;
+  color: var(--text-2);
+  font-size: 0.72rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .application-info-runtime-summary dl {
@@ -1433,5 +1721,52 @@
 
   .extension-settings-details {
     grid-template-columns: 1fr;
+  }
+
+  .extension-endpoint-form {
+    grid-template-columns: 1fr;
+  }
+
+  .extension-detail-section-heading,
+  .extension-batch-panel,
+  .extension-auth-platform-row,
+  .extension-auth-browser-note {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .extension-inline-actions > button,
+  .extension-batch-panel > button,
+  .extension-auth-browser-note > button {
+    min-height: 40px;
+  }
+
+  .extension-auth-platform-row .extension-inline-actions > button {
+    flex: 1 1 auto;
+  }
+
+  .extension-batch-progress {
+    grid-template-columns: 1fr;
+  }
+
+  .collector-auth-browser-backdrop {
+    padding: 0;
+  }
+
+  .collector-auth-browser-dialog {
+    width: 100%;
+    max-height: 100dvh;
+    min-height: 100dvh;
+    border: 0;
+    border-radius: 0;
+  }
+
+  .collector-auth-browser-frame {
+    min-height: 280px;
+  }
+
+  .collector-auth-browser-dialog > footer > button {
+    flex: 1 1 0;
+    min-height: 42px;
   }
 }

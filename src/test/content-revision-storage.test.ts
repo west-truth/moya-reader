@@ -1,5 +1,5 @@
 import 'fake-indexeddb/auto';
-import { beforeEach, describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ParsedNovel } from '../domain/types';
 import type { SyncOutboxItem, SyncState } from '../sync/types';
 import {
@@ -24,6 +24,8 @@ import {
 import type { BookContentRevisionRecord } from '../storage/content-revisions';
 import { activateStagedContentRevision, createStagingContentRevision } from '../storage/content-revision-store';
 import { READER_DB_VERSION } from '../storage/reader-database';
+import { IndexedDbBookAssetRepository } from '../repositories/indexeddb-book-asset-repository';
+import { IndexedDbLibraryCatalogRepository } from '../repositories/indexeddb-library-catalog-repository';
 
 function requestToPromise<T>(request: IDBRequest<T>): Promise<T> {
   return new Promise((resolve, reject) => {
@@ -184,7 +186,20 @@ describe('content revision storage', () => {
 
   it('activates a multi-batch import once and queues one book_imported event', async () => {
     const parsed = parsedNovel('novel-single-activation', 'batched', PARAGRAPHS_PER_PAGE * 2 + 3);
-    await saveImportedNovel(parsed, { batchPageCount: 1 });
+    const countedIndexes: string[] = [];
+    const nativeCount = IDBIndex.prototype.count;
+    const countSpy = vi.spyOn(IDBIndex.prototype, 'count').mockImplementation(function (
+      this: IDBIndex,
+      query?: IDBValidKey | IDBKeyRange,
+    ) {
+      countedIndexes.push(this.name);
+      return nativeCount.call(this, query);
+    });
+    try {
+      await saveImportedNovel(parsed, { batchPageCount: 1 });
+    } finally {
+      countSpy.mockRestore();
+    }
 
     const [novel, revisions, outbox] = await Promise.all([
       getNovel(parsed.novel.id),
@@ -203,7 +218,85 @@ describe('content revision storage', () => {
         searchRowCount: parsed.paragraphs.length,
       },
     });
+    expect(revisions[0]?.stagedCounts).toBeUndefined();
+    expect(countedIndexes).not.toContain('contentRevisionId');
     expect(outbox.map((item) => item.event.type)).toEqual(['book_imported']);
+  });
+
+  it('persists staging counts with each chapter and page batch before activation', async () => {
+    const parsed = parsedNovel('novel-staged-counts', 'staged counts', PARAGRAPHS_PER_PAGE + 2);
+    let releaseProgress!: () => void;
+    const progressGate = new Promise<void>((resolve) => {
+      releaseProgress = resolve;
+    });
+    let staged!: () => void;
+    const stagedWrite = new Promise<void>((resolve) => {
+      staged = resolve;
+    });
+    let paused = false;
+    const importPromise = saveImportedNovel(parsed, {
+      batchPageCount: 1,
+      onProgress: async (progress) => {
+        if (paused || progress.phase !== 'writing_pages' || progress.paragraphsWritten !== parsed.paragraphs.length) {
+          return;
+        }
+        paused = true;
+        staged();
+        await progressGate;
+      },
+    });
+
+    await stagedWrite;
+    const [stagingRevision] = await getContentRevisions(parsed.novel.id);
+    releaseProgress();
+    await importPromise;
+
+    expect(stagingRevision).toMatchObject({
+      status: 'staging',
+      stagedCounts: {
+        chapterCount: 1,
+        pageCount: 2,
+        paragraphCount: parsed.paragraphs.length,
+        paragraphRefCount: parsed.paragraphs.length,
+        searchRowCount: parsed.paragraphs.length,
+      },
+    });
+    expect((await getContentRevisions(parsed.novel.id))[0]).toMatchObject({
+      status: 'active',
+      actual: stagingRevision.stagedCounts,
+    });
+  });
+
+  it('falls back to index counts for a legacy staging revision without staged counts', async () => {
+    const parsed = parsedNovel('novel-legacy-staged-counts', 'legacy staged counts', 0);
+    const novel = {
+      ...parsed.novel,
+      totalChapters: 0,
+      totalCharacters: 0,
+      totalParagraphs: 0,
+      lastReadChapterId: undefined,
+    };
+    const db = await openReaderDb();
+    const revision = await createStagingContentRevision(db, {
+      novel,
+      source: 'local_import',
+      expected: { chapterCount: 0, pageCount: 0, paragraphCount: 0 },
+    });
+    const { stagedCounts: _stagedCounts, ...legacyRevision } = revision;
+    const tx = db.transaction('book_content_revisions', 'readwrite');
+    tx.objectStore('book_content_revisions').put(legacyRevision);
+    await transactionDone(tx);
+
+    await activateStagedContentRevision(db, {
+      revision: legacyRevision,
+      actual: { chapterCount: 0, pageCount: 0, paragraphCount: 0, paragraphRefCount: 0, searchRowCount: 0 },
+      novel,
+    });
+
+    expect((await getContentRevisions(novel.id))[0]).toMatchObject({
+      status: 'active',
+      actual: { chapterCount: 0, pageCount: 0, paragraphCount: 0, paragraphRefCount: 0, searchRowCount: 0 },
+    });
   });
 
   it('keeps only the old active content visible while a replacement is staging', async () => {
@@ -324,6 +417,107 @@ describe('content revision storage', () => {
         expect.objectContaining({ entityType: 'sync_outbox' }),
       ]),
     );
+  });
+
+  it('keeps user-managed metadata and cover while replacing the same book content', async () => {
+    const original = parsedNovel('novel-user-metadata-reimport', 'original');
+    await saveImportedNovel(original);
+    const catalog = new IndexedDbLibraryCatalogRepository();
+    const assets = new IndexedDbBookAssetRepository();
+    await catalog.patchMetadata(
+      original.novel.id,
+      {
+        title: '내가 정한 제목',
+        author: '내가 정한 작가',
+        seriesTitle: '내 시리즈',
+        seriesIndex: 4,
+        tags: ['보존', '사용자'],
+        description: '내 설명',
+        language: 'ko',
+      },
+      0,
+    );
+    const edited = (await getNovel(original.novel.id))!;
+    const cover = await assets.saveCover(original.novel.id, {
+      blob: new Blob([new Uint8Array([1, 2, 3])], { type: 'image/png' }),
+      fileName: 'user-cover.png',
+      contentType: 'image/png',
+      contentHash: `sha256:${'ab'.repeat(32)}`,
+      pixelWidth: 30,
+      pixelHeight: 40,
+      fit: 'crop',
+      positionX: 31,
+      positionY: 72,
+      expectedMetadataRevision: edited.metadataRevision,
+    });
+    const db = await openReaderDb();
+    const seedTx = db.transaction('novels', 'readwrite');
+    const seeded = (await requestToPromise(seedTx.objectStore('novels').get(original.novel.id)))!;
+    seedTx.objectStore('novels').put({
+      ...seeded,
+      cloudVaultBookId: 'vault-stable-book-id',
+      readingDirection: 'rtl',
+    });
+    await transactionDone(seedTx);
+    const before = (await getNovel(original.novel.id))!;
+
+    const replacement = parsedNovel(original.novel.id, 'replacement');
+    replacement.novel.sourceFileName = 'replacement.txt';
+    replacement.novel.author = 'source author';
+    replacement.novel.seriesTitle = 'source series';
+    replacement.novel.seriesIndex = 99;
+    replacement.novel.tags = ['source'];
+    replacement.novel.description = 'source description';
+    replacement.novel.language = 'en';
+    replacement.novel.readingDirection = 'ltr';
+    replacement.novel.metadataRevision = 0;
+    replacement.novel.coverAssetId = 'source-cover';
+    replacement.novel.coverContentHash = 'source-cover-hash';
+    await saveImportedNovel(replacement);
+
+    expect(await getNovel(original.novel.id)).toMatchObject({
+      cloudVaultBookId: 'vault-stable-book-id',
+      title: '내가 정한 제목',
+      author: '내가 정한 작가',
+      seriesTitle: '내 시리즈',
+      seriesIndex: 4,
+      tags: ['보존', '사용자'],
+      description: '내 설명',
+      language: 'ko',
+      readingDirection: 'rtl',
+      coverAssetId: cover.id,
+      coverContentHash: cover.contentHash,
+      coverFit: 'crop',
+      coverPositionX: 31,
+      coverPositionY: 72,
+      coverUpdatedAt: before.coverUpdatedAt,
+      metadataRevision: before.metadataRevision,
+      sourceFileName: 'replacement.txt',
+      normalizedTextHash: replacement.novel.normalizedTextHash,
+    });
+  });
+
+  it('rejects a delayed reader position write from a replaced content revision', async () => {
+    const original = parsedNovel('novel-reader-position-revision-fence', 'original');
+    await saveImportedNovel(original);
+    const before = (await getNovel(original.novel.id))!;
+    const replacement = parsedNovel(original.novel.id, 'replacement');
+    await saveImportedNovel(replacement);
+
+    await expect(
+      saveReadingPosition({
+        novelId: original.novel.id,
+        expectedContentRevisionId: before.activeContentRevisionId,
+        chapterId: original.chapters[0].id,
+        paragraphId: original.paragraphs[0].id,
+        paragraphIndex: 1,
+        offsetInParagraph: 0,
+        chapterProgress: 0.5,
+        scrollTop: 120,
+      }),
+    ).rejects.toMatchObject({ name: 'ContentRevisionConflictError' });
+
+    expect((await getNovel(original.novel.id))?.lastReadProgress).toBe(0);
   });
 
   it('remaps exact reader anchors during a same-id local replacement', async () => {

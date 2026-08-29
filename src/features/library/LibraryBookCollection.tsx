@@ -1,10 +1,10 @@
-import { Check, Pencil, Play, RotateCcw, Star, Trash2 } from 'lucide-react';
-import { formatProgress } from '../../utils/format';
+import { BookOpen, Check, Pencil, Play, RotateCcw, Star, Trash2 } from 'lucide-react';
+import { bookFormatLabel, isFixedDocumentFormat } from '../../domain/book-format';
+import { formatCount, formatProgress } from '../../utils/format';
 import type { LibraryBookView } from './library-screen-model';
-import type { LibraryScreenProps } from './library-screen-contract';
+import type { LibraryExternalWorkView, LibraryScreenProps } from './library-screen-contract';
 import { LibraryReadingProgress } from './LibraryReadingProgress';
 import { BookCover } from './BookCover';
-import { isFixedDocumentFormat } from '../../domain/book-format';
 
 interface LibraryBookItemProps extends LibraryScreenProps {
   readonly book: LibraryBookView;
@@ -13,12 +13,6 @@ interface LibraryBookItemProps extends LibraryScreenProps {
 function classNames(...values: Array<string | false | undefined>): string {
   return values.filter(Boolean).join(' ');
 }
-
-const statusClassName: Record<LibraryBookView['readingStatusLabel'], string> = {
-  '읽는 중': 'is-reading',
-  완독: 'is-finished',
-  미독: 'is-unread',
-};
 
 function useItemState({ book, model }: LibraryBookItemProps) {
   const selected = model.management.selectionMode && model.management.selectedBookIds.has(book.novel.id);
@@ -125,6 +119,98 @@ function SelectionMark({ selected }: { readonly selected: boolean }) {
   );
 }
 
+function ExternalWorkCover({ work, thumbnail }: { work: LibraryExternalWorkView; thumbnail: boolean }) {
+  return (
+    <div className={classNames('book-cover', !thumbnail && 'thumb', thumbnail && 'has-remote-cover')}>
+      {work.thumbnailUrl ? (
+        <img src={work.thumbnailUrl} alt="" loading="lazy" decoding="async" referrerPolicy="no-referrer" />
+      ) : (
+        <span className="external-work-cover-fallback" aria-hidden="true">
+          <BookOpen size={32} />
+        </span>
+      )}
+    </div>
+  );
+}
+
+function ExternalWorkActions({
+  work,
+  actions,
+}: Pick<LibraryScreenProps, 'actions'> & { work: LibraryExternalWorkView }) {
+  return (
+    <div className="card-actions">
+      <button
+        type="button"
+        className="mini-icon-btn book-remove-action"
+        title="라이브러리에서 제거"
+        aria-label={`${work.title} 라이브러리에서 제거`}
+        onClick={() => void actions.books.removeExternal(work.id)}
+      >
+        <Trash2 size={15} />
+      </button>
+    </div>
+  );
+}
+
+function ExternalWorkCard({ work, actions }: Pick<LibraryScreenProps, 'actions'> & { work: LibraryExternalWorkView }) {
+  return (
+    <article className="book-card external-work-card" role="listitem">
+      <button
+        type="button"
+        className="book-card-open"
+        aria-label={`${work.title} 원격 회차 열기`}
+        onClick={() => void actions.books.openExternal(work.id)}
+      />
+      <div className="book-cover-wrap">
+        <ExternalWorkCover work={work} thumbnail />
+      </div>
+      <div className="book-info">
+        <div className="book-title-line">
+          <h3>{work.title}</h3>
+        </div>
+        <p>{[work.author, work.sourceLabel].filter(Boolean).join(' · ')}</p>
+        <div className="card-row">
+          <strong>{formatCount(work.availableReleaseCount)}화</strong>
+          <span>{work.newReleaseCount > 0 ? `새 회차 ${work.newReleaseCount}개` : '새 회차 확인됨'}</span>
+          <ExternalWorkActions work={work} actions={actions} />
+        </div>
+      </div>
+    </article>
+  );
+}
+
+function ExternalWorkListRow({
+  work,
+  actions,
+}: Pick<LibraryScreenProps, 'actions'> & { work: LibraryExternalWorkView }) {
+  return (
+    <article className="book-list-row external-work-list-row" role="listitem">
+      <button
+        type="button"
+        className="book-card-open"
+        aria-label={`${work.title} 원격 회차 열기`}
+        onClick={() => void actions.books.openExternal(work.id)}
+      />
+      <ExternalWorkCover work={work} thumbnail={false} />
+      <div className="book-list-main">
+        <div className="book-list-title">
+          <h3>{work.title}</h3>
+        </div>
+        <p>
+          {[work.author, work.sourceLabel, `원격 회차 ${formatCount(work.availableReleaseCount)}개`]
+            .filter(Boolean)
+            .join(' · ')}
+        </p>
+      </div>
+      <div className="book-list-progress">
+        <strong>{work.newReleaseCount > 0 ? `새 회차 ${work.newReleaseCount}` : '최신'}</strong>
+        <span>Suwayomi 연결 작품</span>
+      </div>
+      <ExternalWorkActions work={work} actions={actions} />
+    </article>
+  );
+}
+
 function LibraryBookCard(props: LibraryBookItemProps) {
   const { book, model } = props;
   const { trashed, selected, focused } = useItemState(props);
@@ -150,12 +236,10 @@ function LibraryBookCard(props: LibraryBookItemProps) {
       <div className="book-cover-wrap">
         <BookCover novel={book.novel} className={classNames('book-cover', book.coverClass)}>
           {model.management.selectionMode && <SelectionMark selected={selected} />}
+          {!model.management.selectionMode && (
+            <span className="book-format-overlay">{bookFormatLabel(book.novel)}</span>
+          )}
         </BookCover>
-        {!trashed && (
-          <span className={classNames('book-status-label', statusClassName[book.readingStatusLabel])}>
-            {book.readingStatusLabel}
-          </span>
-        )}
       </div>
       <div className="book-info">
         <div className="book-title-line">
@@ -205,6 +289,7 @@ function LibraryBookListRow(props: LibraryBookItemProps) {
       />
       <BookCover novel={book.novel} className={classNames('book-cover thumb', book.coverClass)}>
         {model.management.selectionMode && <SelectionMark selected={selected} />}
+        {!model.management.selectionMode && <span className="book-format-overlay">{bookFormatLabel(book.novel)}</span>}
       </BookCover>
       <div className="book-list-main">
         <div className="book-list-title">
@@ -232,6 +317,7 @@ function LibraryBookListRow(props: LibraryBookItemProps) {
 
 export function LibraryBookCollection(props: LibraryScreenProps) {
   const collectionClass = props.model.viewMode === 'grid' ? 'books-grid' : 'books-list';
+  const externalWorks = props.model.management.selectionMode ? [] : (props.model.externalSources.libraryWorks ?? []);
   return (
     <>
       {props.model.management.selectionMode && (
@@ -246,6 +332,13 @@ export function LibraryBookCollection(props: LibraryScreenProps) {
             <span>전체 진행률</span>
             <span>작업</span>
           </div>
+        )}
+        {externalWorks.map((work) =>
+          props.model.viewMode === 'grid' ? (
+            <ExternalWorkCard key={work.id} work={work} actions={props.actions} />
+          ) : (
+            <ExternalWorkListRow key={work.id} work={work} actions={props.actions} />
+          ),
         )}
         {props.model.collection.visibleBooks.map((book) =>
           props.model.viewMode === 'grid' ? (

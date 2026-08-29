@@ -7,6 +7,7 @@ import { requestToPromise, transactionDone } from './indexeddb-transaction';
 import { openReaderDb } from './reader-database';
 import { getTrashedNovels } from './reader-query-store';
 import { jsonValue, LOCAL_DEVICE_ID, queueSyncEventInTransaction } from './sync-event-store';
+import type { SyncTombstone } from './sync-event-store';
 import { BOOK_ENRICHMENT_STORES } from './book-enrichment-schema';
 import { deleteBookEnrichmentDataInTransaction } from './book-enrichment-store';
 
@@ -36,11 +37,25 @@ function assertExpectedRevision(novel: Novel, expectedRevision?: number): void {
   }
 }
 
+function bookVaultTombstone(novel: Novel, deletedAt: string): SyncTombstone {
+  const vaultBookId = novel.cloudVaultBookId ?? novel.id;
+  return {
+    id: `book:${vaultBookId}`,
+    entityType: 'book',
+    entityId: vaultBookId,
+    novelId: novel.id,
+    vaultBookId,
+    bookHash: novel.normalizedTextHash,
+    deletedAt,
+    createdAt: deletedAt,
+  };
+}
+
 export { getTrashedNovels };
 
 export async function moveNovelToTrash(bookId: string, expectedRevision?: number): Promise<CatalogMutationReceipt> {
   const db = await openReaderDb();
-  const tx = db.transaction(['novels', 'devices', 'sync_outbox', 'sync_state'], 'readwrite');
+  const tx = db.transaction(['novels', 'sync_tombstones', 'devices', 'sync_outbox', 'sync_state'], 'readwrite');
   const done = transactionDone(tx);
   const store = tx.objectStore('novels');
   const novel = await requestToPromise<Novel | undefined>(store.get(bookId));
@@ -66,6 +81,7 @@ export async function moveNovelToTrash(bookId: string, expectedRevision?: number
     metadataRevision: receipt.metadataRevision,
     updatedAt: deletedAt,
   } satisfies Novel);
+  tx.objectStore('sync_tombstones').put(bookVaultTombstone(novel, deletedAt));
   await queueSyncEventInTransaction(
     tx,
     'book_trashed',
@@ -81,7 +97,7 @@ export async function restoreNovelFromTrash(
   expectedRevision?: number,
 ): Promise<CatalogMutationReceipt> {
   const db = await openReaderDb();
-  const tx = db.transaction(['novels', 'devices', 'sync_outbox', 'sync_state'], 'readwrite');
+  const tx = db.transaction(['novels', 'sync_tombstones', 'devices', 'sync_outbox', 'sync_state'], 'readwrite');
   const done = transactionDone(tx);
   const store = tx.objectStore('novels');
   const novel = await requestToPromise<Novel | undefined>(store.get(bookId));
@@ -104,6 +120,7 @@ export async function restoreNovelFromTrash(
     updatedAt: restoredAt,
   };
   store.put(restored);
+  tx.objectStore('sync_tombstones').delete(`book:${novel.cloudVaultBookId ?? novel.id}`);
   await queueSyncEventInTransaction(
     tx,
     'book_restored',
@@ -144,13 +161,20 @@ export async function purgeNovel(bookId: string, expectedRevision?: number): Pro
   }
   const purgedAt = new Date().toISOString();
   store.delete(bookId);
-  deleteBookDataInTransaction(tx, bookId);
+  deleteBookDataInTransaction(tx, bookId, { preserveSyncTombstones: true });
   deleteBookAssetsInTransaction(tx, bookId);
   deleteBookEnrichmentDataInTransaction(tx, bookId);
+  tx.objectStore('sync_tombstones').put(bookVaultTombstone(novel, purgedAt));
   await queueSyncEventInTransaction(
     tx,
     'book_purged',
-    jsonValue({ bookId, purgedAt, metadataRevision: (novel.metadataRevision ?? 0) + 1 }),
+    jsonValue({
+      bookId,
+      vaultBookId: novel.cloudVaultBookId ?? novel.id,
+      vaultLegacyContentHash: novel.normalizedTextHash,
+      purgedAt,
+      metadataRevision: (novel.metadataRevision ?? 0) + 1,
+    }),
     { novelId: bookId, entityId: bookId },
   );
   await done;

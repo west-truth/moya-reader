@@ -1,5 +1,5 @@
 import { hashSync } from '../domain/hash';
-import { integrityHash, persistentId128 } from '../domain/id-hash-contract';
+import { integrityHash, integrityHashVersion, persistentId128 } from '../domain/id-hash-contract';
 import { syncEventId, syncPayloadIntegrityHash } from '../domain/identity/sync-identities';
 import type { Bookmark, Chapter, Novel, Paragraph, ParagraphPage, ReaderHighlight, ReaderNote } from '../domain/types';
 import { resolveSyncContract } from '../sync/contract';
@@ -72,7 +72,11 @@ function paragraphRemapKey(chapterIndex: number, paragraphIndex: number, textHas
 export function addParagraphToChildIdIndex(index: BookChildIdIndex, paragraph: Paragraph): void {
   const chapterIndex = index.chapterIndexById.get(paragraph.chapterId);
   if (chapterIndex === undefined || !paragraph.text) return;
-  const key = paragraphRemapKey(chapterIndex, paragraph.index, integrityHash(paragraph.text));
+  const textHash =
+    integrityHashVersion(paragraph.textHash) === 'v2-sha256-tagged'
+      ? paragraph.textHash
+      : integrityHash(paragraph.text);
+  const key = paragraphRemapKey(chapterIndex, paragraph.index, textHash);
   index.paragraphKeyById.set(paragraph.id, key);
   if (!index.paragraphIdByKey.has(key)) index.paragraphIdByKey.set(key, paragraph.id);
 }

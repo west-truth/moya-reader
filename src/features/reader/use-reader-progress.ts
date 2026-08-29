@@ -15,7 +15,7 @@ function bookProgress(novel: Pick<Novel, 'totalChapters'>, chapter: Chapter, cha
 export interface ReaderProgressOptions {
   readonly rootRef: React.RefObject<HTMLDivElement>;
   readonly repository: ReaderRepository;
-  readonly novel: Pick<Novel, 'id' | 'totalChapters'>;
+  readonly novel: Pick<Novel, 'id' | 'totalChapters' | 'activeContentRevisionId'>;
   readonly chapter: Chapter;
   readonly getVisibleParagraph: () => { index?: number; paragraph?: Paragraph };
   readonly onVisualLocation: (location: ReaderLocationSnapshot) => void;
@@ -31,7 +31,7 @@ export interface ReaderProgressController {
 
 interface PendingReaderPosition {
   readonly repository: ReaderRepository;
-  readonly novel: Pick<Novel, 'id' | 'totalChapters'>;
+  readonly novel: Pick<Novel, 'id' | 'totalChapters' | 'activeContentRevisionId'>;
   readonly chapter: Chapter;
   readonly location: ReaderLocationSnapshot;
   readonly offsetInParagraph: number;
@@ -71,6 +71,7 @@ export function useReaderPositionPersistence(
         try {
           await pending.repository.saveReadingPosition({
             novelId: pending.novel.id,
+            expectedContentRevisionId: pending.novel.activeContentRevisionId,
             chapterId: pending.chapter.id,
             scrollTop: pending.location.scrollTop,
             chapterProgress: pending.location.progress,

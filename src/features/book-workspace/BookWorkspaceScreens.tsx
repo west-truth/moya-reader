@@ -40,6 +40,7 @@ export interface BookWorkspaceScreensProps {
   readonly openSettings: () => void;
   readonly openBackup: () => void;
   readonly openImport: () => void;
+  readonly openChapterAppend: (novel: import('../../domain/types').Novel) => void;
   readonly openLibraryFolders: () => void;
   readonly externalSources: ExternalSourceController;
   readonly openExternalSourceSettings: () => void;
@@ -64,6 +65,7 @@ export function BookWorkspaceScreens({
   openSettings,
   openBackup,
   openImport,
+  openChapterAppend,
   openLibraryFolders,
   externalSources,
   openExternalSourceSettings,
@@ -102,18 +104,46 @@ export function BookWorkspaceScreens({
     () => externalSources.sources.filter((source) => source.connection.state === 'connected'),
     [externalSources.sources],
   );
-  const libraryCollection = useMemo(
-    () =>
-      activeShelfBookIds
-        ? {
-            ...projection.libraryCollection,
-            visibleBooks: projection.libraryCollection.visibleBooks.filter((book) =>
-              activeShelfBookIds.has(book.novel.id),
-            ),
-          }
-        : projection.libraryCollection,
-    [activeShelfBookIds, projection.libraryCollection],
+  const remoteLibraryWorks = useMemo(
+    () => externalSources.libraryWorks.filter((work) => !work.localBookId),
+    [externalSources.libraryWorks],
   );
+  const visibleRemoteLibraryWorks = useMemo(() => {
+    if (activeShelfBookIds || (state.libraryFilter !== 'all' && state.libraryFilter !== 'unread')) return [];
+    const query = state.libraryQuery.trim().toLocaleLowerCase();
+    return remoteLibraryWorks
+      .filter(
+        (work) =>
+          !query ||
+          [work.title, work.author, work.sourceLabel]
+            .filter((value): value is string => Boolean(value))
+            .some((value) => value.toLocaleLowerCase().includes(query)),
+      )
+      .sort((left, right) => {
+        if (state.librarySort === 'title') return left.title.localeCompare(right.title, 'ko');
+        if (state.librarySort === 'added') return right.createdAt.localeCompare(left.createdAt);
+        return right.updatedAt.localeCompare(left.updatedAt);
+      });
+  }, [activeShelfBookIds, remoteLibraryWorks, state.libraryFilter, state.libraryQuery, state.librarySort]);
+  const libraryCollection = useMemo(() => {
+    const base = activeShelfBookIds
+      ? {
+          ...projection.libraryCollection,
+          visibleBooks: projection.libraryCollection.visibleBooks.filter((book) =>
+            activeShelfBookIds.has(book.novel.id),
+          ),
+        }
+      : projection.libraryCollection;
+    return {
+      ...base,
+      totalBooks: base.totalBooks + remoteLibraryWorks.length,
+      filterCounts: {
+        ...base.filterCounts,
+        all: base.filterCounts.all + remoteLibraryWorks.length,
+        unread: base.filterCounts.unread + remoteLibraryWorks.length,
+      },
+    };
+  }, [activeShelfBookIds, projection.libraryCollection, remoteLibraryWorks.length]);
 
   useEffect(() => {
     if (state.view !== 'library') return;
@@ -144,6 +174,23 @@ export function BookWorkspaceScreens({
     controller.setView('library');
   };
 
+  const openLibraryNovel = (novel: import('../../domain/types').Novel) => {
+    if (novel.format === 'image_archive') {
+      controller.replaceSelection({
+        selectedNovel: novel,
+        chapters: [],
+        currentChapter: undefined,
+        localReadingPosition: undefined,
+        remoteReadingPosition: undefined,
+      });
+      controller.setView('library');
+      void externalSources.showLocalSeries(novel);
+      return;
+    }
+    externalSources.close();
+    void controller.openNovel(novel);
+  };
+
   const libraryModel: LibraryScreenModel = {
     bootstrap: { status: bootstrap.status, message: bootstrap.message },
     drop: libraryDrop,
@@ -157,6 +204,18 @@ export function BookWorkspaceScreens({
         id: source.id,
         title: source.title,
         kind: source.kind,
+        newReleaseCount: source.newReleaseCount,
+      })),
+      libraryWorks: visibleRemoteLibraryWorks.map((work) => ({
+        id: work.id,
+        title: work.title,
+        author: work.author,
+        thumbnailUrl: work.thumbnailUrl,
+        sourceLabel: work.sourceLabel,
+        availableReleaseCount: work.availableReleaseCount,
+        newReleaseCount: work.newReleaseIds.length,
+        addedAt: work.createdAt,
+        updatedAt: work.updatedAt,
       })),
     },
     filter: state.libraryFilter,
@@ -226,7 +285,7 @@ export function BookWorkspaceScreens({
       exportSelectedMetadata: () => libraryManagement.exportSelectedMetadata(state.novels),
     },
     books: {
-      open: controller.openNovel,
+      open: openLibraryNovel,
       continueReading: controller.continueReading,
       toggleFavorite: controller.toggleFavorite,
       remove: controller.removeNovel,
@@ -236,6 +295,16 @@ export function BookWorkspaceScreens({
       addSample,
       editMetadata: libraryManagement.openMetadata,
       toggleSelected: (novel) => libraryManagement.toggleSelected(novel.id),
+      openExternal: async (workId) => {
+        const work = externalSources.libraryWorks.find((candidate) => candidate.id === workId);
+        if (!work) return;
+        controller.setView('library');
+        await externalSources.openSubscription(work);
+      },
+      removeExternal: async (workId) => {
+        const work = externalSources.libraryWorks.find((candidate) => candidate.id === workId);
+        if (work) await externalSources.removeLibraryWork(work);
+      },
     },
   };
 
@@ -251,6 +320,24 @@ export function BookWorkspaceScreens({
             controller={externalSources}
             library={{ model: libraryModel, actions: libraryActions }}
             openSourceSettings={openExternalSourceSettings}
+            openLocalSeriesImport={openChapterAppend}
+            localSeriesNovel={
+              externalSources.localSeriesNovel && state.selectedNovel?.id === externalSources.localSeriesNovel.id
+                ? state.selectedNovel
+                : externalSources.localSeriesNovel
+            }
+            localSeriesTitleEditor={
+              externalSources.localSeriesNovel && state.selectedNovel?.id === externalSources.localSeriesNovel.id
+                ? {
+                    editing: state.bookTitleEditing,
+                    draft: state.bookTitleDraft,
+                    start: controller.startBookTitleEdit,
+                    cancel: controller.cancelBookTitleEdit,
+                    setDraft: controller.setBookTitleDraft,
+                    save: controller.saveBookTitle,
+                  }
+                : undefined
+            }
           />
         </Suspense>
       )}
@@ -292,6 +379,7 @@ export function BookWorkspaceScreens({
                       openSettings,
                       openSync,
                       openImport,
+                      openChapterAppend: () => openChapterAppend(state.selectedNovel!),
                       openStructureEditor: () => void openChapterStructure(state.selectedNovel!.id),
                       openMetadata: () => libraryManagement.openMetadata(state.selectedNovel!),
                     },

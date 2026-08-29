@@ -11,10 +11,14 @@ function read(relativePath) {
 const files = {
   compose: read('compose.yaml'),
   composeLocalTTS: read('compose.local-tts.yaml'),
+  composeMetadataCollector: read('compose.metadata-collector.yaml'),
+  composeMetadataCollectorAuth: read('compose.metadata-collector-auth.yaml'),
   composePublic: read('compose.public.yaml'),
   composeSuwayomi: read('compose.suwayomi.yaml'),
   dockerignore: read('.dockerignore'),
   localTTSDockerfile: read('deploy/local-tts.Dockerfile'),
+  metadataCollectorDockerfile: read('deploy/metadata-collector.Dockerfile'),
+  metadataCollectorAuthDockerfile: read('deploy/metadata-collector-auth.Dockerfile'),
   localTTSServer: read('deploy/local-tts/server.py'),
   webDockerfile: read('deploy/web.Dockerfile'),
   webRuntimeConfig: read('deploy/web-runtime-config.sh'),
@@ -32,6 +36,12 @@ const files = {
   aiWorkflowSmoke: read('scripts/hosted-ai-workflow-smoke.mjs'),
   serverIndex: read('apps/server/src/index.ts'),
   server: read('apps/server/src/server.ts'),
+  serverAuth: read('apps/server/src/auth.ts'),
+  metadataCollectorGateway: read('apps/server/src/routes/webnovel-metadata-collector-gateway.ts'),
+  serverAuthCookie: read('apps/server/src/auth-cookie.ts'),
+  selfHostAuthRoutes: read('apps/server/src/routes/auth.ts'),
+  selfHostAuthService: read('apps/server/src/services/self-host-auth-service.ts'),
+  selfHostAuthMigration: read('apps/server/src/db/migrations/0032_self_host_account_sessions.sql'),
   serverQueue: read('apps/server/src/queue.ts'),
   serverUploadImport: read('src/services/import/server-upload-import-service.ts'),
   composeGuideKo: read('docs/operations/docker-compose-guide-ko.md'),
@@ -96,7 +106,15 @@ const volumes = blockAfter(files.compose, 'volumes:');
 const commonEnvironment = blockAfter(files.compose, 'x-server-common-environment: &server-common-environment');
 const serverVolumes = blockAfter(files.compose, 'x-server-volumes: &server-volumes');
 const localTTS = blockAfter(files.composeLocalTTS, '  tts-model:');
+const metadataCollectorApi = blockAfter(files.composeMetadataCollector, '  api:');
+const metadataCollector = blockAfter(files.composeMetadataCollector, '  metadata-collector:');
+const metadataCollectorVolumes = blockAfter(files.composeMetadataCollector, 'volumes:');
+const metadataCollectorAuthApi = blockAfter(files.composeMetadataCollectorAuth, '  api:');
+const metadataCollectorAuth = blockAfter(files.composeMetadataCollectorAuth, '  metadata-collector:');
 const suwayomiWeb = blockAfter(files.composeSuwayomi, '  web:');
+const suwayomiApi = blockAfter(files.composeSuwayomi, '  api:');
+const suwayomiPostgres = blockAfter(files.composeSuwayomi, '  postgres:');
+const suwayomiMinio = blockAfter(files.composeSuwayomi, '  minio:');
 const suwayomi = blockAfter(files.composeSuwayomi, '  suwayomi:');
 const suwayomiNetworks = blockAfter(files.composeSuwayomi, 'networks:');
 const suwayomiVolumes = blockAfter(files.composeSuwayomi, 'volumes:');
@@ -142,6 +160,21 @@ for (const key of [
 check('api uses the shared server environment', includes(api, '<<: *server-common-environment'));
 check('api restarts unless stopped', includes(api, 'restart: unless-stopped'));
 check('api has a bounded graceful stop window', includes(api, 'stop_grace_period: 60s'));
+check(
+  'public deployment token is a one-time account setup and recovery boundary',
+  includes(files.composePublic, 'one-time account setup and recovery token') &&
+    includes(files.composePublic, 'READER_AUTH_TOKEN:?'),
+);
+check(
+  'server accepts durable owner sessions without exposing raw credentials',
+  includes(files.server, 'registerSelfHostAuthRoutes') &&
+    includes(files.serverAuth, 'SELF_HOST_SESSION_COOKIE') &&
+    includes(files.serverAuthCookie, "'HttpOnly'") &&
+    includes(files.serverAuthCookie, "'SameSite=Strict'") &&
+    includes(files.selfHostAuthService, 'selfHostSessionTokenHash') &&
+    includes(files.selfHostAuthMigration, 'token_hash text primary key') &&
+    !includes(files.selfHostAuthMigration, 'session_token'),
+);
 
 for (const key of [
   'DATABASE_URL: ${DATABASE_URL:-postgres://${POSTGRES_USER:-noveldesk}:${POSTGRES_PASSWORD:-noveldesk}@postgres:5432/${POSTGRES_DB:-noveldesk}}',
@@ -228,6 +261,10 @@ check(
   includes(files.webDockerfile, 'COPY packages/contracts/package.json packages/contracts/package.json') &&
     includes(
       files.webDockerfile,
+      'COPY packages/document-series-core/package.json packages/document-series-core/package.json',
+    ) &&
+    includes(
+      files.webDockerfile,
       'COPY packages/extension-contracts/package.json packages/extension-contracts/package.json',
     ) &&
     includes(files.webDockerfile, 'COPY packages/text-core/package.json packages/text-core/package.json'),
@@ -280,6 +317,11 @@ check(
   'server Dockerfile installs and copies shared workspaces',
   includes(files.serverDockerfile, 'COPY packages/contracts/package.json packages/contracts/package.json') &&
     includes(files.serverDockerfile, 'COPY packages/contracts packages/contracts') &&
+    includes(
+      files.serverDockerfile,
+      'COPY packages/document-series-core/package.json packages/document-series-core/package.json',
+    ) &&
+    includes(files.serverDockerfile, 'COPY packages/document-series-core packages/document-series-core') &&
     includes(
       files.serverDockerfile,
       'COPY packages/extension-contracts/package.json packages/extension-contracts/package.json',
@@ -352,6 +394,60 @@ check('local TTS Dockerfile runs as non-root', includes(files.localTTSDockerfile
 check('local TTS adapter implements voices', includes(files.localTTSServer, 'if self.path == "/voices"'));
 check('local TTS adapter implements synthesis', includes(files.localTTSServer, 'if self.path != "/synthesize"'));
 
+check('metadata collector overlay declares its internal service', Boolean(metadataCollector));
+check(
+  'metadata collector API uses the internal service URL',
+  includes(metadataCollectorApi, 'WEBNOVEL_METADATA_COLLECTOR_URL: http://metadata-collector:8000'),
+);
+check('metadata collector is not published to a host port', !matches(metadataCollector, /^ {4}ports:/m));
+check('metadata collector has an internal healthcheck', includes(metadataCollector, 'http://127.0.0.1:8000/health'));
+check(
+  'metadata collector persists its private service data',
+  includes(metadataCollector, 'metadata-collector-data:/data') &&
+    includes(metadataCollectorVolumes, 'metadata-collector-data:'),
+);
+check(
+  'metadata collector remains an optional degraded dependency',
+  !includes(files.composeMetadataCollector, 'condition: service_healthy'),
+);
+check(
+  'metadata collector image installs only the public metadata runtime',
+  includes(files.metadataCollectorDockerfile, 'pip install --no-cache-dir .') &&
+    !includes(files.metadataCollectorDockerfile, '[auth]'),
+);
+check('metadata collector image runs as non-root', includes(files.metadataCollectorDockerfile, 'USER collector'));
+check(
+  'metadata collector auth overlay explicitly enables only the API gateway and internal browser mode',
+  includes(metadataCollectorAuthApi, "WEBNOVEL_METADATA_COLLECTOR_REMOTE_AUTH_ENABLED: 'true'") &&
+    includes(metadataCollectorAuth, "MOYA_COLLECTOR_REMOTE_AUTH: '1'") &&
+    includes(metadataCollectorAuth, "MOYA_COLLECTOR_REMOTE_AUTH_HEADLESS: '0'"),
+);
+check('metadata collector auth overlay does not publish a host port', !matches(metadataCollectorAuth, /^ {4}ports:/m));
+check(
+  'metadata collector auth overlay reserves bounded Chromium resources',
+  includes(metadataCollectorAuth, 'shm_size: 1gb') &&
+    includes(metadataCollectorAuth, 'METADATA_COLLECTOR_AUTH_MEMORY_LIMIT'),
+);
+check(
+  'metadata collector auth image installs the explicit Playwright extra and Chromium',
+  includes(files.metadataCollectorAuthDockerfile, "pip install --no-cache-dir '.[auth]'") &&
+    includes(files.metadataCollectorAuthDockerfile, 'playwright install --with-deps --no-shell chromium') &&
+    includes(files.metadataCollectorAuthDockerfile, 'Xvfb :99') &&
+    includes(files.metadataCollectorAuthDockerfile, '-nolisten tcp'),
+);
+check(
+  'metadata collector auth image runs as non-root',
+  includes(files.metadataCollectorAuthDockerfile, 'USER collector'),
+);
+check(
+  'metadata collector gateway is bounded and same-origin API owned',
+  includes(files.metadataCollectorGateway, "const GATEWAY_PREFIX = '/api/integrations/webnovel-metadata'") &&
+    includes(files.metadataCollectorGateway, 'COVER_REF_PATTERN') &&
+    includes(files.metadataCollectorGateway, "credentials: 'omit'") &&
+    includes(files.metadataCollectorGateway, 'AUTH_FRAME_RESPONSE_LIMIT') &&
+    includes(files.metadataCollectorGateway, "presentation === 'remote_frame'"),
+);
+
 check('Suwayomi overlay declares the compatibility runtime', Boolean(suwayomi));
 check(
   'Suwayomi overlay uses the official stable image by default',
@@ -389,6 +485,13 @@ check(
     includes(suwayomi, '${SUWAYOMI_PROXY_HOSTNAME:-moya-suwayomi}') &&
     includes(suwayomiNetworks, 'name: ${NPM_DOCKER_NETWORK:-npm_proxy}') &&
     includes(suwayomiNetworks, 'external: true'),
+);
+check(
+  'Suwayomi NPM overlay independently fails closed without the public override',
+  includes(suwayomiApi, 'SERVER_EXPOSURE: external') &&
+    includes(suwayomiApi, 'READER_AUTH_TOKEN: ${READER_AUTH_TOKEN:?') &&
+    includes(suwayomiPostgres, 'POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?') &&
+    includes(suwayomiMinio, 'MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:?'),
 );
 check(
   'NPM WireGuard guide documents the combined self-host path',
@@ -502,6 +605,7 @@ for (const key of [
   'WEB_BIND_ADDRESS',
   'MINIO_CONSOLE_BIND_ADDRESS',
   'CORS_ALLOWED_ORIGINS',
+  'TRUSTED_PROXY_HOPS',
   'LOCAL_TTS_ALLOWED_HOSTS',
   'PROVIDER_MAX_ACTIVE_ATTEMPTS',
   'PROVIDER_MAX_ATTEMPTS_PER_MINUTE',
@@ -511,6 +615,8 @@ for (const key of [
   'LOCAL_TTS_PROVIDER_DEFAULT',
   'LOCAL_TTS_PROVIDER_ENABLED',
   'MELOTTS_COMMIT',
+  'METADATA_COLLECTOR_MEMORY_LIMIT',
+  'METADATA_COLLECTOR_AUTH_MEMORY_LIMIT',
   'VITE_READER_BACKEND',
   'VITE_API_BASE_URL',
   'VITE_SYNC_API_BASE_URL',
@@ -627,6 +733,11 @@ check(
 check('hosted e2e runs live smoke script', includes(files.hostedE2E, "'scripts/hosted-live-smoke.mjs'"));
 check('hosted e2e supports the protected public override', includes(files.hostedE2E, "hasArg('--public')"));
 check('hosted live smoke verifies the bearer boundary', includes(files.liveSmoke, 'verifyProtectedApiBoundary'));
+check(
+  'hosted live smoke verifies owner account setup and session recovery',
+  includes(files.liveSmoke, "username: 'moya-ci-owner'") &&
+    includes(files.liveSmoke, "joinUrl(apiBaseUrl, '/auth/session')"),
+);
 check(
   'hosted live smoke verifies worker readiness',
   includes(files.liveSmoke, 'readiness worker heartbeat check failed'),

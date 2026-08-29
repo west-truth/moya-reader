@@ -13,6 +13,7 @@ await build({
   alias: {
     '@noveldesk/contracts/sync': '../../packages/contracts/sync.ts',
     '@noveldesk/contracts': '../../packages/contracts/index.ts',
+    '@noveldesk/document-series-core': '../../packages/document-series-core/index.ts',
     '@noveldesk/epub-core': '../../packages/epub-core/index.ts',
     '@noveldesk/fixed-document-core': '../../packages/fixed-document-core/index.ts',
     '@noveldesk/text-core/hash': '../../packages/text-core/hash.ts',

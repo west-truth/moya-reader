@@ -45,6 +45,8 @@ export interface BookWorkspaceState {
   readonly readerSessionDisplaySeconds: number;
   readonly readerSessionCommittedSeconds: number;
   readonly readerOpenRequestVersion: number;
+  /** One-shot fixed-document entry target used by logical comic/webtoon releases. */
+  readonly fixedDocumentOpenChapterId?: string;
 }
 
 export interface BookWorkspaceAnnotations {
@@ -112,7 +114,7 @@ export interface BookWorkspaceAdjacentFeaturePort {
   resetCorrection(): void;
   resetAnnotationEditor(): void;
   refreshNovels(): Promise<unknown>;
-  refreshAfterLocalMutation(): Promise<unknown>;
+  refreshAfterLocalMutation(kind?: 'progress' | 'statistics'): Promise<unknown>;
   refreshSyncState(): Promise<unknown>;
   refreshAfterLocationConflict(): void;
 }

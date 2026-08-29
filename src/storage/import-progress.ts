@@ -10,6 +10,12 @@ export interface SaveImportedNovelProgress {
 
 export interface SaveImportedNovelOptions {
   batchPageCount?: number;
+  /**
+   * Allows an append-only document-series import to reuse the active content
+   * revision. The storage layer still verifies that every existing chapter is
+   * an unchanged prefix before selecting the incremental path.
+   */
+  allowAppendDelta?: boolean;
   onProgress?: (progress: SaveImportedNovelProgress) => void | Promise<void>;
   shouldCancel?: () => boolean;
   sourceAsset?: {

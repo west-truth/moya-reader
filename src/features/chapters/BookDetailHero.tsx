@@ -1,4 +1,4 @@
-import { Check, ChevronLeft, FilePenLine, ListTree, Pencil, Play, Star, Tags, X } from 'lucide-react';
+import { Check, ChevronLeft, FilePenLine, ListTree, Pencil, Play, Plus, Star, Tags, X } from 'lucide-react';
 import { formatCount, formatProgress } from '../../utils/format';
 import { BookCover } from '../library/BookCover';
 import { LibraryReadingProgress } from '../library/LibraryReadingProgress';
@@ -12,7 +12,15 @@ function detailByline({ author, seriesTitle }: ChaptersScreenProps['model']['boo
   return [author, seriesTitle].filter(Boolean).join(' · ');
 }
 
-function formatLabel(format: string | undefined): string {
+function formatLabel(format: string | undefined, sourceFileName: string | undefined): string {
+  if (format === 'image_archive') {
+    const extension = sourceFileName
+      ?.split(/[\\/]/u)
+      .at(-1)
+      ?.match(/\.([^.]+)$/u)?.[1]
+      ?.trim();
+    return extension ? extension.toLocaleUpperCase() : '압축 파일';
+  }
   return (format ?? 'txt').toLocaleUpperCase();
 }
 
@@ -101,6 +109,17 @@ export function BookDetailHero({ model, actions }: ChaptersScreenProps) {
             <button type="button" className="detail-edit-button" onClick={actions.navigation.openMetadata}>
               <FilePenLine size={17} /> 편집
             </button>
+            {(novel.format === 'txt' || novel.format === 'markdown' || novel.format === 'epub') && (
+              <button
+                type="button"
+                className="detail-add-chapter-button"
+                title="로컬 회차 추가"
+                aria-label="로컬 회차 추가"
+                onClick={actions.navigation.openChapterAppend}
+              >
+                <Plus size={17} />
+              </button>
+            )}
             <button
               type="button"
               className={classNames('detail-title-button', model.titleEditor.editing && 'is-active')}
@@ -125,7 +144,7 @@ export function BookDetailHero({ model, actions }: ChaptersScreenProps) {
       <dl className="detail-stats">
         <div>
           <dt>형식</dt>
-          <dd>{formatLabel(novel.format)}</dd>
+          <dd>{formatLabel(novel.format, novel.sourceFileName)}</dd>
         </div>
         <div>
           <dt>총 회차</dt>

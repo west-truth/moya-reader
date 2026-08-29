@@ -5,6 +5,10 @@ import { READER_INFO_ADDON_ID, READER_INFO_EXTENSION_ID } from './builtin/reader
 import { CHARACTER_BUNDLE_ANALYSIS_WORKFLOW_ID } from './builtin/character-bundle-analysis-extension';
 import { BOOK_AI_TTS_WORKFLOW_ID } from './builtin/book-ai-tts-workflow-extension';
 import { MOYA_AI_ADDON_ID, MOYA_AI_EXTENSION_ID } from './builtin/moya-ai-extension';
+import {
+  WEBNOVEL_METADATA_ENRICHMENT_EXTENSION_ID,
+  WEBNOVEL_METADATA_ENRICHMENT_PROVIDER_ID,
+} from './builtin/webnovel-metadata-enrichment-extension';
 import { libraryBookEnrichmentTrustedExtension } from './examples/library-book-enrichment-extension';
 import { createAppExtensionRuntime } from './app-extension-runtime';
 
@@ -30,7 +34,25 @@ describe('createAppExtensionRuntime', () => {
     expect(runtime.bookAITTSRunners.listWorkflowIds()).toEqual([BOOK_AI_TTS_WORKFLOW_ID]);
     expect(runtime.trustedExtensions.getBookEnrichmentProviders()).toEqual([]);
     expect(runtime.trustedExtensions.getExternalSources()).toEqual([]);
-    expect(runtime.manager.list().map(({ id }) => id)).toEqual([MOYA_AI_EXTENSION_ID, READER_INFO_EXTENSION_ID]);
+    expect(runtime.manager.list().map(({ id }) => id)).toEqual(
+      expect.arrayContaining([
+        MOYA_AI_EXTENSION_ID,
+        READER_INFO_EXTENSION_ID,
+        WEBNOVEL_METADATA_ENRICHMENT_EXTENSION_ID,
+      ]),
+    );
+    expect(runtime.manager.list()).toContainEqual(
+      expect.objectContaining({
+        id: WEBNOVEL_METADATA_ENRICHMENT_EXTENSION_ID,
+        enabled: false,
+        defaultEnabled: false,
+      }),
+    );
+
+    expect(runtime.manager.setEnabled(WEBNOVEL_METADATA_ENRICHMENT_EXTENSION_ID, true)).toBe(true);
+    expect(runtime.trustedExtensions.getBookEnrichmentProviders().map(({ descriptor }) => descriptor.id)).toEqual([
+      WEBNOVEL_METADATA_ENRICHMENT_PROVIDER_ID,
+    ]);
   });
 
   it('can build an extension-free runtime for recovery and focused tests', () => {

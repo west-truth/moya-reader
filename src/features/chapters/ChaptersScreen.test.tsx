@@ -70,6 +70,7 @@ function createActions(backToLibrary = vi.fn(), openChapter = vi.fn()): Chapters
       openSettings: vi.fn(),
       openSync: vi.fn(),
       openImport: vi.fn(),
+      openChapterAppend: vi.fn(),
       openStructureEditor: vi.fn(),
       openMetadata: vi.fn(),
     },
@@ -145,6 +146,7 @@ describe('ChaptersScreen', () => {
     expect(markup).toContain('#판타지');
     expect(markup).toContain('누적 독서 시간');
     expect(markup).toContain('60%');
+    expect(markup).toContain('회차 추가');
   });
 
   it('uses the whole-book projection for detail percentages and keeps chapter progress on the current row', () => {

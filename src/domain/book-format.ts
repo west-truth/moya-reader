@@ -9,13 +9,12 @@ export function bookUnitLabel(novel: Novel): string {
 }
 
 export function bookFormatLabel(novel: Novel): string {
-  if (novel.format === 'image_archive') {
-    if (/\.cbz$/i.test(novel.sourceFileName)) return 'CBZ';
-    if (/\.cbr$/i.test(novel.sourceFileName)) return 'CBR';
-    if (/\.cb7$/i.test(novel.sourceFileName)) return 'CB7';
-    if (/\.rar$/i.test(novel.sourceFileName)) return 'RAR';
-    if (/\.7z$/i.test(novel.sourceFileName)) return '7Z';
-    return 'IMAGE ZIP';
-  }
-  return novel.format?.toUpperCase() ?? novel.sourceFileName.split('.').pop()?.toUpperCase() ?? 'TEXT';
+  const extension = novel.sourceFileName
+    .split(/[\\/]/u)
+    .at(-1)
+    ?.match(/\.([^.]+)$/u)?.[1]
+    ?.trim()
+    .toUpperCase();
+  if (extension) return extension;
+  return novel.format === 'image_archive' ? 'ARCHIVE' : (novel.format?.toUpperCase() ?? 'TEXT');
 }

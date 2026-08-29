@@ -2,15 +2,22 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   beginDropboxAuthorizationRedirect,
   completeDropboxAuthorizationRedirect,
+  connectDropboxWithDesktopBrowser,
   connectDropboxWithPopup,
+  DESKTOP_DROPBOX_REDIRECT_URI,
   relayDropboxOAuthPopup,
   type DropboxOAuthCallbackMessage,
 } from './dropbox-oauth';
+
+const invoke = vi.hoisted(() => vi.fn());
+
+vi.mock('@tauri-apps/api/core', () => ({ invoke }));
 
 describe('Dropbox OAuth popup', () => {
   afterEach(() => {
     vi.unstubAllGlobals();
     vi.restoreAllMocks();
+    invoke.mockReset();
   });
 
   it('requests optional read scopes and accepts callbacks only from its popup', async () => {
@@ -204,5 +211,38 @@ describe('Dropbox OAuth popup', () => {
       connectDropboxWithPopup({ appKey: 'app-key', scopes: ['files.metadata.read files.content.write'] }),
     ).rejects.toThrow('scope is invalid');
     expect(open).not.toHaveBeenCalled();
+  });
+
+  it('uses the fixed loopback callback and native token exchange through the desktop command', async () => {
+    invoke.mockImplementation(
+      async (_command: string, args: { authorizeUrl: string; expectedState: string; codeVerifier: string }) => {
+        const authorizeUrl = new URL(args.authorizeUrl);
+        expect(authorizeUrl.searchParams.get('redirect_uri')).toBe(DESKTOP_DROPBOX_REDIRECT_URI);
+        expect(args.expectedState).toBe(authorizeUrl.searchParams.get('state'));
+        expect(args.codeVerifier.length).toBeGreaterThanOrEqual(43);
+        return {
+          accessToken: 'desktop-token',
+          refreshToken: 'desktop-refresh-token',
+          expiresIn: 14_400,
+          accountId: 'desktop-account',
+        };
+      },
+    );
+    const fetchImpl = vi.fn();
+
+    await expect(connectDropboxWithDesktopBrowser({ appKey: 'app-key', fetchImpl })).resolves.toMatchObject({
+      accessToken: 'desktop-token',
+      refreshToken: 'desktop-refresh-token',
+      accountId: 'desktop-account',
+    });
+    expect(fetchImpl).not.toHaveBeenCalled();
+    expect(invoke).toHaveBeenCalledWith(
+      'desktop_dropbox_oauth_authorize',
+      expect.objectContaining({
+        expectedState: expect.any(String),
+        authorizeUrl: expect.any(String),
+        codeVerifier: expect.any(String),
+      }),
+    );
   });
 });

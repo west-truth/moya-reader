@@ -566,6 +566,7 @@ export function mapProviderSettingsBundle(row: JsonRecord): RemoteProviderSettin
 
 export interface RemoteApiClientOptions {
   getAuthToken?: () => string | undefined;
+  onUnauthorized?: () => void;
   requestTimeoutMs?: number;
 }
 
@@ -603,7 +604,11 @@ export class RemoteApiClient {
       controller.abort();
     }, timeoutMs);
     try {
-      return await fetch(`${this.baseUrl}${path}`, { ...init, signal: controller.signal });
+      return await fetch(`${this.baseUrl}${path}`, {
+        credentials: 'same-origin',
+        ...init,
+        signal: controller.signal,
+      });
     } catch (error) {
       if (timedOut && !callerSignal?.aborted) throw new RemoteApiRequestTimeoutError(timeoutMs);
       throw error;
@@ -628,6 +633,7 @@ export class RemoteApiClient {
       timeoutMs,
     );
     if (!response.ok) {
+      if (response.status === 401) this.options.onUnauthorized?.();
       const message = await response.text();
       throw new RemoteApiError(message || response.statusText, response.status);
     }
@@ -645,6 +651,7 @@ export class RemoteApiClient {
       },
     });
     if (!response.ok) {
+      if (response.status === 401) this.options.onUnauthorized?.();
       const message = await response.text();
       throw new RemoteApiError(message || response.statusText, response.status);
     }
@@ -1539,6 +1546,7 @@ export class RemoteApiClient {
       headers: authToken ? { Authorization: `Bearer ${authToken}` } : undefined,
     });
     if (!response.ok) {
+      if (response.status === 401) this.options.onUnauthorized?.();
       const message = await response.text();
       throw new RemoteApiError(message || response.statusText, response.status);
     }

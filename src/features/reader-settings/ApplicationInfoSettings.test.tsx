@@ -44,4 +44,21 @@ describe('ApplicationInfoSettings', () => {
     expect(markup).toContain('웹 브라우저');
     expect(markup).toContain('데스크톱 앱');
   });
+
+  it('shows the signed-in self-host owner without exposing session credentials', () => {
+    const markup = renderToStaticMarkup(
+      <ApplicationInfoSettings
+        platformRuntime={{ kind: 'browser', hasTauri: false, isMobileWebView: false, userAgent: 'Test browser' }}
+        providerExecutionRuntime="server"
+        selfHostAccount={{ username: 'owner', displayName: '개인 독자' }}
+        logoutSelfHostAccount={async () => undefined}
+      />,
+    );
+
+    expect(markup).toContain('개인 서버 계정');
+    expect(markup).toContain('개인 독자');
+    expect(markup).toContain('@owner');
+    expect(markup).toContain('로그아웃');
+    expect(markup).not.toContain('moya_session');
+  });
 });
