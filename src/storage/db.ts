@@ -24,7 +24,7 @@ import type {
   DocumentTextOrderOverride,
   TextQuad,
 } from '../domain/types';
-import { integrityHash } from '../domain/id-hash-contract';
+import { integrityHash, persistentIdVersion } from '../domain/id-hash-contract';
 import { paragraphPageId } from '../domain/parser/entity-identities';
 import type { CharacterRelation } from '../providers/ai';
 import type {
@@ -40,8 +40,10 @@ import {
   type BookContentRevisionRecord,
   type ContentRevisionExpectedCounts,
   type ContentRevisionValidationState,
+  contentRevisionComponentIds,
   createContentRevisionValidationState,
   finalizeContentRevisionValidation,
+  logicalContentRevisionCounts,
   type StoredContentRevisionCounts,
   validateContentRevisionPageBatch,
 } from './content-revisions';
@@ -70,6 +72,7 @@ import {
   createBookChildIdIndex,
 } from './content-revision-remote-state';
 import { buildCachedBookChildIdIndex, prepareContentActivationReaderPlan } from './content-activation-reader-plan';
+import { CONTENT_REVISION_STORES } from './content-revision-migration';
 import { deleteByIndexInTransaction, requestToPromise, transactionDone } from './indexeddb-transaction';
 import type { SaveImportedNovelOptions, SaveImportedNovelProgress } from './import-progress';
 import { throwIfImportCancelled, withImportProgressHeartbeat } from './import-progress';
@@ -261,6 +264,108 @@ function countParagraphPages(chapters: Chapter[]): number {
   }, 0);
 }
 
+const MAX_APPEND_DELTA_COMPONENTS = 12;
+
+interface AppendDeltaImportPlan {
+  readonly baseRevision: BookContentRevisionRecord;
+  readonly chapters: Chapter[];
+  readonly logicalCounts: StoredContentRevisionCounts;
+}
+
+function documentFormatFamily(novel: Novel): 'text' | 'epub' | undefined {
+  if (novel.format === 'epub') return 'epub';
+  if (!novel.format || novel.format === 'txt' || novel.format === 'markdown') return 'text';
+  return undefined;
+}
+
+async function getContentRevisionRecord(contentRevisionId: string): Promise<BookContentRevisionRecord | undefined> {
+  const db = await openReaderDb();
+  const tx = db.transaction(CONTENT_REVISION_STORES.revisions, 'readonly');
+  const record = await requestToPromise<BookContentRevisionRecord | undefined>(
+    tx.objectStore(CONTENT_REVISION_STORES.revisions).get(contentRevisionId),
+  );
+  await transactionDone(tx);
+  return record;
+}
+
+async function planAppendDeltaImport(
+  novel: Novel,
+  chapters: Chapter[],
+  options: SaveImportedNovelOptions,
+): Promise<AppendDeltaImportPlan | undefined> {
+  if (!options.allowAppendDelta) return undefined;
+  const incomingFormatFamily = documentFormatFamily(novel);
+  // EPUB chapters carry images, inline semantics and source locators that are
+  // not represented by Chapter.textHash. Until those fields have a persisted
+  // structural fingerprint, keep EPUB replacement on the safe full-write path.
+  if (incomingFormatFamily !== 'text') return undefined;
+  const currentNovel = await getNovel(novel.id);
+  if (!currentNovel?.activeContentRevisionId || documentFormatFamily(currentNovel) !== incomingFormatFamily) {
+    return undefined;
+  }
+  // Legacy v1 books can still enter the one-time ID migration, whose current
+  // copy plan expects a single physical revision. Let their next import compact
+  // to one full revision before considering append deltas.
+  if (persistentIdVersion(currentNovel.id) === 'v1-fnv32') return undefined;
+  const baseRevision = await getContentRevisionRecord(currentNovel.activeContentRevisionId);
+  if (!baseRevision || baseRevision.status !== 'active') return undefined;
+  const baseComponents = contentRevisionComponentIds(baseRevision);
+  if (baseComponents.length >= MAX_APPEND_DELTA_COMPONENTS) return undefined;
+
+  const handle = await openStoredBookContentRevision(await openReaderDb(), novel.id);
+  const currentChapters = await handle.listChapters();
+  if (chapters.length <= currentChapters.length) return undefined;
+  const unchangedPrefix = currentChapters.every((current, offset) => {
+    const incoming = chapters[offset];
+    return (
+      incoming?.index === current.index &&
+      incoming.id === current.id &&
+      incoming.title === current.title &&
+      incoming.textHash.toLocaleLowerCase() === current.textHash.toLocaleLowerCase() &&
+      incoming.paragraphCount === current.paragraphCount &&
+      incoming.characterCount === current.characterCount
+    );
+  });
+  if (!unchangedPrefix) return undefined;
+
+  const deltaChapters = chapters.slice(currentChapters.length);
+  if (deltaChapters.some((chapter, offset) => chapter.index !== currentChapters.length + offset + 1)) {
+    return undefined;
+  }
+  const baseCounts = logicalContentRevisionCounts(baseRevision);
+  if (!baseCounts) return undefined;
+  const currentParagraphCount = currentChapters.reduce((total, chapter) => total + chapter.paragraphCount, 0);
+  const deltaParagraphCount = deltaChapters.reduce((total, chapter) => total + chapter.paragraphCount, 0);
+  if (
+    baseCounts.chapterCount !== currentChapters.length ||
+    baseCounts.paragraphCount !== currentParagraphCount ||
+    novel.totalChapters !== chapters.length ||
+    novel.totalParagraphs !== currentParagraphCount + deltaParagraphCount
+  ) {
+    return undefined;
+  }
+  return {
+    baseRevision,
+    chapters: deltaChapters,
+    logicalCounts: {
+      chapterCount: chapters.length,
+      pageCount: baseCounts.pageCount + countParagraphPages(deltaChapters),
+      paragraphCount: novel.totalParagraphs,
+      paragraphRefCount: novel.totalParagraphs,
+      searchRowCount: novel.totalParagraphs,
+    },
+  };
+}
+
+async function* selectChapterParagraphs(
+  source: ParsedNovelImportChapterSource,
+  chapterIds: ReadonlySet<string>,
+): AsyncGenerator<ParsedNovelImportChapter> {
+  for await (const chapterParagraphs of source) {
+    if (chapterIds.has(chapterParagraphs.chapter.id)) yield chapterParagraphs;
+  }
+}
+
 function* iterateParsedNovelChapters(
   chapters: Chapter[],
   paragraphsByChapter: Map<string, Paragraph[]>,
@@ -315,6 +420,10 @@ async function createStagingContentRevision(input: {
   sourceRevision?: string;
   sourceHash?: string;
   expected: ContentRevisionExpectedCounts;
+  appendDelta?: {
+    baseRevision: BookContentRevisionRecord;
+    logicalCounts: StoredContentRevisionCounts;
+  };
 }): Promise<BookContentRevisionRecord> {
   return createStoredContentRevision(await openReaderDb(), input);
 }
@@ -347,6 +456,7 @@ async function activateStagedContentRevision(input: {
   shouldCancel?: () => boolean;
   sourceAssetId?: string;
   embeddedAssetIds?: readonly string[];
+  preserveExistingEmbeddedAssets?: boolean;
 }): Promise<void> {
   return activateStoredContentRevision(await openReaderDb(), {
     revision: input.revision,
@@ -356,6 +466,7 @@ async function activateStagedContentRevision(input: {
     shouldCancel: input.shouldCancel,
     sourceAssetId: input.sourceAssetId,
     embeddedAssetIds: input.embeddedAssetIds,
+    preserveExistingEmbeddedAssets: input.preserveExistingEmbeddedAssets,
     queueBookImported: input.emitBookImported
       ? async (tx, novel) => {
           await queueSyncEventInTransaction(tx, 'book_imported', jsonValue({ novel }), {
@@ -1020,14 +1131,30 @@ async function applyRemoteSyncEvent(tx: IDBTransaction, event: SyncEvent): Promi
     tombstoneStore.delete(tombstoneId('reading_position', position.id));
     positionStore.put(position);
     if (existingNovel) {
-      const revisionChapter = existingNovel.activeContentRevisionId
-        ? await requestToPromise<RevisionChapterRow | undefined>(
-            tx
-              .objectStore('book_content_chapters')
-              .index('contentRevisionId_domainId')
-              .get([existingNovel.activeContentRevisionId, position.chapterId]),
+      const activeRevision = existingNovel.activeContentRevisionId
+        ? await requestToPromise<BookContentRevisionRecord | undefined>(
+            tx.objectStore(CONTENT_REVISION_STORES.revisions).get(existingNovel.activeContentRevisionId),
           )
         : undefined;
+      const activeComponentIds = existingNovel.activeContentRevisionId
+        ? activeRevision
+          ? contentRevisionComponentIds(activeRevision)
+          : [existingNovel.activeContentRevisionId]
+        : [];
+      const revisionChapter = (
+        await Promise.all(
+          [...activeComponentIds]
+            .reverse()
+            .map((contentRevisionId) =>
+              requestToPromise<RevisionChapterRow | undefined>(
+                tx
+                  .objectStore(CONTENT_REVISION_STORES.chapters)
+                  .index('contentRevisionId_domainId')
+                  .get([contentRevisionId, position.chapterId]),
+              ),
+            ),
+        )
+      ).find(Boolean);
       const existingChapter = revisionChapter ? chapterFromRevisionRow(revisionChapter) : legacyChapter;
       novelStore.put({
         ...existingNovel,
@@ -1609,11 +1736,14 @@ async function stageAndActivateImportedNovel(input: {
   embeddedAssetStream?: AsyncIterable<ParsedNovelImportAsset>;
   options: SaveImportedNovelOptions;
 }): Promise<void> {
-  const chapters = [...input.chapters].sort((a, b) => a.index - b.index).map(storedChapter);
+  const allChapters = [...input.chapters].sort((a, b) => a.index - b.index).map(storedChapter);
+  const appendDelta = await planAppendDeltaImport(input.novel, allChapters, input.options);
+  const chapters = appendDelta?.chapters ?? allChapters;
+  const paragraphCount = chapters.reduce((total, chapter) => total + chapter.paragraphCount, 0);
   const expected: ContentRevisionExpectedCounts = {
-    chapterCount: input.novel.totalChapters,
+    chapterCount: chapters.length,
     pageCount: countParagraphPages(chapters),
-    paragraphCount: input.novel.totalParagraphs,
+    paragraphCount,
   };
   const validation = createContentRevisionValidationState({
     novel: input.novel,
@@ -1625,6 +1755,9 @@ async function stageAndActivateImportedNovel(input: {
     source: 'local_import',
     sourceHash: input.novel.rawTextHash || input.novel.normalizedTextHash,
     expected,
+    appendDelta: appendDelta
+      ? { baseRevision: appendDelta.baseRevision, logicalCounts: appendDelta.logicalCounts }
+      : undefined,
   });
   let stagedSourceAssetId: string | undefined;
   let stagedEmbeddedAssetIds: string[] = [];
@@ -1647,23 +1780,28 @@ async function stageAndActivateImportedNovel(input: {
         if (stagedId) stagedEmbeddedAssetIds.push(stagedId);
       }
     }
-    const oldIndex = await buildCachedBookChildIdIndex(input.novel.id);
+    const replacingExistingNovel = revision.baseNovelPresent && !appendDelta;
+    const oldIndex = replacingExistingNovel
+      ? await buildCachedBookChildIdIndex(input.novel.id)
+      : createBookChildIdIndex([]);
     const nextIndex = createBookChildIdIndex(chapters);
     throwIfImportCancelled(input.options);
     const chaptersWritten = await saveStagedContentChapters(revision.id, chapters, input.options);
     throwIfImportCancelled(input.options);
     const actual = await saveImportedParagraphPages(
       revision.id,
-      input.chapterParagraphs,
+      appendDelta
+        ? selectChapterParagraphs(input.chapterParagraphs, new Set(chapters.map((chapter) => chapter.id)))
+        : input.chapterParagraphs,
       validation,
       input.options,
       {
         chaptersWritten,
         totalChapters: chapters.length,
         totalPages: countParagraphPages(chapters),
-        totalParagraphs: input.novel.totalParagraphs,
+        totalParagraphs: expected.paragraphCount,
       },
-      nextIndex,
+      replacingExistingNovel ? nextIndex : undefined,
     );
     throwIfImportCancelled(input.options);
     const activationProgress: SaveImportedNovelProgress = {
@@ -1675,13 +1813,18 @@ async function stageAndActivateImportedNovel(input: {
       totalPages: actual.pageCount,
       totalParagraphs: expected.paragraphCount,
     };
-    const activation = await prepareContentActivationReaderPlan(
-      { novel: input.novel, chapters, readingPosition: undefined },
-      oldIndex,
-      nextIndex,
-      revision.id,
-    );
-    const readerPlan = input.options.extendReaderPlan?.(activation.readerPlan) ?? activation.readerPlan;
+    let activationNovel = input.novel;
+    let readerPlan: ContentActivationReaderPlan | undefined;
+    if (!appendDelta && (revision.baseNovelPresent || input.options.extendReaderPlan)) {
+      const activation = await prepareContentActivationReaderPlan(
+        { novel: input.novel, chapters: allChapters, readingPosition: undefined },
+        oldIndex,
+        nextIndex,
+        revision.id,
+      );
+      activationNovel = activation.novel;
+      readerPlan = input.options.extendReaderPlan?.(activation.readerPlan) ?? activation.readerPlan;
+    }
     await withImportProgressHeartbeat(
       input.options.onProgress,
       activationProgress,
@@ -1689,19 +1832,22 @@ async function stageAndActivateImportedNovel(input: {
         activateStagedContentRevision({
           revision,
           actual,
-          novel: storedNovel(activation.novel),
+          novel: storedNovel(activationNovel),
           emitBookImported: true,
           readerPlan,
           shouldCancel: input.options.shouldCancel,
           sourceAssetId: stagedSourceAssetId,
           embeddedAssetIds: stagedEmbeddedAssetIds,
+          preserveExistingEmbeddedAssets: Boolean(appendDelta),
         }),
       input.options.shouldCancel,
     );
   } catch (error) {
-    await cleanupStagingContentRevision(revision.id);
-    if (stagedSourceAssetId) await cleanupStagedBookAsset(stagedSourceAssetId);
-    for (const id of stagedEmbeddedAssetIds) await cleanupStagedBookAsset(id);
+    await Promise.allSettled([
+      cleanupStagingContentRevision(revision.id),
+      ...(stagedSourceAssetId ? [cleanupStagedBookAsset(stagedSourceAssetId)] : []),
+      ...stagedEmbeddedAssetIds.map((id) => cleanupStagedBookAsset(id)),
+    ]);
     throw error;
   }
 }

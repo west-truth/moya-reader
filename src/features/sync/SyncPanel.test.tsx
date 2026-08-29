@@ -46,15 +46,19 @@ function cloudVault(): CloudVaultController {
       id: 'cloud-vault-config',
       scope: DEFAULT_CLOUD_VAULT_SCOPE,
       waitingBookTitles: [],
+      rememberPassphrase: true,
+      autoSync: true,
       updatedAt: '2026-08-01T00:00:00.000Z',
     },
     connected: false,
     passphrase: '',
+    unlocked: false,
     directoryAvailable: true,
-    dropboxAvailable: false,
-    dropboxSetupHint: '배포 빌드에 VITE_DROPBOX_APP_KEY 설정이 필요합니다.',
+    dropboxAvailable: true,
     backupOnly: false,
     setPassphrase: vi.fn(),
+    setRememberPassphrase: vi.fn().mockResolvedValue(undefined),
+    setAutoSync: vi.fn().mockResolvedValue(undefined),
     setScope: vi.fn().mockResolvedValue(undefined),
     selectDirectory: vi.fn().mockResolvedValue(undefined),
     connectDropbox: vi.fn().mockResolvedValue(undefined),
@@ -110,16 +114,44 @@ describe('SyncPanel', () => {
   it('renders local-only connection controls and queued reader changes through its feature contract', () => {
     const markup = renderToStaticMarkup(<SyncPanel data={data()} actions={actions()} />);
 
-    expect(markup).toContain('동기화 상태');
+    expect(markup).toContain('>동기화</h2>');
     expect(markup).toContain('role="dialog"');
     expect(markup).toContain('aria-modal="true"');
-    expect(markup).toContain('Cloud Vault');
-    expect(markup).toContain('VITE_DROPBOX_APP_KEY');
-    expect(markup).toContain('서버 연결');
-    expect(markup).toContain('로컬 변경 기록');
-    expect(markup).toContain('메모 수정');
-    expect(markup).toContain('시도 2회');
+    expect(markup).toContain('기기 간 동기화');
+    expect(markup).toContain('Dropbox 연결');
+    expect(markup).toContain('8자 이상');
+    expect(markup).toContain('이 기기에서 기억');
+    expect(markup).toContain('자동 동기화');
+    expect(markup).toContain('다른 저장 위치');
+    expect(markup.indexOf('Dropbox 연결')).toBeLessThan(markup.indexOf('로컬 폴더'));
+    expect(markup).not.toContain('서버 없이 독서 기록을 암호화해 보관합니다.');
+    expect(markup).toContain('개인 서버');
+    expect(markup).toContain('선택 사항');
+    expect(markup).not.toContain('대기 중인 변경');
+    expect(markup).not.toContain('메모 수정');
+    expect(markup).not.toContain('시도 2회');
     expect(markup).not.toContain('서버 상태로 정리');
+  });
+
+  it('treats stale server state as local-only when no server is configured', () => {
+    const markup = renderToStaticMarkup(
+      <SyncPanel
+        data={data({
+          syncState: {
+            ...syncState('offline'),
+            pendingCount: 13,
+            lastError: 'Failed to fetch',
+          },
+        })}
+        actions={actions()}
+      />,
+    );
+
+    expect(markup).not.toContain('로컬 전용');
+    expect(markup).not.toContain('대기 중인 변경');
+    expect(markup).not.toContain('오프라인');
+    expect(markup).not.toContain('서버에 연결할 수 없음');
+    expect(markup).not.toContain('Failed to fetch');
   });
 
   it('shows conflict recovery and remote reading position only when supplied by the controller', () => {
@@ -150,5 +182,63 @@ describe('SyncPanel', () => {
     expect(markup).toContain('7화 갈림길');
     expect(markup).toContain('42%');
     expect(markup).toContain('7문단');
+  });
+
+  it('shows sync time only when it belongs to the connected Cloud Vault provider', () => {
+    const base = cloudVault();
+    const staleDropbox: CloudVaultController = {
+      ...base,
+      connected: true,
+      providerKind: 'dropbox',
+      providerLabel: 'reader@example.com',
+      passphrase: 'long-enough-passphrase',
+      config: {
+        ...base.config!,
+        providerKind: 'dropbox',
+        lastSyncAt: '2026-08-28T06:38:00.000Z',
+        lastUploadedBytes: 1024,
+      },
+    };
+    const staleMarkup = renderToStaticMarkup(
+      <SyncPanel data={data({ cloudVault: staleDropbox })} actions={actions()} />,
+    );
+
+    expect(staleMarkup).toContain('아직 동기화하지 않았습니다.');
+    expect(staleMarkup).not.toContain('암호화 기록 1 KB');
+
+    const currentMarkup = renderToStaticMarkup(
+      <SyncPanel
+        data={data({
+          cloudVault: {
+            ...staleDropbox,
+            config: { ...staleDropbox.config!, lastSyncProviderKind: 'dropbox' },
+          },
+        })}
+        actions={actions()}
+      />,
+    );
+    expect(currentMarkup).toContain('암호화 기록 1 KB');
+  });
+
+  it('keeps a remembered device unlocked without rendering the Vault password input', () => {
+    const base = cloudVault();
+    const markup = renderToStaticMarkup(
+      <SyncPanel
+        data={data({
+          cloudVault: {
+            ...base,
+            connected: true,
+            unlocked: true,
+            providerKind: 'dropbox',
+            providerLabel: 'reader@example.com',
+            config: { ...base.config!, providerKind: 'dropbox' },
+          },
+        })}
+        actions={actions()}
+      />,
+    );
+
+    expect(markup).toContain('이 기기에서 잠금 해제됨');
+    expect(markup).not.toContain('placeholder="8자 이상"');
   });
 });

@@ -28,7 +28,8 @@ export function selectSupportedImportFiles(files: readonly File[]): ImportFileSe
       supportedFiles,
       skipped,
       notice: {
-        message: 'TXT, Markdown, DRM 없는 EPUB, PDF 또는 이미지 ZIP/CBZ/RAR/CBR/7z/CB7 파일을 선택해 주세요.',
+        message:
+          'TXT, Markdown, DRM 없는 EPUB, 문서 묶음 ZIP, PDF 또는 이미지 ZIP/CBZ/RAR/CBR/7z/CB7 파일을 선택해 주세요.',
         tone: 'warning',
       },
     };

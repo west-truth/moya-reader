@@ -23,6 +23,8 @@ const expectedStyleImports = [
   './styles/settings-sync.css',
   './styles/feedback.css',
   './styles/responsive.css',
+  './styles/self-host-auth.css',
+  './styles/desktop-window.css',
 ];
 
 const appRuntimeStyles = path.join(repoRoot, 'src', 'App.tsx');

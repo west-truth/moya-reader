@@ -145,6 +145,8 @@ export type AnalysisStatus =
 
 export interface Novel {
   id: string;
+  /** Stable Cloud Vault identity. Local book ids may differ between devices. */
+  cloudVaultBookId?: string;
   activeContentRevisionId?: string;
   sourceAssetId?: string;
   sourceProvenance?: BookAssetProvenance;
@@ -165,6 +167,10 @@ export interface Novel {
   coverFit?: 'crop' | 'contain';
   coverPositionX?: number;
   coverPositionY?: number;
+  /** Revision clock for the active cover, independent from other metadata. */
+  coverUpdatedAt?: string;
+  /** Durable Cloud Vault deletion clock for an explicitly removed cover. */
+  coverRemovedAt?: string;
   sourceFileName: string;
   sourceEncoding?: EncodingMode;
   rawText: string;
@@ -174,6 +180,8 @@ export interface Novel {
   createdAt: string;
   updatedAt: string;
   totalChapters: number;
+  /** Optional logical sections for fixed documents whose storage chapters represent individual pages. */
+  documentSectionCount?: number;
   totalCharacters: number;
   totalParagraphs: number;
   coverSeed: number;
@@ -219,6 +227,11 @@ export interface Chapter {
   rawEndOffset: number;
   characterCount: number;
   paragraphCount: number;
+  /** Stable logical section identity for fixed-document page chapters, such as a remote comic release. */
+  documentSectionId?: string;
+  documentSectionTitle?: string;
+  documentSectionIndex?: number;
+  documentPageIndexInSection?: number;
   createdAt: string;
   updatedAt: string;
 }
@@ -566,6 +579,8 @@ export interface AIWorkflowPreferencesV1 {
 
 export interface ReaderSettings {
   id: 'reader-settings';
+  /** Internal sync clock; ignored by reader presentation code. */
+  cloudVaultUpdatedAt?: string;
   /** Global application chrome theme. Falls back to the Reader theme for older settings. */
   applicationTheme?: ReadingProfileTheme;
   /** Custom application colors. Kept separate from book-specific Reader colors. */
@@ -671,6 +686,7 @@ export interface TTSOfflineCacheManifestEntry {
 export interface ComicReadingProfile {
   schemaVersion: 1;
   mode: 'single' | 'spread' | 'vertical';
+  seamlessVertical?: boolean;
   direction: 'ltr' | 'rtl';
   coverBehavior: 'single' | 'paired';
   pageParity: 'auto' | 'left' | 'right';

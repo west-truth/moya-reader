@@ -13,6 +13,7 @@ import {
   List,
   Menu,
   MoreVertical,
+  Plus,
   PlugZap,
   RotateCcw,
   Search,
@@ -132,6 +133,9 @@ function SourceNavigation({ model, actions, close }: LibraryScreenProps & { clos
           >
             <Icon size={17} strokeWidth={1.7} />
             <span>{source.title}</span>
+            {Boolean(source.newReleaseCount) && (
+              <em aria-label={`새 회차 ${source.newReleaseCount}개`}>{source.newReleaseCount}</em>
+            )}
           </button>
         );
       })}
@@ -212,21 +216,18 @@ export function LibraryHeader({ model, actions }: LibraryScreenProps) {
       </label>
       <div className="library-topbar-actions">
         <button
-          className={`sync-pill ${model.sync.tone}`}
+          className={`library-sync-entry ${model.sync.tone}`}
           type="button"
           onClick={actions.header.openSync}
-          aria-label={`동기화 상태 열기: ${model.sync.label}`}
+          aria-label={`동기화 열기: ${model.sync.label}`}
         >
-          <span aria-hidden="true" /> {model.sync.label}
-        </button>
-        <button
-          className="icon-btn"
-          type="button"
-          onClick={actions.header.openSync}
-          title="동기화"
-          aria-label="동기화 상태 열기"
-        >
-          <RotateCcw size={18} />
+          <span className="library-sync-entry-icon" aria-hidden="true">
+            <Cloud size={17} />
+          </span>
+          <span className="library-sync-entry-copy">
+            <strong>동기화</strong>
+            <small>{model.sync.label}</small>
+          </span>
         </button>
         <button className="ghost-btn" type="button" onClick={actions.header.openBackup} aria-label="백업 및 복원 열기">
           <DatabaseBackup size={17} /> 백업
@@ -238,8 +239,8 @@ export function LibraryHeader({ model, actions }: LibraryScreenProps) {
           className="icon-btn"
           type="button"
           onClick={actions.header.openLibraryFolders}
-          title="책장 폴더"
-          aria-label="책장 폴더 열기"
+          title="폴더 가져오기"
+          aria-label="폴더 가져오기 열기"
         >
           <FolderPlus size={18} />
         </button>
@@ -320,14 +321,6 @@ export function LibraryMobileHeader(props: LibraryScreenProps & { sourceMode?: L
             </span>
           </button>
         )}
-        <button
-          type="button"
-          className="library-mobile-home"
-          onClick={() => goLibraryHome(props)}
-          aria-label="라이브러리 메인"
-        >
-          <img src="/icons/moya-192.png" alt="" />
-        </button>
         <span className="library-mobile-spacer" />
         {!sourceMode && (
           <button
@@ -491,8 +484,13 @@ export function LibraryMobileHeader(props: LibraryScreenProps & { sourceMode?: L
             <Upload size={17} /> 가져오기
           </button>
           <button type="button" onClick={() => runGlobal(actions.header.openLibraryFolders)}>
-            <FolderPlus size={17} /> 책장 폴더
+            <FolderPlus size={17} /> 폴더 가져오기
           </button>
+          {model.management.available && (
+            <button type="button" onClick={() => runGlobal(actions.controls.openShelves)}>
+              <Plus size={17} /> 책장 추가
+            </button>
+          )}
           <button type="button" onClick={() => runGlobal(actions.header.openSync)}>
             <RotateCcw size={17} /> 동기화 <small>{model.sync.label}</small>
           </button>
@@ -518,7 +516,7 @@ export function LibraryMobileHeader(props: LibraryScreenProps & { sourceMode?: L
               <Upload size={17} /> 가져오기
             </button>
             <button type="button" onClick={() => runGlobal(actions.header.openLibraryFolders)}>
-              <FolderPlus size={17} /> 책장 폴더
+              <FolderPlus size={17} /> 폴더 가져오기
             </button>
             <button type="button" onClick={() => runGlobal(actions.header.openSync)}>
               <RotateCcw size={17} /> 동기화
@@ -543,17 +541,7 @@ export function LibraryMobileHeader(props: LibraryScreenProps & { sourceMode?: L
           )}
           {model.externalSources.sources.length > 0 && (
             <>
-              <div className="library-mobile-drawer-heading">
-                <h2>소스</h2>
-                <button
-                  type="button"
-                  aria-label="소스 관리"
-                  disabled={model.externalSources.busy}
-                  onClick={() => runGlobal(actions.header.openExternalSourceSettings)}
-                >
-                  <Settings size={15} />
-                </button>
-              </div>
+              <h2>소스</h2>
               <SourceNavigation {...props} close={() => setPanel(null)} />
             </>
           )}

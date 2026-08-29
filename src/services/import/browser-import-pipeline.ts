@@ -10,7 +10,7 @@ import {
 } from './cooperative-import-parser';
 import type { ImportProgress, ImportProgressSubphase, ImportResult } from './import-service';
 
-export const BROWSER_IMPORT_WRITE_BATCH_PAGES = 4;
+export const BROWSER_IMPORT_WRITE_BATCH_PAGES = 16;
 
 export interface BrowserImportPipelineInput {
   jobId: string;
@@ -21,6 +21,7 @@ export interface BrowserImportPipelineInput {
   encoding: EncodingMode;
   chapterSplitMode?: ChapterSplitMode;
   clientBookId?: string;
+  expectedNormalizedTextHash?: string;
   archivePassword?: string;
   shouldCancel?: () => boolean;
   onProgress: (progress: ImportProgress) => void;
@@ -33,6 +34,12 @@ function importAbortError(): Error {
 
 function throwIfCancelled(input: BrowserImportPipelineInput): void {
   if (input.shouldCancel?.()) throw importAbortError();
+}
+
+function assertExpectedNormalizedTextHash(input: BrowserImportPipelineInput, actual: string): void {
+  if (input.expectedNormalizedTextHash && input.expectedNormalizedTextHash !== actual) {
+    throw new Error('가져온 원본의 본문 식별자가 예상한 Cloud Vault 기록과 다릅니다.');
+  }
 }
 
 async function defaultYieldControl(): Promise<void> {
@@ -127,6 +134,7 @@ export async function runBrowserImportPipeline(input: BrowserImportPipelineInput
     },
   });
   throwIfCancelled(input);
+  assertExpectedNormalizedTextHash(input, parsed.novel.normalizedTextHash);
 
   input.onProgress(
     pipelineProgress(input, bytesRead, 'writing', 'staging_chapters', {
@@ -188,6 +196,7 @@ export async function runBrowserEpubImportPipeline(input: BrowserImportPipelineI
     sourceBytes: bytes,
     clientBookId: input.clientBookId,
   });
+  assertExpectedNormalizedTextHash(input, parsed.novel.normalizedTextHash);
   input.buffer = new ArrayBuffer(0);
   input.onProgress(
     pipelineProgress(input, bytes.byteLength, 'writing', 'staging_chapters', {
@@ -233,6 +242,12 @@ export async function runBrowserEpubImportPipeline(input: BrowserImportPipelineI
 export async function runBrowserFixedDocumentImportPipeline(input: BrowserImportPipelineInput): Promise<ImportResult> {
   const bytes = new Uint8Array(input.buffer);
   const isPdf = /\.pdf$/i.test(input.fileName);
+  const sourceBlob = input.sourceBlob;
+  const { DOCUMENT_SERIES_CONTENT_TYPE, hasDocumentSeriesManifest, materializeDocumentSeriesArchive } =
+    await import('@noveldesk/document-series-core');
+  const isDocumentSeries = Boolean(
+    sourceBlob && /\.zip$/i.test(input.fileName) && (await hasDocumentSeriesManifest(sourceBlob)),
+  );
   const streamsArchiveEntries =
     !isPdf && /\.(zip|cbz|rar|cbr|7z|cb7)$/i.test(input.fileName) && Boolean(input.sourceBlob);
   const processedBytes = streamsArchiveEntries ? input.totalBytes : bytes.byteLength;
@@ -244,7 +259,11 @@ export async function runBrowserFixedDocumentImportPipeline(input: BrowserImport
       'decoding',
       streamsArchiveEntries ? 'hashing_source' : 'decoding_text',
       {
-        message: isPdf ? 'PDF 페이지 구조를 해석하는 중입니다.' : '이미지 압축 파일의 페이지를 검사하는 중입니다.',
+        message: isPdf
+          ? 'PDF 페이지 구조를 해석하는 중입니다.'
+          : isDocumentSeries
+            ? '연재 문서의 원본과 회차 구성을 검사하는 중입니다.'
+            : '이미지 압축 파일의 페이지를 검사하는 중입니다.',
       },
     ),
   );
@@ -256,79 +275,107 @@ export async function runBrowserFixedDocumentImportPipeline(input: BrowserImport
     openImageArchiveStream,
     parseImageArchive,
   } = await import('@noveldesk/fixed-document-core');
-  const parsed = streamsArchiveEntries
+  const parsed = isDocumentSeries
     ? await (async () => {
-        const sourceBlob = input.sourceBlob!;
-        const sourceContentHash = await hashBlobInChunks(sourceBlob, {
+        const sourceContentHash = await hashBlobInChunks(sourceBlob!, {
           shouldCancel: input.shouldCancel,
           onProgress: ({ bytesRead }) =>
             input.onProgress(
               pipelineProgress(input, bytesRead, 'decoding', 'hashing_source', {
-                message: `압축 원본을 확인하는 중입니다. ${bytesRead.toLocaleString()} / ${input.totalBytes.toLocaleString()} 바이트`,
+                message: `연재 문서 원본을 확인하는 중입니다. ${bytesRead.toLocaleString()} / ${input.totalBytes.toLocaleString()} 바이트`,
               }),
             ),
         });
-        const document = await openImageArchiveStream(sourceBlob, {
+        return materializeDocumentSeriesArchive(sourceBlob!, {
           fileName: input.fileName,
-          password: input.archivePassword,
-        });
-        let pagesPrepared = 0;
-        return materializeStreamingImageArchiveImport({
-          fileName: input.fileName,
-          sourceContentHash,
           clientBookId: input.clientBookId,
-          document: {
-            pages: document.pages,
-            comicInfo: document.comicInfo,
-            async *consumePages() {
-              for await (const page of document.consumePages()) {
-                throwIfCancelled(input);
-                pagesPrepared += 1;
-                input.onProgress(
-                  pipelineProgress(input, input.totalBytes, 'writing', 'staging_chapters', {
-                    chaptersDetected: document.pages.length,
-                    paragraphsWritten: pagesPrepared,
-                    message: `이미지 페이지를 저장하는 중입니다. ${pagesPrepared.toLocaleString()} / ${document.pages.length.toLocaleString()}개`,
-                  }),
-                );
-                yield page;
-              }
-            },
-          },
+          sourceContentHash,
         });
       })()
-    : isPdf
-      ? await materializePdfImport({
-          fileName: input.fileName,
-          sourceBytes: bytes,
-          clientBookId: input.clientBookId,
-          workerSrc: pdfWorkerUrl,
-        })
-      : materializeImageArchiveImport({
-          fileName: input.fileName,
-          sourceBytes: bytes,
-          document: await parseImageArchive(new Blob([bytes]), {
+    : streamsArchiveEntries
+      ? await (async () => {
+          const archiveBlob = input.sourceBlob!;
+          const sourceContentHash = await hashBlobInChunks(archiveBlob, {
+            shouldCancel: input.shouldCancel,
+            onProgress: ({ bytesRead }) =>
+              input.onProgress(
+                pipelineProgress(input, bytesRead, 'decoding', 'hashing_source', {
+                  message: `압축 원본을 확인하는 중입니다. ${bytesRead.toLocaleString()} / ${input.totalBytes.toLocaleString()} 바이트`,
+                }),
+              ),
+          });
+          const document = await openImageArchiveStream(archiveBlob, {
             fileName: input.fileName,
             password: input.archivePassword,
-          }),
-          clientBookId: input.clientBookId,
-        });
+          });
+          let pagesPrepared = 0;
+          return materializeStreamingImageArchiveImport({
+            fileName: input.fileName,
+            sourceContentHash,
+            clientBookId: input.clientBookId,
+            document: {
+              pages: document.pages,
+              comicInfo: document.comicInfo,
+              moyaSeries: document.moyaSeries,
+              async *consumePages() {
+                for await (const page of document.consumePages()) {
+                  throwIfCancelled(input);
+                  pagesPrepared += 1;
+                  input.onProgress(
+                    pipelineProgress(input, input.totalBytes, 'writing', 'staging_chapters', {
+                      chaptersDetected: document.pages.length,
+                      paragraphsWritten: pagesPrepared,
+                      message: `이미지 페이지를 저장하는 중입니다. ${pagesPrepared.toLocaleString()} / ${document.pages.length.toLocaleString()}개`,
+                    }),
+                  );
+                  yield page;
+                }
+              },
+            },
+          });
+        })()
+      : isPdf
+        ? await materializePdfImport({
+            fileName: input.fileName,
+            sourceBytes: bytes,
+            clientBookId: input.clientBookId,
+            workerSrc: pdfWorkerUrl,
+          })
+        : materializeImageArchiveImport({
+            fileName: input.fileName,
+            sourceBytes: bytes,
+            document: await parseImageArchive(new Blob([bytes]), {
+              fileName: input.fileName,
+              password: input.archivePassword,
+            }),
+            clientBookId: input.clientBookId,
+          });
   throwIfCancelled(input);
+  assertExpectedNormalizedTextHash(input, parsed.novel.normalizedTextHash);
   input.buffer = new ArrayBuffer(0);
   input.onProgress(
     pipelineProgress(input, processedBytes, 'writing', 'staging_chapters', {
       chaptersDetected: parsed.chapters.length,
-      message: isPdf ? 'PDF 문서 정보를 저장하는 중입니다.' : '이미지 페이지를 임시 저장하는 중입니다.',
+      message: isPdf
+        ? 'PDF 문서 정보를 저장하는 중입니다.'
+        : isDocumentSeries
+          ? '연재 문서의 회차와 원본을 임시 저장하는 중입니다.'
+          : '이미지 페이지를 임시 저장하는 중입니다.',
     }),
   );
   await saveParsedNovelImport(parsed, {
     batchPageCount: BROWSER_IMPORT_WRITE_BATCH_PAGES,
+    allowAppendDelta: isDocumentSeries,
     shouldCancel: input.shouldCancel,
     sourceAsset: input.sourceBlob
       ? {
           blob: input.sourceBlob,
           fileName: input.fileName,
-          contentType: isPdf ? 'application/pdf' : imageArchiveContentType(input.fileName),
+          contentType: isPdf
+            ? 'application/pdf'
+            : isDocumentSeries
+              ? DOCUMENT_SERIES_CONTENT_TYPE
+              : imageArchiveContentType(input.fileName),
           contentHash: parsed.novel.rawTextHash,
         }
       : undefined,
@@ -341,7 +388,9 @@ export async function runBrowserFixedDocumentImportPipeline(input: BrowserImport
           message:
             writeProgress.phase === 'activating_revision'
               ? '문서와 페이지를 최종 적용하는 중입니다.'
-              : `페이지를 저장하는 중입니다. ${writeProgress.paragraphsWritten.toLocaleString()} / ${writeProgress.totalParagraphs.toLocaleString()}개`,
+              : isDocumentSeries
+                ? `회차 본문을 저장하는 중입니다. ${writeProgress.paragraphsWritten.toLocaleString()} / ${writeProgress.totalParagraphs.toLocaleString()}문단`
+                : `페이지를 저장하는 중입니다. ${writeProgress.paragraphsWritten.toLocaleString()} / ${writeProgress.totalParagraphs.toLocaleString()}개`,
         }),
       );
     },
@@ -350,7 +399,7 @@ export async function runBrowserFixedDocumentImportPipeline(input: BrowserImport
     pipelineProgress(input, processedBytes, 'ready', 'complete', {
       chaptersDetected: parsed.chapters.length,
       paragraphsWritten: parsed.novel.totalParagraphs,
-      message: `${isPdf ? 'PDF' : '이미지 압축 파일'} 가져오기가 완료되었습니다.`,
+      message: `${isPdf ? 'PDF' : isDocumentSeries ? '연재 문서' : '이미지 압축 파일'} 가져오기가 완료되었습니다.`,
     }),
   );
   return { novel: parsed.novel };

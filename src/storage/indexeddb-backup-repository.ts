@@ -14,11 +14,7 @@ import { BACKUP_RESTORE_RUNS_STORE, type BackupRestoreRunRecord } from './backup
 import { BOOK_ASSET_STORES, type StoredBookAssetBlob } from './book-asset-schema';
 import { BOOK_DATA_STORES, bookDataIndexName } from './book-data-cleanup';
 import { READER_PERSONALIZATION_STORES } from './reader-personalization-schema';
-import {
-  putParagraphSearchRowsForPage,
-  revisionParagraphSearchRow,
-  type RevisionParagraphPageRow,
-} from './content-revision-store';
+import { putParagraphSearchRowsForPage, type RevisionParagraphPageRow } from './content-revision-store';
 import { requestToPromise, transactionDone } from './indexeddb-transaction';
 import { openReaderDb, type ReaderStoreName } from './reader-database';
 import { SPEAKER_ATTRIBUTION_STORES } from './speaker-attribution-schema';
@@ -431,7 +427,14 @@ export class IndexedDbBackupRepository implements BackupRepository {
       for (const [storeName, records] of restoredStores) {
         if (!tx.objectStoreNames.contains(storeName)) continue;
         const store = tx.objectStore(storeName);
-        records.forEach((record) => store.put(record));
+        records.forEach((record) => {
+          if (storeName === 'book_content_paragraph_pages') {
+            const page = record as unknown as RevisionParagraphPageRow;
+            store.put({ ...page, paragraphIds: page.paragraphs.map((paragraph) => paragraph.id) });
+            return;
+          }
+          store.put(record);
+        });
       }
       for (const metadata of restoredBlobs) {
         const blob = parsed.assetBlobs.get(metadata.storageKey);
@@ -450,13 +453,6 @@ export class IndexedDbBackupRepository implements BackupRepository {
       (restoredStores.get('paragraph_pages') ?? []).forEach((page) =>
         putParagraphSearchRowsForPage(legacySearchStore, page as unknown as ParagraphPage),
       );
-      const revisionSearchStore = tx.objectStore('book_content_paragraph_search');
-      (restoredStores.get('book_content_paragraph_pages') ?? []).forEach((record) => {
-        const page = record as unknown as RevisionParagraphPageRow;
-        page.paragraphs.forEach((paragraph) =>
-          revisionSearchStore.put(revisionParagraphSearchRow(page.contentRevisionId, page, paragraph)),
-        );
-      });
       await garbageCollectAssetBlobs(tx);
 
       const copiedBooks = Array.from(resolutions.values()).filter((resolution) => resolution === 'copy').length;

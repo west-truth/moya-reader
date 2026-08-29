@@ -1,0 +1,148 @@
+.self-host-auth-screen {
+  min-height: 100dvh;
+  display: grid;
+  place-items: center;
+  padding: clamp(20px, 5vw, 64px);
+  color: var(--text);
+  background:
+    radial-gradient(circle at 20% 10%, color-mix(in srgb, var(--accent) 15%, transparent), transparent 35%), var(--bg);
+}
+
+.self-host-auth-card {
+  width: min(100%, 460px);
+  padding: clamp(24px, 5vw, 38px);
+  border: 1px solid var(--border);
+  border-radius: 22px;
+  background: color-mix(in srgb, var(--surface) 94%, transparent);
+  box-shadow: 0 24px 80px rgb(0 0 0 / 28%);
+}
+
+.self-host-auth-card > header {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  margin-bottom: 24px;
+}
+
+.self-host-auth-card header p,
+.self-host-auth-card header h1,
+.self-host-auth-description,
+.self-host-auth-loading p,
+.self-host-auth-error p,
+.self-host-auth-form-error {
+  margin: 0;
+}
+
+.self-host-auth-card header p {
+  color: var(--muted);
+  font-size: 0.8rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.self-host-auth-card header h1 {
+  margin-top: 3px;
+  font-size: clamp(1.45rem, 5vw, 1.9rem);
+}
+
+.self-host-auth-mark {
+  width: 52px;
+  height: 52px;
+  display: grid;
+  place-items: center;
+  flex: 0 0 auto;
+  border-radius: 16px;
+  color: white;
+  background: var(--accent);
+}
+
+.self-host-auth-card form {
+  display: grid;
+  gap: 15px;
+}
+
+.self-host-auth-description {
+  color: var(--text-2);
+  line-height: 1.65;
+}
+
+.self-host-auth-card label {
+  display: grid;
+  gap: 7px;
+  font-size: 0.88rem;
+  font-weight: 700;
+}
+
+.self-host-auth-card label span {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+}
+
+.self-host-auth-card label small {
+  color: var(--muted);
+  font-size: 0.76rem;
+  font-weight: 500;
+  line-height: 1.45;
+}
+
+.self-host-auth-card input {
+  width: 100%;
+  min-height: 46px;
+  padding: 0 13px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  color: var(--text);
+  background: var(--bg);
+}
+
+.self-host-auth-card input:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.self-host-auth-submit {
+  min-height: 48px;
+  justify-content: center;
+  margin-top: 4px;
+}
+
+.self-host-auth-loading,
+.self-host-auth-error {
+  min-height: 170px;
+  display: grid;
+  place-items: center;
+  align-content: center;
+  gap: 14px;
+  text-align: center;
+  color: var(--text-2);
+}
+
+.self-host-auth-error svg,
+.self-host-auth-form-error {
+  color: var(--danger);
+}
+
+.self-host-auth-form-error {
+  padding: 10px 12px;
+  border-radius: 9px;
+  font-size: 0.86rem;
+  background: color-mix(in srgb, var(--danger) 10%, transparent);
+}
+
+@media (max-width: 520px) {
+  .self-host-auth-screen {
+    align-items: stretch;
+    padding: 0;
+  }
+
+  .self-host-auth-card {
+    width: 100%;
+    min-height: 100dvh;
+    padding: max(28px, env(safe-area-inset-top)) 20px max(24px, env(safe-area-inset-bottom));
+    border: 0;
+    border-radius: 0;
+    box-shadow: none;
+  }
+}

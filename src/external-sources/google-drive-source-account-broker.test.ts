@@ -51,6 +51,11 @@ function memoryState(key: CryptoKey): ExternalSourceLocalState & {
     deleteDefaultFolder: async (connectorId, accountConnectionId) => {
       folders.delete(`${connectorId}::${accountConnectionId ?? ''}`);
     },
+    getCatalogPreference: async () => undefined,
+    saveCatalogPreference: async () => undefined,
+    listSubscriptions: async () => [],
+    saveSubscription: async () => undefined,
+    deleteSubscription: async () => undefined,
     listSelectedItems: async (connectorId, accountConnectionId) =>
       [...selections.values()].filter(
         (record) => record.connectorId === connectorId && record.accountConnectionId === accountConnectionId,

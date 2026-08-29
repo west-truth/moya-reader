@@ -9,8 +9,11 @@ import { registerBookRoutes } from './routes/books.js';
 import { registerAIRoutes } from './routes/ai.js';
 import { registerSyncRoutes } from './routes/sync.js';
 import { registerBackupRoutes } from './routes/backups.js';
+import { registerSelfHostAuthRoutes } from './routes/auth.js';
+import { registerWebNovelMetadataCollectorGateway } from './routes/webnovel-metadata-collector-gateway.js';
 import { pruneStaleUploadSessions } from './services/upload-cleanup.js';
 import { registerAuthHook } from './auth.js';
+import { PostgresSelfHostAuthStore, SelfHostAuthService } from './services/self-host-auth-service.js';
 import { createS3Client, ensureBucket } from './services/object-storage.js';
 import {
   createStructuredLogger,
@@ -136,6 +139,8 @@ export async function buildServer(config: ServerConfig): Promise<FastifyInstance
     bodyLimit: config.maxChunkBytes,
     disableRequestLogging: true,
     loggerInstance: logger.fastify,
+    // A numeric hop count avoids trusting arbitrary client-supplied forwarding chains.
+    trustProxy: config.trustedProxyHops ? config.trustedProxyHops : false,
   });
 
   registerRequestObservability(app, logger);
@@ -149,7 +154,9 @@ export async function buildServer(config: ServerConfig): Promise<FastifyInstance
 
   registerCorsPolicy(app, config);
 
-  await registerAuthHook(app, config);
+  const selfHostAuth = new SelfHostAuthService(new PostgresSelfHostAuthStore(pool), config.defaultUserId);
+  await registerAuthHook(app, config, selfHostAuth);
+  await registerSelfHostAuthRoutes(app, selfHostAuth, config);
 
   const pruneResult = await pruneStaleUploadSessions(pool, config);
   if (pruneResult.prunedCount) {
@@ -198,6 +205,7 @@ export async function buildServer(config: ServerConfig): Promise<FastifyInstance
   await registerAIRoutes(app, pool, config, providerQueue);
   await registerSyncRoutes(app, pool, config);
   await registerBackupRoutes(app, pool, config);
+  await registerWebNovelMetadataCollectorGateway(app, config);
 
   return app;
 }

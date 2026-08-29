@@ -14,6 +14,7 @@ interface StartMessage {
   encoding: EncodingMode;
   chapterSplitMode?: ChapterSplitMode;
   clientBookId?: string;
+  expectedNormalizedTextHash?: string;
   archivePassword?: string;
 }
 
@@ -95,6 +96,7 @@ async function runImport(message: StartMessage): Promise<void> {
       encoding,
       chapterSplitMode: message.chapterSplitMode ?? 'auto',
       clientBookId: message.clientBookId,
+      expectedNormalizedTextHash: message.expectedNormalizedTextHash,
       archivePassword: message.archivePassword,
       shouldCancel: () => cancelled && activeJobId === jobId,
       onProgress: postProgress,

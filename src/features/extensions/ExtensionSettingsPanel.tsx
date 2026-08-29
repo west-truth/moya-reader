@@ -1,4 +1,5 @@
 import { Boxes, ShieldCheck } from 'lucide-react';
+import type { ReactNode } from 'react';
 import type { ExtensionContributionId, ExtensionPermission } from '@noveldesk/extension-contracts';
 import type { AppExtensionSnapshot, ExtensionContributionKind } from '../../extensions/app-extension-manager';
 
@@ -21,6 +22,7 @@ const contributionLabels: Record<ExtensionContributionKind, string> = {
 };
 
 function stateLabel(extension: AppExtensionSnapshot): string {
+  if (extension.trustLevel === 'sandboxed' && extension.state === 'failed') return '지원 안 함';
   if (extension.state === 'failed') return '실행 실패';
   return extension.enabled ? '사용 중' : '꺼짐';
 }
@@ -28,9 +30,11 @@ function stateLabel(extension: AppExtensionSnapshot): string {
 function ExtensionCard({
   extension,
   setEnabled,
+  details,
 }: {
   extension: AppExtensionSnapshot;
   setEnabled(extensionId: ExtensionContributionId, enabled: boolean): void;
+  details?: ReactNode;
 }) {
   return (
     <article className="extension-settings-card">
@@ -42,7 +46,7 @@ function ExtensionCard({
             <span className="extension-badge">{extension.origin === 'bundled' ? '내장' : '커뮤니티'}</span>
           </div>
           <span className="muted">
-            v{extension.version} · {extension.trustLevel === 'trusted' ? '앱과 함께 검증됨' : '격리 실행'}
+            v{extension.version} · {extension.trustLevel === 'trusted' ? '앱과 함께 검증됨' : '격리 실행 미지원'}
           </span>
         </div>
         <label className="reader-settings-toggle extension-enable-toggle">
@@ -85,6 +89,12 @@ function ExtensionCard({
           </div>
         </div>
       </details>
+      {details && (
+        <details className="extension-custom-settings" open={extension.enabled}>
+          <summary>세부 설정</summary>
+          <div className="extension-custom-settings-body">{details}</div>
+        </details>
+      )}
     </article>
   );
 }
@@ -92,9 +102,11 @@ function ExtensionCard({
 export function ExtensionSettingsPanel({
   extensions,
   setEnabled,
+  renderDetails,
 }: {
   extensions: readonly AppExtensionSnapshot[];
   setEnabled(extensionId: ExtensionContributionId, enabled: boolean): void;
+  renderDetails?(extension: AppExtensionSnapshot): ReactNode;
 }) {
   const bundled = extensions.filter((extension) => extension.origin === 'bundled');
   const community = extensions.filter((extension) => extension.origin === 'community');
@@ -110,7 +122,12 @@ export function ExtensionSettingsPanel({
         </div>
         <div className="extension-settings-list">
           {bundled.map((extension) => (
-            <ExtensionCard key={extension.id} extension={extension} setEnabled={setEnabled} />
+            <ExtensionCard
+              key={extension.id}
+              extension={extension}
+              setEnabled={setEnabled}
+              details={renderDetails?.(extension)}
+            />
           ))}
         </div>
       </section>
@@ -127,7 +144,12 @@ export function ExtensionSettingsPanel({
         ) : (
           <div className="extension-settings-list">
             {community.map((extension) => (
-              <ExtensionCard key={extension.id} extension={extension} setEnabled={setEnabled} />
+              <ExtensionCard
+                key={extension.id}
+                extension={extension}
+                setEnabled={setEnabled}
+                details={renderDetails?.(extension)}
+              />
             ))}
           </div>
         )}

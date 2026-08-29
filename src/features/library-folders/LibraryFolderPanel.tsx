@@ -74,9 +74,9 @@ export default function LibraryFolderPanel({ controller }: LibraryFolderPanelPro
   return (
     <Dialog
       open={controller.open}
-      title="책장 폴더"
+      title="폴더 가져오기"
       className="library-folder-dialog"
-      closeLabel="책장 폴더 닫기"
+      closeLabel="폴더 가져오기 닫기"
       closeDisabled={controller.busy}
       onClose={controller.close}
     >
@@ -87,8 +87,8 @@ export default function LibraryFolderPanel({ controller }: LibraryFolderPanelPro
             <button
               type="button"
               className="icon-btn"
-              aria-label="책장 폴더 추가"
-              title="책장 폴더 추가"
+              aria-label="가져올 폴더 추가"
+              title="가져올 폴더 추가"
               disabled={!controller.available || controller.busy}
               onClick={() => void controller.pickFolder()}
             >

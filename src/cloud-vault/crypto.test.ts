@@ -5,7 +5,13 @@ import {
   DEFAULT_CLOUD_VAULT_SCOPE,
   type CloudVaultSnapshotV1,
 } from './contracts';
-import { decryptCloudVault, encryptCloudVault, sealCloudVaultSecret, unsealCloudVaultSecret } from './crypto';
+import {
+  CLOUD_VAULT_MIN_PASSPHRASE_LENGTH,
+  decryptCloudVault,
+  encryptCloudVault,
+  sealCloudVaultSecret,
+  unsealCloudVaultSecret,
+} from './crypto';
 
 function snapshot(): CloudVaultSnapshotV1 {
   return {
@@ -33,6 +39,12 @@ describe('cloud vault encryption', () => {
   it('rejects a wrong passphrase', async () => {
     const encrypted = await encryptCloudVault(snapshot(), 'correct horse battery staple');
     await expect(decryptCloudVault(encrypted, 'different secure passphrase')).rejects.toThrow(/incorrect|damaged/);
+  });
+
+  it('accepts an 8-character passphrase and rejects anything shorter', async () => {
+    expect(CLOUD_VAULT_MIN_PASSPHRASE_LENGTH).toBe(8);
+    await expect(encryptCloudVault(snapshot(), '12345678')).resolves.toBeInstanceOf(Uint8Array);
+    await expect(encryptCloudVault(snapshot(), '1234567')).rejects.toThrow(/at least 8/);
   });
 
   it('seals Dropbox credentials separately from the vault payload', async () => {

@@ -3,6 +3,34 @@ use tauri::Manager;
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let builder = tauri::Builder::default();
+    #[cfg(target_os = "windows")]
+    let builder = builder.on_page_load(|webview, payload| {
+        if payload.event() != tauri::webview::PageLoadEvent::Finished {
+            return;
+        }
+        let _ = webview.eval(
+            r#"
+            (() => {
+              const migrationKey = 'moya.nativeShellCacheVersion';
+              const migrationVersion = '1';
+              if (
+                window.location.hostname !== 'tauri.localhost' ||
+                window.localStorage.getItem(migrationKey) === migrationVersion
+              ) return;
+              window.localStorage.setItem(migrationKey, migrationVersion);
+              const unregister = 'serviceWorker' in navigator
+                ? navigator.serviceWorker.getRegistrations().then((registrations) =>
+                    Promise.all(registrations.map((registration) => registration.unregister())))
+                : Promise.resolve([]);
+              const clearCaches = 'caches' in window
+                ? window.caches.keys().then((keys) =>
+                    Promise.all(keys.map((key) => window.caches.delete(key))))
+                : Promise.resolve([]);
+              Promise.all([unregister, clearCaches]).finally(() => window.location.reload());
+            })();
+            "#,
+        );
+    });
     #[cfg(target_os = "android")]
     let builder = builder.plugin(crate::provider_secrets::init_android_provider_secret_store());
     #[cfg(target_os = "android")]
@@ -13,8 +41,9 @@ pub fn run() {
         .plugin(crate::android_document_io::init_android_document_io())
         .plugin(crate::android_plugins::init_android_shell())
         .plugin(crate::android_plugins::init_android_system_tts());
-    builder
+    let app = builder
         .setup(|app| {
+            app.manage(crate::metadata_collector::MetadataCollectorManager::default());
             let runtime = crate::workflow::NativeWorkflowRuntime::open(app.handle())
                 .map_err(std::io::Error::other)?;
             app.manage(runtime.clone());
@@ -32,6 +61,9 @@ pub fn run() {
             crate::secure_credentials::app_credential_get,
             crate::secure_credentials::app_credential_status,
             crate::secure_credentials::app_credential_delete,
+            crate::desktop_oauth::desktop_dropbox_oauth_authorize,
+            crate::metadata_collector::desktop_metadata_collector_start,
+            crate::metadata_collector::desktop_metadata_collector_stop,
             crate::android_document_io::android_document_io_pick,
             crate::android_document_io::android_document_io_pick_folder,
             crate::android_document_io::android_document_io_scan_folder,
@@ -64,6 +96,13 @@ pub fn run() {
             crate::tts::render_cache::native_tts_pending_jobs,
             crate::tts::bridge::desktop_tts_list_voices
         ])
-        .run(tauri::generate_context!())
-        .expect("error while running Moya");
+        .build(tauri::generate_context!())
+        .expect("error while building Moya");
+    app.run(|app_handle, event| {
+        if matches!(event, tauri::RunEvent::ExitRequested { .. }) {
+            app_handle
+                .state::<crate::metadata_collector::MetadataCollectorManager>()
+                .stop_before_exit();
+        }
+    });
 }

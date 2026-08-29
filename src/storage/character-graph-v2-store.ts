@@ -18,6 +18,7 @@ import { openReaderDb } from './reader-database';
 import { jsonValue, queueSyncEventInTransaction } from './sync-event-store';
 import { CHARACTER_GRAPH_V2_STORES } from './character-graph-v2-schema';
 import type { RevisionChapterRow } from './content-revision-store';
+import { contentRevisionComponentIds, type BookContentRevisionRecord } from './content-revisions';
 
 interface StoredCharacterIdentityReceiptV2 extends CharacterIdentityOperationResultV2 {
   readonly id: string;
@@ -46,6 +47,7 @@ const OPERATION_STORES = [
   'voice_profiles',
   'chapters',
   'novels',
+  'book_content_revisions',
   'book_content_chapters',
   'devices',
   'sync_outbox',
@@ -196,6 +198,14 @@ export async function applyLocalCharacterIdentityCommandV2(
         tx.objectStore('book_content_chapters').index('novelId').getAll(command.novelId),
       ),
     ]);
+    const activeRevision = novel?.activeContentRevisionId
+      ? await requestToPromise<BookContentRevisionRecord | undefined>(
+          tx.objectStore('book_content_revisions').get(novel.activeContentRevisionId),
+        )
+      : undefined;
+    const activeComponentIds = novel?.activeContentRevisionId
+      ? new Set(activeRevision ? contentRevisionComponentIds(activeRevision) : [novel.activeContentRevisionId])
+      : undefined;
     const graph: CharacterGraph = { novelId: command.novelId, characters, relations };
     const activeKnowledge = knowledgeIsEmpty(knowledge) ? backfillCharacterGraphKnowledgeV2(graph) : knowledge;
     const plan = buildCharacterIdentityOperationPlanV2({
@@ -206,9 +216,7 @@ export async function applyLocalCharacterIdentityCommandV2(
       voiceProfiles,
       chapterIndexById: Object.fromEntries(
         revisionChapters
-          .filter(
-            (chapter) => !novel?.activeContentRevisionId || chapter.contentRevisionId === novel.activeContentRevisionId,
-          )
+          .filter((chapter) => !activeComponentIds || activeComponentIds.has(chapter.contentRevisionId))
           .map((chapter) => [chapter.id, chapter.index]),
       ),
     });

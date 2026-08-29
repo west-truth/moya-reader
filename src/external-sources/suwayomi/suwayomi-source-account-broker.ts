@@ -2,6 +2,7 @@ import type {
   DownloadedExternalSource,
   ExternalItemPage,
   ExternalItemSummary,
+  ExternalSourceBrowseMode,
   ExternalSourceBroker,
   ExternalSourceConnectionForm,
   ExternalSourceConnectionInput,
@@ -9,6 +10,7 @@ import type {
   ExternalSourceCredentialRecord,
   ExternalSourceDownloadRef,
   ExternalSourceListInput,
+  ExternalSourceFilterDefinition,
   ExternalSourceWorkDetail,
 } from '../contracts';
 import { sealExternalSourceCredential, unsealExternalSourceCredential } from '../device-credential-crypto';
@@ -25,6 +27,8 @@ import { DEFAULT_SUWAYOMI_BASE_URL } from '../../config/public-runtime-config';
 
 export { DEFAULT_SUWAYOMI_BASE_URL } from '../../config/public-runtime-config';
 const MAX_DIRECT_DOWNLOAD_BYTES = 1024 * 1024 * 1024;
+const MAX_THUMBNAIL_BYTES = 20 * 1024 * 1024;
+const DIRECT_DOWNLOAD_FALLBACK_STATUSES = new Set([400, 404, 405, 409, 422, 500, 501]);
 
 type SuwayomiConnectionAuthMode = 'auto' | SuwayomiAuthMode;
 
@@ -44,12 +48,41 @@ interface SuwayomiSource {
   readonly lang: string;
   readonly iconUrl?: string;
   readonly supportsLatest?: boolean;
+  readonly filters?: readonly SuwayomiFilter[];
   readonly extension?: {
     readonly pkgName?: string;
     readonly versionName?: string;
     readonly isInstalled?: boolean;
   };
 }
+
+type SuwayomiFilter =
+  | { readonly __typename: 'HeaderFilter'; readonly name: string }
+  | { readonly __typename: 'SeparatorFilter'; readonly name: string }
+  | { readonly __typename: 'CheckBoxFilter'; readonly name: string; readonly booleanDefault: boolean }
+  | {
+      readonly __typename: 'SelectFilter';
+      readonly name: string;
+      readonly selectDefault: number;
+      readonly values: readonly string[];
+    }
+  | {
+      readonly __typename: 'SortFilter';
+      readonly name: string;
+      readonly sortDefault?: { readonly index: number; readonly ascending: boolean } | null;
+      readonly values: readonly string[];
+    }
+  | { readonly __typename: 'TextFilter'; readonly name: string; readonly textDefault: string }
+  | {
+      readonly __typename: 'TriStateFilter';
+      readonly name: string;
+      readonly triStateDefault: 'IGNORE' | 'INCLUDE' | 'EXCLUDE';
+    }
+  | {
+      readonly __typename: 'GroupFilter';
+      readonly name: string;
+      readonly filters: readonly Exclude<SuwayomiFilter, { readonly __typename: 'GroupFilter' }>[];
+    };
 
 interface SuwayomiManga {
   readonly id: number;
@@ -85,6 +118,29 @@ const SOURCE_LIST_QUERY = `query MoyaSuwayomiSources {
   sources(first: 500) {
     nodes {
       id name displayName lang iconUrl supportsLatest
+      filters {
+        __typename
+        ... on HeaderFilter { name }
+        ... on SeparatorFilter { name }
+        ... on CheckBoxFilter { name booleanDefault: default }
+        ... on SelectFilter { name selectDefault: default values }
+        ... on SortFilter { name sortDefault: default { index ascending } values }
+        ... on TextFilter { name textDefault: default }
+        ... on TriStateFilter { name triStateDefault: default }
+        ... on GroupFilter {
+          name
+          filters {
+            __typename
+            ... on HeaderFilter { name }
+            ... on SeparatorFilter { name }
+            ... on CheckBoxFilter { name booleanDefault: default }
+            ... on SelectFilter { name selectDefault: default values }
+            ... on SortFilter { name sortDefault: default { index ascending } values }
+            ... on TextFilter { name textDefault: default }
+            ... on TriStateFilter { name triStateDefault: default }
+          }
+        }
+      }
       extension { pkgName versionName isInstalled }
     }
   }
@@ -178,6 +234,94 @@ function pageNumber(cursor: string | undefined): number {
   return match ? Number(match[1]) : 1;
 }
 
+function filterId(position: number, groupPosition?: number): string {
+  return groupPosition === undefined ? String(position) : `${position}.${groupPosition}`;
+}
+
+function projectFilter(
+  filter: Exclude<SuwayomiFilter, { readonly __typename: 'GroupFilter' }>,
+  position: number,
+  groupPosition?: number,
+): ExternalSourceFilterDefinition | undefined {
+  const common = { id: filterId(position, groupPosition), position, groupPosition };
+  switch (filter.__typename) {
+    case 'HeaderFilter':
+      return { ...common, kind: 'header', label: filter.name };
+    case 'SeparatorFilter':
+      return { ...common, kind: 'separator', label: filter.name || undefined };
+    case 'CheckBoxFilter':
+      return { ...common, kind: 'checkbox', label: filter.name, defaultValue: filter.booleanDefault };
+    case 'SelectFilter':
+      return {
+        ...common,
+        kind: 'select',
+        label: filter.name,
+        options: filter.values,
+        defaultValue: filter.selectDefault,
+      };
+    case 'SortFilter':
+      return {
+        ...common,
+        kind: 'sort',
+        label: filter.name,
+        options: filter.values,
+        defaultValue: filter.sortDefault ?? { index: 0, ascending: true },
+      };
+    case 'TextFilter':
+      return { ...common, kind: 'text', label: filter.name, defaultValue: filter.textDefault };
+    case 'TriStateFilter':
+      return { ...common, kind: 'tri_state', label: filter.name, defaultValue: filter.triStateDefault };
+  }
+}
+
+function projectFilters(filters: readonly SuwayomiFilter[] | undefined): readonly ExternalSourceFilterDefinition[] {
+  return (filters ?? []).flatMap((filter, position) => {
+    if (filter.__typename !== 'GroupFilter') {
+      const projected = projectFilter(filter, position);
+      return projected ? [projected] : [];
+    }
+    const header: ExternalSourceFilterDefinition = {
+      id: filterId(position),
+      position,
+      kind: 'header',
+      label: filter.name,
+    };
+    return [
+      header,
+      ...filter.filters.flatMap((child, groupPosition) => {
+        const projected = projectFilter(child, position, groupPosition);
+        return projected ? [projected] : [];
+      }),
+    ];
+  });
+}
+
+function browseMode(input: ExternalSourceListInput, source: SuwayomiSource | undefined): ExternalSourceBrowseMode {
+  if (input.browseMode === 'search') return 'search';
+  if (input.query?.trim()) return 'search';
+  if (input.browseMode === 'latest' && source?.supportsLatest) return 'latest';
+  return 'popular';
+}
+
+function suwayomiFilterChanges(input: ExternalSourceListInput) {
+  return input.filters?.map((change) => {
+    const value = change.value;
+    const leaf = {
+      position: change.groupPosition ?? change.position,
+      ...(typeof value === 'boolean'
+        ? { checkBoxState: value }
+        : typeof value === 'number'
+          ? { selectState: value }
+          : typeof value === 'string'
+            ? value === 'IGNORE' || value === 'INCLUDE' || value === 'EXCLUDE'
+              ? { triState: value }
+              : { textState: value }
+            : { sortState: value }),
+    };
+    return change.groupPosition === undefined ? leaf : { position: change.position, groupChange: leaf };
+  });
+}
+
 function epochIso(value: number | null | undefined): string | undefined {
   if (!Number.isFinite(value) || !value || value < 0) return undefined;
   const milliseconds = value > 10_000_000_000 ? value : value * 1000;
@@ -218,6 +362,7 @@ export class SuwayomiSourceAccountBroker implements ExternalSourceBroker {
   private connectionReason?: string;
   private readonly sources = new Map<string, SuwayomiSource>();
   private readonly mangas = new Map<number, SuwayomiManga>();
+  private readonly thumbnailObjectUrls = new Map<string, string>();
   private readonly fetchImpl: typeof fetch;
   private readonly defaultBaseUrl: string;
 
@@ -379,13 +524,14 @@ export class SuwayomiSourceAccountBroker implements ExternalSourceBroker {
     this.connectionReason = undefined;
     this.sources.clear();
     this.mangas.clear();
+    this.clearThumbnailObjectUrls();
   }
 
   async list(input: ExternalSourceListInput, signal: AbortSignal): Promise<ExternalItemPage> {
     this.requireConnection(input.accountConnectionId);
     if (!input.parentRef) return this.listSources(signal);
     const sourceId = parseNavigationId(input.parentRef, 'source');
-    if (sourceId) return this.listMangas(sourceId, input.query, input.cursor, signal);
+    if (sourceId) return this.listMangas(sourceId, input, signal);
     const mangaId = parseNavigationId(input.parentRef, 'manga');
     if (mangaId) return this.listChapters(Number(mangaId), signal);
     throw new Error('Suwayomi 탐색 위치가 올바르지 않습니다.');
@@ -412,7 +558,7 @@ export class SuwayomiSourceAccountBroker implements ExternalSourceBroker {
         remoteRevision: ref.remoteRevision,
       };
     } catch (error) {
-      if (!(error instanceof SuwayomiHttpError) || ![404, 405].includes(error.status)) throw error;
+      if (!(error instanceof SuwayomiHttpError) || !DIRECT_DOWNLOAD_FALLBACK_STATUSES.has(error.status)) throw error;
     }
 
     const pages = await client.graphql<{
@@ -450,29 +596,31 @@ export class SuwayomiSourceAccountBroker implements ExternalSourceBroker {
     const nodes = data.sources?.nodes?.filter((source) => source.extension?.isInstalled !== false) ?? [];
     this.sources.clear();
     nodes.forEach((source) => this.sources.set(source.id, source));
-    return {
-      items: nodes.map((source): ExternalItemSummary => ({
+    const items = await Promise.all(
+      nodes.map(async (source): Promise<ExternalItemSummary> => ({
         key: this.itemKey(`source:${source.id}`),
         kind: 'folder',
         title: source.displayName?.trim() || source.name,
         subtitle: [source.lang?.toUpperCase(), source.extension?.versionName].filter(Boolean).join(' · '),
         formatHint: 'MIHON SOURCE',
-        thumbnailUrl: this.credential?.authMode === 'none' ? client.absoluteUrl(source.iconUrl) : undefined,
+        thumbnailUrl: await this.resolveThumbnail(source.iconUrl, signal),
         navigationRef: navigationId('source', source.id),
         importability: 'unsupported',
       })),
-    };
+    );
+    return { items };
   }
 
   private async listMangas(
     sourceId: string,
-    query: string | undefined,
-    cursor: string | undefined,
+    input: ExternalSourceListInput,
     signal: AbortSignal,
   ): Promise<ExternalItemPage> {
     const client = this.requireConnection();
-    const page = pageNumber(cursor);
-    const search = query?.trim();
+    const page = pageNumber(input.cursor);
+    const search = input.query?.trim();
+    const source = this.sources.get(sourceId);
+    const mode = browseMode(input, source);
     const data = await client.graphql<{
       fetchSourceManga?: { mangas?: readonly SuwayomiManga[]; hasNextPage?: boolean } | null;
     }>(
@@ -480,9 +628,10 @@ export class SuwayomiSourceAccountBroker implements ExternalSourceBroker {
       {
         input: {
           source: sourceId,
-          type: search ? 'SEARCH' : 'POPULAR',
+          type: mode.toUpperCase(),
           page,
           ...(search ? { query: search } : {}),
+          ...(input.filters?.length ? { filters: suwayomiFilterChanges(input) } : {}),
         },
       },
       signal,
@@ -490,10 +639,14 @@ export class SuwayomiSourceAccountBroker implements ExternalSourceBroker {
     const payload = data.fetchSourceManga;
     if (!payload?.mangas) throw new Error('Suwayomi 소스에서 작품 목록을 가져오지 못했습니다.');
     payload.mangas.forEach((manga) => this.mangas.set(manga.id, manga));
-    const source = this.sources.get(sourceId);
     return {
-      items: payload.mangas.map((manga) => this.mangaItem(manga, source)),
+      items: await Promise.all(payload.mangas.map((manga) => this.mangaItem(manga, source, signal))),
       nextCursor: payload.hasNextPage ? `page:${page + 1}` : undefined,
+      browse: {
+        activeMode: mode,
+        availableModes: ['popular', ...(source?.supportsLatest ? (['latest'] as const) : []), 'search'],
+        filters: projectFilters(source?.filters),
+      },
     };
   }
 
@@ -508,7 +661,7 @@ export class SuwayomiSourceAccountBroker implements ExternalSourceBroker {
     this.mangas.set(manga.id, manga);
     const source = this.sources.get(manga.sourceId);
     return {
-      detail: this.workDetail(manga, source),
+      detail: await this.workDetail(manga, source, signal),
       items: (payload.chapters ?? []).map((chapter): ExternalItemSummary => ({
         key: this.itemKey(`chapter:${chapter.id}`),
         kind: 'file',
@@ -518,30 +671,53 @@ export class SuwayomiSourceAccountBroker implements ExternalSourceBroker {
         mimeType: 'application/vnd.comicbook+zip',
         formatHint: 'CBZ',
         updatedAt: epochIso(chapter.uploadDate),
-        remoteRevision: [chapter.id, chapter.fetchedAt ?? '', chapter.pageCount ?? '', chapter.uploadDate ?? ''].join(
-          ':',
-        ),
+        // fetchedAt is a local Suwayomi refresh timestamp and can change even when the
+        // remote release bytes did not. Keep the link revision stable across browsing.
+        // pageCount can be missing until Suwayomi fetches a chapter for the first time.
+        // Treating that cache fill as a revision would show an immediate false update after import.
+        remoteRevision: [chapter.id, chapter.uploadDate ?? ''].join(':'),
+        collection: {
+          remoteId: `manga:${manga.id}`,
+          title: manga.title,
+          author: manga.author?.trim() || manga.artist?.trim() || undefined,
+          description: manga.description?.trim() || undefined,
+          tags: manga.genre,
+          status: statusLabel(manga.status),
+          sourceLabel: source?.displayName?.trim() || source?.name,
+        },
+        release: {
+          title: chapter.name,
+          chapterNumber: chapter.chapterNumber,
+          sourceOrder: chapter.sourceOrder,
+        },
         importability: 'supported',
       })),
     };
   }
 
-  private mangaItem(manga: SuwayomiManga, source: SuwayomiSource | undefined): ExternalItemSummary {
+  private async mangaItem(
+    manga: SuwayomiManga,
+    source: SuwayomiSource | undefined,
+    signal: AbortSignal,
+  ): Promise<ExternalItemSummary> {
     return {
       key: this.itemKey(`manga:${manga.id}`),
       kind: 'work',
       title: manga.title,
       author: manga.author?.trim() || manga.artist?.trim() || undefined,
       subtitle: [statusLabel(manga.status), source?.displayName ?? source?.name].filter(Boolean).join(' · '),
-      thumbnailUrl:
-        this.credential?.authMode === 'none' ? this.client?.absoluteUrl(manga.thumbnailUrl ?? undefined) : undefined,
+      thumbnailUrl: await this.resolveThumbnail(manga.thumbnailUrl ?? undefined, signal),
       updatedAt: epochIso(manga.chaptersLastFetchedAt ?? manga.lastFetchedAt),
       navigationRef: navigationId('manga', manga.id),
       importability: 'unsupported',
     };
   }
 
-  private workDetail(manga: SuwayomiManga, source: SuwayomiSource | undefined): ExternalSourceWorkDetail {
+  private async workDetail(
+    manga: SuwayomiManga,
+    source: SuwayomiSource | undefined,
+    signal: AbortSignal,
+  ): Promise<ExternalSourceWorkDetail> {
     return {
       title: manga.title,
       author: manga.author?.trim() || undefined,
@@ -549,10 +725,42 @@ export class SuwayomiSourceAccountBroker implements ExternalSourceBroker {
       description: manga.description?.trim() || undefined,
       tags: manga.genre,
       status: statusLabel(manga.status),
-      thumbnailUrl:
-        this.credential?.authMode === 'none' ? this.client?.absoluteUrl(manga.thumbnailUrl ?? undefined) : undefined,
+      thumbnailUrl: await this.resolveThumbnail(manga.thumbnailUrl ?? undefined, signal),
       sourceLabel: source?.displayName?.trim() || source?.name,
     };
+  }
+
+  private async resolveThumbnail(pathOrUrl: string | undefined, signal: AbortSignal): Promise<string | undefined> {
+    if (!pathOrUrl) return undefined;
+    const client = this.requireConnection();
+    const absoluteUrl = client.absoluteUrl(pathOrUrl);
+    if (!absoluteUrl) return undefined;
+    if (this.credential?.authMode === 'none') return absoluteUrl;
+    const cached = this.thumbnailObjectUrls.get(absoluteUrl);
+    if (cached) return cached;
+    try {
+      const response = await client.fetchAsset(absoluteUrl, signal);
+      const declaredLength = Number(response.headers.get('Content-Length'));
+      if (Number.isFinite(declaredLength) && declaredLength > MAX_THUMBNAIL_BYTES) return undefined;
+      const blob = await response.blob();
+      const contentType = (blob.type || response.headers.get('Content-Type') || '').toLowerCase();
+      if (!contentType.startsWith('image/') || blob.size === 0 || blob.size > MAX_THUMBNAIL_BYTES) return undefined;
+      if (typeof URL.createObjectURL !== 'function') return undefined;
+      const objectUrl = URL.createObjectURL(blob);
+      this.thumbnailObjectUrls.set(absoluteUrl, objectUrl);
+      return objectUrl;
+    } catch (error) {
+      if (error instanceof DOMException && error.name === 'AbortError') throw error;
+      if (error instanceof SuwayomiAuthenticationError) throw error;
+      return undefined;
+    }
+  }
+
+  private clearThumbnailObjectUrls(): void {
+    if (typeof URL.revokeObjectURL === 'function') {
+      this.thumbnailObjectUrls.forEach((url) => URL.revokeObjectURL(url));
+    }
+    this.thumbnailObjectUrls.clear();
   }
 
   private itemKey(remoteId: string) {
@@ -616,6 +824,7 @@ export class SuwayomiSourceAccountBroker implements ExternalSourceBroker {
   }
 
   private installCredential(credential: SuwayomiCredential, key: CryptoKey): void {
+    this.clearThumbnailObjectUrls();
     this.credential = credential;
     this.credentialKey = key;
     this.client = new SuwayomiGraphqlClient(

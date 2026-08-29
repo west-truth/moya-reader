@@ -97,16 +97,18 @@ export class SuwayomiGraphqlClient {
   }
 
   async fetchAsset(pathOrUrl: string, signal: AbortSignal): Promise<Response> {
+    const targetUrl = new URL(pathOrUrl, `${this.baseUrl}/`);
+    const sameOrigin = targetUrl.origin === new URL(this.baseUrl).origin;
     const request = (authorization: string | undefined) =>
-      this.fetchImpl(new URL(pathOrUrl, `${this.baseUrl}/`).toString(), {
+      this.fetchImpl(targetUrl.toString(), {
         method: 'GET',
-        headers: authorization ? { Authorization: authorization } : undefined,
+        headers: sameOrigin && authorization ? { Authorization: authorization } : undefined,
         signal,
       });
     let response: Response;
     try {
       response = await request(this.authorizationHeader());
-      if (response.status === 401 && this.getAuth().refreshToken) {
+      if (sameOrigin && response.status === 401 && this.getAuth().refreshToken) {
         const accessToken = await this.refreshAccessToken(signal);
         response = await request(`Bearer ${accessToken}`);
       }
@@ -114,7 +116,7 @@ export class SuwayomiGraphqlClient {
       if (isAbortError(error)) throw error;
       throw Object.assign(new Error('Suwayomi 서버에서 회차 이미지를 가져오지 못했습니다.'), { cause: error });
     }
-    if (response.status === 401 || response.status === 403) throw new SuwayomiAuthenticationError();
+    if (sameOrigin && (response.status === 401 || response.status === 403)) throw new SuwayomiAuthenticationError();
     if (!response.ok) throw new SuwayomiHttpError(response.status);
     return response;
   }

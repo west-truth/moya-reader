@@ -3,6 +3,8 @@ import type { ChapterHeadingInfo } from './contracts';
 const maxHeadingLength = 140;
 const clearStandaloneHeadings =
   /^(프롤로그|prologue|서장|序章|에필로그|epilogue|종장|終章|외전|번외|막간|interlude|side\s*story|special|특별편|작가\s*후기|후기)(?:\s*[:.\-–—]\s*.+)?$/i;
+const numberedStandaloneHeading =
+  /^(프롤로그|prologue|서장|序章|에필로그|epilogue|종장|終章|외전|번외|막간|interlude|side\s*story|special|특별편)\s*(\d{1,5}|[IVXLCDM]{1,8})(?:\s|$|[.:\-–—_]).*$/i;
 
 const koreanNumberChars = '영공일이삼사오육칠팔구십백천만零〇一二三四五六七八九十百千万萬两兩';
 const numberedUnit = '(화|話|话|장|章|편|篇|회|回|부|部|권|卷|막|幕|절|節|节)';
@@ -19,7 +21,7 @@ const headingPatterns: Array<{ family: string; pattern: RegExp; requiresSequence
   },
   {
     family: 'bracket_numbered_unit',
-    pattern: new RegExp(`^[\\[【〔「『]\\s*${numberToken}\\s*${numberedUnit}\\s*[\\]】〕」』](?:\\s*.+)?$`, 'i'),
+    pattern: new RegExp(`^[\\[【〔「『]\\s*${numberToken}\\s*${numberedUnit}\\s*[\\]】〕」』](?:\\s+.+)?$`, 'i'),
   },
   {
     family: 'brace_explicit',
@@ -266,6 +268,16 @@ export function parseChapterHeading(line: string): ChapterHeadingInfo | undefine
     };
   }
 
+  const numberedStandalone = text.match(numberedStandaloneHeading);
+  if (numberedStandalone) {
+    return {
+      title: cleanupHeadingTitle(text),
+      family: hadAngle ? 'angle_numbered_special' : 'numbered_special',
+      number: parseNumberish(numberedStandalone[2]),
+      requiresSequence: false,
+    };
+  }
+
   if (hadAngle && /^.+\(\s*\d{1,5}\s*\)$/.test(text) && !statusLikeHeading.test(text)) {
     return {
       title: cleanupHeadingTitle(text),
@@ -278,11 +290,20 @@ export function parseChapterHeading(line: string): ChapterHeadingInfo | undefine
   for (const { family, pattern, requiresSequence } of headingPatterns) {
     const match = text.match(pattern);
     if (match) {
+      const number = extractNumberFromMatch(match);
+      // Korean zero words followed by a unit are common nouns (for example, 공장/영화).
+      // A numeric zero written with a digit remains a valid explicit heading.
+      if (number === 0 && !/\d/.test(match[0])) continue;
+
+      const sentenceLikeBroadUnit =
+        family === 'numbered_hwa_jang' &&
+        /^\d{1,5}\s*(?:부|部|권|卷|막|幕|절|節|节)\s+\S/u.test(text) &&
+        text.length > 40;
       return {
         title: cleanupHeadingTitle(text),
         family: hadAngle ? `angle_${family}` : family,
-        number: extractNumberFromMatch(match),
-        requiresSequence: Boolean(requiresSequence && !hadAngle),
+        number,
+        requiresSequence: Boolean((requiresSequence || sentenceLikeBroadUnit) && !hadAngle),
       };
     }
   }

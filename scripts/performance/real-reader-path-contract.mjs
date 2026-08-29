@@ -18,7 +18,7 @@ const CHECKS = [
     patterns: [
       'parseDecodedNovelTextForImportCooperatively',
       'saveParsedNovelImport',
-      'BROWSER_IMPORT_WRITE_BATCH_PAGES = 4',
+      'BROWSER_IMPORT_WRITE_BATCH_PAGES = 16',
       'shouldCancel: input.shouldCancel',
     ],
   },
@@ -30,7 +30,7 @@ const CHECKS = [
   {
     id: 'active-app-import-route',
     file: 'src/App.tsx',
-    patterns: ['const importFeature = useImportController({', '<ImportFeatureHost controller={importFeature}'],
+    patterns: ['const importFeature = useImportController({', '<ImportFeatureHost', 'controller={importFeature}'],
   },
   {
     id: 'active-import-host',
@@ -101,7 +101,9 @@ const CHECKS = [
     file: 'scripts/performance/reader-performance-gate.mjs',
     patterns: [
       'setInputFiles',
+      'button[aria-label="\\ucc45 \\uac00\\uc838\\uc624\\uae30"]:visible',
       "selectOption('mixed')",
+      'phase6ImportPhaseTimings(run)',
       "'.reader-scroll'",
       "'.reader-virtual-row'",
       'workerFileBytes',

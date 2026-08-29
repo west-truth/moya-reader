@@ -13,6 +13,25 @@ services:
         aliases:
           - ${MOYA_PROXY_HOSTNAME:-moya-web}
 
+  # This overlay exposes Web to an external NPM network, so it must be safe even when an
+  # operator accidentally omits compose.public.yaml. Using both overlays is idempotent.
+  api:
+    environment:
+      SERVER_EXPOSURE: external
+      READER_AUTH_TOKEN: ${READER_AUTH_TOKEN:?Set the one-time account setup and recovery token before NPM deployment}
+      DATABASE_URL: ${DATABASE_URL:-postgres://${POSTGRES_USER:-noveldesk}:${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD before NPM deployment}@postgres:5432/${POSTGRES_DB:-noveldesk}}
+      S3_ACCESS_KEY_ID: ${S3_ACCESS_KEY_ID:-${MINIO_ROOT_USER:?Set MINIO_ROOT_USER before NPM deployment}}
+      S3_SECRET_ACCESS_KEY: ${S3_SECRET_ACCESS_KEY:-${MINIO_ROOT_PASSWORD:?Set MINIO_ROOT_PASSWORD before NPM deployment}}
+
+  postgres:
+    environment:
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD before NPM deployment}
+
+  minio:
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:?Set MINIO_ROOT_USER before NPM deployment}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:?Set MINIO_ROOT_PASSWORD before NPM deployment}
+
   suwayomi:
     image: ghcr.io/suwayomi/suwayomi-server:${SUWAYOMI_IMAGE_TAG:-stable}
     environment:

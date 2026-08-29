@@ -53,5 +53,7 @@ describe('ExtensionSettingsPanel', () => {
     expect(markup).toContain('외부 소스 · 작품 카탈로그');
     expect(markup).toContain('외부 작품·파일 목록 보기');
     expect(markup).toContain('선택한 외부 원문 가져오기');
+    expect(markup).toContain('격리 실행 미지원');
+    expect(markup).not.toContain('v1.0.0 · 격리 실행<');
   });
 });

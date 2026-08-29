@@ -104,6 +104,9 @@ describe('BookEnrichmentInbox', () => {
     const markup = render(controller({ providers: [], receipts: [approval] }));
 
     expect(markup).toContain('적용 기록');
+    expect(markup).toContain('aria-expanded="false"');
+    expect(markup).toContain('hidden=""');
+    expect(markup).toContain('<details class="enrichment-history">');
     expect(markup).toContain('공식 작품 카탈로그');
     expect(markup).toContain('사용 조건 개인 서재 사용 허용');
     expect(markup).toContain('이전 제목');
@@ -123,7 +126,11 @@ describe('BookEnrichmentInbox', () => {
   });
 
   it('marks changed and undone approvals without offering an active undo action', () => {
-    const changed = receipt({ id: 'receipt-changed', appliedMetadataRevision: 6 });
+    const changed = receipt({
+      id: 'receipt-changed',
+      appliedMetadataRevision: 6,
+      after: { kind: 'metadata', values: { title: '다른 추천 제목' } },
+    });
     const undone = receipt({ id: 'receipt-undone', appliedMetadataRevision: 5 });
     const undoReceipt = receipt({
       id: 'undo-receipt',

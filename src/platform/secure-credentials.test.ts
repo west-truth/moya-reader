@@ -106,7 +106,7 @@ describe('AppCredentialStore', () => {
     expect(store.serverTokenForRequest()).toBeUndefined();
   });
 
-  it('keeps existing browser persistence behavior outside Android', async () => {
+  it('keeps existing browser persistence behavior outside Tauri', async () => {
     const local = storage();
     const store = new AppCredentialStore({ runtime: runtime('browser'), storage: local });
 
@@ -117,21 +117,45 @@ describe('AppCredentialStore', () => {
     expect(local.values.get(API_AUTH_TOKEN_STORAGE_KEY)).toBe('browser-token');
   });
 
-  it('stores Dropbox OAuth material only in the Android native gateway', async () => {
-    const local = storage();
+  it.each(['tauri-mobile', 'tauri-desktop'] as const)(
+    'stores Dropbox OAuth and the remembered vault passphrase in the %s native gateway',
+    async (runtimeKind) => {
+      const local = storage();
+      const native = nativeGateway();
+      const store = new AppCredentialStore({
+        runtime: runtime(runtimeKind),
+        storage: local,
+        nativeGateway: native.gateway,
+      });
+      const credential = JSON.stringify({ accessToken: 'access', refreshToken: 'refresh' });
+
+      await store.saveCloudVaultDropboxCredential(credential);
+      await store.saveCloudVaultPassphrase('remembered-passphrase');
+
+      expect(await store.getCloudVaultDropboxCredential()).toBe(credential);
+      expect(await store.getCloudVaultPassphrase()).toBe('remembered-passphrase');
+      expect(local.setItem).not.toHaveBeenCalled();
+      await store.deleteCloudVaultDropboxCredential();
+      await store.deleteCloudVaultPassphrase();
+      expect(await store.getCloudVaultDropboxCredential()).toBeUndefined();
+      expect(await store.getCloudVaultPassphrase()).toBeUndefined();
+    },
+  );
+
+  it('does not block desktop startup on an unused self-host token keyring read', async () => {
+    const local = storage({ [API_AUTH_TOKEN_STORAGE_KEY]: 'desktop-token' });
     const native = nativeGateway();
     const store = new AppCredentialStore({
-      runtime: runtime('tauri-mobile'),
+      runtime: runtime('tauri-desktop'),
       storage: local,
       nativeGateway: native.gateway,
     });
-    const credential = JSON.stringify({ accessToken: 'access', refreshToken: 'refresh' });
 
-    await store.saveCloudVaultDropboxCredential(credential);
+    await store.initialize();
 
-    expect(await store.getCloudVaultDropboxCredential()).toBe(credential);
-    expect(local.setItem).not.toHaveBeenCalled();
-    await store.deleteCloudVaultDropboxCredential();
-    expect(await store.getCloudVaultDropboxCredential()).toBeUndefined();
+    expect(native.gateway.status).not.toHaveBeenCalled();
+    expect(native.gateway.set).not.toHaveBeenCalled();
+    expect(local.values.get(API_AUTH_TOKEN_STORAGE_KEY)).toBe('desktop-token');
+    expect(store.serverTokenForRequest()).toBe('desktop-token');
   });
 });

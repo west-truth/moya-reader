@@ -285,6 +285,7 @@ async function targetScopeContent(input: {
     if (scope.mappedRevisionId) {
       pageValue.storageId = pageKey;
       pageValue.contentRevisionId = scope.mappedRevisionId;
+      pageValue.paragraphIds = paragraphs.map((paragraph) => paragraph.id);
     }
     accumulator.target(scope.pageStore, pageKey, pageValue);
 

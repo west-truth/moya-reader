@@ -35,6 +35,7 @@
   },
   "devDependencies": {
     "@noveldesk/contracts": "workspace:*",
+    "@noveldesk/document-series-core": "workspace:*",
     "@noveldesk/epub-core": "workspace:*",
     "@noveldesk/fixed-document-core": "workspace:*",
     "@noveldesk/text-core": "workspace:*",

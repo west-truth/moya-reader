@@ -1,3 +1,5 @@
+import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it, vi } from 'vitest';
 import type { LabeledSegment, Paragraph, ParagraphPage, ReadingSessionEvent } from '../../domain/types';
@@ -477,5 +479,17 @@ describe('EPUB footnote sheet', () => {
     expect(html).toContain('role="dialog"');
     expect(html).toContain('각주 본문');
     expect(html).toContain('본문에서 보기');
+  });
+});
+
+describe('EPUB illustration sizing', () => {
+  it('keeps paginated images intrinsic and uses the shared reader height ceiling', () => {
+    const css = readFileSync(fileURLToPath(new URL('../../styles/reader-content.css', import.meta.url)), 'utf8');
+
+    expect(css).toContain('--reader-pagination-image-max-height');
+    expect(css).toContain('max-height: var(--reader-pagination-image-max-height)');
+    expect(css).toContain('.reader-paginated-page .reader-epub-image');
+    expect(css).not.toContain('width: min(100%, 32rem)');
+    expect(css).not.toContain('height: min(42vh, 22rem)');
   });
 });

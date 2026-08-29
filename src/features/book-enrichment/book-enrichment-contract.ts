@@ -3,6 +3,7 @@ import type { BookCoverAssetInput } from '../../repositories/book-asset-reposito
 
 export const BOOK_ENRICHMENT_CANDIDATE_SCHEMA_VERSION = 1 as const;
 export const BOOK_ENRICHMENT_RECEIPT_SCHEMA_VERSION = 2 as const;
+export const BOOK_ENRICHMENT_APPROVAL_INTENT_SCHEMA_VERSION = 1 as const;
 
 export const BOOK_ENRICHMENT_METADATA_FIELDS = [
   'title',
@@ -46,7 +47,21 @@ export interface PublicBookMetadataSnapshot {
   };
 }
 
+/**
+ * A trusted provider's bounded recommendation. The host still owns the apply
+ * policy and must never treat this hint as permission to overwrite user data.
+ */
+export interface BookEnrichmentAutomationHint {
+  readonly autoApplyEligible: boolean;
+  readonly matchType?: 'exact_identity' | 'exact_title_and_author' | 'exact_title' | 'fuzzy_title' | 'ambiguous';
+  readonly metadataQuality?: 'full' | 'partial';
+  readonly reasons: readonly string[];
+  readonly authenticatedSearch?: boolean;
+}
+
 interface BookEnrichmentCandidateDraftBase {
+  /** Groups metadata and cover drafts produced by one resolved catalog match. */
+  readonly proposalGroupId?: string;
   readonly confidence?: number;
   readonly rationale?: string;
   readonly sourceFingerprints?: readonly string[];
@@ -55,6 +70,7 @@ interface BookEnrichmentCandidateDraftBase {
   readonly sourceLabel?: string;
   readonly sourceUrl?: string;
   readonly licenseSummary?: string;
+  readonly automation?: BookEnrichmentAutomationHint;
 }
 
 export interface BookEnrichmentMetadataCandidateDraft extends BookEnrichmentCandidateDraftBase {
@@ -95,6 +111,7 @@ export interface BookEnrichmentProvenance {
   readonly sourceLabel?: string;
   readonly sourceUrl?: string;
   readonly licenseSummary?: string;
+  readonly automation?: BookEnrichmentAutomationHint;
 }
 
 interface BookEnrichmentCandidateBase {
@@ -104,10 +121,16 @@ interface BookEnrichmentCandidateBase {
   readonly status: 'pending' | 'stale' | 'applied' | 'rejected';
   readonly baseMetadataRevision: number;
   readonly baseContentRevisionId?: string;
+  readonly proposalGroupId?: string;
   readonly provenance: BookEnrichmentProvenance;
   readonly createdAt: string;
   readonly updatedAt: string;
   readonly statusReason?: string;
+  /**
+   * Host-owned write-ahead intent. It is persisted before the canonical book
+   * mutation so a later session can finish the approval receipt safely.
+   */
+  readonly approvalIntent?: BookEnrichmentApprovalIntent;
 }
 
 export interface BookEnrichmentMetadataCandidate extends BookEnrichmentCandidateBase {
@@ -145,6 +168,22 @@ export type BookEnrichmentMutationSnapshot =
       readonly cover: BookEnrichmentCoverSnapshot;
     };
 
+export interface BookEnrichmentApprovalIntent {
+  readonly schemaVersion: typeof BOOK_ENRICHMENT_APPROVAL_INTENT_SCHEMA_VERSION;
+  readonly operationId: string;
+  readonly stagedAt: string;
+  readonly kind: BookEnrichmentCandidate['kind'];
+  readonly baseMetadataRevision: number;
+  readonly selectedFields: readonly BookEnrichmentMetadataField[];
+  readonly before: BookEnrichmentMutationSnapshot;
+  /**
+   * Expected selected metadata values, or expected cover hash and layout. A
+   * cover asset id is intentionally absent because it is allocated by the host
+   * mutation after this intent is committed.
+   */
+  readonly expected: BookEnrichmentMutationSnapshot;
+}
+
 export interface BookEnrichmentApprovalReceipt {
   /** Missing only on receipts written before C3. */
   readonly schemaVersion?: typeof BOOK_ENRICHMENT_RECEIPT_SCHEMA_VERSION;
@@ -164,6 +203,8 @@ export interface BookEnrichmentApprovalReceipt {
   readonly after?: BookEnrichmentMutationSnapshot;
   readonly provenance: BookEnrichmentProvenance;
   readonly appliedAt: string;
+  /** Present on approvals created from the durable approval-intent path. */
+  readonly approvalOperationId?: string;
 }
 
 export interface BookEnrichmentProviderSummary {

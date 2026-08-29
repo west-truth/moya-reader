@@ -2,6 +2,7 @@ import {
   BlobReader,
   ERR_ENCRYPTED,
   ERR_INVALID_PASSWORD,
+  TextWriter,
   Uint8ArrayWriter,
   ZipReader,
   type Entry,
@@ -28,6 +29,7 @@ const MAX_PAGE_BYTES = 64 * 1024 * 1024;
 const MAX_EXPANDED_BYTES = 1024 * 1024 * 1024;
 const MAX_COMPRESSION_RATIO = 250;
 const MAX_COMIC_INFO_BYTES = 512 * 1024;
+const MAX_MOYA_SERIES_MANIFEST_BYTES = 1024 * 1024;
 
 const IMAGE_TYPES = new Map([
   ['jpg', 'image/jpeg'],
@@ -70,12 +72,29 @@ export interface ImageArchivePageDescriptor {
 export interface StreamingImageArchiveDocument {
   readonly pages: readonly ImageArchivePageDescriptor[];
   readonly comicInfo?: ComicInfoMetadata;
+  readonly moyaSeries?: MoyaSeriesManifest;
   consumePages(): AsyncIterable<ImageArchivePage>;
 }
 
 export interface ImageArchiveDocument {
   readonly pages: readonly ImageArchivePage[];
   readonly comicInfo?: ComicInfoMetadata;
+  readonly moyaSeries?: MoyaSeriesManifest;
+}
+
+export interface MoyaSeriesManifestChapter {
+  readonly remoteId: string;
+  readonly title: string;
+  readonly chapterNumber?: number;
+  readonly sourceOrder?: number;
+  readonly pageCount: number;
+  readonly entryNames: readonly string[];
+}
+
+export interface MoyaSeriesManifest {
+  readonly schemaVersion: 1;
+  readonly collection: { readonly remoteId: string; readonly title: string };
+  readonly chapters: readonly MoyaSeriesManifestChapter[];
 }
 
 export type ImageArchiveFormat = 'zip' | 'rar4' | 'rar5' | '7z';
@@ -103,6 +122,36 @@ export interface ComicInfoMetadata {
   readonly tags: readonly string[];
   readonly readingDirection?: 'ltr' | 'rtl';
   readonly pages: readonly ComicInfoPageMetadata[];
+}
+
+function parseMoyaSeriesManifest(text: string): MoyaSeriesManifest {
+  let value: unknown;
+  try {
+    value = JSON.parse(text);
+  } catch {
+    throw new FixedDocumentImportError('Moya 연재 작품 정보가 올바른 JSON이 아닙니다.', 'invalid_archive');
+  }
+  if (!value || typeof value !== 'object') {
+    throw new FixedDocumentImportError('Moya 연재 작품 정보가 올바르지 않습니다.', 'invalid_archive');
+  }
+  const manifest = value as Partial<MoyaSeriesManifest>;
+  if (
+    manifest.schemaVersion !== 1 ||
+    !manifest.collection?.remoteId ||
+    !manifest.collection.title ||
+    !Array.isArray(manifest.chapters) ||
+    !manifest.chapters.every(
+      (chapter) =>
+        Boolean(chapter?.remoteId && chapter.title) &&
+        Number.isInteger(chapter.pageCount) &&
+        chapter.pageCount > 0 &&
+        Array.isArray(chapter.entryNames) &&
+        chapter.entryNames.length === chapter.pageCount,
+    )
+  ) {
+    throw new FixedDocumentImportError('Moya 연재 작품 정보가 올바르지 않습니다.', 'invalid_archive');
+  }
+  return manifest as MoyaSeriesManifest;
 }
 
 function normalizedArchivePath(value: string): string {
@@ -341,7 +390,11 @@ export async function openZipImageArchiveStream(
     const comicInfoEntry = entries.find(
       (entry) => !entry.directory && normalizedArchivePath(entry.filename).toLocaleLowerCase() === 'comicinfo.xml',
     ) as FileEntry | undefined;
+    const seriesManifestEntry = entries.find(
+      (entry) => !entry.directory && normalizedArchivePath(entry.filename).toLocaleLowerCase() === 'moya-series.json',
+    ) as FileEntry | undefined;
     let comicInfo: ComicInfoMetadata | undefined;
+    let moyaSeries: MoyaSeriesManifest | undefined;
     if (comicInfoEntry) {
       if (comicInfoEntry.encrypted && !options.password)
         throw new FixedDocumentImportError('암호가 필요한 압축 파일입니다.', 'password_required');
@@ -352,6 +405,16 @@ export async function openZipImageArchiveStream(
       }
       comicInfo = parseComicInfoXml(await comicInfoEntry.getData(new Uint8ArrayWriter()));
     }
+    if (seriesManifestEntry) {
+      if (seriesManifestEntry.encrypted && !options.password)
+        throw new FixedDocumentImportError('암호가 필요한 압축 파일입니다.', 'password_required');
+      if (!seriesManifestEntry.getData)
+        throw new FixedDocumentImportError('Moya 연재 작품 정보를 읽을 수 없습니다.', 'invalid_archive');
+      if (Number(seriesManifestEntry.uncompressedSize ?? 0) > MAX_MOYA_SERIES_MANIFEST_BYTES) {
+        throw new FixedDocumentImportError('Moya 연재 작품 정보 크기가 안전 한도를 초과했습니다.', 'unsafe_archive');
+      }
+      moyaSeries = parseMoyaSeriesManifest(await seriesManifestEntry.getData(new TextWriter()));
+    }
     const pages = records.map<ImageArchivePageDescriptor>((record) => ({
       fileName: record.path,
       contentType: record.contentType,
@@ -359,6 +422,7 @@ export async function openZipImageArchiveStream(
     return {
       pages,
       comicInfo,
+      moyaSeries,
       async *consumePages() {
         let streamReader: ZipReader<Blob> | undefined;
         try {
@@ -966,7 +1030,7 @@ export async function parseImageArchive(
     if (!page) throw new FixedDocumentImportError('압축 파일 페이지 저장이 중간에 끝났습니다.', 'invalid_archive');
     return page;
   });
-  return { pages, comicInfo: stream.comicInfo };
+  return { pages, comicInfo: stream.comicInfo, moyaSeries: stream.moyaSeries };
 }
 
 export async function openImageArchiveStream(
@@ -1022,6 +1086,37 @@ function titleFromFileName(fileName: string): string {
   return fileName.replace(/\.(pdf|zip|cbz|rar|cbr|7z|cb7)$/i, '').trim() || '제목 없음';
 }
 
+interface MoyaSeriesPageLocation {
+  readonly section: MoyaSeriesManifestChapter;
+  readonly sectionIndex: number;
+  readonly pageIndexInSection: number;
+}
+
+function moyaSeriesPageLocations(
+  manifest: MoyaSeriesManifest | undefined,
+  pages: readonly { readonly fileName: string }[] | undefined,
+): ReadonlyMap<number, MoyaSeriesPageLocation> {
+  if (!manifest || !pages) return new Map();
+  const indexByName = new Map(pages.map((page, index) => [page.fileName, index] as const));
+  const locations = new Map<number, MoyaSeriesPageLocation>();
+  manifest.chapters.forEach((section, sectionIndex) => {
+    section.entryNames.forEach((entryName, pageIndexInSection) => {
+      const pageIndex = indexByName.get(entryName);
+      if (pageIndex === undefined || locations.has(pageIndex)) {
+        throw new FixedDocumentImportError(
+          'Moya 연재 작품의 회차 페이지 목록이 압축 파일과 다릅니다.',
+          'invalid_archive',
+        );
+      }
+      locations.set(pageIndex, { section, sectionIndex, pageIndexInSection });
+    });
+  });
+  if (locations.size !== pages.length) {
+    throw new FixedDocumentImportError('Moya 연재 작품에 회차가 지정되지 않은 페이지가 있습니다.', 'invalid_archive');
+  }
+  return locations;
+}
+
 export function imageArchiveContentType(fileName: string): string {
   if (/\.(?:rar|cbr)$/i.test(fileName)) return 'application/vnd.comicbook-rar';
   if (/\.(?:7z|cb7)$/i.test(fileName)) return 'application/x-7z-compressed';
@@ -1041,6 +1136,7 @@ function materializeFixedImport(input: {
   pageAssetIds?: readonly string[];
   consumeEmbeddedAssets?: () => AsyncIterable<ParsedNovelImportAsset>;
   comicInfo?: ComicInfoMetadata;
+  moyaSeries?: MoyaSeriesManifest;
   clientBookId?: string;
   now?: string;
 }): ParsedNovelImport {
@@ -1055,10 +1151,22 @@ function materializeFixedImport(input: {
     );
   const chapters: Chapter[] = [];
   const rows: ParsedNovelImportChapter[] = [];
+  const seriesLocations = moyaSeriesPageLocations(input.moyaSeries, input.pages ?? input.pageDescriptors);
   for (let index = 0; index < input.pageCount; index += 1) {
-    const title = `${index + 1}페이지`;
-    const chapterId = parsedChapterId(bookId, index + 1, title);
-    const paragraphId = parsedParagraphId(bookId, chapterId, 1, title);
+    const location = seriesLocations.get(index);
+    const title = location
+      ? `${location.section.title} · ${location.pageIndexInSection + 1}페이지`
+      : `${index + 1}페이지`;
+    const chapterId = location
+      ? persistentId128('fixed_document_series_page', [
+          bookId,
+          location.section.remoteId,
+          String(location.pageIndexInSection + 1),
+        ])
+      : parsedChapterId(bookId, index + 1, title);
+    const paragraphId = location
+      ? persistentId128('fixed_document_series_paragraph', [chapterId])
+      : parsedParagraphId(bookId, chapterId, 1, title);
     const paragraph: Paragraph = {
       id: paragraphId,
       novelId: bookId,
@@ -1085,6 +1193,10 @@ function materializeFixedImport(input: {
       rawEndOffset: index + 1,
       characterCount: title.length,
       paragraphCount: 1,
+      documentSectionId: location?.section.remoteId,
+      documentSectionTitle: location?.section.title,
+      documentSectionIndex: location ? location.sectionIndex + 1 : undefined,
+      documentPageIndexInSection: location ? location.pageIndexInSection + 1 : undefined,
       createdAt: now,
       updatedAt: now,
     };
@@ -1142,6 +1254,7 @@ function materializeFixedImport(input: {
       createdAt: now,
       updatedAt: now,
       totalChapters: input.pageCount,
+      documentSectionCount: input.moyaSeries?.chapters.length,
       totalCharacters: chapters.reduce((sum, chapter) => sum + chapter.characterCount, 0),
       totalParagraphs: input.pageCount,
       coverSeed: Number.parseInt(normalizedTextHash.slice(-8), 16) || 0,
@@ -1186,6 +1299,7 @@ export function materializeImageArchiveImport(input: {
     pageCount: input.document.pages.length,
     pages: input.document.pages,
     comicInfo: input.document.comicInfo,
+    moyaSeries: input.document.moyaSeries,
   });
 }
 
@@ -1221,6 +1335,7 @@ export function materializeStreamingImageArchiveImport(input: {
     pageDescriptors: input.document.pages,
     pageAssetIds,
     comicInfo: input.document.comicInfo,
+    moyaSeries: input.document.moyaSeries,
     clientBookId: bookId,
     now: input.now,
     async *consumeEmbeddedAssets() {

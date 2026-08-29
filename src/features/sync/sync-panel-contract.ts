@@ -32,7 +32,7 @@ export interface SyncPanelData {
   readonly syncConnectionTest: SyncConnectionTestState;
   readonly apiAuthTokenDraft: string;
   readonly apiAuthTokenConfigured: boolean;
-  readonly apiAuthTokenStorage: 'browser_storage' | 'android_keystore';
+  readonly apiAuthTokenStorage: 'browser_storage' | 'native_secure_store';
   readonly mergeSelections: SyncMergeSelections;
 }
 

@@ -4,10 +4,12 @@ import {
   getBookEnrichmentReceipt,
   listBookEnrichmentCandidates,
   listBookEnrichmentReceipts,
-  markCompetingBookEnrichmentCandidatesStale,
+  reconcileBookEnrichmentCandidatesAfterApproval,
   recordBookEnrichmentApproval,
   recordBookEnrichmentUndo,
   replacePendingBookEnrichmentCandidates,
+  resolveBookEnrichmentApprovalIntent,
+  stageBookEnrichmentApprovalIntent,
   updateBookEnrichmentCandidateStatus,
 } from '../storage/book-enrichment-store';
 
@@ -36,6 +38,14 @@ export class IndexedDbBookEnrichmentRepository implements BookEnrichmentReposito
     return updateBookEnrichmentCandidateStatus(...args);
   }
 
+  stageApprovalIntent(...args: Parameters<BookEnrichmentRepository['stageApprovalIntent']>) {
+    return stageBookEnrichmentApprovalIntent(...args);
+  }
+
+  resolveApprovalIntent(...args: Parameters<BookEnrichmentRepository['resolveApprovalIntent']>) {
+    return resolveBookEnrichmentApprovalIntent(...args);
+  }
+
   recordApproval(...args: Parameters<BookEnrichmentRepository['recordApproval']>) {
     return recordBookEnrichmentApproval(...args);
   }
@@ -44,7 +54,7 @@ export class IndexedDbBookEnrichmentRepository implements BookEnrichmentReposito
     return recordBookEnrichmentUndo(...args);
   }
 
-  markCompetingCandidatesStale(...args: Parameters<BookEnrichmentRepository['markCompetingCandidatesStale']>) {
-    return markCompetingBookEnrichmentCandidatesStale(...args);
+  reconcileCandidatesAfterApproval(...args: Parameters<BookEnrichmentRepository['reconcileCandidatesAfterApproval']>) {
+    return reconcileBookEnrichmentCandidatesAfterApproval(...args);
   }
 }

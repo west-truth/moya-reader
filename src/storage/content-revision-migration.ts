@@ -15,7 +15,16 @@ function createRevisionScopedStore(db: IDBDatabase, name: string): IDBObjectStor
   return db.createObjectStore(name, { keyPath: 'storageId' });
 }
 
-export function upgradeContentRevisionStores(db: IDBDatabase): void {
+function ensureIndex(
+  store: IDBObjectStore,
+  name: string,
+  keyPath: string | string[],
+  options?: IDBIndexParameters,
+): void {
+  if (!store.indexNames.contains(name)) store.createIndex(name, keyPath, options);
+}
+
+export function upgradeContentRevisionStores(db: IDBDatabase, transaction: IDBTransaction): void {
   if (!db.objectStoreNames.contains(CONTENT_REVISION_STORES.revisions)) {
     const store = createEntityStore(db, CONTENT_REVISION_STORES.revisions);
     store.createIndex('novelId', 'novelId');
@@ -51,6 +60,11 @@ export function upgradeContentRevisionStores(db: IDBDatabase): void {
     store.createIndex('contentRevisionId_chapterId', ['contentRevisionId', 'chapterId']);
     store.createIndex('contentRevisionId_chapterId_pageIndex', ['contentRevisionId', 'chapterId', 'pageIndex'], {
       unique: true,
+    });
+    store.createIndex('paragraphIds', 'paragraphIds', { multiEntry: true });
+  } else {
+    ensureIndex(transaction.objectStore(CONTENT_REVISION_STORES.pages), 'paragraphIds', 'paragraphIds', {
+      multiEntry: true,
     });
   }
   if (!db.objectStoreNames.contains(CONTENT_REVISION_STORES.search)) {

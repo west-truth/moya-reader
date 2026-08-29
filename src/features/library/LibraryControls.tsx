@@ -16,12 +16,13 @@ export function LibraryControls({ model, actions }: LibraryScreenProps) {
   const counts = model.collection.filterCounts;
   const activeShelf = model.management.shelves.find((shelf) => shelf.id === model.management.activeShelfId);
   const heading = activeShelf?.name ?? filterLabels[model.filter];
+  const visibleWorkCount = model.collection.visibleBooks.length + (model.externalSources.libraryWorks?.length ?? 0);
 
   return (
     <section className="library-toolbar" aria-label="작품 목록 도구">
       <div className="library-toolbar-heading">
         <h1>{heading}</h1>
-        <span>{formatCount(model.collection.visibleBooks.length)}권</span>
+        <span>{formatCount(visibleWorkCount)}권</span>
       </div>
 
       <div className="library-mobile-controls">

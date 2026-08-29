@@ -15,17 +15,6 @@ import {
   searchParagraphs,
 } from '../storage/db';
 
-async function clearObjectStore(storeName: string): Promise<void> {
-  const db = await openReaderDb();
-  const tx = db.transaction(storeName, 'readwrite');
-  tx.objectStore(storeName).clear();
-  await new Promise<void>((resolve, reject) => {
-    tx.oncomplete = () => resolve();
-    tx.onerror = () => reject(tx.error);
-    tx.onabort = () => reject(tx.error);
-  });
-}
-
 function syntheticLargeParsedNovel(chapterCount: number, paragraphsPerChapter: number): ParsedNovel {
   const now = '2026-07-05T00:00:00.000Z';
   const novelId = 'synthetic-large';
@@ -126,6 +115,16 @@ describe('large import storage regression', () => {
     const paragraphRefs = diagnostics.paragraphRefs;
     const pages = diagnostics.paragraphPages;
     const searchRows = diagnostics.paragraphSearchRows;
+    const db = await openReaderDb();
+    const headCount = await new Promise<number>((resolve, reject) => {
+      const request = db
+        .transaction('book_content_domain_heads', 'readonly')
+        .objectStore('book_content_domain_heads')
+        .index('novelId')
+        .count(parsed.novel.id);
+      request.onsuccess = () => resolve(request.result);
+      request.onerror = () => reject(request.error);
+    });
 
     expect(storedNovel).toMatchObject({ rawText: '', normalizedText: '' });
     expect(chapters).toHaveLength(chapterCount);
@@ -135,20 +134,17 @@ describe('large import storage regression', () => {
     expect(searchMatches.map((paragraph) => paragraph.id)).toEqual([
       `${lateChapterId}:paragraph:${paragraphsPerChapter}`,
     ]);
-    expect(paragraphRefs).toHaveLength(parsed.paragraphs.length);
+    expect(paragraphRefs).toHaveLength(0);
     expect(pages).toHaveLength(chapterCount * 2);
-    expect(searchRows).toHaveLength(parsed.paragraphs.length);
-    expect(paragraphRefs.every((paragraph) => paragraph.text === '' && paragraph.textStorageMode === 'page')).toBe(
-      true,
-    );
+    expect(searchRows).toHaveLength(0);
+    expect(headCount).toBe(chapterCount);
     expect(progress.at(-1)).toBe(parsed.paragraphs.length);
     expect(progress).toEqual([...progress].sort((a, b) => a - b));
   });
 
-  it('searches indexed paragraph rows without materializing every page through getAll', async () => {
+  it('searches page-canonical paragraph rows without materializing every page through getAll', async () => {
     const parsed = syntheticLargeParsedNovel(1, PARAGRAPHS_PER_PAGE * 3);
     await saveImportedNovel(parsed, { batchPageCount: 1 });
-    await clearObjectStore('book_content_paragraph_pages');
     const objectStoreGetAll = vi.spyOn(IDBObjectStore.prototype, 'getAll');
     const indexGetAll = vi.spyOn(IDBIndex.prototype, 'getAll');
 

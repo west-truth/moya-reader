@@ -18,8 +18,8 @@ export const DEFAULT_PROVIDER_JOB_ADMISSION_LIMITS: Readonly<ProviderJobAdmissio
 });
 
 const defaultLocalCorsOrigins = [
-  'http://127.0.0.1:1420',
-  'http://localhost:1420',
+  'http://127.0.0.1:1421',
+  'http://localhost:1421',
   'http://127.0.0.1:8080',
   'http://localhost:8080',
   'tauri://localhost',
@@ -40,8 +40,12 @@ export interface ServerConfig {
   defaultUserId: string;
   providerJobAdmission?: ProviderJobAdmissionLimits;
   authToken?: string;
+  /** Number of immediate reverse-proxy hops allowed to supply X-Forwarded-For. Zero disables trust. */
+  trustedProxyHops?: number;
   exposure?: ServerExposure;
   corsAllowedOrigins?: readonly string[];
+  webNovelMetadataCollectorUrl?: string;
+  webNovelMetadataCollectorRemoteAuthEnabled?: boolean;
   s3: {
     endpoint: string;
     region: string;
@@ -50,6 +54,22 @@ export interface ServerConfig {
     secretAccessKey: string;
     forcePathStyle: boolean;
   };
+}
+
+function optionalInternalHttpUrlFromEnv(value: string | undefined, key: string): string | undefined {
+  const candidate = value?.trim();
+  if (!candidate) return undefined;
+  let url: URL;
+  try {
+    url = new URL(candidate);
+  } catch {
+    throw new Error(`${key} must be an HTTP(S) URL`);
+  }
+  if (!['http:', 'https:'].includes(url.protocol) || url.username || url.password || url.search || url.hash) {
+    throw new Error(`${key} must be an HTTP(S) URL without credentials, query strings, or fragments`);
+  }
+  url.pathname = url.pathname.replace(/\/+$/u, '') || '/';
+  return url.toString().replace(/\/$/u, '');
 }
 
 function boolFromEnv(value: string | undefined, fallback: boolean): boolean {
@@ -76,6 +96,17 @@ function positiveIntegerFromEnv(
   if (parsed <= 0 || parsed > maximum) {
     throw new Error(`${key} must be a positive integer no greater than ${maximum}`);
   }
+  return parsed;
+}
+
+function boundedNonNegativeIntegerFromEnv(
+  env: NodeJS.ProcessEnv,
+  key: string,
+  fallback: number,
+  maximum: number,
+): number {
+  const parsed = nonNegativeIntegerFromEnv(env, key, fallback);
+  if (parsed > maximum) throw new Error(`${key} must be no greater than ${maximum}`);
   return parsed;
 }
 
@@ -189,8 +220,14 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): ServerConfig {
       ),
     },
     authToken: env.READER_AUTH_TOKEN?.trim() || env.API_AUTH_TOKEN?.trim() || undefined,
+    trustedProxyHops: boundedNonNegativeIntegerFromEnv(env, 'TRUSTED_PROXY_HOPS', 0, 4),
     exposure: exposureFromEnv(env, host),
     corsAllowedOrigins: corsOriginsFromEnv(env),
+    webNovelMetadataCollectorUrl: optionalInternalHttpUrlFromEnv(
+      env.WEBNOVEL_METADATA_COLLECTOR_URL,
+      'WEBNOVEL_METADATA_COLLECTOR_URL',
+    ),
+    webNovelMetadataCollectorRemoteAuthEnabled: boolFromEnv(env.WEBNOVEL_METADATA_COLLECTOR_REMOTE_AUTH_ENABLED, false),
     s3: {
       endpoint: env.S3_ENDPOINT ?? 'http://127.0.0.1:9000',
       region: env.S3_REGION ?? 'us-east-1',

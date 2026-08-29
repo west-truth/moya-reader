@@ -7,7 +7,7 @@ describe('server security config', () => {
 
     expect(config.host).toBe('127.0.0.1');
     expect(serverExposure(config)).toBe('loopback');
-    expect(corsAllowedOrigins(config)).toContain('http://127.0.0.1:1420');
+    expect(corsAllowedOrigins(config)).toContain('http://127.0.0.1:1421');
     expect(corsAllowedOrigins(config)).toContain('http://127.0.0.1:8080');
     expect(corsAllowedOrigins(config)).toContain('tauri://localhost');
     expect(corsAllowedOrigins(config)).not.toContain('*');
@@ -16,6 +16,7 @@ describe('server security config', () => {
       maxAttemptsPerMinute: 60,
       maxAttemptsPerUtcDay: 1000,
     });
+    expect(config.trustedProxyHops).toBe(0);
     expect(() => assertSecureServerConfig(config)).not.toThrow();
   });
 
@@ -37,10 +38,10 @@ describe('server security config', () => {
     const config = loadConfig({
       HOST: '0.0.0.0',
       READER_AUTH_TOKEN: 'server-token',
-      CORS_ALLOWED_ORIGINS: 'https://reader.example, http://127.0.0.1:1420/',
+      CORS_ALLOWED_ORIGINS: 'https://reader.example, http://127.0.0.1:1421/',
     });
 
-    expect(corsAllowedOrigins(config)).toEqual(['https://reader.example', 'http://127.0.0.1:1420']);
+    expect(corsAllowedOrigins(config)).toEqual(['https://reader.example', 'http://127.0.0.1:1421']);
     expect(() => assertSecureServerConfig(config)).not.toThrow();
   });
 
@@ -69,6 +70,11 @@ describe('server security config', () => {
     });
   });
 
+  it('accepts only a small explicit reverse-proxy hop count', () => {
+    expect(loadConfig({ TRUSTED_PROXY_HOPS: '2' }).trustedProxyHops).toBe(2);
+    expect(() => loadConfig({ TRUSTED_PROXY_HOPS: '5' })).toThrow(/TRUSTED_PROXY_HOPS/);
+  });
+
   it.each(['-1', '1.5', 'many', '9007199254740992'])('rejects invalid provider admission limit %s', (value) => {
     expect(() => loadConfig({ PROVIDER_MAX_ATTEMPTS_PER_MINUTE: value })).toThrow(/PROVIDER_MAX_ATTEMPTS_PER_MINUTE/);
   });
@@ -88,5 +94,23 @@ describe('server security config', () => {
     const config = loadConfig({ STALE_UPLOAD_MAX_AGE_MS: '0' });
 
     expect(config.staleUploadMaxAgeMs).toBe(0);
+  });
+
+  it('accepts an optional internal metadata collector URL without exposing it to the browser', () => {
+    const config = loadConfig({
+      WEBNOVEL_METADATA_COLLECTOR_URL: 'http://metadata-collector:8000/',
+      WEBNOVEL_METADATA_COLLECTOR_REMOTE_AUTH_ENABLED: 'true',
+    });
+
+    expect(config.webNovelMetadataCollectorUrl).toBe('http://metadata-collector:8000');
+    expect(config.webNovelMetadataCollectorRemoteAuthEnabled).toBe(true);
+  });
+
+  it.each([
+    'file:///tmp/collector',
+    'http://user:password@metadata-collector:8000',
+    'http://metadata-collector:8000?token=secret',
+  ])('rejects unsafe metadata collector URL %s', (value) => {
+    expect(() => loadConfig({ WEBNOVEL_METADATA_COLLECTOR_URL: value })).toThrow(/WEBNOVEL_METADATA_COLLECTOR_URL/);
   });
 });

@@ -1,7 +1,24 @@
 import { describe, expect, it } from 'vitest';
-import { buildComicSpreads, comicSpreadForPage, DEFAULT_COMIC_READING_PROFILE } from './comic-layout';
+import {
+  buildComicSpreads,
+  comicProfileModeToViewMode,
+  comicSpreadForPage,
+  comicViewModeToProfileMode,
+  DEFAULT_COMIC_READING_PROFILE,
+  isContinuousComicViewMode,
+  nextComicViewMode,
+} from './comic-layout';
 
 describe('comic layout', () => {
+  it('keeps regular and seamless vertical layouts as distinct persistent modes', () => {
+    expect(comicProfileModeToViewMode('vertical')).toBe('continuous');
+    expect(comicProfileModeToViewMode('vertical', true)).toBe('continuous-seamless');
+    expect(comicViewModeToProfileMode('continuous-seamless')).toBe('vertical');
+    expect(isContinuousComicViewMode('continuous-seamless')).toBe(true);
+    expect(nextComicViewMode('continuous')).toBe('continuous-seamless');
+    expect(nextComicViewMode('continuous-seamless')).toBe('single');
+  });
+
   it('keeps the cover single and pairs following LTR pages without loss', () => {
     const spreads = buildComicSpreads(6, { ...DEFAULT_COMIC_READING_PROFILE, mode: 'spread' });
     expect(spreads).toEqual([

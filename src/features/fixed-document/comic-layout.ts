@@ -1,5 +1,29 @@
 import type { ComicReadingProfile } from '../../domain/types';
 
+export type ComicViewMode = 'single' | 'spread' | 'continuous' | 'continuous-seamless';
+
+export function isContinuousComicViewMode(mode: ComicViewMode): boolean {
+  return mode === 'continuous' || mode === 'continuous-seamless';
+}
+
+export function comicProfileModeToViewMode(mode: ComicReadingProfile['mode'], seamlessVertical = false): ComicViewMode {
+  if (mode === 'vertical') return seamlessVertical ? 'continuous-seamless' : 'continuous';
+  return mode;
+}
+
+export function comicViewModeToProfileMode(mode: ComicViewMode): ComicReadingProfile['mode'] {
+  if (mode === 'continuous') return 'vertical';
+  if (mode === 'continuous-seamless') return 'vertical';
+  return mode;
+}
+
+export function nextComicViewMode(mode: ComicViewMode): ComicViewMode {
+  if (mode === 'single') return 'spread';
+  if (mode === 'spread') return 'continuous';
+  if (mode === 'continuous') return 'continuous-seamless';
+  return 'single';
+}
+
 export interface ComicSpread {
   readonly left?: number;
   readonly right?: number;
@@ -16,6 +40,7 @@ export interface ComicPageLayoutHint {
 export const DEFAULT_COMIC_READING_PROFILE: ComicReadingProfile = {
   schemaVersion: 1,
   mode: 'single',
+  seamlessVertical: false,
   direction: 'ltr',
   coverBehavior: 'single',
   pageParity: 'auto',

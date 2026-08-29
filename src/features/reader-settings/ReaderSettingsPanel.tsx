@@ -10,14 +10,19 @@ import {
   RefreshCw,
   type LucideIcon,
 } from 'lucide-react';
-import { useState, type KeyboardEvent } from 'react';
+import { useState, type KeyboardEvent, type ReactNode } from 'react';
 import type { GestureBindings, ReadingProfile, ReadingProfileOverride } from '../../domain/types';
 import type { PlatformRuntimeInfo, ProviderExecutionRuntimeKind } from '../../platform/runtime';
 import type { ReaderPersonalizationRepository } from '../../repositories/reader-personalization-repository';
 import { Dialog } from '../../shared/ui/Dialog';
 import type { ExtensionContributionId } from '@noveldesk/extension-contracts';
 import type { AppExtensionSnapshot } from '../../extensions/app-extension-manager';
+import { WEBNOVEL_METADATA_ENRICHMENT_EXTENSION_ID } from '../../extensions/builtin/webnovel-metadata-enrichment-extension';
+import type { BookEnrichmentAutomationController } from '../book-enrichment/useBookEnrichmentAutomation';
+import type { SelfHostAccount } from '../auth/self-host-auth-client';
+import type { WebNovelMetadataCollectorBroker } from '../../services/webnovel-metadata-collector-broker';
 import { ExtensionSettingsPanel } from '../extensions/ExtensionSettingsPanel';
+import { WebNovelMetadataExtensionSettings } from '../extensions/WebNovelMetadataExtensionSettings';
 import { ExternalSourceSettingsPanel } from '../external-sources/ExternalSourceSettingsPanel';
 import type { ExternalSourceController } from '../external-sources/useExternalSourceController';
 import { ApplicationInfoSettings } from './ApplicationInfoSettings';
@@ -92,9 +97,15 @@ export interface ReaderSettingsPanelProps {
   readonly personalizationRepository?: ReaderPersonalizationRepository;
   readonly platformRuntime: PlatformRuntimeInfo;
   readonly providerExecutionRuntime: ProviderExecutionRuntimeKind;
+  readonly selfHostAccount?: SelfHostAccount;
+  readonly logoutSelfHostAccount?: () => Promise<void>;
   readonly extensions: readonly AppExtensionSnapshot[];
   readonly externalSources: ExternalSourceController;
+  readonly webNovelMetadataCollector?: WebNovelMetadataCollectorBroker;
+  readonly bookEnrichmentAutomation?: BookEnrichmentAutomationController;
+  readonly libraryCount?: number;
   readonly initialTab?: SettingsTab;
+  renderExtensionDetails?(extension: AppExtensionSnapshot): ReactNode;
   updateProfile(patch: ReadingProfileOverride): void;
   setBookOverrideEnabled(enabled: boolean): void;
   resetProfile(): void;
@@ -211,13 +222,32 @@ export default function ReaderSettingsPanel(props: ReaderSettingsPanelProps) {
                 <ReaderGestureSettings bindings={props.gestureBindings} update={props.updateGestureBindings} />
               )}
               {tab === 'extensions' && (
-                <ExtensionSettingsPanel extensions={props.extensions} setEnabled={props.setExtensionEnabled} />
+                <ExtensionSettingsPanel
+                  extensions={props.extensions}
+                  setEnabled={props.setExtensionEnabled}
+                  renderDetails={(extension) =>
+                    props.renderExtensionDetails?.(extension) ??
+                    (extension.id === WEBNOVEL_METADATA_ENRICHMENT_EXTENSION_ID &&
+                    props.webNovelMetadataCollector &&
+                    props.bookEnrichmentAutomation ? (
+                      <WebNovelMetadataExtensionSettings
+                        broker={props.webNovelMetadataCollector}
+                        automation={props.bookEnrichmentAutomation}
+                        extensionEnabled={extension.enabled}
+                        libraryCount={props.libraryCount ?? 0}
+                        confirm={(message) => window.confirm(message)}
+                      />
+                    ) : undefined)
+                  }
+                />
               )}
               {tab === 'sources' && <ExternalSourceSettingsPanel controller={props.externalSources} />}
               {tab === 'application' && (
                 <ApplicationInfoSettings
                   platformRuntime={props.platformRuntime}
                   providerExecutionRuntime={props.providerExecutionRuntime}
+                  selfHostAccount={props.selfHostAccount}
+                  logoutSelfHostAccount={props.logoutSelfHostAccount}
                 />
               )}
             </div>

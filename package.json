@@ -7,7 +7,7 @@
   "type": "module",
   "packageManager": "pnpm@11.7.0",
   "scripts": {
-    "dev": "vite --host 127.0.0.1 --port 1420",
+    "dev": "vite --host 127.0.0.1 --port 1421 --strictPort",
     "build": "tsc && vite build",
     "format": "prettier --write \"src/**/*.{css,ts,tsx}\" \"apps/server/src/**/*.ts\" \"apps/server/*.{json,mjs}\" \"packages/**/*.{json,ts}\" \"scripts/**/*.{ts,mjs}\" \"*.{json,js,ts,mjs}\"",
     "format:check": "node scripts/check-changed-format.mjs",
@@ -24,7 +24,7 @@
     "typecheck:scripts": "tsc -p tsconfig.scripts.json --noEmit",
     "typecheck:contracts": "pnpm --filter @noveldesk/contracts typecheck",
     "typecheck:text-core": "pnpm --filter @noveldesk/text-core typecheck",
-    "typecheck": "pnpm typecheck:contracts && pnpm --filter @noveldesk/extension-contracts typecheck && pnpm --filter @noveldesk/epub-core typecheck && pnpm --filter @noveldesk/fixed-document-core typecheck && pnpm typecheck:text-core && pnpm typecheck:web && pnpm typecheck:server && pnpm typecheck:scripts",
+    "typecheck": "pnpm typecheck:contracts && pnpm --filter @noveldesk/extension-contracts typecheck && pnpm --filter @noveldesk/epub-core typecheck && pnpm --filter @noveldesk/document-series-core typecheck && pnpm --filter @noveldesk/fixed-document-core typecheck && pnpm typecheck:text-core && pnpm typecheck:web && pnpm typecheck:server && pnpm typecheck:scripts",
     "check:rust": "cargo fmt --manifest-path src-tauri/Cargo.toml -- --check && cargo clippy --manifest-path src-tauri/Cargo.toml --locked --all-targets -- -D warnings && cargo test --manifest-path src-tauri/Cargo.toml --locked",
     "check": "pnpm check:web-server && pnpm check:rust",
     "check:desktop": "pnpm build && cargo check --manifest-path src-tauri/Cargo.toml --locked",
@@ -59,6 +59,7 @@
     "check:reader-performance": "node scripts/performance/reader-performance-gate.mjs",
     "test": "vitest run",
     "tauri:dev": "tauri dev",
+    "collector:bundle": "node scripts/build-webnovel-metadata-collector-sidecar.mjs",
     "tauri:build": "tauri build",
     "tauri:android:sync-provider-plugin": "node scripts/sync-tauri-android-provider-secret-plugin.mjs",
     "tauri:android:init": "tauri android init --ci && pnpm tauri:android:sync-provider-plugin",
@@ -78,6 +79,7 @@
   "dependencies": {
     "@googleworkspace/drive-picker-element": "0.7.3",
     "@noble/hashes": "2.0.1",
+    "@noveldesk/document-series-core": "workspace:*",
     "@noveldesk/epub-core": "workspace:*",
     "@noveldesk/extension-contracts": "workspace:*",
     "@noveldesk/fixed-document-core": "workspace:*",

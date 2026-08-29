@@ -22,6 +22,8 @@ import {
 export const LOCAL_DEVICE_ID = 'device_local';
 
 export type SyncTombstoneEntity =
+  | 'book'
+  | 'cover'
   | 'bookmark'
   | 'highlight'
   | 'note'
@@ -38,6 +40,10 @@ export interface SyncTombstone {
   entityType: SyncTombstoneEntity;
   entityId: string;
   novelId?: string;
+  /** Stable Cloud Vault identity retained even after the local book is purged. */
+  vaultBookId?: string;
+  /** Legacy v1 fallback retained for older Vault manifests. */
+  bookHash?: string;
   pageIndex?: number;
   deletedAt: string;
   createdAt: string;

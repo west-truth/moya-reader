@@ -6,6 +6,11 @@ import { createAppExtensionRuntime } from './extensions/app-extension-runtime';
 import { RuntimeProvider } from './app/runtime/RuntimeProvider';
 import { relayDropboxOAuthPopup } from './cloud-vault/dropbox-oauth';
 import { initializeAppCredentialStore } from './platform/secure-credentials';
+import { SelfHostAccountGate } from './features/auth/SelfHostAccountGate';
+import { DesktopWindowShell } from './platform/DesktopWindowFrame';
+import { detectPlatformRuntime } from './platform/runtime';
+import { clearWebAppRuntimeState } from './platform/web-app-cache';
+import { createPlatformWebNovelMetadataCollector } from './platform/webnovel-metadata-collector';
 import './styles/tokens.css';
 import './styles/base.css';
 import './styles/shell.css';
@@ -21,9 +26,40 @@ import './styles/external-sources.css';
 import './styles/settings-sync.css';
 import './styles/feedback.css';
 import './styles/responsive.css';
+import './styles/self-host-auth.css';
+import './styles/desktop-window.css';
 
 function registerWebAppServiceWorker(): void {
-  if (!import.meta.env.PROD || !('serviceWorker' in navigator) || !/^https?:$/.test(window.location.protocol)) return;
+  if (!('serviceWorker' in navigator)) return;
+  const platformRuntime = detectPlatformRuntime();
+  const clearStaleRuntimeState = (deleteAllCaches: boolean, warning: string) => {
+    window.addEventListener('load', () => {
+      void Promise.all([
+        navigator.serviceWorker.getRegistrations(),
+        'caches' in window ? window.caches.keys() : Promise.resolve([]),
+      ])
+        .then(([registrations, cacheNames]) =>
+          clearWebAppRuntimeState({
+            registrations,
+            cacheNames,
+            deleteCache: (cacheName) => window.caches.delete(cacheName),
+            deleteAllCaches,
+          }),
+        )
+        .catch((error) => {
+          console.warn(warning, error);
+        });
+    });
+  };
+  if (platformRuntime.hasTauri) {
+    clearStaleRuntimeState(true, 'Stale desktop app cache cleanup failed.');
+    return;
+  }
+  if (!import.meta.env.PROD) {
+    clearStaleRuntimeState(false, 'Stale development app cache cleanup failed.');
+    return;
+  }
+  if (!/^https?:$/.test(window.location.protocol)) return;
   window.addEventListener('load', () => {
     void navigator.serviceWorker.register('/sw.js', { scope: '/' }).catch((error) => {
       console.warn('PWA service worker registration failed.', error);
@@ -32,6 +68,7 @@ function registerWebAppServiceWorker(): void {
 }
 
 async function startApp(): Promise<void> {
+  const platformRuntime = detectPlatformRuntime();
   try {
     await initializeAppCredentialStore();
   } catch (error) {
@@ -72,13 +109,18 @@ async function startApp(): Promise<void> {
     extensionRuntimeFactory: () =>
       createAppExtensionRuntime({
         additionalTrustedRegistrations,
+        webNovelMetadataCollector: createPlatformWebNovelMetadataCollector(platformRuntime),
       }),
   });
 
   ReactDOM.createRoot(document.getElementById('root') as HTMLElement).render(
     <React.StrictMode>
       <RuntimeProvider runtime={runtime}>
-        <App />
+        <DesktopWindowShell>
+          <SelfHostAccountGate runtime={runtime.readerRuntime}>
+            <App />
+          </SelfHostAccountGate>
+        </DesktopWindowShell>
       </RuntimeProvider>
     </React.StrictMode>,
   );

@@ -5,14 +5,15 @@ import { throwIfReaderSearchAborted } from '../repositories/reader-query-contrac
 import { PARAGRAPHS_PER_PAGE } from '../repositories/reader-defaults';
 import {
   activeRevisionIdForChapter,
+  getContentRevisionComponentIds,
   getContentDomainHead,
   getLegacyChapters,
   getLegacyParagraphPages,
   getLegacyParagraphs,
-  getRevisionChapters,
   getRevisionParagraphPage,
   getRevisionParagraphPages,
   getRevisionParagraphRefs,
+  getLogicalRevisionChapters,
   iteratePinnedParagraphPages,
   legacyNovelIsReadable,
   readableLegacyChapter,
@@ -22,6 +23,7 @@ import {
   type ParagraphSearchRow,
   paragraphFromRevisionRow,
   type RevisionChapterRow,
+  type RevisionParagraphPageRow,
   type RevisionParagraphRefRow,
   type RevisionParagraphSearchRow,
   type StoredParagraphRef,
@@ -50,7 +52,7 @@ export async function getChapters(novelId: string): Promise<Chapter[]> {
   const novel = await getNovel(novelId);
   const db = await openReaderDb();
   return novel?.activeContentRevisionId
-    ? getRevisionChapters(db, novel.activeContentRevisionId)
+    ? getLogicalRevisionChapters(db, novel.activeContentRevisionId)
     : getLegacyChapters(db, novelId);
 }
 
@@ -93,20 +95,88 @@ async function getParagraphsByIndexRange(
   return paragraphs.sort((a, b) => a.index - b.index);
 }
 
+function getRevisionParagraphRefCandidates(db: IDBDatabase, paragraphId: string): Promise<RevisionParagraphRefRow[]> {
+  const tx = db.transaction('book_content_paragraphs', 'readonly');
+  const request = tx.objectStore('book_content_paragraphs').index('domainId').openCursor(paragraphId);
+  return new Promise((resolve, reject) => {
+    const candidates: RevisionParagraphRefRow[] = [];
+    request.onerror = () => reject(request.error);
+    request.onsuccess = () => {
+      const cursor = request.result;
+      if (!cursor) {
+        resolve(candidates);
+        return;
+      }
+      candidates.push(cursor.value as RevisionParagraphRefRow);
+      cursor.continue();
+    };
+  });
+}
+
+function getRevisionParagraphPageCandidates(db: IDBDatabase, paragraphId: string): Promise<RevisionParagraphPageRow[]> {
+  const tx = db.transaction('book_content_paragraph_pages', 'readonly');
+  const request = tx.objectStore('book_content_paragraph_pages').index('paragraphIds').openCursor(paragraphId);
+  return new Promise((resolve, reject) => {
+    const candidates: RevisionParagraphPageRow[] = [];
+    request.onerror = () => reject(request.error);
+    request.onsuccess = () => {
+      const cursor = request.result;
+      if (!cursor) {
+        resolve(candidates);
+        return;
+      }
+      candidates.push(cursor.value as RevisionParagraphPageRow);
+      cursor.continue();
+    };
+  });
+}
+
 export async function getParagraph(id: string): Promise<Paragraph | undefined> {
   const db = await openReaderDb();
-  const contentRevisionId = (await getContentDomainHead(db, 'paragraph', id))?.contentRevisionId;
+  const head = await getContentDomainHead(db, 'paragraph', id);
+  const [candidates, pageCandidates] = await Promise.all([
+    getRevisionParagraphRefCandidates(db, id),
+    getRevisionParagraphPageCandidates(db, id),
+  ]);
+  const novelIds = [
+    ...new Set([
+      ...(head ? [head.novelId] : []),
+      ...candidates.map((candidate) => candidate.novelId),
+      ...pageCandidates.map((candidate) => candidate.novelId),
+    ]),
+  ];
+  let storedRef: RevisionParagraphRefRow | undefined;
+  for (const novelId of novelIds) {
+    const novel = await getNovel(novelId);
+    if (!novel?.activeContentRevisionId) continue;
+    const components = await getContentRevisionComponentIds(db, novel.activeContentRevisionId);
+    for (const componentRevisionId of [...components].reverse()) {
+      const page = pageCandidates.find(
+        (candidate) => candidate.novelId === novelId && candidate.contentRevisionId === componentRevisionId,
+      );
+      const paragraph = page?.paragraphs.find((candidate) => candidate.id === id);
+      if (paragraph) return paragraph;
+      storedRef = candidates.find(
+        (candidate) => candidate.novelId === novelId && candidate.contentRevisionId === componentRevisionId,
+      );
+      if (storedRef) break;
+    }
+    if (storedRef) break;
+  }
+  const contentRevisionId = storedRef?.contentRevisionId;
   if (contentRevisionId) {
     const row = await getByIndex<RevisionParagraphSearchRow>(
       'book_content_paragraph_search',
       'contentRevisionId_paragraphId',
       [contentRevisionId, id],
     );
-    if (row) return row.paragraph;
-    const stored = await getByIndex<RevisionParagraphRefRow>('book_content_paragraphs', 'contentRevisionId_domainId', [
-      contentRevisionId,
-      id,
-    ]);
+    if (row?.paragraph) return row.paragraph;
+    const stored =
+      storedRef ??
+      (await getByIndex<RevisionParagraphRefRow>('book_content_paragraphs', 'contentRevisionId_domainId', [
+        contentRevisionId,
+        id,
+      ]));
     if (!stored) return undefined;
     if (stored.text) return paragraphFromRevisionRow(stored);
     if (typeof stored.pageIndex === 'number') {

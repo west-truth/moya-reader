@@ -1,51 +1,55 @@
 # 모야 Docker Compose 배포 가이드
 
 Status: current
-Last verified: 2026-08-24
+Last verified: 2026-08-29
 
 ## 권장 서버 환경
 
-모야의 기준 서버 환경은 **x86-64 Ubuntu + Docker Engine + Docker Compose v2**이다. GitHub 검사는 Ubuntu 24.04에서
-실행하며, Node 빌드와 서버 런타임 이미지는 Ubuntu와 같은 glibc 계열인 Debian Bookworm slim을 사용한다. 로컬
-TTS 이미지도 Debian 기반이다. 따라서 Windows에서 만든 네이티브 패키지 목록이나 Alpine/musl 패키지가 서버용
-라이선스 기준본에 섞이지 않는다.
+모야의 기준 서버 환경은 **x86-64 Ubuntu + Docker Engine + Docker Compose v2**이다. 공개 배포 저장소의 GitHub
+검사는 Ubuntu 24.04에서 실행하며, Node 빌드와 서버 런타임 이미지는 Ubuntu와 같은 glibc 계열인 Debian
+Bookworm slim을 사용한다. 로컬 TTS 이미지도 Debian 기반이다. 따라서 Windows에서 만든 네이티브 패키지
+목록이나 Alpine/musl 패키지가 서버용 라이선스 기준본에 섞이지 않는다.
 
-Ubuntu가 아닌 Linux에서도 같은 Compose 구성을 실행할 수는 있지만, 문서와 CI가 직접 보장하는 기준은 Ubuntu
-x86-64이다. Docker를 사용하면 호스트 운영체제와 컨테이너 운영체제는 별개이며, 모야의 Node 컨테이너는 의도적으로
-Debian/glibc 계열을 사용한다.
+Ubuntu가 아닌 Linux에서도 같은 Compose 구성을 실행할 수는 있지만, 문서와 공개 CI가 직접 보장하는 기준은
+Ubuntu x86-64이다. Docker를 사용하면 호스트 운영체제와 컨테이너 운영체제는 별개이며, 모야의 Node 컨테이너는
+의도적으로 Debian/glibc 계열을 사용한다.
 
 이 문서는 Docker를 처음 사용하는 사람도 모야 서버를 실행할 수 있도록 단계별로 설명한다. 명령은
 프로젝트 루트, 즉 `compose.yaml`이 있는 폴더에서 실행한다.
 
 ## 먼저 배포 방식을 고른다
 
-| 목적                        | 사용할 구성                               | 권장 대상                                |
-| --------------------------- | ----------------------------------------- | ---------------------------------------- |
-| 한 컴퓨터에서만 사용        | `compose.yaml`                            | 처음 설치, 개인용 테스트                 |
-| 서버와 로컬 한국어 TTS 사용 | `compose.yaml` + `compose.local-tts.yaml` | 외부 TTS 비용 없이 CPU 음성 합성을 쓸 때 |
-| WireGuard/LAN/인터넷 접속   | `compose.yaml` + `compose.public.yaml`    | 개인 서버, 동일 호스트의 HTTPS 프록시 뒤 |
-| 외부 접속과 로컬 TTS 사용   | 위 세 파일 모두                           | 개인 서버와 CPU TTS를 함께 운영할 때     |
-| 외부 접속과 Suwayomi 사용   | 기본 + public + `compose.suwayomi.yaml`   | Mihon 호환 source를 함께 탐색할 때       |
+| 목적                        | 사용할 구성                                        | 권장 대상                                |
+| --------------------------- | -------------------------------------------------- | ---------------------------------------- |
+| 한 컴퓨터에서만 사용        | `compose.yaml`                                     | 처음 설치, 개인용 테스트                 |
+| 표지·작품 정보 자동 채우기  | `compose.yaml` + `compose.metadata-collector.yaml` | 웹소설 정보 익스텐션을 쓸 때             |
+| 19세 작품 인증 검색         | 위 구성 + `compose.metadata-collector-auth.yaml`   | 서버 전용 로그인 브라우저가 필요할 때    |
+| 서버와 로컬 한국어 TTS 사용 | `compose.yaml` + `compose.local-tts.yaml`          | 외부 TTS 비용 없이 CPU 음성 합성을 쓸 때 |
+| WireGuard/LAN/인터넷 접속   | `compose.yaml` + `compose.public.yaml`             | 개인 서버, 동일 호스트의 HTTPS 프록시 뒤 |
+| 외부 접속과 로컬 TTS 사용   | 위 세 파일 모두                                    | 개인 서버와 CPU TTS를 함께 운영할 때     |
 
 처음에는 기본 구성으로 정상 실행을 확인한 다음 TTS나 외부 공개를 추가하는 편이 가장 쉽다.
 
-현재 서버 인증은 여러 사용자의 계정을 관리하는 방식이 아니라 하나의 공유 Bearer 토큰을 사용하는
-개인 self-host 방식이다. 불특정 다수가 가입하는 공개 서비스로 바로 운영하는 구성은 아니다.
+현재 서버 인증은 여러 사용자가 가입하는 SaaS가 아니라 기존 `DEFAULT_USER_ID` 책장에 연결되는 **소유자 계정
+하나**를 사용한다. 첫 브라우저에서만 `READER_AUTH_TOKEN`을 초기 설정 코드로 입력해 아이디·비밀번호를 만들고,
+이후 기기는 그 계정으로 로그인한다. 로그인 세션은 서버 DB와 HttpOnly cookie에 30일간 보존되어 다음 접속부터
+자동 복구된다. `READER_AUTH_TOKEN`은 자동화와 비상 복구용으로 계속 보관하지만 일반 브라우저 설정에는 저장하지
+않는다. 불특정 다수가 가입하는 공개 서비스 구성은 아니다.
 
 ## 어떤 컨테이너가 실행되는가
 
 기본 구성은 다음 서비스를 실행한다.
 
-| 서비스      | 역할                                  | 호스트 공개 여부            |
-| ----------- | ------------------------------------- | --------------------------- |
-| `web`       | 웹 화면과 `/api` 프록시               | `127.0.0.1:8080`            |
-| `api`       | 책장, Reader, 동기화, 백업 API        | 직접 공개하지 않음          |
-| `worker`    | 파일 가져오기와 AI/TTS 작업           | 공개하지 않음               |
-| `postgres`  | 책장과 독서 데이터의 기준 저장소      | 공개하지 않음               |
-| `redis`     | 작업 큐                               | 공개하지 않음               |
-| `minio`     | 원본 파일, 문서 자산, TTS 오디오 저장 | Console만 `127.0.0.1:9001`  |
-| `tts-model` | 선택형 로컬 한국어 TTS                | Compose 내부에서만 사용     |
-| `suwayomi`  | 선택형 Mihon 호환 source runtime      | NPM 공유 network에서만 사용 |
+| 서비스               | 역할                                  | 호스트 공개 여부           |
+| -------------------- | ------------------------------------- | -------------------------- |
+| `web`                | 웹 화면과 `/api` 프록시               | `127.0.0.1:8080`           |
+| `api`                | 책장, Reader, 동기화, 백업 API        | 직접 공개하지 않음         |
+| `worker`             | 파일 가져오기와 AI/TTS 작업           | 공개하지 않음              |
+| `postgres`           | 책장과 독서 데이터의 기준 저장소      | 공개하지 않음              |
+| `redis`              | 작업 큐                               | 공개하지 않음              |
+| `minio`              | 원본 파일, 문서 자산, TTS 오디오 저장 | Console만 `127.0.0.1:9001` |
+| `tts-model`          | 선택형 로컬 한국어 TTS                | Compose 내부에서만 사용    |
+| `metadata-collector` | 선택형 웹소설 표지·작품 정보 수집기   | Compose 내부에서만 사용    |
 
 컨테이너를 다시 만들어도 데이터가 유지되도록 PostgreSQL, Redis, MinIO와 서버 데이터는 Docker named
 volume에 저장된다.
@@ -204,6 +208,62 @@ Windows에서 `curl` 사용이 불편하면 브라우저에서 두 주소를 직
 확인한다. `/ready`가 성공하고 `docker compose ps`에서 주요 서비스가 `healthy` 또는 `running`이면 파일
 가져오기까지 받을 준비가 된 것이다.
 
+### 표지·작품 정보 수집기를 함께 실행하기
+
+`설정 → 익스텐션 → 웹소설 표지·작품 정보`를 self-host Web에서도 사용하려면 선택형 override를 추가한다.
+
+```bash
+docker compose -f compose.yaml -f compose.metadata-collector.yaml config --quiet
+docker compose -f compose.yaml -f compose.metadata-collector.yaml up -d --build
+```
+
+외부 접속 구성에서도 같은 override를 마지막에 더하면 된다.
+
+```bash
+docker compose -f compose.yaml -f compose.public.yaml -f compose.metadata-collector.yaml up -d --build
+```
+
+수집기는 호스트 포트를 열지 않는다. 브라우저 요청은 기존 Moya `/api`로 들어오고 API가 Compose 내부의
+`metadata-collector:8000`으로 필요한 health·검색·표지 요청만 전달한다. 따라서 Caddy, nginx, Traefik,
+Nginx Proxy Manager 중 무엇을 쓰든 외부 프록시는 기존처럼 Moya Web 주소 하나만 전달하면 된다. 수집기용
+도메인, 포트, Custom Location이나 브라우저 공개 API 주소를 추가하지 않는다.
+
+override를 사용하지 않으면 익스텐션 연결만 `사용할 수 없음`으로 표시된다. 책장, Reader, 가져오기,
+동기화와 나머지 서버 기능은 그대로 동작한다. 다시 끌 때는 base 구성으로 API를 재생성하고 수집기만 내린다.
+
+```bash
+docker compose up -d --force-recreate api
+docker compose -f compose.yaml -f compose.metadata-collector.yaml stop metadata-collector
+```
+
+기본 수집기는 공개 메타데이터와 표지만 지원한다. 19세 인증 검색도 필요하면 auth override를 **마지막에** 추가한다.
+
+```bash
+docker compose \
+  -f compose.yaml \
+  -f compose.metadata-collector.yaml \
+  -f compose.metadata-collector-auth.yaml \
+  up -d --build
+```
+
+외부 접속 구성은 `compose.public.yaml` 다음에 두 collector override를 같은 순서로 추가한다. auth image는
+Playwright/Chromium을 포함해 첫 빌드가 더 오래 걸리고 기본 memory limit는 `1536m`, shared memory는 `1gb`다.
+기본 배포에는 포함되지 않으며 연결하지 않아도 Library, Reader, 동기화와 공개 metadata 검색에 영향이 없다.
+
+Moya 설정의 익스텐션 카드에서 플랫폼 로그인 화면을 열면 전용 서버 Chromium 화면이 Moya 안에 표시된다. 별도
+domain, port, WebSocket, NPM Custom Location은 필요 없다. 입력은 기존 로그인된 Moya HTTPS 연결을 거쳐 전용
+브라우저로 전달되지만 앱 설정이나 DB에는 저장되지 않는다. browser profile/cookie는 private
+`metadata-collector-data` volume에만 남고 Cloud Vault나 일반 기기 동기화에 포함되지 않는다. 공용 PC나 신뢰할
+수 없는 평문 HTTP에서는 사용하지 말고, HTTPS·loopback 또는 신뢰하는 WireGuard 경로에서만 로그인한다.
+
+현재 self-host는 소유자 계정 하나와 인증 profile 하나를 전제로 한다. `로그인 완료`는 해당 플랫폼을 검색 대상으로
+켜는 동작이며 실제 성인 인증 성공을 자동 판정하지 않는다. 검색 결과가 계속 비어 있거나 session이 만료되면 다시
+로그인하고, 서버를 폐기하거나 계정을 바꿀 때는 UI의 `로그인 세션 삭제`로 저장 profile도 제거한다.
+
+수집기는 DB·Redis·MinIO와 분리된 전용 Docker network를 사용한다. 원격 로그인 browser는 내부 host와 공인 주소가
+아닌 literal/DNS 결과를 차단하고 Service Worker와 WebSocket을 사용하지 않는다. 이는 실수와 일반적인 SSRF를 줄이는
+앱 경계이며, Docker host가 민감한 사설망에 접근할 수 있는 배포라면 host firewall/egress 정책도 함께 적용한다.
+
 ### 서버에 올린 원본 소설 다운로드
 
 서버 책장은 업로드한 TXT, Markdown, EPUB, PDF, ZIP/CBZ, RAR/CBR, 7z/CB7 원본 파일을 MinIO에 그대로
@@ -270,7 +330,7 @@ MELOTTS_LANGUAGE=KR
 할 때는 다음 조건을 적용한다.
 
 1. Caddy, nginx 또는 Traefik이 HTTPS를 종료한다.
-2. 긴 `READER_AUTH_TOKEN`을 설정한다.
+2. 첫 계정 초기 설정과 비상 복구에 쓸 긴 `READER_AUTH_TOKEN`을 설정한다.
 3. 첫 기동 전에 `POSTGRES_PASSWORD`, `MINIO_ROOT_USER`, `MINIO_ROOT_PASSWORD`를 개발 기본값이 아닌 값으로 정한다.
 4. `compose.public.yaml`을 함께 사용한다.
 5. 인터넷 공개라면 도메인 DNS와 80/443 방화벽을 구성한다.
@@ -281,7 +341,7 @@ WireGuard 전용이면 공개 DNS나 인터넷 443 개방은 필요 없다. ngin
 기능을 유지하려면 WireGuard 안에서도 신뢰할 수 있는 내부 인증서나 정상 도메인 인증서를 사용하는 편이
 좋다.
 
-토큰 생성 예시:
+첫 계정용 초기 설정 코드 생성 예시:
 
 PowerShell:
 
@@ -308,6 +368,13 @@ MINIO_ROOT_USER=noveldesk-storage
 MINIO_ROOT_PASSWORD=충분히긴별도영문숫자비밀번호
 ```
 
+공개 Compose를 시작한 뒤 첫 브라우저에서 모야 주소를 열면 `내 계정 만들기` 화면이 나온다. 위 값을 `초기
+설정 코드`에 한 번 입력하고 소유자 아이디·비밀번호를 만든다. 기존 서버 책장은 새 사용자를 만들지 않고 기존
+`DEFAULT_USER_ID`에 그대로 연결된다. 두 번째 기기부터는 초기 설정 코드 없이 아이디·비밀번호만 사용하며,
+로그아웃하거나 30일 세션이 만료되기 전까지 자동 로그인된다. 공개 프록시를 열기 전에 loopback 또는 WireGuard
+안에서 첫 계정을 만드는 편이 안전하다. 첫 가져오기나 계정 생성 후 `DEFAULT_USER_ID`를 바꾸면 기존 책장과
+소유자 계정의 기준 사용자가 달라지므로 서버가 인증을 차단한다. 운영 중에는 이 값을 변경하지 않는다.
+
 public override는 위 저장소 자격증명도 required interpolation으로 검사한다. 비어 있으면 Compose가
 컨테이너를 만들기 전에 멈춘다. 기존 volume을 public override로 전환할 때는 새 값을 임의로 만들지 말고
 현재 PostgreSQL/MinIO가 실제로 사용하는 값을 먼저 적는다. PostgreSQL 비밀번호를 바꿀 때는 앞의 DB 내부
@@ -320,10 +387,6 @@ public override는 위 저장소 자격증명도 required interpolation으로 �
 ```dotenv
 CORS_ALLOWED_ORIGINS=https://별도-web.example.com,http://10.20.0.2:1420
 ```
-
-Dropbox/Google의 공개 OAuth 식별자와 Suwayomi 기본 origin은 `.env`의 `MOYA_*` 값을 Web 컨테이너 시작 시
-`/runtime-config.js`로 만든다. 값을 바꿀 때 Web image를 다시 빌드할 필요는 없지만 컨테이너는 재생성해야 한다.
-이 경계는 browser-visible 값만 허용하므로 app/client secret, Bearer token이나 provider API key를 넣지 않는다.
 
 외부 공개 구성을 확인하고 시작한다.
 
@@ -372,27 +435,6 @@ PostgreSQL, Redis, MinIO API, TTS 포트는 직접 공개하지 않는다.
 처음 웹 화면을 연 뒤 모야의 서버 연결/동기화 설정에 `.env`와 같은 Bearer 토큰을 저장한다. 연결 테스트는
 공개 `/ready`뿐 아니라 보호된 sync API도 확인한다. 토큰을 저장하면 최초 401로 실패했던 책장도 자동으로
 다시 불러온다.
-
-### 선택형 Suwayomi/Mihon source
-
-Nginx Proxy Manager를 Docker로 운영한다면 NPM, Moya Web과 Suwayomi를 같은 외부 network에 연결한다. 기본
-network 이름은 `npm_proxy`이며 한 번만 만든다.
-
-```bash
-docker network create npm_proxy
-```
-
-`.env`에 `SUWAYOMI_AUTH_USERNAME`, `SUWAYOMI_AUTH_PASSWORD`와 browser에서 접근 가능한 별도 HTTPS origin인
-`MOYA_SUWAYOMI_DEFAULT_URL`을 설정한다. 그런 다음 항상 같은 세 Compose 파일 조합을 사용한다.
-
-```bash
-docker compose -f compose.yaml -f compose.public.yaml -f compose.suwayomi.yaml config --quiet
-docker compose -f compose.yaml -f compose.public.yaml -f compose.suwayomi.yaml up -d --build
-```
-
-Suwayomi는 host port를 publish하지 않고 기본 alias `moya-suwayomi:4567`만 NPM network에 제공한다. 설치 source,
-설정과 library data는 `suwayomi-data` volume에 남는다. 두 Proxy Host, HTTPS/OAuth origin, WireGuard 방화벽과
-업데이트 절차는 [Nginx Proxy Manager + WireGuard 배포 예제](nginx-proxy-manager-wireguard.md)를 따른다.
 
 ## 6. 평상시 운영 명령
 
@@ -509,12 +551,20 @@ docker compose -f compose.yaml -f compose.local-tts.yaml ps
 
 ### 웹에서 `401 Unauthorized`
 
-public override를 사용한다면 모야 서버 연결 설정에 저장한 토큰과 `.env`의 `READER_AUTH_TOKEN`이
-같은지 확인한다. 토큰을 URL이나 CORS origin에 넣으면 안 된다. 보호된 API를 직접 확인하려면 다음 명령을
-사용한다.
+Hosted Web에서는 먼저 로그아웃됐거나 30일 세션이 만료되지 않았는지 확인하고 계정으로 다시 로그인한다.
+브라우저에 `READER_AUTH_TOKEN`을 반복해서 저장하는 구조가 아니다. 계정 로그인까지 실패하면 API와 PostgreSQL
+로그, `DEFAULT_USER_ID` 변경 여부, HTTPS 프록시가 `Set-Cookie`와 `X-Forwarded-Proto`를 보존하는지 확인한다.
+운영 자동화나 비상 진단에서만 `.env`의 복구 토큰으로 보호된 API를 직접 확인한다.
 
 ```bash
 curl -H "Authorization: Bearer $READER_AUTH_TOKEN" https://moya.example.com/api/sync/capabilities
+```
+
+`내 계정 만들기`가 나오지 않거나 초기 설정 코드가 거부되면 다음 공개 상태 API를 확인한다. 이 응답에는 계정명,
+비밀번호, session token이 포함되지 않는다.
+
+```bash
+curl https://moya.example.com/api/auth/status
 ```
 
 ### 웹에서 `403 cors_origin_denied`
@@ -611,13 +661,5 @@ docker compose -f compose.yaml -f compose.public.yaml -f compose.local-tts.yaml 
 docker compose -f compose.yaml -f compose.public.yaml -f compose.local-tts.yaml up -d --no-build
 ```
 
-외부 공개와 Suwayomi:
-
-```bash
-docker compose -f compose.yaml -f compose.public.yaml -f compose.suwayomi.yaml up -d --build
-```
-
 상세한 데이터 경계, 장애 복구 범위와 운영 검증 항목은
 [Docker Compose 기술 운영 런북](docker-compose-deployment.md)을 참고한다.
-Nginx Proxy Manager와 Suwayomi를 함께 쓸 때는
-[WireGuard 전용 NPM 예제](nginx-proxy-manager-wireguard.md)도 확인한다.

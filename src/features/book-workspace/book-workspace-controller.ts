@@ -135,6 +135,7 @@ export class BookWorkspaceController {
     novel: Novel,
     generation: number,
     prefetched?: { chapters: Chapter[]; readingPosition?: ReadingPosition },
+    documentSectionId?: string,
   ): Promise<boolean> {
     const [chapters, annotations, readingPosition] = await Promise.all([
       prefetched ? Promise.resolve(prefetched.chapters) : this.ports.repository.listChapters(novel.id),
@@ -142,6 +143,9 @@ export class BookWorkspaceController {
       prefetched ? Promise.resolve(prefetched.readingPosition) : this.ports.repository.getReadingPosition(novel.id),
     ]);
     if (!this.navigationIsCurrent(generation)) return false;
+    const documentEntryChapter = documentSectionId
+      ? chapters.find((chapter) => chapter.documentSectionId === documentSectionId)
+      : undefined;
     this.updateState({
       remoteReadingPosition: undefined,
       localReadingPosition: readingPosition,
@@ -153,11 +157,12 @@ export class BookWorkspaceController {
       outlineQuery: '',
       bookTitleDraft: novel.title,
       bookTitleEditing: false,
+      fixedDocumentOpenChapterId: documentEntryChapter?.id,
     });
     this.ports.adjacent.applyBookAnnotations(annotations);
     this.updateState({
       currentChapter: isFixedDocumentFormat(novel.format)
-        ? (chapters.find((chapter) => chapter.id === readingPosition?.chapterId) ?? chapters[0])
+        ? (documentEntryChapter ?? chapters.find((chapter) => chapter.id === readingPosition?.chapterId) ?? chapters[0])
         : this.state.currentChapter,
       view: isFixedDocumentFormat(novel.format) ? 'document' : 'chapters',
     });
@@ -166,6 +171,10 @@ export class BookWorkspaceController {
 
   readonly openNovel = async (novel: Novel): Promise<void> => {
     await this.openNovelForNavigation(novel, this.beginNavigation());
+  };
+
+  readonly openDocumentSection = async (novel: Novel, documentSectionId: string): Promise<void> => {
+    await this.openNovelForNavigation(novel, this.beginNavigation(), undefined, documentSectionId);
   };
 
   private async openChapterForNavigation(
@@ -231,6 +240,7 @@ export class BookWorkspaceController {
     if (isFixedDocumentFormat(novel.format)) {
       this.updateState({
         currentChapter: chapters.find((candidate) => candidate.id === readingPosition?.chapterId) ?? chapters[0],
+        fixedDocumentOpenChapterId: undefined,
         view: 'document',
       });
       return;
@@ -264,6 +274,7 @@ export class BookWorkspaceController {
     try {
       await this.ports.repository.saveReadingPosition({
         novelId: novel.id,
+        expectedContentRevisionId: novel.activeContentRevisionId,
         chapterId: chapter.id,
         scrollTop: pageIndex,
         chapterProgress: 1,
@@ -294,7 +305,7 @@ export class BookWorkspaceController {
           updatedAt,
         },
       });
-      void this.ports.adjacent.refreshAfterLocalMutation();
+      void this.ports.adjacent.refreshAfterLocalMutation('progress');
       void this.ports.adjacent.refreshNovels();
     } catch (error) {
       this.locationPersistenceFailed(error);
@@ -471,6 +482,7 @@ export class BookWorkspaceController {
     try {
       await this.ports.repository.saveReadingPosition({
         novelId: novel.id,
+        expectedContentRevisionId: novel.activeContentRevisionId,
         chapterId: chapter.id,
         scrollTop: Number.MAX_SAFE_INTEGER,
         chapterProgress: 1,
@@ -576,7 +588,7 @@ export class BookWorkspaceController {
         updatedAt,
       },
     });
-    void this.ports.adjacent.refreshAfterLocalMutation();
+    void this.ports.adjacent.refreshAfterLocalMutation('progress');
     void this.ports.adjacent.refreshNovels();
   };
 
@@ -604,6 +616,6 @@ export class BookWorkspaceController {
       novels: this.state.novels.map(applyReadingTime),
       readerSessionCommittedSeconds: this.state.readerSessionCommittedSeconds + deltaSeconds,
     });
-    void this.ports.adjacent.refreshAfterLocalMutation();
+    void this.ports.adjacent.refreshAfterLocalMutation('statistics');
   };
 }

@@ -29,11 +29,12 @@ import type { ReaderDocumentRepository } from './reader-document-repository';
 import { RepositoryBackedReaderDocumentRepository } from './reader-document-repository';
 import {
   API_AUTH_TOKEN_STORAGE_KEY,
-  apiAuthTokenUsesAndroidKeystore,
+  apiAuthTokenUsesNativeSecureStore,
   getApiAuthTokenDraft,
   resolveStoredApiAuthToken,
   saveApiAuthToken,
 } from '../platform/secure-credentials';
+import { notifySelfHostAuthRequired } from '../services/remote/self-host-auth-events';
 
 export type ReaderBackendMode = 'local' | 'remote';
 
@@ -74,7 +75,7 @@ export function saveStoredApiAuthToken(token: string): Promise<void> {
 export function resolveApiAuthToken(): string | undefined {
   const stored = resolveStoredApiAuthToken();
   if (stored) return stored;
-  if (apiAuthTokenUsesAndroidKeystore()) return undefined;
+  if (apiAuthTokenUsesNativeSecureStore()) return undefined;
   return (import.meta.env.VITE_API_AUTH_TOKEN as string | undefined)?.trim() || undefined;
 }
 
@@ -302,7 +303,10 @@ export function createReaderRuntime(): ReaderRuntime {
   const bookEnrichmentRepository = new IndexedDbBookEnrichmentRepository();
   if (mode === 'remote') {
     const apiBaseUrl = resolveApiBaseUrl();
-    const client = new RemoteApiClient(apiBaseUrl, { getAuthToken: resolveApiAuthToken });
+    const client = new RemoteApiClient(apiBaseUrl, {
+      getAuthToken: resolveApiAuthToken,
+      onUnauthorized: notifySelfHostAuthRequired,
+    });
     const deviceId = getOrCreateRemoteDeviceId();
     const remoteRepository = new RemoteReaderRepository(client, deviceId);
     return {

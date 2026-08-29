@@ -411,6 +411,64 @@
   border-bottom: 0;
 }
 
+.sync-server-settings {
+  border-bottom: 1px solid var(--border);
+}
+
+.sync-server-settings > summary {
+  min-height: 52px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 0;
+  color: var(--text-2);
+  cursor: pointer;
+  list-style: none;
+}
+
+.sync-server-settings > summary::-webkit-details-marker {
+  display: none;
+}
+
+.sync-server-settings > summary > span {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.sync-server-settings > summary strong {
+  color: var(--text);
+  font-size: 0.86rem;
+}
+
+.sync-server-settings > summary small {
+  font-size: 0.72rem;
+  font-weight: 700;
+}
+
+.sync-server-settings > summary::after {
+  content: '+';
+  color: var(--text-2);
+  font-size: 1rem;
+}
+
+.sync-server-settings[open] > summary::after {
+  content: '−';
+}
+
+.sync-server-settings-body {
+  display: grid;
+  gap: 9px;
+  padding: 0 0 16px;
+}
+
+.sync-server-field-label {
+  color: var(--text-2);
+  font-size: 0.74rem;
+  font-weight: 700;
+}
+
 .sync-detail-card {
   padding: 8px 0 8px 12px;
   background: transparent;
@@ -507,6 +565,7 @@
 .cloud-vault-heading,
 .cloud-vault-heading > div,
 .cloud-vault-passphrase > span,
+.cloud-vault-unlocked,
 .cloud-vault-provider-card,
 .cloud-vault-sync-row {
   display: flex;
@@ -622,19 +681,44 @@
   box-shadow: 0 0 0 2px color-mix(in srgb, var(--primary) 20%, transparent);
 }
 
+.cloud-vault-unlocked {
+  min-height: 40px;
+  gap: 7px;
+  padding: 0 11px;
+  color: var(--primary-2);
+  background: color-mix(in srgb, var(--primary) 8%, transparent);
+  border: 1px solid color-mix(in srgb, var(--primary) 34%, var(--border));
+  font-size: 0.82rem;
+  font-weight: 700;
+}
+
 .cloud-vault-provider-options {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 8px;
 }
 
-.cloud-vault-provider-options .ghost-btn {
+.cloud-vault-dropbox-connect,
+.cloud-vault-provider-more .ghost-btn {
+  width: 100%;
   min-height: 42px;
-  justify-content: flex-start;
 }
 
-.cloud-vault-provider-options small {
-  grid-column: 1 / -1;
+.cloud-vault-provider-more {
+  border-top: 1px solid var(--border);
+}
+
+.cloud-vault-provider-more summary {
+  padding: 9px 0;
+  color: var(--text-2);
+  cursor: pointer;
+  font-size: 0.78rem;
+  font-weight: 700;
+  list-style-position: inside;
+}
+
+.cloud-vault-provider-more .ghost-btn {
+  margin-top: 2px;
+  justify-content: flex-start;
 }
 
 .cloud-vault-provider-card {
@@ -655,6 +739,71 @@
 
 .cloud-vault-provider-card strong {
   overflow-wrap: anywhere;
+}
+
+.cloud-vault-preferences {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 18px;
+}
+
+.cloud-vault-preferences label {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  color: var(--text-2);
+  font-size: 0.78rem;
+  font-weight: 700;
+}
+
+.cloud-vault-preferences input {
+  width: 15px;
+  height: 15px;
+  margin: 0;
+  accent-color: var(--primary);
+}
+
+.cloud-vault-scope-details {
+  border-block: 1px solid var(--border);
+}
+
+.cloud-vault-scope-details > summary {
+  min-height: 42px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  color: var(--text);
+  cursor: pointer;
+  font-size: 0.82rem;
+  font-weight: 700;
+  list-style: none;
+}
+
+.cloud-vault-scope-details > summary::-webkit-details-marker {
+  display: none;
+}
+
+.cloud-vault-scope-details > summary::after {
+  content: '+';
+  margin-left: auto;
+  color: var(--text-2);
+  font-size: 1rem;
+  font-weight: 400;
+}
+
+.cloud-vault-scope-details[open] > summary::after {
+  content: '−';
+}
+
+.cloud-vault-scope-details > summary small {
+  color: var(--text-2);
+  font-size: 0.72rem;
+  font-weight: 600;
+}
+
+.cloud-vault-scope-details .cloud-vault-scope {
+  margin-bottom: 10px;
 }
 
 .cloud-vault-scope {
@@ -758,14 +907,6 @@
 }
 
 @media (max-width: 620px) {
-  .cloud-vault-provider-options {
-    grid-template-columns: 1fr;
-  }
-
-  .cloud-vault-provider-options small {
-    grid-column: 1;
-  }
-
   .cloud-vault-sync-row {
     align-items: stretch;
     flex-direction: column;

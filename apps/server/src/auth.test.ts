@@ -2,6 +2,7 @@ import Fastify from 'fastify';
 import { describe, expect, it } from 'vitest';
 import { ServerConfig, type ServerExposure } from './config.js';
 import { registerAuthHook } from './auth.js';
+import type { SelfHostAuthService } from './services/self-host-auth-service.js';
 
 function testConfig(authToken?: string, host = '127.0.0.1', exposure?: ServerExposure): ServerConfig {
   return {
@@ -95,6 +96,33 @@ describe('server auth hook', () => {
     expect(missing.statusCode).toBe(401);
     expect(wrong.statusCode).toBe(401);
     expect(malformed.statusCode).toBe(401);
+    expect(allowed.statusCode).toBe(200);
+    await app.close();
+  });
+
+  it('accepts an owner session cookie and blocks protected data before first-account setup', async () => {
+    const app = Fastify({ logger: false });
+    let setupRequired = true;
+    const service = {
+      setupRequired: async () => setupRequired,
+      authenticateSession: async (token: string | undefined) =>
+        token === 'valid-session' ? { username: 'owner', displayName: 'Owner' } : undefined,
+    } as SelfHostAuthService;
+    await registerAuthHook(app, testConfig(), service);
+    app.get('/api/books', async () => ({ books: [] }));
+
+    const setup = await app.inject({ method: 'GET', url: '/api/books' });
+    expect(setup.statusCode).toBe(503);
+    expect(setup.json()).toEqual({ error: 'account_setup_required' });
+
+    setupRequired = false;
+    const missing = await app.inject({ method: 'GET', url: '/api/books' });
+    const allowed = await app.inject({
+      method: 'GET',
+      url: '/api/books',
+      headers: { cookie: 'moya_session=valid-session' },
+    });
+    expect(missing.statusCode).toBe(401);
     expect(allowed.statusCode).toBe(200);
     await app.close();
   });

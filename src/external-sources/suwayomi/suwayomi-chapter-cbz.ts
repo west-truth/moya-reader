@@ -17,7 +17,7 @@ function xmlText(value: string): string {
 
 function imageExtension(contentType: string, url: string): string | undefined {
   const normalized = contentType.split(';', 1)[0]?.trim().toLowerCase();
-  if (normalized === 'image/jpeg') return 'jpg';
+  if (normalized === 'image/jpeg' || normalized === 'image/jpg') return 'jpg';
   if (normalized === 'image/png') return 'png';
   if (normalized === 'image/webp') return 'webp';
   if (normalized === 'image/gif') return 'gif';

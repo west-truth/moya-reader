@@ -60,10 +60,13 @@ networks:
 NPM_DOCKER_NETWORK=npm_proxy
 MOYA_PROXY_HOSTNAME=moya-web
 SUWAYOMI_PROXY_HOSTNAME=moya-suwayomi
+TRUSTED_PROXY_HOPS=2
 ```
 
 `compose.suwayomi.yaml`을 포함한 Compose 구성을 사용하면 Web과 Suwayomi가 이 외부 network에 연결된다.
 호스트의 `8080`을 계속 loopback에만 두더라도 NPM은 Docker network 안에서 `moya-web:80`으로 접근할 수 있다.
+`TRUSTED_PROXY_HOPS=2`는 API 앞의 Moya Web과 NPM 두 홉만 신뢰한다. NPM 없이 Moya Web에 직접 접속하는
+기본 Compose는 `.env.example`의 `1`을 유지한다.
 
 ## 2. WireGuard 전용 HTTPS 경계
 
@@ -106,7 +109,22 @@ proxy_send_timeout 900s;
 ```
 
 내부 Moya nginx가 `/api`를 API 컨테이너로 전달하므로 NPM에 별도 `/api` Custom Location은 만들지 않는다.
-`compose.public.yaml`의 `READER_AUTH_TOKEN`, PostgreSQL과 MinIO 자격증명은 그대로 필요하다.
+`compose.public.yaml`의 `READER_AUTH_TOKEN`, PostgreSQL과 MinIO 자격증명은 그대로 필요하다. 토큰은 첫 브라우저의
+소유자 계정 생성 때 한 번만 초기 설정 코드로 쓰며 이후 기기는 아이디·비밀번호로 로그인한다. NPM은
+`Set-Cookie`, `Host`, `X-Forwarded-Proto`를 그대로 전달해야 30일 HttpOnly 세션이 다음 접속에도 복구된다.
+
+`compose.suwayomi.yaml`은 Web을 외부 NPM network에 연결하므로 같은 필수 자격증명과 external exposure 검사를
+overlay 안에서도 반복한다. 실수로 `compose.public.yaml`을 빠뜨려도 Compose 설정 단계에서 중단되며, 표준 실행
+명령은 계속 세 파일을 모두 사용한다.
+
+`compose.metadata-collector.yaml`을 함께 사용하는 경우도 NPM 설정은 바뀌지 않는다. 표지·작품 정보 요청은
+같은 Moya `/api` gateway를 거쳐 내부 수집기로 전달되므로 별도 Proxy Host, Custom Location 또는 8000 포트
+공개가 필요 없다. 이 구조는 NPM 전용이 아니며 Caddy, Traefik과 일반 nginx에서도 동일하다.
+
+선택형 `compose.metadata-collector-auth.yaml`을 더해 19세 인증 브라우저를 쓰는 경우도 동일하다. 화면과 입력은
+기존 `/api`의 bounded HTTP frame/action으로 전달되므로 WebSocket 지원이나 timeout용 Custom Location을 추가하지
+않는다. 로그인 입력이 이 HTTPS 경로를 통과하므로 Proxy Host의 SSL은 반드시 유지하고, 신뢰할 수 없는 평문 HTTP
+경로에는 auth override를 노출하지 않는다.
 
 ## 4. NPM Proxy Host: Suwayomi
 

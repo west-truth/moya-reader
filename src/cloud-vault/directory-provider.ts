@@ -2,7 +2,7 @@ import { sha256 } from '../domain/hash';
 import {
   CLOUD_VAULT_FILE_NAME,
   CloudVaultWriteConflictError,
-  type CloudVaultFileProvider,
+  type CloudVaultContentProvider,
   type CloudVaultStoredObject,
 } from './contracts';
 
@@ -33,7 +33,30 @@ export async function ensureDirectoryPermission(handle: FileSystemDirectoryHandl
   return (await permissionHandle.requestPermission({ mode: 'readwrite' })) === 'granted';
 }
 
-export class DirectoryCloudVaultProvider implements CloudVaultFileProvider {
+function objectKeySegments(objectKey: string): string[] {
+  const segments = objectKey.split('/');
+  if (
+    segments.length < 2 ||
+    segments.some((segment) => !segment || segment === '.' || segment === '..' || !/^[a-z0-9._-]+$/i.test(segment))
+  ) {
+    throw new Error('Cloud Vault object key is invalid.');
+  }
+  return segments;
+}
+
+async function objectParent(
+  root: FileSystemDirectoryHandle,
+  segments: readonly string[],
+  create: boolean,
+): Promise<FileSystemDirectoryHandle> {
+  let current = root;
+  for (const segment of segments.slice(0, -1)) {
+    current = await current.getDirectoryHandle(segment, { create });
+  }
+  return current;
+}
+
+export class DirectoryCloudVaultProvider implements CloudVaultContentProvider {
   readonly kind = 'directory' as const;
 
   constructor(private readonly handle: FileSystemDirectoryHandle) {}
@@ -75,6 +98,49 @@ export class DirectoryCloudVaultProvider implements CloudVaultFileProvider {
       throw error;
     }
     return { revision: await revision(bytes) };
+  }
+
+  async getObject(objectKey: string) {
+    if (!(await ensureDirectoryPermission(this.handle))) {
+      throw new Error('Cloud vault folder permission must be granted again.');
+    }
+    const segments = objectKeySegments(objectKey);
+    try {
+      const parent = await objectParent(this.handle, segments, false);
+      const fileHandle = await parent.getFileHandle(segments.at(-1)!);
+      const file = await fileHandle.getFile();
+      return { blob: file, revision: `${file.lastModified}:${file.size}` };
+    } catch (error) {
+      if (isNotFound(error)) return undefined;
+      throw error;
+    }
+  }
+
+  async putObject(objectKey: string, blob: Blob, expected: { readonly byteLength: number }) {
+    if (!(await ensureDirectoryPermission(this.handle, true))) {
+      throw new Error('Cloud vault folder write permission was not granted.');
+    }
+    if (blob.size !== expected.byteLength) throw new Error('Cloud Vault object size changed before upload.');
+    const existing = await this.getObject(objectKey);
+    if (existing) {
+      if (existing.blob.size !== expected.byteLength) {
+        throw new Error('Cloud Vault content-addressed object has an unexpected size.');
+      }
+      return { created: false, revision: existing.revision };
+    }
+    const segments = objectKeySegments(objectKey);
+    const parent = await objectParent(this.handle, segments, true);
+    const fileHandle = await parent.getFileHandle(segments.at(-1)!, { create: true });
+    const writable = await fileHandle.createWritable();
+    try {
+      await writable.write(blob);
+      await writable.close();
+    } catch (error) {
+      await writable.abort().catch(() => undefined);
+      throw error;
+    }
+    const written = await fileHandle.getFile();
+    return { created: true, revision: `${written.lastModified}:${written.size}` };
   }
 }
 

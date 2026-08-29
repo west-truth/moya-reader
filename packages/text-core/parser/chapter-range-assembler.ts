@@ -28,24 +28,16 @@ export function assembleChapterRanges(
   const chapters: ChapterRange[] = [];
   const prefix = trimNormalizedTextRange(text, 0, headings[0].lineStart);
   const prefixLength = prefix.end - prefix.start;
-  if (prefixLength > 0) {
-    chapters.push({
-      title: prefixLength > 160 ? '프롤로그' : '머리말',
-      normalizedStartOffset: 0,
-      normalizedEndOffset: headings[0].lineStart,
-      normalizedBodyStartOffset: prefix.start,
-      normalizedBodyEndOffset: prefix.end,
-    });
-  }
 
   for (let index = 0; index < headings.length; index += 1) {
     const current = headings[index];
     const next = headings[index + 1];
     const end = next?.lineStart ?? text.length;
-    const body = trimNormalizedTextRange(text, current.contentStart, end);
+    const bodyStart = index === 0 && prefixLength > 0 ? prefix.start : current.contentStart;
+    const body = trimNormalizedTextRange(text, bodyStart, end);
     chapters.push({
       title: current.title || `${index + 1}화`,
-      normalizedStartOffset: chapters.length === 0 ? 0 : current.lineStart,
+      normalizedStartOffset: index === 0 ? 0 : current.lineStart,
       normalizedEndOffset: end,
       normalizedBodyStartOffset: body.start,
       normalizedBodyEndOffset: body.end,

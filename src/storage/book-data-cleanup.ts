@@ -60,8 +60,13 @@ export function bookDataIndexName(storeName: (typeof BOOK_DATA_STORES)[number]):
     : 'novelId';
 }
 
-export function deleteBookDataInTransaction(tx: IDBTransaction, novelId: string): void {
+export function deleteBookDataInTransaction(
+  tx: IDBTransaction,
+  novelId: string,
+  options: { readonly preserveSyncTombstones?: boolean } = {},
+): void {
   for (const storeName of BOOK_DATA_STORES) {
+    if (storeName === 'sync_tombstones' && options.preserveSyncTombstones) continue;
     deleteByIndexInTransaction(tx, storeName, bookDataIndexName(storeName), novelId);
   }
 }

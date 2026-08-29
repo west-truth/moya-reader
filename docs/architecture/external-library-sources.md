@@ -1,7 +1,7 @@
 # 외부 작품 소스 아키텍처
 
-상태: Phase 3B Source Hub, Dropbox·Google Drive live, Suwayomi/Mihon Source Bridge와 self-host Docker profile 구현
-기준일: 2026-08-24
+상태: Phase 3B Source Hub, Dropbox·Google Drive live, Suwayomi serial-comic과 self-host Docker profile 구현
+기준일: 2026-08-29
 
 ## 사용자 흐름
 
@@ -48,6 +48,9 @@ revision 경계를 통과한다.
 - `links`: connector/account/remote ID와 local book ID, imported revision/source hash 연결
 - `selectedItems`: Google Picker처럼 provider 전체 목록 권한이 없는 connector에서 사용자가 직접 고른 remote ID와
   bounded metadata만 보존
+- `browsePreferences`: catalog 위치별 인기/최신 mode와 extension filter 값, cloud 기본 폴더
+- `subscriptions`: 제품 UI의 `라이브러리에 추가한 원격 작품`을 구현하는 내부 account-scoped record. 작품
+  identity, cover/metadata, 이미 확인한 회차 ID, 아직 확인하지 않은 새 회차 ID와 마지막 확인 시각을 보존
 
 목록 cache에는 원문, provider response 전문, signed URL, cookie나 token을 넣지 않는다. 연결 해제는 credential과
 해당 account cache를 지우지만 이미 가져온 local book과 안전한 link history는 지우지 않는다.
@@ -81,7 +84,7 @@ Google Drive는 제품 기본 외부 소스지만 전체 Drive 브라우저가 �
 1. 같은 Google Cloud project에서 Google Drive API와 Google Picker API를 활성화한다.
 2. OAuth consent screen을 구성하고 테스트 상태면 사용할 계정을 test user로 등록한다.
 3. OAuth 2.0 Web application client의 Authorized JavaScript origins에 실제 origin을 정확히 등록한다
-   (`http://127.0.0.1:1420`, 필요하면 별도로 `http://localhost:1420`).
+   (`http://127.0.0.1:1421`, 필요하면 별도로 `http://localhost:1421`).
 4. Browser API key는 같은 origin과 필요한 Google API로 제한한다.
 5. 로컬 개발은 `.env.local`에 `VITE_GOOGLE_DRIVE_CLIENT_ID`, numeric project number인
    `VITE_GOOGLE_DRIVE_APP_ID`, `VITE_GOOGLE_DRIVE_DEVELOPER_KEY`를 설정하고 dev server를 다시 시작한다.
@@ -132,11 +135,13 @@ Suwayomi bridge가 사용자가 소유한 Suwayomi Server를 호스트 runtime�
 ```text
 설정 → 소스에서 Suwayomi endpoint 연결
   → 설치된 Mihon source 목록
-  → POPULAR 또는 검색 작품 목록
+  → source capability에 따른 POPULAR / LATEST / SEARCH와 확장 필터
   → 작품 상세와 회차 목록
-  → 사용자가 선택한 회차 CBZ 한 개 다운로드
-  → 기존 ImportService와 ExternalSourceLink
-  → 고정 문서 Reader
+  → 작품을 라이브러리에 추가하고 foreground 새 회차 metadata 확인
+  → 사용자가 선택한 회차 CBZ만 다운로드
+  → 작품별 bounded aggregate CBZ + moya-series.json
+  → 기존 ImportService와 작품/회차 ExternalSourceLink
+  → 회차 선택이 가능한 고정 문서 Reader
 ```
 
 - GraphQL `POST /api/graphql`의 `aboutServer`, `sources`, `fetchSourceManga`,
@@ -147,15 +152,70 @@ Suwayomi bridge가 사용자가 소유한 Suwayomi Server를 호스트 runtime�
 - 인증 없음, UI login access/refresh token, Basic auth를 지원한다. UI login password는 저장하지 않고 token만
   기기 키로 봉인한다. Basic password도 저장하지 않아 앱 재시작 뒤 다시 연결해야 한다. Cookie 중심
   `SIMPLE_LOGIN`은 cross-origin Web 제약 때문에 v1에서 지원하지 않는다.
-- 원격 오류 body, password와 token은 UI/plugin/cache로 전달하지 않는다. 인증이 필요한 thumbnail은 DOM URL로
-  직접 내보내지 않고 앱 내부 임시 표지를 사용한다.
+- 원격 오류 body, password와 token은 UI/plugin/cache로 전달하지 않는다. 인증이 필요한 thumbnail은 broker가
+  같은 인증으로 읽어 session-only blob URL로 투영하고 catalog cache에는 저장하지 않는다. Library 최초 import에서는
+  사용자 표지가 없는 경우에만 작품 표지를 검증해 `approved_enrichment` cover로 보존한다.
 - 작품 카드를 여는 것만으로 회차 원문을 다운로드하지 않는다. 회차별 버튼 또는 일괄 선택이 기존
   download/hash/import/link 안전 경계를 통과해야 한다.
 
-현재 local book model에는 원격 연재 작품 하나 아래 여러 CBZ 회차를 누적하는 aggregate가 없다. 따라서 v1은
-회차 하나를 Library의 CBZ 문서 하나로 가져오며 UI에도 이 제한을 명시한다. 다음 catalog checkpoint는
-`serial comic` aggregate, 작품 단위 provenance와 원격 이어읽기를 설계한다. 모든 회차를 브라우저에서 하나의
-거대한 archive로 다시 묶는 방식은 사용하지 않는다.
+2026-08-26 serial-comic checkpoint부터 같은 원격 작품의 선택 회차는 Library 작품 하나에 누적한다. Aggregate의
+root `moya-series.json`은 collection identity, 원격 회차 ID/revision/hash, 정렬 순서와 정확한 page entry를 기록한다.
+내부 page chapter/paragraph ID는 `localBookId + remote release ID + release 내 page index`로 만들어 뒤에 회차를
+추가해도 기존 독서 위치가 이동하지 않는다. Reader는 page 기반 구조를 유지하면서 회차 선택으로 각 시작 page에
+이동한다.
+
+현재 구현은 선택해 받은 회차만 최대 5,000 page/1 GiB의 aggregate CBZ로 다시 만든다. 회차 추가·교체는 기존
+원본을 export해 manifest가 확인된 page를 보존한 뒤 같은 local book ID의 새 content revision으로 원자적으로
+교체한다. 이전 단일 회차 import 하나는 연결 provenance가 있으면 첫 aggregate로 승격한다. 같은 작품의 과거
+단일 회차가 여러 Library 항목에 흩어진 경우에는 임의 병합하지 않고 실패한다. 대형 장기 연재가 이 한도에
+도달하기 전 segmented source asset으로 바꾸는 것은 후속 확장점이다.
+
+회차 link는 `collectionRemoteId`와 개별 source identity를 함께 보존한다. Suwayomi의 조회 시각 `fetchedAt`과
+첫 다운로드 뒤에 채워질 수 있는 `pageCount`는 content revision에서 제외하고 회차 ID·업로드 시각만 사용한다.
+이전 `chapterId:pageCount:uploadDate` link는 비교 시 현재 형식으로 정규화해 단순 cache fill이 가짜
+`업데이트 있음`을 만들지 않는다. 실제 update/import 실패·취소 시 기존 aggregate와 link는 유지된다.
+
+`subscriptions` capability는 내부 갱신 계약 이름이며 제품 UI에는 별도 `구독` 개념으로 노출하지 않는다. Source
+카드나 작품 상세의 `라이브러리 추가`는 cover/metadata와 원격 작품 identity를 저장해, 회차를 아직 받지 않은
+작품도 Library의 일반 작품 카드로 투영한다. 첫 회차 import 뒤에는 같은 collection link를 가진 실제 로컬 작품
+카드가 그 자리를 이어받아 중복 카드를 만들지 않는다. 추가 시 현재 회차 ID가 baseline이 되며 이후 Source Hub
+진입, `새 회차 확인` 또는 작품 상세 새로고침이 bounded 회차 metadata만 다시 조회한다. 새 ID는 확인 완료하거나
+해당 회차를 성공적으로 가져올 때까지 account-local badge로 남는다. `새 회차 선택`은 기존 단일/일괄 import
+안전 경계에 선택만 전달하며, 라이브러리에 추가하는 것만으로 CBZ나 page image를 다운로드하지 않는다. 연결
+해제나 다른 account 전환 시 record는 보존하지만 해당 account가 다시 연결되기 전에는 조회하지 않는다. 인증된
+Suwayomi가 만든 session-only `blob:` 표지는 추가 시 bounded JPEG/PNG/WebP data URL로 materialize해 같은 로컬
+record에 저장한다. 따라서 session 종료나 reload 뒤에도 원격-only Library 카드 표지가 유지되며 catalog cache에는
+여전히 임시 blob URL을 쓰지 않는다.
+
+POPULAR/LATEST와 extension-defined filter 값도 connector/account/source navigation 위치별로 저장한다. 작품
+상세에서 source 목록으로 돌아가거나 같은 source를 다시 열면 마지막 mode와 filter request를 복원한다. Provider가
+filter schema를 바꿔 저장값을 거부하면 일반 목록 오류/마지막 cache 경계를 따르며 canonical Library 데이터에는
+영향을 주지 않는다.
+
+Mihon의 extension filter는 source의 POPULAR/LATEST method가 아니라 SEARCH request의 `FilterList`에서 소비된다.
+따라서 Source Hub의 `확장 필터 → 적용`은 텍스트 검색어가 비어 있어도 명시적인 SEARCH로 실행한다. 이후 같은
+목록의 새로고침과 더 보기도 SEARCH identity를 유지한다. `인기` 또는 `최신`으로 돌아가는 동작은 각 mode 버튼을
+명시적으로 선택했을 때만 일어나며, 빈 검색어의 필터 화면은 UI에서 `필터 결과`로 표시한다.
+
+Library에서 `image_archive` 작품에 logical document section이 있으면 바로 page Reader를 열지 않고 연재 작품
+상세로 진입한다. 상세 화면은 텍스트 작품 상세와 같은 cover/byline/description/tag/action/stat shell을 사용하고,
+로컬 page chapter를 `documentSectionId` 단위 회차로 투영하며 source 연결이 살아 있으면 같은 collection의 원격
+회차를 합친다. 받은 회차, 미다운로드 회차와 revision 변경 회차의 작업은 접근 가능한 34px 보기/다운로드/갱신
+icon으로 표시한다. Source 연결이 없거나 끊겨도 받은 회차와
+표지·metadata는 로컬 상세에 남는다. Reader는 선택 회차의 첫 page로 열리고 뒤로가기는 작품 상세를 복원한다.
+
+이 상세/회차 projection은 Suwayomi 전용 UI가 아니다. `moya-series.json`처럼 logical section을 가진 로컬
+image archive도 같은 상세와 회차 목록을 사용한다. 2026-08-26 local-series import부터 사용자가 함께 고른
+회차별 ZIP/CBZ/RAR/CBR/7z 또는 한 단계 안쪽에 ZIP/CBZ 회차가 든 outer ZIP/CBZ를 하나의 aggregate로 만들 수
+있다. 작품 상세의 작은 `+` 보조 동작 또는 import dialog에서 exact title 후보를 명시적으로 선택해 기존 작품에
+추가한다. exact hash 중복은 건너뛰고 같은 release identity의 다른 내용은 기존 회차를 보존한 채 conflict로
+표시한다. 이미 별도 Library 작품으로 저장된 항목의 사후 병합과 fuzzy title 자동 병합은 아직 지원하지 않는다.
+
+작은 `+`로 제공하는 `로컬 회차 추가`는 source 연결의 기능이 아니라 Library 보조 기능이다. Suwayomi 연결 여부와 관계없이 일반 단일
+image archive를 첫 회차로 승격할 수 있고, TXT/Markdown/EPUB 작품 상세에서도 같은 명시적 진입점을 제공한다.
+텍스트/EPUB는 원격 source link 대신 `moya-document-series.json`과 보존된 원본 파일로 구성된 local package를
+사용한다. 따라서 Suwayomi 작품에 로컬 파일을 얹는 것이 기본 흐름은 아니며, 로컬 작품의 파일 기반 증분 관리가
+주 목적이다.
 
 ### 개인 self-host Docker profile
 
@@ -182,10 +242,37 @@ Suwayomi overlay 조합, 필수 credential 누락 실패, 공식 stable image의
 health boundary도 확인했다. 이는 실제 WireGuard routing, DNS/TLS 인증서, NPM Proxy Host, Hosted OAuth callback,
 volume 재생성 복구나 제3자 Mihon extension browse/import를 대상 서버에서 완료했다는 뜻은 아니다.
 
-HTTP localhost Moya와 공식 계약 fixture로 연결 → 설치 source → 작품 → 상세/회차 → CBZ import → Reader →
-reload 영속성을 실제 Web에서 확인했다. 이 evidence는 UI와 host boundary 검증이며 실제 제3자 Mihon extension
-하나를 설치한 Suwayomi live gate, source filter/latest, source preference/login, authenticated cover asset,
-HTTPS Web에서 HTTP LAN endpoint로 접근할 때의 mixed-content/PNA, Tauri managed sidecar를 완료했다는 뜻은 아니다.
+HTTP localhost Moya와 공식 계약 fixture에 더해 실제 설치된 Blacktoon/Naver Mihon source를 확인했다. Blacktoon은
+authenticated cover와 HTTP 400 direct-download fallback으로 35-page 회차 import가 통과했다. Naver는
+POPULAR/LATEST와 extension-defined select/sort filter를 실제 목록에 투영했고, `서른의 봄` 01·02를 한 작품으로
+가져온 뒤 03을 추가해 3개 회차·212 page가 됐다. Reader 회차 선택, reload 영속성과 안정적인 revision 재조회도
+통과했다. 후속 새 회차 checkpoint는 `서른의 봄`을 Library 원격 작품으로 추가하고 reload 뒤 root 작품 카드와
+15개 회차 재진입, POPULAR/LATEST preference 복원 및 390×844 레이아웃을 확인했다. 이어서 Source 카드 전체
+상세 진입/원클릭 추가, 영구 원격 표지, text-detail형 상세·회차 표와 작은 `+` 로컬 추가 동선도 실제 Naver
+source에서 확인했다.
+이는 주기적 background polling/notification,
+모든 Mihon extension 호환, HTTPS Web의 HTTP LAN mixed-content/PNA, target-host Docker/NPM 및 Tauri managed
+sidecar 완료를 뜻하지 않는다.
+
+## 가져오기 연결의 crash·다중 창 복구
+
+외부 source link는 본문보다 먼저 성공 상태로 기록하지 않는다. 다운로드와 hash 검증 뒤 import 직전에
+`pendingImport`를 저장하고, 본문 활성화가 끝난 뒤에만 확정 link로 바꾼다.
+
+- intent에는 매 실행마다 다른 `operationId`, 기존 link 존재 여부, 이전 content revision, 기대 source asset hash와
+  적용할 원격 revision/hash를 기록한다.
+- 앱이 중단되면 다음 source projection이 활성 작품의 `sourceContentHash`를 기대 hash와 비교한다. 정확히 일치할
+  때만 확정하고, 일치하지 않으면 기존 link는 복구하고 새 link intent는 제거한다. 단순히 content revision ID가
+  달라졌다는 이유만으로 해당 source import 성공으로 간주하지 않는다.
+- 확정·복구는 IndexedDB 한 transaction 안에서 현재 `operationId`가 기대값과 같은지 확인하는 compare-and-swap을
+  사용한다. 다른 탭의 더 최신 가져오기를 이전 탭의 늦은 성공/실패가 덮어쓰지 않는다.
+- staging도 기존 link baseline과 pending owner를 같은 transaction에서 검사해 acquire한다. Hash가 아직 바뀌지 않은
+  30분 이내 intent는 진행 중으로 보고 건드리지 않으며, lease가 지난 intent만 exact hash 확정 또는 이전 link
+  복구 대상으로 삼는다.
+- import promise가 완료된 순간부터 본문은 적용된 것으로 본다. 그 뒤 projection용 재조회가 실패해도 이전 link로
+  되돌리지 않고 import 결과와 durable intent로 복구한다.
+- 단일 작품과 Suwayomi aggregate 회차 가져오기는 같은 규칙을 사용한다. Aggregate는 실제로 import할 최종 CBZ의
+  hash를 먼저 계산해 각 회차 link intent에 공통으로 기록한다.
 
 ## 개발과 검증
 
@@ -206,10 +293,11 @@ remote-to-local link가 복구됐다. 이 과정에서 raw `fetch`의 illegal in
 Source Hub checkpoint는 기존 modal과 중복 source rail을 제거했다. 연결된 source만 desktop sidebar와 mobile
 drawer에 나타나며 cloud folder는 별도 탐색 영역, file/work는 Library형 card로 표시한다. 새 항목은 카드별
 `라이브러리로 추가` 또는 일괄 선택, 기존 link는 `라이브러리에서 보기`, revision drift는 명시적 `업데이트`를 사용한다.
+Cover에는 원격 이미지 또는 중립 아이콘만 표시하고 제목·파일 형식 글자 overlay는 표시하지 않는다.
 Catalog의 표시 제목과 import 파일명은 `importFileName`으로 분리한다. 실제 Dropbox root/card/open-local-book와
-개발 catalog의 단일 card import 2→3권/reload가 local Web에서 통과했다. Suwayomi work detail은 후속 bridge에서
-구현했지만 generic remote cover fetch/cache와 release list는 아직 없으며 development fixture도 production
-bundle에는 등록되지 않는다.
+개발 catalog의 단일 card import 2→3권/reload가 local Web에서 통과했다. Suwayomi work detail, 원격 cover와
+표지 없는 release list는 후속 bridge에서 구현했다. Library의 연재 작품 카드에서도 같은 detail로 진입하며
+로컬/원격 회차 상태를 합친다. Development fixture는 production bundle에 등록되지 않는다.
 
 Cloud folder 안에서는 현재 위치를 source connector와 account connection 조합의 기본 폴더로 지정할 수 있다.
 선택은 source 전용 IndexedDB preference에 breadcrumb와 opaque `parentRef`만 저장하며 credential이나 원문은
@@ -219,5 +307,7 @@ Cloud folder 안에서는 현재 위치를 source connector와 account connectio
 다음 connector도 같은 common model과 host broker를 사용하되 cloud file과 작품 catalog의 provider semantics를
 한 거대한 optional interface로 합치지 않는다. 배포 직후에는 실제 WireGuard/NPM host에서 HTTPS origin,
 OAuth callback, 컨테이너·volume 재생성 및 합법적으로 설치한 Mihon extension 하나의 live gate를 수행한다.
-제품 구조의 다음 우선순위는 Suwayomi 회차를 한 작품 아래 누적하는 `serial comic` model이다. Dropbox/Google의
-강제 token expiry·권한 철회·대형 파일 취소는 connector 공통 회귀 gate에서 함께 확인한다.
+Suwayomi source preference와 Library 원격 작품/foreground 새 회차 확인은 구현됐다. 다음 source 후보는 사용자가 실제로
+요청할 때의 선택적 새 회차 알림/자동 다운로드 정책, HTTPS→HTTP LAN PNA/managed sidecar와 장기 연재 segmented
+storage다. 사후 Library 작품 병합은 개발 단계에서는 우선하지 않는다. Dropbox/Google의 강제 token expiry·권한
+철회·대형 파일 취소는 connector 공통 회귀 gate에서 함께 확인한다.

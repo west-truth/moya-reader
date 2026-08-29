@@ -9,9 +9,11 @@ import {
   Download,
   EyeOff,
   Expand,
+  Focus,
   Highlighter,
   ListOrdered,
   Maximize2,
+  Minimize2,
   Minus,
   MoreHorizontal,
   PanelLeftClose,
@@ -61,6 +63,7 @@ import { IndexedDbDocumentAnnotationRepository } from '../../storage/document-an
 import type { DocumentTextSearchResult } from '../../repositories/document-text-repository';
 import type { ReaderRepository } from '../../repositories/reader-repository';
 import { LocalTesseractOcrProvider } from '../../providers/local-tesseract-ocr-provider';
+import { useScrollChapterBoundary } from '../reader/use-scroll-chapter-boundary';
 import { IndexedDbDocumentTextRepository } from '../../storage/document-text-store';
 import { IndexedDbComicReadingProfileRepository } from '../../storage/comic-reading-profile-store';
 import {
@@ -93,9 +96,14 @@ import { remapFixedTextAnnotation } from './text/fixed-text-annotation-remap';
 import { manuallyReanchorFixedTextAnnotation } from './text/manual-fixed-text-reanchor';
 import {
   buildComicSpreads,
+  comicProfileModeToViewMode,
   comicSpreadForPage,
   comicSpreadPages,
+  comicViewModeToProfileMode,
   DEFAULT_COMIC_READING_PROFILE,
+  isContinuousComicViewMode,
+  nextComicViewMode,
+  type ComicViewMode,
   type ComicPageLayoutHint,
 } from './comic-layout';
 import { comicCropRefitScale, detectComicContentBounds, runComicAutoCropBatch } from './comic-auto-crop';
@@ -105,17 +113,34 @@ import {
   type PageFocalRect,
   type ViewportFocalAnchor,
 } from './viewport-focal-anchor';
+import {
+  continuousComicPageEstimatedHeight,
+  continuousComicPageIndexes,
+  continuousComicSectionIndex,
+  continuousPageNearestViewportCenter,
+  representativeContinuousImageDimensions,
+  shouldAnchorContinuousPageResize,
+  type ContinuousImageDimensions,
+} from './continuous-scroll';
 import './fixed-document.css';
 
 GlobalWorkerOptions.workerSrc = pdfWorkerUrl;
 
 type FitMode = ComicReadingProfile['fit'];
-type ViewMode = 'single' | 'spread' | 'continuous';
+type ViewMode = ComicViewMode;
 type PdfTextPageState = 'ready' | 'ocr_candidate' | 'failed';
+
+interface LoadedArchivePage {
+  readonly index: number;
+  readonly blob: Blob;
+  readonly hint?: ComicPageLayoutHint;
+}
 
 const documentTextRepository = new IndexedDbDocumentTextRepository();
 const documentAnnotationRepository = new IndexedDbDocumentAnnotationRepository();
 const comicReadingProfileRepository = new IndexedDbComicReadingProfileRepository();
+const CONTINUOUS_SECTION_NAV_HEIGHT = 112;
+const CONTINUOUS_SECTION_BOUNDARY_HEIGHT = 196;
 
 const OCR_LANGUAGE_LABELS: Record<OcrLanguageModel, string> = {
   kor: '한국어',
@@ -127,6 +152,11 @@ function formatStoredBytes(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`;
   if (bytes < 1024 * 1024) return `${Math.round(bytes / 1024)} KB`;
   return `${(bytes / (1024 * 1024)).toFixed(bytes < 10 * 1024 * 1024 ? 1 : 0)} MB`;
+}
+
+function mobileComicSectionLabel(title: string): string {
+  const normalized = title.trim();
+  return /^\d+(?:\.\d+)?$/.test(normalized) ? `${normalized}화` : normalized;
 }
 
 interface PdfTextSelection {
@@ -146,6 +176,7 @@ export interface FixedDocumentScreenProps {
   readonly novel: Novel;
   readonly chapters: readonly Chapter[];
   readonly readingPosition?: ReadingPosition;
+  readonly initialChapterId?: string;
   readonly repository: ReaderRepository;
   readonly assets: BookAssetRepository;
   readonly onBack: () => void;
@@ -159,8 +190,8 @@ export interface FixedDocumentScreenProps {
   readonly annotationSyncRevision?: string;
 }
 
-function initialPage(chapters: readonly Chapter[], position?: ReadingPosition): number {
-  const index = chapters.findIndex((chapter) => chapter.id === position?.chapterId);
+function initialPage(chapters: readonly Chapter[], position?: ReadingPosition, initialChapterId?: string): number {
+  const index = chapters.findIndex((chapter) => chapter.id === (initialChapterId ?? position?.chapterId));
   return Math.max(0, index);
 }
 
@@ -614,6 +645,7 @@ export default function FixedDocumentScreen({
   novel,
   chapters,
   readingPosition,
+  initialChapterId,
   repository,
   assets,
   onBack,
@@ -627,12 +659,30 @@ export default function FixedDocumentScreen({
   annotationSyncRevision,
 }: FixedDocumentScreenProps) {
   const sortedChapters = useMemo(() => [...chapters].sort((left, right) => left.index - right.index), [chapters]);
+  const documentSections = useMemo(() => {
+    const sections: Array<{ id: string; title: string; startPageIndex: number; pageCount: number }> = [];
+    sortedChapters.forEach((chapter, index) => {
+      if (!chapter.documentSectionId || !chapter.documentSectionTitle) return;
+      const current = sections.at(-1);
+      if (current?.id === chapter.documentSectionId) current.pageCount += 1;
+      else
+        sections.push({
+          id: chapter.documentSectionId,
+          title: chapter.documentSectionTitle,
+          startPageIndex: index,
+          pageCount: 1,
+        });
+    });
+    return sections;
+  }, [sortedChapters]);
   const totalPages = sortedChapters.length;
-  const [pageIndex, setPageIndex] = useState(() => initialPage(sortedChapters, readingPosition));
+  const [pageIndex, setPageIndex] = useState(() => initialPage(sortedChapters, readingPosition, initialChapterId));
   const [pageDraft, setPageDraft] = useState(String(pageIndex + 1));
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [mobileThumbnailOpen, setMobileThumbnailOpen] = useState(false);
+  const [immersive, setImmersive] = useState(false);
+  const [fullscreen, setFullscreen] = useState(false);
   const [fit, setFit] = useState<FitMode>('page');
   const [viewMode, setViewMode] = useState<ViewMode>('single');
   const [zoom, setZoom] = useState(1);
@@ -641,14 +691,20 @@ export default function FixedDocumentScreen({
   const [pdfPages, setPdfPages] = useState<Map<number, PDFPageProxy>>(() => new Map());
   const [imageUrls, setImageUrls] = useState<Map<number, string>>(() => new Map());
   const imageUrlsRef = useRef<Map<number, string>>(new Map());
+  const [imageDimensions, setImageDimensions] = useState<Map<number, ContinuousImageDimensions>>(() => new Map());
+  const archiveImageLoadsRef = useRef(new Map<string, Promise<LoadedArchivePage>>());
   const [status, setStatus] = useState<'loading' | 'ready' | 'failed'>('loading');
   const [errorMessage, setErrorMessage] = useState('');
-  const viewportRef = useRef<HTMLDivElement>(null);
+  const viewportRef = useRef<HTMLElement>(null);
+  const continuousContentRef = useRef<HTMLDivElement>(null);
   const sidebarRef = useRef<HTMLElement>(null);
   const [viewportSize, setViewportSize] = useState({ width: 1000, height: 800 });
   const viewportSizeRef = useRef(viewportSize);
+  const viewportScrollFrameRef = useRef<number>();
+  const pendingContinuousPageRef = useRef<number>();
   const [focalRestoreRevision, setFocalRestoreRevision] = useState(0);
-  const pointerStartRef = useRef<{ x: number; y: number }>();
+  const pointerStartRef = useRef<{ x: number; y: number; at: number; immersiveEligible: boolean }>();
+  const suppressViewportClickRef = useRef(false);
   const activePointersRef = useRef(new Map<number, { x: number; y: number }>());
   const pinchRef = useRef<{
     distance: number;
@@ -732,7 +788,12 @@ export default function FixedDocumentScreen({
     }
   }, []);
 
-  const effectiveViewMode: ViewMode = viewMode === 'spread' && viewportSize.width < 720 ? 'single' : viewMode;
+  const requestedViewMode =
+    novel.format !== 'image_archive' && viewMode === 'continuous-seamless' ? 'continuous' : viewMode;
+  const effectiveViewMode: ViewMode =
+    requestedViewMode === 'spread' && viewportSize.width < 720 ? 'single' : requestedViewMode;
+  const continuousView = isContinuousComicViewMode(effectiveViewMode);
+  const seamlessContinuousView = effectiveViewMode === 'continuous-seamless';
 
   const captureFocalAnchor = useCallback(
     (clientX?: number, clientY?: number) => {
@@ -768,6 +829,43 @@ export default function FixedDocumentScreen({
     },
     [captureFocalAnchor],
   );
+
+  const closeTransientChrome = useCallback(() => {
+    setMobileMenuOpen(false);
+    setMobileThumbnailOpen(false);
+    setSearchOpen(false);
+    setAnnotationOpen(false);
+    setComicSettingsOpen(false);
+    setListeningPreparationOpen(false);
+    setReadingOrderOpen(false);
+    setSelectionMode(false);
+    setRegionMode(false);
+    setPendingTextSelection(undefined);
+    setPendingRegionSelection(undefined);
+    setReanchorTargetId(undefined);
+    window.getSelection()?.removeAllRanges();
+  }, []);
+
+  const toggleImmersive = useCallback(() => {
+    if (!immersive) closeTransientChrome();
+    setImmersive((current) => !current);
+  }, [closeTransientChrome, immersive]);
+
+  const toggleFullscreen = useCallback(async () => {
+    if (document.fullscreenElement) {
+      await document.exitFullscreen().catch(() => undefined);
+      return;
+    }
+    if (!document.fullscreenEnabled || !document.documentElement.requestFullscreen) return;
+    await document.documentElement.requestFullscreen({ navigationUI: 'hide' }).catch(() => undefined);
+  }, []);
+
+  useEffect(() => {
+    const syncFullscreen = () => setFullscreen(Boolean(document.fullscreenElement));
+    document.addEventListener('fullscreenchange', syncFullscreen);
+    syncFullscreen();
+    return () => document.removeEventListener('fullscreenchange', syncFullscreen);
+  }, []);
 
   useLayoutEffect(() => {
     const anchor = pendingFocalAnchorRef.current;
@@ -805,21 +903,60 @@ export default function FixedDocumentScreen({
     () => buildComicSpreads(totalPages, comicProfile, comicPageHints),
     [comicPageHints, comicProfile, totalPages],
   );
-  const continuousVirtualizer = useVirtualizer({
-    count: effectiveViewMode === 'continuous' ? totalPages : 0,
-    getScrollElement: () => viewportRef.current,
-    estimateSize: () =>
-      Math.max(
-        420,
-        fit === 'width'
-          ? viewportSize.width * 1.42 * zoom
-          : fit === 'original'
-            ? viewportSize.height * 1.5 * zoom
-            : viewportSize.height * zoom,
+  const archiveEstimateDimensions = useMemo(
+    () => representativeContinuousImageDimensions(imageDimensions.values()),
+    [imageDimensions],
+  );
+  const currentDocumentSectionIndex = useMemo(
+    () => continuousComicSectionIndex(documentSections, pageIndex),
+    [documentSections, pageIndex],
+  );
+  const currentDocumentSection = documentSections[currentDocumentSectionIndex];
+  const previousDocumentSection = documentSections[currentDocumentSectionIndex - 1];
+  const nextDocumentSection = documentSections[currentDocumentSectionIndex + 1];
+  const continuousPageIndexes = useMemo(
+    () =>
+      continuousComicPageIndexes(
+        totalPages,
+        currentDocumentSection ? [currentDocumentSection] : [],
+        currentDocumentSection?.startPageIndex ?? 0,
       ),
-    gap: 32,
+    [currentDocumentSection, totalPages],
+  );
+  const continuousVirtualIndexByPage = useMemo(
+    () => new Map(continuousPageIndexes.map((globalPageIndex, virtualIndex) => [globalPageIndex, virtualIndex])),
+    [continuousPageIndexes],
+  );
+  const continuousSectionKey = currentDocumentSection?.id ?? `${novel.id}:all-pages`;
+  const estimateContinuousPageSize = useCallback(
+    (index: number) =>
+      continuousComicPageEstimatedHeight({
+        fit,
+        viewportWidth: viewportSize.width,
+        viewportHeight: viewportSize.height,
+        zoom,
+        seamless: seamlessContinuousView,
+        dimensions: imageDimensions.get(index) ?? archiveEstimateDimensions,
+      }),
+    [
+      archiveEstimateDimensions,
+      fit,
+      imageDimensions,
+      seamlessContinuousView,
+      viewportSize.height,
+      viewportSize.width,
+      zoom,
+    ],
+  );
+  const continuousVirtualizer = useVirtualizer({
+    count: continuousView ? continuousPageIndexes.length : 0,
+    getScrollElement: () => viewportRef.current,
+    estimateSize: (virtualIndex) => estimateContinuousPageSize(continuousPageIndexes[virtualIndex] ?? pageIndex),
+    gap: seamlessContinuousView ? -1 : 32,
     overscan: 2,
   });
+  continuousVirtualizer.shouldAdjustScrollPositionOnItemSizeChange = (item, _delta, instance) =>
+    shouldAnchorContinuousPageResize(item.end, instance.scrollOffset ?? 0);
   const sidebarVirtualizer = useVirtualizer({
     count: sidebarOpen ? totalPages : 0,
     getScrollElement: () => sidebarRef.current,
@@ -828,14 +965,16 @@ export default function FixedDocumentScreen({
   });
   const continuousItems = continuousVirtualizer.getVirtualItems();
   const sidebarItems = sidebarVirtualizer.getVirtualItems();
-  const displayedPages =
-    effectiveViewMode === 'continuous'
-      ? continuousItems.length
-        ? continuousItems.map((item) => item.index)
-        : [pageIndex]
-      : effectiveViewMode === 'spread' && novel.format === 'image_archive'
-        ? comicSpreadPages(comicSpreads[comicSpreadForPage(comicSpreads, pageIndex)] ?? { readingOrder: [pageIndex] })
-        : [pageIndex];
+  const continuousDisplayedPages = continuousItems
+    .map((item) => continuousPageIndexes[item.index])
+    .filter((index) => index !== undefined);
+  const displayedPages = continuousView
+    ? continuousDisplayedPages.length
+      ? continuousDisplayedPages
+      : [pageIndex]
+    : effectiveViewMode === 'spread' && novel.format === 'image_archive'
+      ? comicSpreadPages(comicSpreads[comicSpreadForPage(comicSpreads, pageIndex)] ?? { readingOrder: [pageIndex] })
+      : [pageIndex];
   const displayedPageKey = [...displayedPages].sort((left, right) => left - right).join(',');
   const wantedPageKey = [...new Set([...displayedPages, ...sidebarItems.map((item) => item.index)])]
     .sort((left, right) => left - right)
@@ -846,17 +985,23 @@ export default function FixedDocumentScreen({
   );
   const imageWantedPageIndexes = useMemo(() => {
     const displayed = displayedPageKey.split(',').filter(Boolean).map(Number);
-    return new Set(archiveFullImageWindow(displayed, pageIndex, totalPages));
-  }, [displayedPageKey, pageIndex, totalPages]);
+    const wanted = archiveFullImageWindow(displayed, pageIndex, totalPages);
+    if (!continuousView || !currentDocumentSection) return new Set(wanted);
+    const sectionEnd = currentDocumentSection.startPageIndex + currentDocumentSection.pageCount;
+    return new Set(wanted.filter((index) => index >= currentDocumentSection.startPageIndex && index < sectionEnd));
+  }, [continuousView, currentDocumentSection, displayedPageKey, pageIndex, totalPages]);
 
   const goToPage = useCallback(
     (next: number) => {
       const normalized = clampPage(next, totalPages);
       setPageIndex(normalized);
       setPageDraft(String(normalized + 1));
-      if (effectiveViewMode === 'continuous') continuousVirtualizer.scrollToIndex(normalized, { align: 'center' });
+      if (!continuousView) return;
+      const virtualIndex = continuousVirtualIndexByPage.get(normalized);
+      if (virtualIndex === undefined) pendingContinuousPageRef.current = normalized;
+      else continuousVirtualizer.scrollToIndex(virtualIndex, { align: 'center' });
     },
-    [continuousVirtualizer, effectiveViewMode, totalPages],
+    [continuousView, continuousVirtualIndexByPage, continuousVirtualizer, totalPages],
   );
 
   const turnPage = useCallback(
@@ -888,6 +1033,15 @@ export default function FixedDocumentScreen({
       const current = previous.get(index);
       if (current?.type === hint.type && current?.doublePage === hint.doublePage) return previous;
       return new Map(previous).set(index, hint);
+    });
+  }, []);
+
+  const recordArchiveImageDimensions = useCallback((index: number, image: HTMLImageElement) => {
+    if (image.naturalWidth <= 0 || image.naturalHeight <= 0) return;
+    setImageDimensions((previous) => {
+      const current = previous.get(index);
+      if (current?.width === image.naturalWidth && current?.height === image.naturalHeight) return previous;
+      return new Map(previous).set(index, { width: image.naturalWidth, height: image.naturalHeight });
     });
   }, []);
 
@@ -1572,7 +1726,7 @@ export default function FixedDocumentScreen({
     void comicReadingProfileRepository.get(novel.id, { direction: novel.readingDirection ?? 'ltr' }).then((profile) => {
       if (!active) return;
       setComicProfile(profile);
-      setViewMode(profile.mode === 'vertical' ? 'continuous' : profile.mode);
+      setViewMode(comicProfileModeToViewMode(profile.mode, profile.seamlessVertical));
       setFit(profile.fit);
     });
     return () => {
@@ -1597,17 +1751,53 @@ export default function FixedDocumentScreen({
 
   useEffect(() => {
     continuousVirtualizer.measure();
-  }, [continuousVirtualizer, fit, rotation, viewportSize.height, viewportSize.width, zoom]);
+  }, [
+    archiveEstimateDimensions?.height,
+    archiveEstimateDimensions?.width,
+    continuousVirtualizer,
+    effectiveViewMode,
+    fit,
+    rotation,
+    viewportSize.height,
+    viewportSize.width,
+    zoom,
+  ]);
 
   useEffect(() => {
-    if (effectiveViewMode !== 'continuous') return;
+    if (!seamlessContinuousView || !archiveEstimateDimensions) return;
+    const virtualIndex = continuousVirtualIndexByPage.get(pageIndex) ?? 0;
     const frame = window.requestAnimationFrame(() =>
-      continuousVirtualizer.scrollToIndex(pageIndex, { align: 'center' }),
+      continuousVirtualizer.scrollToIndex(virtualIndex, { align: 'center' }),
     );
     return () => window.cancelAnimationFrame(frame);
-    // Only settle the existing page when the layout mode changes. Scroll tracking owns later page changes.
+    // Settle once when the representative image ratio replaces the fallback estimate.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [effectiveViewMode]);
+  }, [
+    archiveEstimateDimensions?.height,
+    archiveEstimateDimensions?.width,
+    continuousSectionKey,
+    continuousVirtualizer,
+    seamlessContinuousView,
+  ]);
+
+  useLayoutEffect(() => {
+    if (!continuousView) return;
+    const pendingPage = pendingContinuousPageRef.current;
+    const targetPage = pendingPage ?? pageIndex;
+    const virtualIndex = continuousVirtualIndexByPage.get(targetPage) ?? 0;
+    pendingContinuousPageRef.current = undefined;
+    if (pendingPage !== undefined) {
+      const viewport = viewportRef.current;
+      if (viewport) viewport.scrollTo({ top: 0, left: viewport.scrollLeft });
+      continuousVirtualizer.scrollToIndex(virtualIndex, { align: 'start' });
+    }
+    const frame = window.requestAnimationFrame(() =>
+      continuousVirtualizer.scrollToIndex(virtualIndex, { align: pendingPage === undefined ? 'center' : 'start' }),
+    );
+    return () => window.cancelAnimationFrame(frame);
+    // Settle when the layout or active episode changes. Scroll tracking owns later page changes inside the episode.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [continuousSectionKey, continuousView, effectiveViewMode]);
 
   useEffect(() => {
     if (!sidebarOpen) return;
@@ -1816,33 +2006,81 @@ export default function FixedDocumentScreen({
     if (novel.format !== 'image_archive') return;
     let active = true;
     const wanted = new Set([...imageWantedPageIndexes].filter((value) => value >= 0 && value < totalPages));
+    const missing = [...wanted].filter((index) => !imageUrlsRef.current.has(index));
+    if (missing.length === 0) {
+      setStatus('ready');
+      return;
+    }
     setStatus('loading');
     void Promise.all(
-      [...wanted].map(async (index) => {
-        if (imageUrls.has(index)) return;
-        const chapter = sortedChapters[index];
-        const paragraphPage = chapter ? await repository.getParagraphPage(chapter.id, 0) : undefined;
-        const paragraph = paragraphPage?.paragraphs[0];
-        if (active && (paragraph?.documentPageType !== undefined || paragraph?.documentPageDouble !== undefined)) {
-          recordComicPageHint(index, {
-            type: paragraph.documentPageType,
-            doublePage: paragraph.documentPageDouble,
-          });
-        }
-        const assetId = paragraph?.assetId;
-        const resource = assetId ? await assets.getEmbeddedResource(novel.id, assetId) : undefined;
-        if (!resource) throw new Error(`${index + 1}페이지 이미지를 찾을 수 없습니다.`);
-        const url = URL.createObjectURL(resource.blob);
-        if (active)
-          setImageUrls((previous) => {
-            const next = new Map(previous).set(index, url);
-            imageUrlsRef.current = next;
-            return next;
-          });
-        else URL.revokeObjectURL(url);
+      missing.map((index) => {
+        const loadKey = `${novel.id}:${index}`;
+        const existing = archiveImageLoadsRef.current.get(loadKey);
+        if (existing) return existing;
+        const pending = (async (): Promise<LoadedArchivePage> => {
+          const chapter = sortedChapters[index];
+          const paragraphPage = chapter ? await repository.getParagraphPage(chapter.id, 0) : undefined;
+          const paragraph = paragraphPage?.paragraphs[0];
+          const assetId = paragraph?.assetId;
+          const resource = assetId ? await assets.getEmbeddedResource(novel.id, assetId) : undefined;
+          if (!resource) throw new Error(`${index + 1}페이지 이미지를 찾을 수 없습니다.`);
+          return {
+            index,
+            blob: resource.blob,
+            ...(paragraph?.documentPageType !== undefined || paragraph?.documentPageDouble !== undefined
+              ? {
+                  hint: {
+                    type: paragraph.documentPageType,
+                    doublePage: paragraph.documentPageDouble,
+                  },
+                }
+              : {}),
+          };
+        })();
+        archiveImageLoadsRef.current.set(loadKey, pending);
+        void pending.then(
+          () => {
+            if (archiveImageLoadsRef.current.get(loadKey) === pending) archiveImageLoadsRef.current.delete(loadKey);
+          },
+          () => {
+            if (archiveImageLoadsRef.current.get(loadKey) === pending) archiveImageLoadsRef.current.delete(loadKey);
+          },
+        );
+        return pending;
       }),
     )
-      .then(() => active && setStatus('ready'))
+      .then((loaded) => {
+        if (!active) return;
+        const hints = loaded.filter((page): page is LoadedArchivePage & { hint: ComicPageLayoutHint } =>
+          Boolean(page.hint),
+        );
+        if (hints.length > 0) {
+          setComicPageHints((previous) => {
+            const next = new Map(previous);
+            let changed = false;
+            for (const page of hints) {
+              const current = next.get(page.index);
+              if (current?.type === page.hint.type && current?.doublePage === page.hint.doublePage) continue;
+              next.set(page.index, page.hint);
+              changed = true;
+            }
+            return changed ? next : previous;
+          });
+        }
+        setImageUrls((previous) => {
+          const next = new Map(previous);
+          let changed = false;
+          for (const page of loaded) {
+            if (next.has(page.index)) continue;
+            next.set(page.index, URL.createObjectURL(page.blob));
+            changed = true;
+          }
+          if (!changed) return previous;
+          imageUrlsRef.current = next;
+          return next;
+        });
+        setStatus('ready');
+      })
       .catch((error) => {
         if (!active) return;
         setErrorMessage(error instanceof Error ? error.message : '이미지 페이지를 열지 못했습니다.');
@@ -1851,17 +2089,7 @@ export default function FixedDocumentScreen({
     return () => {
       active = false;
     };
-  }, [
-    assets,
-    imageUrls,
-    imageWantedPageIndexes,
-    novel.format,
-    novel.id,
-    recordComicPageHint,
-    repository,
-    sortedChapters,
-    totalPages,
-  ]);
+  }, [assets, imageWantedPageIndexes, novel.format, novel.id, repository, sortedChapters, totalPages]);
 
   useEffect(() => {
     setImageUrls((previous) => {
@@ -1880,6 +2108,7 @@ export default function FixedDocumentScreen({
   useEffect(
     () => () => {
       comicCropControllerRef.current?.abort();
+      if (viewportScrollFrameRef.current !== undefined) cancelAnimationFrame(viewportScrollFrameRef.current);
       imageUrlsRef.current.forEach((url) => URL.revokeObjectURL(url));
       imageUrlsRef.current.clear();
     },
@@ -1888,7 +2117,13 @@ export default function FixedDocumentScreen({
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
-      if (event.target instanceof HTMLInputElement || event.target instanceof HTMLSelectElement) return;
+      if (
+        event.target instanceof HTMLInputElement ||
+        event.target instanceof HTMLSelectElement ||
+        event.target instanceof HTMLTextAreaElement ||
+        (event.target instanceof Element && event.target.closest('[contenteditable="true"]'))
+      )
+        return;
       const rtlComic = novel.format === 'image_archive' && comicProfile.direction === 'rtl';
       if (event.key === 'ArrowLeft') {
         event.preventDefault();
@@ -1902,6 +2137,12 @@ export default function FixedDocumentScreen({
       } else if (event.key === 'PageDown' || event.key === ' ') {
         event.preventDefault();
         turnPage(1);
+      } else if (event.key.toLowerCase() === 'i') {
+        event.preventDefault();
+        toggleImmersive();
+      } else if (event.key.toLowerCase() === 'f') {
+        event.preventDefault();
+        void toggleFullscreen();
       } else if (event.key === '+' || event.key === '=')
         preserveFocalPoint(() => setZoom((value) => Math.min(3, value + 0.1)));
       else if (event.key === '-') preserveFocalPoint(() => setZoom((value) => Math.max(0.5, value - 0.1)));
@@ -1918,6 +2159,7 @@ export default function FixedDocumentScreen({
       else if (event.key === 'Escape' && annotationOpen) setAnnotationOpen(false);
       else if (event.key === 'Escape' && comicSettingsOpen) setComicSettingsOpen(false);
       else if (event.key === 'Escape' && listeningPreparationOpen) setListeningPreparationOpen(false);
+      else if (event.key === 'Escape' && immersive) setImmersive(false);
       else if (event.key === 'Escape' && document.fullscreenElement) void document.exitFullscreen();
     };
     window.addEventListener('keydown', onKeyDown);
@@ -1937,6 +2179,9 @@ export default function FixedDocumentScreen({
     regionMode,
     searchOpen,
     preserveFocalPoint,
+    immersive,
+    toggleFullscreen,
+    toggleImmersive,
     turnPage,
   ]);
 
@@ -1963,13 +2208,41 @@ export default function FixedDocumentScreen({
     '--fixed-doc-crop-left': `${comicProfile.crop === 'manual' ? (comicProfile.manualCrop?.left ?? 0) * 100 : 0}%`,
     '--fixed-doc-crop-scale': comicProfile.crop === 'manual' ? comicCropRefitScale(comicProfile.manualCrop, fit) : 1,
     '--fixed-doc-original-scale': fit === 'original' ? zoom : 1,
+    '--fixed-doc-viewport-width': `${viewportSize.width}px`,
+    '--fixed-doc-viewport-height': `${viewportSize.height}px`,
   } as CSSProperties;
+  const continuousSectionFooterHeight =
+    continuousView && currentDocumentSection
+      ? nextDocumentSection
+        ? CONTINUOUS_SECTION_BOUNDARY_HEIGHT
+        : CONTINUOUS_SECTION_NAV_HEIGHT
+      : 0;
+  const scrollSectionBoundary = useScrollChapterBoundary({
+    rootRef: viewportRef,
+    contentRef: continuousContentRef,
+    chapterId: continuousSectionKey,
+    enabled: continuousView && Boolean(currentDocumentSection && nextDocumentSection),
+    onNextChapter: () => {
+      if (nextDocumentSection) goToPage(nextDocumentSection.startPageIndex);
+    },
+  });
 
-  const pointerDown = (event: ReactPointerEvent<HTMLDivElement>) => {
+  const pointerDown = (event: ReactPointerEvent<HTMLElement>) => {
     if (selectionMode && event.target instanceof Element && event.target.closest('.fixed-doc-text-layer')) return;
     event.currentTarget.setPointerCapture(event.pointerId);
     activePointersRef.current.set(event.pointerId, { x: event.clientX, y: event.clientY });
-    pointerStartRef.current = { x: event.clientX, y: event.clientY };
+    pointerStartRef.current = {
+      x: event.clientX,
+      y: event.clientY,
+      at: performance.now(),
+      immersiveEligible: !(
+        event.target instanceof Element &&
+        event.target.closest(
+          'a,button,input,select,textarea,label,[role="button"],[contenteditable="true"],.fixed-doc-text-layer,.fixed-doc-region-select-layer',
+        )
+      ),
+    };
+    if (activePointersRef.current.size === 1 && continuousView) scrollSectionBoundary.onPointerDown(event.clientY);
     if (activePointersRef.current.size === 2) {
       const [first, second] = [...activePointersRef.current.values()];
       const midpointX = (first.x + second.x) / 2;
@@ -1983,7 +2256,7 @@ export default function FixedDocumentScreen({
       pointerStartRef.current = undefined;
     }
   };
-  const pointerMove = (event: ReactPointerEvent<HTMLDivElement>) => {
+  const pointerMove = (event: ReactPointerEvent<HTMLElement>) => {
     const previous = activePointersRef.current.get(event.pointerId);
     if (!previous) return;
     activePointersRef.current.set(event.pointerId, { x: event.clientX, y: event.clientY });
@@ -2013,41 +2286,80 @@ export default function FixedDocumentScreen({
       }
       return;
     }
+    if (continuousView && scrollSectionBoundary.onPointerMove(event.clientY)) {
+      event.preventDefault();
+      return;
+    }
     if (zoom > 1.02) {
       viewportRef.current?.scrollBy({ left: previous.x - event.clientX, top: previous.y - event.clientY });
       pointerStartRef.current = undefined;
     }
   };
-  const pointerUp = (event: ReactPointerEvent<HTMLDivElement>) => {
+  const pointerUp = (event: ReactPointerEvent<HTMLElement>, cancelled = false) => {
     const wasPinching = Boolean(pinchRef.current?.active);
     activePointersRef.current.delete(event.pointerId);
     if (activePointersRef.current.size < 2) pinchRef.current = undefined;
-    if (event.currentTarget.hasPointerCapture(event.pointerId))
-      event.currentTarget.releasePointerCapture(event.pointerId);
     const start = pointerStartRef.current;
     pointerStartRef.current = undefined;
-    if (!start || wasPinching || zoom > 1.02 || effectiveViewMode === 'continuous') return;
-    const dx = event.clientX - start.x;
-    const dy = event.clientY - start.y;
-    if (Math.abs(dx) < 55 || Math.abs(dx) < Math.abs(dy)) return;
+    if (event.currentTarget.hasPointerCapture(event.pointerId))
+      event.currentTarget.releasePointerCapture(event.pointerId);
+    const deltaX = start ? event.clientX - start.x : 0;
+    const deltaY = start ? event.clientY - start.y : 0;
+    const viewportRect = viewportRef.current?.getBoundingClientRect();
+    const horizontalPosition = viewportRect ? (event.clientX - viewportRect.left) / Math.max(1, viewportRect.width) : 0;
+    const shouldToggleImmersive = Boolean(
+      !cancelled &&
+      start?.immersiveEligible &&
+      !wasPinching &&
+      Math.abs(deltaX) <= 12 &&
+      Math.abs(deltaY) <= 12 &&
+      performance.now() - start.at <= 500 &&
+      horizontalPosition >= 0.33 &&
+      horizontalPosition <= 0.67,
+    );
+    const toggleImmersiveFromViewport = () => {
+      suppressViewportClickRef.current = true;
+      window.setTimeout(() => {
+        suppressViewportClickRef.current = false;
+      }, 0);
+      toggleImmersive();
+    };
+    if (continuousView) {
+      if (!cancelled && start && !wasPinching && zoom <= 1.02)
+        scrollSectionBoundary.onVerticalGesture(start.y - event.clientY);
+      scrollSectionBoundary.onPointerEnd();
+      if (shouldToggleImmersive) toggleImmersiveFromViewport();
+      return;
+    }
+    if (shouldToggleImmersive) {
+      toggleImmersiveFromViewport();
+      return;
+    }
+    if (!start || wasPinching || zoom > 1.02 || cancelled) return;
+    if (Math.abs(deltaX) < 55 || Math.abs(deltaX) < Math.abs(deltaY)) return;
     const rtlComic = novel.format === 'image_archive' && comicProfile.direction === 'rtl';
-    turnPage(dx < 0 ? (rtlComic ? -1 : 1) : rtlComic ? 1 : -1);
+    turnPage(deltaX < 0 ? (rtlComic ? -1 : 1) : rtlComic ? 1 : -1);
   };
   const handleViewportScroll = () => {
-    if (effectiveViewMode !== 'continuous') return;
-    const viewport = viewportRef.current;
-    if (!viewport) return;
-    const center = viewport.scrollTop + viewport.clientHeight / 2;
-    const nearest = continuousVirtualizer
-      .getVirtualItems()
-      .reduce<{ index: number; distance: number } | undefined>((best, item) => {
-        const distance = Math.abs(item.start + item.size / 2 - center);
-        return !best || distance < best.distance ? { index: item.index, distance } : best;
-      }, undefined);
-    if (nearest && nearest.index !== pageIndex) {
-      setPageIndex(nearest.index);
-      setPageDraft(String(nearest.index + 1));
-    }
+    scrollSectionBoundary.onScroll();
+    if (!continuousView || viewportScrollFrameRef.current !== undefined) return;
+    viewportScrollFrameRef.current = window.requestAnimationFrame(() => {
+      viewportScrollFrameRef.current = undefined;
+      const viewport = viewportRef.current;
+      if (!viewport) return;
+      const nearestVirtualIndex = continuousPageNearestViewportCenter(
+        continuousVirtualizer.getVirtualItems(),
+        viewport.scrollTop,
+        viewport.clientHeight,
+      );
+      const nearest = nearestVirtualIndex === undefined ? undefined : continuousPageIndexes[nearestVirtualIndex];
+      if (nearest === undefined) return;
+      setPageIndex((current) => {
+        if (current === nearest) return current;
+        setPageDraft(String(nearest + 1));
+        return nearest;
+      });
+    });
   };
   const rtlComic = novel.format === 'image_archive' && comicProfile.direction === 'rtl';
   const currentSpreadIndex = comicSpreadForPage(comicSpreads, pageIndex);
@@ -2059,7 +2371,7 @@ export default function FixedDocumentScreen({
   const rightTurnStep: -1 | 1 = rtlComic ? -1 : 1;
 
   return (
-    <main className="fixed-doc-screen">
+    <main className={`fixed-doc-screen${immersive ? ' is-immersive' : ''}`}>
       <header className="fixed-doc-header">
         <div className="fixed-doc-title-group">
           <button type="button" className="fixed-doc-icon-button" onClick={onBack} aria-label="라이브러리로 돌아가기">
@@ -2067,10 +2379,36 @@ export default function FixedDocumentScreen({
           </button>
           <div>
             <strong>{novel.title}</strong>
+            {currentDocumentSection && (
+              <small className="fixed-doc-mobile-section-label">
+                {mobileComicSectionLabel(currentDocumentSection.title)}
+              </small>
+            )}
             <span>
-              {bookFormatLabel(novel)} · {totalPages.toLocaleString()}페이지
+              {bookFormatLabel(novel)} ·{' '}
+              {documentSections.length > 0 ? `${documentSections.length.toLocaleString()}개 회차 · ` : ''}
+              {totalPages.toLocaleString()}페이지
             </span>
           </div>
+          {documentSections.length > 0 && (
+            <label className="fixed-doc-section-select">
+              <span>회차</span>
+              <select
+                value={currentDocumentSection?.id ?? documentSections[0]?.id}
+                aria-label="웹툰 회차"
+                onChange={(event) => {
+                  const section = documentSections.find((candidate) => candidate.id === event.target.value);
+                  if (section) goToPage(section.startPageIndex);
+                }}
+              >
+                {documentSections.map((section) => (
+                  <option key={section.id} value={section.id}>
+                    {section.title} · {section.pageCount}페이지
+                  </option>
+                ))}
+              </select>
+            </label>
+          )}
         </div>
         <div className="fixed-doc-toolbar" aria-label="문서 보기 설정">
           <button
@@ -2083,24 +2421,33 @@ export default function FixedDocumentScreen({
           </button>
           <button
             type="button"
+            className={novel.format === 'image_archive' ? 'fixed-doc-mobile-top-action' : undefined}
             onClick={() => {
               if (novel.format === 'image_archive') {
-                const next: ViewMode =
-                  viewMode === 'single' ? 'spread' : viewMode === 'spread' ? 'continuous' : 'single';
+                const next = nextComicViewMode(viewMode);
                 preserveFocalPoint(() => setViewMode(next));
-                updateComicProfile({ mode: next === 'continuous' ? 'vertical' : next });
+                updateComicProfile({
+                  mode: comicViewModeToProfileMode(next),
+                  seamlessVertical: next === 'continuous-seamless',
+                });
               } else preserveFocalPoint(() => setViewMode((mode) => (mode === 'single' ? 'continuous' : 'single')));
             }}
             aria-pressed={viewMode !== 'single'}
-            title={novel.format === 'image_archive' ? '단면·양면·세로 보기 전환' : '연속 보기'}
+            aria-label={novel.format === 'image_archive' ? '단면·양면·세로·경계 없는 세로 보기 전환' : '연속 보기'}
+            title={novel.format === 'image_archive' ? '단면·양면·세로·경계 없는 세로 보기 전환' : '연속 보기'}
           >
             <Columns3 size={17} />
           </button>
           {novel.format === 'image_archive' && (
             <button
               type="button"
-              onClick={() => setComicSettingsOpen((open) => !open)}
+              className="fixed-doc-mobile-top-action"
+              onClick={() => {
+                setComicSettingsOpen((open) => !open);
+                setMobileMenuOpen(false);
+              }}
               aria-pressed={comicSettingsOpen}
+              aria-label="만화 보기 설정"
               title="만화 보기 설정"
             >
               <Settings2 size={17} />
@@ -2239,6 +2586,25 @@ export default function FixedDocumentScreen({
             title="회전"
           >
             <RotateCw size={17} />
+          </button>
+          <button
+            type="button"
+            onClick={toggleImmersive}
+            aria-pressed={immersive}
+            aria-label={immersive ? '몰입 모드 종료' : '몰입 모드 시작'}
+            title="몰입 모드"
+          >
+            <Focus size={17} />
+          </button>
+          <button
+            type="button"
+            className={novel.format === 'image_archive' ? 'fixed-doc-mobile-top-action' : undefined}
+            onClick={() => void toggleFullscreen()}
+            aria-pressed={fullscreen}
+            aria-label={fullscreen ? '전체 화면 종료' : '전체 화면 시작'}
+            title="전체 화면"
+          >
+            {fullscreen ? <Minimize2 size={17} /> : <Maximize2 size={17} />}
           </button>
           <button
             type="button"
@@ -2386,10 +2752,17 @@ export default function FixedDocumentScreen({
           onPointerDown={pointerDown}
           onPointerMove={pointerMove}
           onPointerUp={pointerUp}
-          onPointerCancel={pointerUp}
+          onPointerCancel={(event) => pointerUp(event, true)}
           onLostPointerCapture={pointerUp}
+          onClickCapture={(event) => {
+            if (!suppressViewportClickRef.current) return;
+            event.preventDefault();
+            event.stopPropagation();
+            suppressViewportClickRef.current = false;
+          }}
           onScroll={handleViewportScroll}
           onWheel={(event) => {
+            scrollSectionBoundary.onWheel(event);
             if (!event.ctrlKey) return;
             event.preventDefault();
             preserveFocalPoint(
@@ -2398,9 +2771,13 @@ export default function FixedDocumentScreen({
               event.clientY,
             );
           }}
-          onDoubleClick={(event) =>
-            preserveFocalPoint(() => setZoom((value) => (value > 1.02 ? 1 : 2)), event.clientX, event.clientY)
-          }
+          onDoubleClick={(event) => {
+            if (continuousView) {
+              event.preventDefault();
+              return;
+            }
+            preserveFocalPoint(() => setZoom((value) => (value > 1.02 ? 1 : 2)), event.clientX, event.clientY);
+          }}
           aria-busy={status === 'loading'}
         >
           {status === 'failed' ? (
@@ -2410,24 +2787,32 @@ export default function FixedDocumentScreen({
             </div>
           ) : (
             <div
-              className={`fixed-doc-pages${effectiveViewMode === 'continuous' ? ' is-virtual' : ''}`}
+              ref={continuousContentRef}
+              className={`fixed-doc-pages${continuousView ? ' is-virtual' : ''}`}
               style={
-                effectiveViewMode === 'continuous'
-                  ? { ...pageStyle, height: continuousVirtualizer.getTotalSize() }
+                continuousView
+                  ? {
+                      ...pageStyle,
+                      height: continuousVirtualizer.getTotalSize() + continuousSectionFooterHeight,
+                    }
                   : pageStyle
               }
             >
               {displayedPages.map((index) => (
                 <article
                   key={index}
-                  ref={effectiveViewMode === 'continuous' ? continuousVirtualizer.measureElement : undefined}
-                  data-index={effectiveViewMode === 'continuous' ? index : undefined}
+                  ref={continuousView ? continuousVirtualizer.measureElement : undefined}
+                  data-index={continuousVirtualIndexByPage.get(index) ?? index}
                   data-page-index={index}
                   className={`${index === pageIndex ? 'is-current' : ''}${effectiveViewMode === 'spread' ? ' is-spread-page' : ''}${effectiveViewMode === 'spread' && comicSpreads[comicSpreadForPage(comicSpreads, pageIndex)]?.widePage === index ? ' is-double-page' : ''}`}
                   style={
-                    effectiveViewMode === 'continuous'
+                    continuousView
                       ? {
-                          transform: `translateY(${continuousItems.find((item) => item.index === index)?.start ?? 0}px)`,
+                          transform: `translateY(${
+                            continuousItems.find((item) => item.index === continuousVirtualIndexByPage.get(index))
+                              ?.start ?? 0
+                          }px)`,
+                          ...(seamlessContinuousView ? { height: estimateContinuousPageSize(index) } : {}),
                         }
                       : undefined
                   }
@@ -2467,6 +2852,7 @@ export default function FixedDocumentScreen({
                       src={imageUrls.get(index)}
                       alt={`${novel.title} ${index + 1}페이지`}
                       draggable={false}
+                      onLoad={(event) => recordArchiveImageDimensions(index, event.currentTarget)}
                       style={
                         comicProfile.crop === 'auto' && comicProfile.pageCrops?.[String(index)]
                           ? ({
@@ -2480,10 +2866,55 @@ export default function FixedDocumentScreen({
                       }
                     />
                   ) : (
-                    <div className="fixed-doc-page-loading">{index + 1}페이지 불러오는 중</div>
+                    <div
+                      className="fixed-doc-page-loading"
+                      style={seamlessContinuousView ? { height: estimateContinuousPageSize(index) } : undefined}
+                    >
+                      {index + 1}페이지 불러오는 중
+                    </div>
                   )}
                 </article>
               ))}
+              {continuousView && currentDocumentSection && (
+                <div
+                  className="fixed-doc-section-footer"
+                  style={{
+                    height: continuousSectionFooterHeight,
+                    transform: `translateY(${continuousVirtualizer.getTotalSize()}px)`,
+                  }}
+                >
+                  <nav className="fixed-doc-section-nav" aria-label="만화 회차 이동">
+                    <button
+                      type="button"
+                      disabled={!previousDocumentSection}
+                      onClick={() => {
+                        if (previousDocumentSection) goToPage(previousDocumentSection.startPageIndex);
+                      }}
+                    >
+                      <ChevronLeft size={16} /> 이전 회차
+                    </button>
+                    <button
+                      type="button"
+                      disabled={!nextDocumentSection}
+                      onClick={() => {
+                        if (nextDocumentSection) goToPage(nextDocumentSection.startPageIndex);
+                      }}
+                    >
+                      다음 회차 <ChevronRight size={16} />
+                    </button>
+                  </nav>
+                  {nextDocumentSection && (
+                    <div
+                      className={`fixed-doc-next-section-boundary${scrollSectionBoundary.armed ? ' is-armed' : ''}`}
+                      aria-live="polite"
+                    >
+                      <span>다음 회차</span>
+                      <strong>{nextDocumentSection.title}</strong>
+                      <small>{scrollSectionBoundary.armed ? '한 번 더 아래로 스크롤' : '마지막까지 읽었습니다'}</small>
+                    </div>
+                  )}
+                </div>
+              )}
             </div>
           )}
           <button
@@ -2529,22 +2960,17 @@ export default function FixedDocumentScreen({
             >
               <PanelLeftOpen size={16} /> 페이지 목록
             </button>
-            <button
-              type="button"
-              onClick={() => {
-                if (novel.format === 'image_archive') {
-                  const next: ViewMode =
-                    viewMode === 'single' ? 'spread' : viewMode === 'spread' ? 'continuous' : 'single';
-                  preserveFocalPoint(() => setViewMode(next));
-                  updateComicProfile({ mode: next === 'continuous' ? 'vertical' : next });
-                } else {
+            {novel.format !== 'image_archive' && (
+              <button
+                type="button"
+                onClick={() => {
                   preserveFocalPoint(() => setViewMode((mode) => (mode === 'single' ? 'continuous' : 'single')));
-                }
-                setMobileMenuOpen(false);
-              }}
-            >
-              <Columns3 size={16} /> 보기 전환
-            </button>
+                  setMobileMenuOpen(false);
+                }}
+              >
+                <Columns3 size={16} /> 보기 전환
+              </button>
+            )}
             <button
               type="button"
               onClick={() => {
@@ -2580,15 +3006,25 @@ export default function FixedDocumentScreen({
             >
               <RotateCw size={16} /> 회전
             </button>
-            {novel.format === 'image_archive' && (
+            <button
+              type="button"
+              onClick={() => {
+                toggleImmersive();
+                setMobileMenuOpen(false);
+              }}
+            >
+              <Focus size={16} /> 몰입 모드
+            </button>
+            {novel.format !== 'image_archive' && (
               <button
                 type="button"
                 onClick={() => {
-                  setComicSettingsOpen(true);
+                  void toggleFullscreen();
                   setMobileMenuOpen(false);
                 }}
               >
-                <Settings2 size={16} /> 만화 보기 설정
+                {fullscreen ? <Minimize2 size={16} /> : <Maximize2 size={16} />}
+                {fullscreen ? '전체 화면 종료' : '전체 화면'}
               </button>
             )}
             {novel.format === 'pdf' && (
@@ -2855,12 +3291,16 @@ export default function FixedDocumentScreen({
                 onChange={(event) => {
                   const next = event.target.value as ViewMode;
                   preserveFocalPoint(() => setViewMode(next));
-                  updateComicProfile({ mode: next === 'continuous' ? 'vertical' : next });
+                  updateComicProfile({
+                    mode: comicViewModeToProfileMode(next),
+                    seamlessVertical: next === 'continuous-seamless',
+                  });
                 }}
               >
                 <option value="single">한 페이지</option>
                 <option value="spread">양면</option>
                 <option value="continuous">세로 연속</option>
+                <option value="continuous-seamless">경계 없는 세로 연속</option>
               </select>
             </label>
             {viewMode === 'spread' && viewportSize.width < 720 && (

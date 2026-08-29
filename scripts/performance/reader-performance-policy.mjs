@@ -50,6 +50,29 @@ export function phase6TimingBudgets(env = process.env) {
   );
 }
 
+function elapsedMilliseconds(startedAt, finishedAt) {
+  return Number.isFinite(startedAt) && Number.isFinite(finishedAt) && finishedAt >= startedAt
+    ? finishedAt - startedAt
+    : null;
+}
+
+export function phase6ImportPhaseTimings(run) {
+  const progress = Array.isArray(run?.progress) ? run.progress : [];
+  const stagingStartedAt = progress.find(
+    (event) => event?.subphase === 'staging_chapters' && Number.isFinite(event.at),
+  )?.at;
+  const activationStartedAt = progress.find(
+    (event) => event?.subphase === 'activating_revision' && Number.isFinite(event.at),
+  )?.at;
+  const completedAt = run?.terminal?.type === 'complete' ? run.terminal.at : undefined;
+
+  return {
+    parseMs: elapsedMilliseconds(run?.startedAt, stagingStartedAt),
+    bodyWriteMs: elapsedMilliseconds(stagingStartedAt, activationStartedAt),
+    activationMs: elapsedMilliseconds(activationStartedAt, completedAt),
+  };
+}
+
 function failure(code, message, details) {
   return details === undefined ? { code, message } : { code, message, details };
 }
@@ -148,6 +171,20 @@ export function evaluatePhase6PerformanceReport(report, budgets = PHASE6_DEFAULT
   }
   if (!imported?.workerPathObserved || imported.workerFileBytes !== strict.fixtureBytes) {
     failures.push(failure('IMPORT_WORKER_PATH_NOT_OBSERVED', 'The measured worker was not the real import worker.'));
+  }
+  if (
+    !imported?.phaseTimings ||
+    !['parseMs', 'bodyWriteMs', 'activationMs'].every(
+      (key) => Number.isFinite(imported.phaseTimings[key]) && imported.phaseTimings[key] >= 0,
+    )
+  ) {
+    failures.push(
+      failure(
+        'IMPORT_PHASE_TIMING_MISSING',
+        'Import parse, body-write, and activation timings were not recorded from worker subphases.',
+        imported?.phaseTimings,
+      ),
+    );
   }
   timingFailure(failures, imported?.totalMs, budgets.importTotalMs, 'IMPORT_TOTAL_TIMEOUT', 'Import');
   timingFailure(

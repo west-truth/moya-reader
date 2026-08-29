@@ -5,6 +5,30 @@ third-party software under separate terms. This notice records the archive backe
 deployment, but it does not replace the license texts under `third_party/licenses/` or the generated production
 dependency inventory at `third_party/production-license-inventory.json`.
 
+## Bundled Desktop metadata collector
+
+The optional `웹소설 표지·작품 정보` trusted extension is packaged in Desktop releases as a Python/PyInstaller
+sidecar. Its direct runtime/build dependencies include Python, FastAPI, Uvicorn, HTTPX, Beautiful Soup, lxml,
+Playwright, Pydantic and PyInstaller. These projects use their own PSF, MIT, BSD, Apache-2.0 and PyInstaller
+bootloader-exception terms. The generated executable is not committed to this source repository.
+
+`pnpm collector:bundle` creates an isolated Python environment and emits the exact 37-component inventory at
+`src-tauri/collector-sidecar/python-license-inventory.json`. It also copies each component's detected license texts,
+the Moya collector license and the Python runtime license under the packaged `collector-sidecar/third_party/licenses/`
+resource. The build fails when a component is unclassified or has no copied license file. This inventory is generated
+for the Desktop sidecar and is separate from the pnpm production inventory.
+
+The optional `compose.metadata-collector.yaml` image installs the collector's public metadata runtime without the
+Playwright authentication or PyInstaller build extras. It is built from source by the self-host operator and includes
+this notice and the project license. Publishing an official prebuilt collector container still requires an inventory
+for its exact Python base image and installed runtime distributions.
+
+The separate `compose.metadata-collector-auth.yaml` profile replaces that service image with an operator-built image
+that additionally installs Playwright, Chromium, Xvfb and their Debian runtime dependencies. It is not included in the
+base Moya image or the public-metadata collector image. The source Dockerfile copies this notice and the project
+license, but publishing an official prebuilt auth image still requires an exact Python, Debian package and Chromium
+license/source inventory for the built artifact; the Desktop sidecar inventory is not evidence for that container.
+
 ## Optional local TTS sidecar
 
 ### MeloTTS / MeloTTS-Korean
@@ -55,8 +79,8 @@ dependency inventory at `third_party/production-license-inventory.json`.
 - Decide how corresponding source/relinking information for `7zz.wasm` is delivered with binary web/container
   releases. The full pinned official GNU LGPL 2.1 text is already packaged.
 - Complete the libarchive 3.7.7 and compiled codec license/source capture described above.
-- Complete the container base-image and optional local-TTS Python dependency inventory before publishing official
-  prebuilt images.
+- Complete the container base-image, optional metadata-collector runtime and optional local-TTS Python dependency
+  inventories before publishing official prebuilt images.
 - Verify `LICENSE`, this notice, and bundled third-party license files in every official binary release artifact.
 
 `pnpm licenses:generate` refreshes the path-free, deterministic pnpm production inventory.
