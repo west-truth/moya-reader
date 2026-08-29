@@ -734,6 +734,11 @@ check('hosted e2e runs live smoke script', includes(files.hostedE2E, "'scripts/h
 check('hosted e2e supports the protected public override', includes(files.hostedE2E, "hasArg('--public')"));
 check('hosted live smoke verifies the bearer boundary', includes(files.liveSmoke, 'verifyProtectedApiBoundary'));
 check(
+  'hosted live smoke verifies owner account setup and session recovery',
+  includes(files.liveSmoke, "username: 'moya-ci-owner'") &&
+    includes(files.liveSmoke, "joinUrl(apiBaseUrl, '/auth/session')"),
+);
+check(
   'hosted live smoke verifies worker readiness',
   includes(files.liveSmoke, 'readiness worker heartbeat check failed'),
 );
