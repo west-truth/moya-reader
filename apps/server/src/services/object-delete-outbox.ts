@@ -6,7 +6,6 @@ interface DeleteOutboxRow {
   id: string;
   storage_key: string;
   attempts: number;
-  generation: number;
 }
 
 function normalizedStorageKeys(storageKeys: Iterable<string>): string[] {
@@ -25,10 +24,8 @@ export async function enqueueObjectDeletions(
        select key, $2 from unnest($1::text[]) as keys(key)
      on conflict (storage_key) do update
        set reason = excluded.reason,
-           status = 'pending',
-           generation = object_delete_outbox.generation + 1,
+           status = case when object_delete_outbox.status = 'processing' then 'processing' else 'pending' end,
            next_attempt_at = least(object_delete_outbox.next_attempt_at, now()),
-           last_error = null,
            updated_at = now()`,
     [keys, reason],
   );
@@ -54,10 +51,7 @@ export async function reserveObjectDeletions(
          from unnest($1::text[]) as keys(key)
      on conflict (storage_key) do update
        set reason = excluded.reason,
-           status = 'pending',
-           generation = object_delete_outbox.generation + 1,
-           next_attempt_at = greatest(object_delete_outbox.next_attempt_at, excluded.next_attempt_at),
-           last_error = null,
+           next_attempt_at = least(object_delete_outbox.next_attempt_at, excluded.next_attempt_at),
            updated_at = now()`,
     [keys, reason, safeDelayMs],
   );
@@ -97,7 +91,7 @@ async function claimObjectDeletions(pool: pg.Pool, limit: number): Promise<Delet
         set status = 'processing', attempts = attempts + 1, updated_at = now()
        from candidates
       where target.id = candidates.id
-     returning target.id::text, target.storage_key, target.attempts, target.generation`,
+     returning target.id::text, target.storage_key, target.attempts`,
     [Math.max(1, Math.min(100, Math.floor(limit)))],
   );
   return result.rows;
@@ -127,25 +121,11 @@ export async function drainObjectDeleteOutbox(
         [row.storage_key],
       );
       if (referenced.rows.length > 0) {
-        await pool.query('delete from object_delete_outbox where id = $1 and status = $2 and generation = $3', [
-          row.id,
-          'processing',
-          row.generation,
-        ]);
+        await pool.query('delete from object_delete_outbox where id = $1 and status = $2', [row.id, 'processing']);
         continue;
       }
-      const stillClaimed = await pool.query(
-        `select 1 from object_delete_outbox
-          where id = $1 and status = 'processing' and generation = $2`,
-        [row.id, row.generation],
-      );
-      if (!stillClaimed.rows[0]) continue;
       await remove(row.storage_key);
-      await pool.query('delete from object_delete_outbox where id = $1 and status = $2 and generation = $3', [
-        row.id,
-        'processing',
-        row.generation,
-      ]);
+      await pool.query('delete from object_delete_outbox where id = $1 and status = $2', [row.id, 'processing']);
       deleted += 1;
     } catch (error) {
       const retrySeconds = Math.min(3_600, 2 ** Math.min(10, Math.max(1, Number(row.attempts))));
@@ -155,13 +135,8 @@ export async function drainObjectDeleteOutbox(
                 next_attempt_at = now() + ($2::integer * interval '1 second'),
                 last_error = $3,
                 updated_at = now()
-          where id = $1 and status = 'processing' and generation = $4`,
-        [
-          row.id,
-          retrySeconds,
-          error instanceof Error ? error.message.slice(0, 2_000) : String(error).slice(0, 2_000),
-          row.generation,
-        ],
+          where id = $1 and status = 'processing'`,
+        [row.id, retrySeconds, error instanceof Error ? error.message.slice(0, 2_000) : String(error).slice(0, 2_000)],
       );
       failed += 1;
     }

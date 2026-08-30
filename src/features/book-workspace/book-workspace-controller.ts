@@ -13,7 +13,6 @@ import {
   type BookWorkspaceState,
   type BookWorkspaceUpdate,
   type BookWorkspaceView,
-  type FixedDocumentPageTarget,
 } from './book-workspace-contract';
 import {
   buildBookWorkspaceReadingProjection,
@@ -41,7 +40,6 @@ export class BookWorkspaceController {
   private ports: BookWorkspacePorts;
   private readonly listeners = new Set<Listener>();
   private navigationGeneration = 0;
-  private fixedDocumentProgressGeneration = 0;
 
   constructor(ports: BookWorkspacePorts, initialState: BookWorkspaceState = INITIAL_BOOK_WORKSPACE_STATE) {
     this.ports = ports;
@@ -150,9 +148,7 @@ export class BookWorkspaceController {
     documentSectionTitle?: string,
   ): Promise<boolean> {
     const [chapters, annotations, readingPosition] = await Promise.all([
-      prefetched
-        ? Promise.resolve(prefetched.chapters)
-        : this.ports.repository.listChapters(novel.id, novel.activeContentRevisionId),
+      prefetched ? Promise.resolve(prefetched.chapters) : this.ports.repository.listChapters(novel.id),
       this.ports.adjacent.loadBookAnnotations(novel.id),
       prefetched ? Promise.resolve(prefetched.readingPosition) : this.ports.repository.getReadingPosition(novel.id),
     ]);
@@ -257,7 +253,7 @@ export class BookWorkspaceController {
     const chaptersPromise =
       this.state.chapters.length > 0 && this.state.selectedNovel?.id === novel.id
         ? Promise.resolve(this.state.chapters)
-        : this.ports.repository.listChapters(novel.id, novel.activeContentRevisionId);
+        : this.ports.repository.listChapters(novel.id);
     const [chapters, readingPosition] = await Promise.all([
       chaptersPromise,
       this.ports.repository.getReadingPosition(novel.id),
@@ -299,90 +295,51 @@ export class BookWorkspaceController {
     this.updateState({ view: 'chapters' });
   };
 
-  readonly saveFixedDocumentPage = async (
-    pageIndex: number,
-    capturedTarget?: FixedDocumentPageTarget,
-  ): Promise<void> => {
-    const selectedNovel = this.state.selectedNovel;
+  readonly saveFixedDocumentPage = async (pageIndex: number): Promise<void> => {
+    const novel = this.state.selectedNovel;
     const chapter = [...this.state.chapters].sort((left, right) => left.index - right.index)[pageIndex];
-    if (!capturedTarget && (!selectedNovel || !chapter || !isFixedDocumentFormat(selectedNovel.format))) return;
-    const target: FixedDocumentPageTarget = capturedTarget ?? {
-      novelId: selectedNovel!.id,
-      contentRevisionId: selectedNovel!.activeContentRevisionId,
-      chapterId: chapter!.id,
-      documentSectionId: chapter!.documentSectionId,
-      chapterIndex: chapter!.index,
-      totalPages: this.state.chapters.length,
-    };
-    const writeGeneration = ++this.fixedDocumentProgressGeneration;
-    const progress = (pageIndex + 1) / Math.max(1, target.totalPages);
+    if (!novel || !chapter || !isFixedDocumentFormat(novel.format)) return;
+    const progress = (pageIndex + 1) / this.state.chapters.length;
     try {
       await this.ports.repository.saveReadingPosition({
-        novelId: target.novelId,
-        expectedContentRevisionId: target.contentRevisionId,
-        chapterId: target.chapterId,
-        documentSectionId: target.documentSectionId,
+        novelId: novel.id,
+        expectedContentRevisionId: novel.activeContentRevisionId,
+        chapterId: chapter.id,
+        documentSectionId: chapter.documentSectionId,
         scrollTop: pageIndex,
         chapterProgress: 1,
         paragraphIndex: 1,
         offsetInParagraph: 0,
       });
-      const currentNovel = this.state.selectedNovel;
-      if (
-        writeGeneration !== this.fixedDocumentProgressGeneration ||
-        currentNovel?.id !== target.novelId ||
-        currentNovel.activeContentRevisionId !== target.contentRevisionId
-      ) {
-        void this.ports.adjacent.refreshAfterLocalMutation('progress');
-        return;
-      }
       const updatedAt = new Date().toISOString();
       const updatedNovel: Novel = {
-        ...currentNovel,
-        lastReadChapterId: target.chapterId,
-        lastReadChapterIndex: target.chapterIndex,
+        ...novel,
+        lastReadChapterId: chapter.id,
+        lastReadChapterIndex: chapter.index,
         lastReadOffset: pageIndex,
         lastReadProgress: progress,
         lastReadAt: updatedAt,
         updatedAt,
       };
-      const updatedChapters = target.documentSectionId
-        ? this.state.chapters.map((candidate) =>
-            candidate.documentSectionId === target.documentSectionId
-              ? { ...candidate, documentSectionReadAt: updatedAt }
-              : candidate,
-          )
-        : this.state.chapters;
-      const updatedCurrentChapter = updatedChapters.find((candidate) => candidate.id === target.chapterId);
       this.updateState({
-        chapters: updatedChapters,
-        currentChapter: updatedCurrentChapter,
+        currentChapter: chapter,
         localReadingPosition: {
-          id: `reading_position_${target.novelId}`,
-          novelId: target.novelId,
-          chapterId: target.chapterId,
+          id: `reading_position_${novel.id}`,
+          novelId: novel.id,
+          chapterId: chapter.id,
           paragraphIndex: 1,
           offsetInParagraph: 0,
           chapterProgress: 1,
           scrollTop: pageIndex,
           deviceId: 'device_local',
           updatedAt,
-          documentSectionId: target.documentSectionId,
-          contentRevisionId: target.contentRevisionId,
         },
         selectedNovel: updatedNovel,
         novels: this.state.novels.map((candidate) => (candidate.id === updatedNovel.id ? updatedNovel : candidate)),
       });
       void this.ports.adjacent.refreshAfterLocalMutation('progress');
     } catch (error) {
-      const currentNovel = this.state.selectedNovel;
-      if (
-        writeGeneration === this.fixedDocumentProgressGeneration &&
-        currentNovel?.id === target.novelId &&
-        currentNovel.activeContentRevisionId === target.contentRevisionId
-      ) {
-        this.locationPersistenceFailed(error);
-      }
+      this.locationPersistenceFailed(error);
     }
   };
 
@@ -392,12 +349,7 @@ export class BookWorkspaceController {
     );
     if (!confirmed) return;
     try {
-      const lifecycleExpectation = {
-        metadataRevision: novel.metadataRevision ?? 0,
-        activeContentRevisionId: novel.activeContentRevisionId,
-      };
-      await this.ports.repository.deleteNovel(novel.id, lifecycleExpectation);
-      const trashedMetadataRevision = (novel.metadataRevision ?? 0) + 1;
+      await this.ports.repository.deleteNovel(novel.id, novel.metadataRevision ?? 0);
       this.beginNavigation();
       if (this.state.selectedNovel?.id === novel.id) {
         this.updateState({
@@ -415,10 +367,7 @@ export class BookWorkspaceController {
         label: '실행 취소',
         onSelect: async () => {
           if (!this.ports.catalog) return;
-          await this.ports.catalog.restore(novel.id, {
-            metadataRevision: trashedMetadataRevision,
-            activeContentRevisionId: novel.activeContentRevisionId,
-          });
+          await this.ports.catalog.restore(novel.id);
           await this.ports.adjacent.refreshNovels();
           await this.ports.adjacent.refreshAfterLocalMutation();
           this.ports.environment.notify('책을 복원했습니다.', 'success');
@@ -435,10 +384,7 @@ export class BookWorkspaceController {
       return;
     }
     try {
-      await this.ports.catalog.restore(novel.id, {
-        metadataRevision: novel.metadataRevision ?? 0,
-        activeContentRevisionId: novel.activeContentRevisionId,
-      });
+      await this.ports.catalog.restore(novel.id, novel.metadataRevision ?? 0);
       await this.ports.adjacent.refreshNovels();
       await this.ports.adjacent.refreshAfterLocalMutation();
       this.ports.environment.notify('책을 복원했습니다.', 'success');
@@ -454,31 +400,10 @@ export class BookWorkspaceController {
     );
     if (!confirmed) return;
     try {
-      let associationPurgeIntent: { readonly id: string } | undefined;
-      let associationCleanupFailed = false;
-      if (this.ports.associationLifecycle) {
-        associationPurgeIntent = await this.ports.associationLifecycle.prepareBookAssociationPurge([
-          { bookId: novel.id, activeContentRevisionId: novel.activeContentRevisionId },
-        ]);
-      }
-      await this.ports.catalog.purge(novel.id, {
-        metadataRevision: novel.metadataRevision ?? 0,
-        activeContentRevisionId: novel.activeContentRevisionId,
-      });
-      if (this.ports.associationLifecycle && associationPurgeIntent) {
-        associationCleanupFailed = await this.ports.associationLifecycle
-          .completeBookAssociationPurge(associationPurgeIntent.id, [novel.id])
-          .then(() => associationCleanupFailed)
-          .catch(() => true);
-      }
+      await this.ports.catalog.purge(novel.id, novel.metadataRevision ?? 0);
       await this.ports.adjacent.refreshNovels();
       await this.ports.adjacent.refreshAfterLocalMutation();
-      this.ports.environment.notify(
-        associationCleanupFailed
-          ? '책은 삭제했지만 이 기기의 소스 연결 정리에 실패했습니다.'
-          : '책을 영구 삭제했습니다.',
-        associationCleanupFailed ? 'warning' : 'info',
-      );
+      this.ports.environment.notify('책을 영구 삭제했습니다.', 'info');
     } catch {
       this.ports.environment.notify('책을 영구 삭제하지 못했습니다.', 'danger');
     }
@@ -491,32 +416,10 @@ export class BookWorkspaceController {
     );
     if (!confirmed) return;
     try {
-      const trash = await this.ports.catalog.listTrash();
-      let associationPurgeIntent: { readonly id: string } | undefined;
-      let associationCleanupFailed = false;
-      if (this.ports.associationLifecycle && trash.length > 0) {
-        associationPurgeIntent = await this.ports.associationLifecycle.prepareBookAssociationPurge(
-          trash.map((novel) => ({
-            bookId: novel.id,
-            activeContentRevisionId: novel.activeContentRevisionId,
-          })),
-        );
-      }
-      const receipt = await this.ports.catalog.emptyTrash();
-      if (this.ports.associationLifecycle && associationPurgeIntent) {
-        associationCleanupFailed = await this.ports.associationLifecycle
-          .completeBookAssociationPurge(associationPurgeIntent.id, receipt.bookIds)
-          .then(() => associationCleanupFailed)
-          .catch(() => true);
-      }
+      const count = await this.ports.catalog.emptyTrash();
       await this.ports.adjacent.refreshNovels();
       await this.ports.adjacent.refreshAfterLocalMutation();
-      this.ports.environment.notify(
-        associationCleanupFailed
-          ? `${receipt.purged}권은 삭제했지만 이 기기의 소스 연결 정리에 실패했습니다.`
-          : `휴지통에서 ${receipt.purged}권을 영구 삭제했습니다.`,
-        associationCleanupFailed ? 'warning' : 'info',
-      );
+      this.ports.environment.notify(`휴지통에서 ${count}권을 영구 삭제했습니다.`, 'info');
     } catch {
       this.ports.environment.notify('휴지통을 비우지 못했습니다.', 'danger');
     }
@@ -524,14 +427,7 @@ export class BookWorkspaceController {
 
   readonly toggleFavorite = async (novel: Novel): Promise<void> => {
     const next = { ...novel, favorite: !novel.favorite };
-    await this.ports.repository.patchNovelMetadata(
-      novel.id,
-      { favorite: next.favorite },
-      {
-        metadataRevision: novel.metadataRevision ?? 0,
-        activeContentRevisionId: novel.activeContentRevisionId,
-      },
-    );
+    await this.ports.repository.patchNovelMetadata(novel.id, { favorite: next.favorite });
     await this.ports.adjacent.refreshNovels();
     await this.ports.adjacent.refreshAfterLocalMutation();
     if (this.state.selectedNovel?.id === novel.id) this.setSelectedNovel(next);
@@ -560,14 +456,7 @@ export class BookWorkspaceController {
     }
     try {
       const nextNovel = { ...novel, title };
-      await this.ports.repository.patchNovelMetadata(
-        novel.id,
-        { title },
-        {
-          metadataRevision: novel.metadataRevision ?? 0,
-          activeContentRevisionId: novel.activeContentRevisionId,
-        },
-      );
+      await this.ports.repository.patchNovelMetadata(novel.id, { title });
       const freshNovel = (await this.ports.repository.getNovel(novel.id)) ?? nextNovel;
       if (this.state.selectedNovel?.id === novel.id) {
         this.updateState({ selectedNovel: freshNovel, bookTitleDraft: freshNovel.title, bookTitleEditing: false });
@@ -589,7 +478,7 @@ export class BookWorkspaceController {
     );
     if (!confirmed) return;
     try {
-      await this.ports.repository.clearReadingPosition(novel.id, novel.activeContentRevisionId);
+      await this.ports.repository.clearReadingPosition(novel.id);
       const [freshNovel, readingPosition] = await Promise.all([
         this.ports.repository.getNovel(novel.id),
         this.ports.repository.getReadingPosition(novel.id),
@@ -597,17 +486,10 @@ export class BookWorkspaceController {
       await this.ports.adjacent.refreshNovels();
       await this.ports.adjacent.refreshAfterLocalMutation();
       if (this.state.selectedNovel?.id === novel.id) {
-        const chapters = this.state.chapters.map((chapter) =>
-          chapter.documentSectionReadAt ? { ...chapter, documentSectionReadAt: undefined } : chapter,
-        );
         this.updateState({
           remoteReadingPosition: undefined,
           localReadingPosition: readingPosition,
           selectedNovel: freshNovel ?? novel,
-          chapters,
-          currentChapter: this.state.currentChapter
-            ? chapters.find((chapter) => chapter.id === this.state.currentChapter?.id)
-            : undefined,
         });
       }
       this.ports.environment.notify('읽은 위치와 진행률을 초기화했습니다.', 'success');

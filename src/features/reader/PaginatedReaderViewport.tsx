@@ -267,11 +267,7 @@ export function PaginatedReaderViewport(
   const [transitionSequence, setTransitionSequence] = useState(0);
   activeChapterIdRef.current = chapter.id;
   const contentRevisionId = novel.activeContentRevisionId ?? `${novel.id}:${chapter.textHash}`;
-  const {
-    schedule: schedulePosition,
-    flush: flushPosition,
-    flushImmediately: flushPositionImmediately,
-  } = useReaderPositionPersistence({
+  const { schedule: schedulePosition, flush: flushPosition } = useReaderPositionPersistence({
     repository,
     novel,
     chapter,
@@ -1020,7 +1016,6 @@ export function PaginatedReaderViewport(
         setCurrentPage(0);
       },
       flushPosition,
-      flushPositionImmediately,
       scrollToParagraph: async (paragraphId) => {
         const paragraph = await repository.getParagraph(paragraphId);
         if (!paragraph || paragraph.chapterId !== chapter.id) return false;
@@ -1137,7 +1132,6 @@ export function PaginatedReaderViewport(
       contentRevisionId,
       currentBoundary,
       flushPosition,
-      flushPositionImmediately,
       goChapter,
       getParagraphAtIndex,
       loadPageFragments,
@@ -1225,7 +1219,6 @@ export function PaginatedReaderViewport(
                 measureElement={() => undefined}
                 onSelectCorrectionSegment={(segmentId) => screenHandle.getActions().selectCorrectionSegment(segmentId)}
                 assetRepository={assetRepository}
-                contentRevisionId={novel.activeContentRevisionId}
                 onDocumentLink={onDocumentLink}
               />
             ))}
@@ -1258,7 +1251,6 @@ export function PaginatedReaderViewport(
               measureElement={() => undefined}
               onSelectCorrectionSegment={(segmentId) => screenHandle.getActions().selectCorrectionSegment(segmentId)}
               assetRepository={assetRepository}
-              contentRevisionId={novel.activeContentRevisionId}
               onDocumentLink={onDocumentLink}
             />
           ))}

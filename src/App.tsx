@@ -255,7 +255,6 @@ import {
 } from './storage/listening-position-store';
 import { IndexedDbDocumentTextRepository } from './storage/document-text-store';
 import { IndexedDbHostedTTSOfflineCache, type HostedTTSOfflineCacheStatus } from './storage/hosted-tts-offline-cache';
-import { listBookAssociationPurgeEvidence } from './storage/library-catalog-store';
 import type { AiTtsSyncRemoteSnapshot } from './sync/ai-tts-sync-diff';
 import { aiTtsRemoteSnapshotApplyAvailable } from './sync/ai-tts-sync-apply';
 import { loadAiTtsRemoteSnapshot } from './sync/ai-tts-remote-snapshot';
@@ -410,20 +409,6 @@ export default function App() {
     [externalSourceState],
   );
   const [externalSourceBrokerRevision, setExternalSourceBrokerRevision] = useState(0);
-  const externalSourceAssociationLifecycle = useMemo(
-    () => ({
-      prepareBookAssociationPurge: (targets: Parameters<typeof externalSourceState.prepareBookAssociationPurge>[0]) =>
-        externalSourceState.prepareBookAssociationPurge(targets),
-      completeBookAssociationPurge: async (intentId: string, confirmedBookIds?: readonly string[]) => {
-        try {
-          return await externalSourceState.completeBookAssociationPurge(intentId, confirmedBookIds);
-        } finally {
-          setExternalSourceBrokerRevision((value) => value + 1);
-        }
-      },
-    }),
-    [externalSourceState],
-  );
   useEffect(() => {
     let cancelled = false;
     void Promise.allSettled([
@@ -507,7 +492,6 @@ export default function App() {
     createBookWorkspacePortProxy({
       repository: readerRepository,
       catalog: libraryCatalogRepository,
-      associationLifecycle: externalSourceAssociationLifecycle,
       transition: bookWorkspaceTransitionRef,
       adjacent: bookWorkspaceAdjacentRef,
       environment: {
@@ -1226,7 +1210,7 @@ export default function App() {
     if (!freshNovel) return state;
     const expectedChapterId = activeChapterIdRef.current;
     const [freshChapters, freshBookmarks, freshHighlights, freshNotes] = await Promise.all([
-      readerRepository.listChapters(freshNovel.id, freshNovel.activeContentRevisionId),
+      readerRepository.listChapters(freshNovel.id),
       readerRepository.listBookmarks(freshNovel.id),
       readerRepository.listHighlights(freshNovel.id),
       readerRepository.listNotes(freshNovel.id),
@@ -1331,67 +1315,6 @@ export default function App() {
     },
     notify: showToast,
   });
-  const externalSourceLibraryRevision = useMemo(() => {
-    const library = novels
-      .map((novel) =>
-        [
-          novel.id,
-          novel.deletedAt ?? '',
-          novel.activeContentRevisionId ?? '',
-          novel.documentSectionCount ?? 0,
-          novel.metadataRevision ?? 0,
-        ].join(':'),
-      )
-      .sort()
-      .join('|');
-    const readSections = [
-      ...new Set(
-        chapters.flatMap((chapter) =>
-          chapter.documentSectionId && chapter.documentSectionReadAt ? [chapter.documentSectionId] : [],
-        ),
-      ),
-    ]
-      .sort()
-      .join(',');
-    return `${library}#${selectedNovel?.id ?? ''}:${readSections}`;
-  }, [chapters, novels, selectedNovel?.id]);
-  const externalSourceAssociationGenerationRevision = useMemo(
-    () =>
-      novels
-        .map((novel) => [novel.id, novel.deletedAt ?? '', novel.activeContentRevisionId ?? ''].join(':'))
-        .sort()
-        .join('|'),
-    [novels],
-  );
-  useEffect(() => {
-    if (bootstrapState.status !== 'ready') return;
-    let cancelled = false;
-    void (async () => {
-      const [active, trash, purgeEvidence] = await Promise.all([
-        readerRepository.listNovels(),
-        libraryCatalogRepository?.listTrash() ?? Promise.resolve([]),
-        readerRuntime.mode === 'local' ? listBookAssociationPurgeEvidence() : Promise.resolve([]),
-      ]);
-      const targets = [...active, ...trash].map((novel) => ({
-        bookId: novel.id,
-        activeContentRevisionId: novel.activeContentRevisionId,
-      }));
-      const changed = await externalSourceState.reconcileBookAssociationPurges(targets, purgeEvidence);
-      if (!cancelled && changed > 0) setExternalSourceBrokerRevision((value) => value + 1);
-    })().catch(() => {
-      // The intent remains durable and will be retried after the next catalog projection.
-    });
-    return () => {
-      cancelled = true;
-    };
-  }, [
-    bootstrapState.status,
-    externalSourceAssociationGenerationRevision,
-    externalSourceState,
-    libraryCatalogRepository,
-    readerRepository,
-    readerRuntime.mode,
-  ]);
   const externalSourceFeature = useExternalSourceController({
     registry: externalSourceRegistry,
     hostContext: externalSourceHostContext,
@@ -1400,7 +1323,6 @@ export default function App() {
     assets: bookAssetRepository,
     supportsExactDocumentSectionReadMarkers: readerRuntime.mode === 'remote',
     extensionRevision: extensionRevision + externalSourceBrokerRevision,
-    libraryRevision: externalSourceLibraryRevision,
     getNovel: (id) => readerRepository.getNovel(id),
     listChapters: (novelId) => readerRepository.listChapters(novelId),
     openNovel: (novel, target) =>
@@ -2044,9 +1966,7 @@ export default function App() {
         return;
       }
       try {
-        const source = await bookAssetRepository.exportSource(novel.id, {
-          activeContentRevisionId: novel.activeContentRevisionId,
-        });
+        const source = await bookAssetRepository.exportSource(novel.id);
         if (!source) {
           showToast('보관된 원본 파일이 없습니다. 원본을 다시 가져와 보강하세요.', 'warning');
           return;
@@ -2079,7 +1999,6 @@ export default function App() {
           fileName: file.name,
           contentType: file.type || 'text/plain',
           blob: file,
-          expectedContentRevisionId: novel.activeContentRevisionId,
         });
         await refreshNovels();
         const updated = await readerRepository.getNovel(novel.id);
@@ -2957,14 +2876,7 @@ export default function App() {
       }
       const nextCharacters = result.characters.length > 0 ? result.characters : knownCharacters;
       const nextNovel = { ...selectedNovel, analysisStatus: 'ready' as const, updatedAt: new Date().toISOString() };
-      await readerRepository.patchNovelMetadata(
-        bookId,
-        { analysisStatus: nextNovel.analysisStatus },
-        {
-          metadataRevision: selectedNovel.metadataRevision ?? 0,
-          activeContentRevisionId: selectedNovel.activeContentRevisionId,
-        },
-      );
+      await readerRepository.patchNovelMetadata(bookId, { analysisStatus: nextNovel.analysisStatus });
       await refreshAfterLocalMutation('aiTts');
       if (activeNovelIdRef.current === bookId && activeChapterIdRef.current === chapterId) {
         setSegmentsState(result.segments);
@@ -3533,14 +3445,7 @@ export default function App() {
     setSegmentsState(result.segments);
     setCharacters(result.characters);
     const nextNovel = { ...selectedNovel, analysisStatus: 'mock_ready' as const };
-    await readerRepository.patchNovelMetadata(
-      selectedNovel.id,
-      { analysisStatus: nextNovel.analysisStatus },
-      {
-        metadataRevision: selectedNovel.metadataRevision ?? 0,
-        activeContentRevisionId: selectedNovel.activeContentRevisionId,
-      },
-    );
+    await readerRepository.patchNovelMetadata(selectedNovel.id, { analysisStatus: nextNovel.analysisStatus });
     await refreshAfterLocalMutation('aiTts');
     setSelectedNovel(nextNovel);
     setReaderMode('analysis');
@@ -6202,7 +6107,6 @@ export default function App() {
       {view === 'document' && selectedNovel && bookAssetRepository && (
         <Suspense fallback={<main className="fixed-doc-screen" aria-busy="true" />}>
           <FixedDocumentScreen
-            key={`${selectedNovel.id}:${selectedNovel.activeContentRevisionId ?? ''}`}
             novel={selectedNovel}
             chapters={chapters}
             readingPosition={localReadingPosition}

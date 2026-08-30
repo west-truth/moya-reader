@@ -6,7 +6,6 @@ import { persistReaderSyncEvent } from './reader-entity-persistence.js';
 import {
   appWithSync,
   bookmarkCreatedEvent,
-  canonicalV2Event,
   deletedEvent,
   highlightCreatedEvent,
   noteUpdatedEvent,
@@ -67,9 +66,6 @@ describe('sync reader event routes', () => {
       false,
       null,
       null,
-      null,
-      null,
-      false,
       null,
       null,
     ]);
@@ -287,9 +283,9 @@ describe('sync reader event routes', () => {
     await persistReaderSyncEvent(client, 'user_test', restored);
 
     expect(queries[0].sql).toContain('set deleted_at = $3');
-    expect(queries[0].params).toEqual(['book_1', 'user_test', '2026-07-13T00:00:00.000Z', 'device_a', 3, null]);
+    expect(queries[0].params).toEqual(['book_1', 'user_test', '2026-07-13T00:00:00.000Z', 'device_a', 3]);
     expect(queries[1].sql).toContain('set deleted_at = null');
-    expect(queries[1].params).toEqual(['book_1', 'user_test', '2026-07-13T00:01:00.000Z', 4, null]);
+    expect(queries[1].params).toEqual(['book_1', 'user_test', '2026-07-13T00:01:00.000Z', 4]);
   });
 
   it('pushes and materializes reading position events', async () => {
@@ -298,18 +294,14 @@ describe('sync reader event routes', () => {
     const client = {
       query: vi.fn(async (sql: string, params?: unknown[]) => {
         if (sql === 'begin' || sql === 'commit' || sql === 'rollback') return { rowCount: 0, rows: [] };
-        if (sql.includes('pg_advisory_xact_lock')) return { rowCount: 1, rows: [] };
-        if (sql.includes('join book_content_revisions')) return { rowCount: 1, rows: [{ should_accept: true }] };
         if (sql.includes('from library_books') && sql.includes('for share')) {
           return { rowCount: 1, rows: [{ exists: true }] };
         }
         if (sql.includes('select exists(select 1 from chapters')) return { rowCount: 1, rows: [{ exists: true }] };
         if (sql.includes('select exists(select 1 from paragraph_search'))
           return { rowCount: 1, rows: [{ exists: true }] };
-        if (sql.includes('document_section_id is not null')) {
-          return { rowCount: 1, rows: [{ has_section: false }] };
-        }
-        if (sql.includes('should_accept')) {
+        if (sql.includes('join book_content_revisions')) return { rowCount: 1, rows: [{ should_accept: true }] };
+        if (sql.includes('from reading_positions') && sql.includes('should_accept')) {
           return { rowCount: 1, rows: [{ should_accept: true }] };
         }
         if (sql.includes('insert into sync_events')) {
@@ -317,10 +309,11 @@ describe('sync reader event routes', () => {
           return { rowCount: 1, rows: [{ id: params?.[0] }] };
         }
         if (sql.includes('insert into reading_positions')) {
+          expect(sql).toContain('insert into fixed_document_section_read_states');
+          expect(sql).toContain('join chapters chapter');
           materializedParams.push(params ?? []);
           return { rowCount: 1, rows: [] };
         }
-        if (sql.includes('insert into fixed_document_section_read_states')) return { rowCount: 0, rows: [] };
         throw new Error(`unexpected query: ${sql}`);
       }),
       release: vi.fn(),
@@ -337,7 +330,7 @@ describe('sync reader event routes', () => {
       payload: v2PushEnvelope([event]),
     });
 
-    expect(response.statusCode, response.body).toBe(200);
+    expect(response.statusCode).toBe(200);
     expect(response.json()).toEqual({ ...V2_SYNC_CONTRACT, accepted: 1, acceptedIds: [event.id] });
     expect(JSON.parse(String(syncEventParams[0][7]))).toEqual(event.revision);
     expect(materializedParams).toEqual([
@@ -353,18 +346,14 @@ describe('sync reader event routes', () => {
     const client = {
       query: vi.fn(async (sql: string) => {
         if (sql === 'begin' || sql === 'commit' || sql === 'rollback') return { rowCount: 0, rows: [] };
-        if (sql.includes('pg_advisory_xact_lock')) return { rowCount: 1, rows: [] };
-        if (sql.includes('join book_content_revisions')) return { rowCount: 1, rows: [{ should_accept: true }] };
         if (sql.includes('from library_books') && sql.includes('for share')) {
           return { rowCount: 1, rows: [{ exists: true }] };
         }
         if (sql.includes('select exists(select 1 from chapters')) return { rowCount: 1, rows: [{ exists: true }] };
         if (sql.includes('select exists(select 1 from paragraph_search'))
           return { rowCount: 1, rows: [{ exists: true }] };
-        if (sql.includes('document_section_id is not null')) {
-          return { rowCount: 1, rows: [{ has_section: false }] };
-        }
-        if (sql.includes('should_accept')) {
+        if (sql.includes('join book_content_revisions')) return { rowCount: 1, rows: [{ should_accept: true }] };
+        if (sql.includes('from reading_positions') && sql.includes('should_accept')) {
           return { rowCount: 1, rows: [{ should_accept: false }] };
         }
         if (sql.includes('insert into sync_events') || sql.includes('insert into reading_positions')) {
@@ -409,7 +398,6 @@ describe('sync reader event routes', () => {
     const client = {
       query: vi.fn(async (sql: string) => {
         if (sql === 'begin' || sql === 'commit' || sql === 'rollback') return { rowCount: 0, rows: [] };
-        if (sql.includes('pg_advisory_xact_lock')) return { rowCount: 1, rows: [] };
         if (sql.includes('from library_books') && sql.includes('for share')) return { rowCount: 0, rows: [] };
         if (
           sql.includes('insert into sync_events') ||
@@ -471,7 +459,6 @@ describe('sync reader event routes', () => {
     const client = {
       query: vi.fn(async (sql: string) => {
         if (sql === 'begin' || sql === 'commit' || sql === 'rollback') return { rowCount: 0, rows: [] };
-        if (sql.includes('pg_advisory_xact_lock')) return { rowCount: 1, rows: [] };
         if (sql.includes('from library_books') && sql.includes('for share')) {
           return { rowCount: 1, rows: [{ exists: true }] };
         }
@@ -636,7 +623,6 @@ describe('sync reader event routes', () => {
     const client = {
       query: vi.fn(async (sql: string) => {
         if (sql === 'begin' || sql === 'commit' || sql === 'rollback') return { rowCount: 0, rows: [] };
-        if (sql.includes('pg_advisory_xact_lock')) return { rowCount: 1, rows: [] };
         if (sql.includes('from library_books') && sql.includes('for share')) {
           return { rowCount: 1, rows: [{ exists: true }] };
         }
@@ -776,176 +762,6 @@ describe('sync reader event routes', () => {
       events: deleteEvents.map((event, index) => v2PullEvent(event, index + 5)),
     });
     expect(client.query).toHaveBeenCalledWith('commit');
-
-    await app.close();
-  });
-
-  it('keeps exact section reads independent and rejects stale reader writes after a re-added incarnation', async () => {
-    const activeContentRevisionId = 'content-r2';
-    const sectionByChapter = new Map<string, string>(
-      Array.from({ length: 6 }, (_, zeroIndex) => {
-        const index = zeroIndex + 1;
-        return [`chapter_${index}`, `section:${index}`] as const;
-      }),
-    );
-    let globalPosition: { chapterId: string; updatedAt: string } | undefined;
-    const sectionReadAt = new Map<string, string>();
-    const loggedTypes: string[] = [];
-    const client = {
-      query: vi.fn(async (sql: string, params?: unknown[]) => {
-        if (sql === 'begin' || sql === 'commit' || sql === 'rollback') return { rowCount: 0, rows: [] };
-        if (sql.includes('pg_advisory_xact_lock')) return { rowCount: 1, rows: [] };
-        if (sql.includes('join book_content_revisions')) {
-          return { rowCount: 1, rows: [{ should_accept: params?.[2] === activeContentRevisionId }] };
-        }
-        if (sql.includes('from library_books') && sql.includes('for share')) {
-          return { rowCount: 1, rows: [{ exists: true }] };
-        }
-        if (sql.includes('select exists(') && sql.includes('document_section_id is not null')) {
-          return { rowCount: 1, rows: [{ has_section: sectionByChapter.has(String(params?.[0])) }] };
-        }
-        if (sql.includes('select exists(select 1 from chapters')) {
-          return { rowCount: 1, rows: [{ exists: sectionByChapter.has(String(params?.[2] ?? params?.[0])) }] };
-        }
-        if (sql.includes('select exists(select 1 from paragraph_search')) {
-          return { rowCount: 1, rows: [{ exists: true }] };
-        }
-        if (sql.includes('select not exists(') && sql.includes("type = 'reading_position_deleted'")) {
-          return { rowCount: 1, rows: [{ should_accept: true }] };
-        }
-        if (sql.includes('should_accept')) {
-          const updatedAt = String(params?.[2]);
-          return {
-            rowCount: 1,
-            rows: [{ should_accept: !globalPosition || globalPosition.updatedAt <= updatedAt }],
-          };
-        }
-        if (sql.includes('insert into sync_events')) {
-          loggedTypes.push(String(params?.[3]));
-          return { rowCount: 1, rows: [{ id: params?.[0] }] };
-        }
-        if (sql.includes('insert into reading_positions')) {
-          const chapterId = String(params?.[2]);
-          const updatedAt = String(params?.[9]);
-          if (!globalPosition || globalPosition.updatedAt <= updatedAt) globalPosition = { chapterId, updatedAt };
-          return { rowCount: 1, rows: [] };
-        }
-        if (sql.includes('insert into fixed_document_section_read_states')) {
-          const sectionId = sectionByChapter.get(String(params?.[2]));
-          const updatedAt = String(params?.[3]);
-          const current = sectionId ? sectionReadAt.get(sectionId) : undefined;
-          if (sectionId && (!current || current <= updatedAt)) sectionReadAt.set(sectionId, updatedAt);
-          return { rowCount: sectionId ? 1 : 0, rows: [] };
-        }
-        if (sql.includes('with deleted_position as (')) {
-          globalPosition = undefined;
-          sectionReadAt.clear();
-          return { rowCount: 1, rows: [] };
-        }
-        throw new Error(`unexpected query: ${sql}`);
-      }),
-      release: vi.fn(),
-    };
-    const pool = { connect: vi.fn(async () => client) } as unknown as pg.Pool;
-    const app = await appWithSync(pool);
-    const positionEvent = (id: string, chapterId: string, contentRevisionId: string, updatedAt: string): SyncEvent =>
-      canonicalV2Event({
-        id,
-        type: 'reading_position_updated',
-        deviceId: 'device_a',
-        novelId: 'book_1',
-        entityId: 'reading_position_book_1',
-        payload: {
-          position: {
-            chapterId,
-            paragraphIndex: 0,
-            offsetInParagraph: 0,
-            chapterProgress: 0.5,
-            scrollTop: 100,
-            contentRevisionId,
-            updatedAt,
-          },
-        },
-        revision: {
-          entityType: 'reading_position',
-          entityId: 'reading_position_book_1',
-          novelId: 'book_1',
-          localSequence: 1,
-          updatedAt,
-          payloadHash: `fixture-${id}`,
-        },
-        createdAt: updatedAt,
-      });
-    const resetEvent = (id: string, contentRevisionId: string, deletedAt: string): SyncEvent =>
-      canonicalV2Event({
-        id,
-        type: 'reading_position_deleted',
-        deviceId: 'device_a',
-        novelId: 'book_1',
-        entityId: 'reading_position_book_1',
-        payload: {
-          id: 'reading_position_book_1',
-          expectedContentRevisionId: contentRevisionId,
-          deletedAt,
-        },
-        revision: {
-          entityType: 'reading_position',
-          entityId: 'reading_position_book_1',
-          novelId: 'book_1',
-          localSequence: 2,
-          deletedAt,
-          payloadHash: `fixture-${id}`,
-        },
-        createdAt: deletedAt,
-      });
-
-    const initialEvents = [
-      positionEvent('r2-section-3', 'chapter_3', activeContentRevisionId, '2026-07-05T00:30:00.000Z'),
-      positionEvent('r2-section-6', 'chapter_6', activeContentRevisionId, '2026-07-05T00:20:00.000Z'),
-      positionEvent('stale-r1-section-4', 'chapter_4', 'content-r1', '2026-07-05T00:40:00.000Z'),
-    ];
-    const initial = await app.inject({
-      method: 'POST',
-      url: '/api/sync/events',
-      payload: v2PushEnvelope(initialEvents),
-    });
-
-    expect(initial.statusCode, initial.body).toBe(200);
-    expect(initial.json()).toMatchObject({
-      accepted: 2,
-      acceptedIds: initialEvents.slice(0, 2).map((event) => event.id),
-      rejected: [{ id: initialEvents[2].id, reason: 'stale' }],
-    });
-    expect(globalPosition).toEqual({ chapterId: 'chapter_3', updatedAt: '2026-07-05T00:30:00.000Z' });
-    expect(sectionReadAt.has('section:4')).toBe(false);
-    expect(sectionReadAt.has('section:5')).toBe(false);
-    expect(sectionReadAt.get('section:6')).toBe('2026-07-05T00:20:00.000Z');
-
-    const staleReset = resetEvent('stale-r1-reset', 'content-r1', '2026-07-05T00:41:00.000Z');
-    const staleResetResponse = await app.inject({
-      method: 'POST',
-      url: '/api/sync/events',
-      payload: v2PushEnvelope([staleReset]),
-    });
-    expect(staleResetResponse.statusCode, staleResetResponse.body).toBe(200);
-    expect(staleResetResponse.json()).toMatchObject({
-      accepted: 0,
-      rejected: [{ id: staleReset.id, reason: 'stale' }],
-    });
-    expect(globalPosition?.chapterId).toBe('chapter_3');
-    expect(sectionReadAt.get('section:6')).toBe('2026-07-05T00:20:00.000Z');
-
-    const activeReset = resetEvent('active-r2-reset', activeContentRevisionId, '2026-07-05T00:42:00.000Z');
-    const activeResetResponse = await app.inject({
-      method: 'POST',
-      url: '/api/sync/events',
-      payload: v2PushEnvelope([activeReset]),
-    });
-    expect(activeResetResponse.statusCode, activeResetResponse.body).toBe(200);
-    expect(activeResetResponse.json()).toMatchObject({ accepted: 1, acceptedIds: [activeReset.id] });
-    expect(globalPosition).toBeUndefined();
-    expect(sectionReadAt.size).toBe(0);
-    expect(loggedTypes).toEqual(['reading_position_updated', 'reading_position_updated', 'reading_position_deleted']);
 
     await app.close();
   });

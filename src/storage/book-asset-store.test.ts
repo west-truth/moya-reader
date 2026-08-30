@@ -4,7 +4,6 @@ import {
   cleanupStagedBookAsset,
   exportBookSource,
   getActiveBookCover,
-  getActiveBookCoverMetadata,
   reconstructCanonicalBookSource,
   removeBookCover,
   reselectOriginalBookSource,
@@ -121,20 +120,8 @@ describe('book asset store', () => {
       fileName: 'selected.txt',
       contentType: 'text/plain',
       blob: source,
-      expectedContentRevisionId: 'revision-legacy',
     });
     expect(attached).toMatchObject({ provenance: 'original', status: 'active', contentHash: integrityHash(bytes) });
-    await expect(
-      reselectOriginalBookSource('book-legacy', {
-        fileName: 'selected.txt',
-        contentType: 'text/plain',
-        blob: source,
-        expectedContentRevisionId: 'revision-stale',
-      }),
-    ).rejects.toThrow('content revision changed');
-    await expect(exportBookSource('book-legacy', { activeContentRevisionId: 'revision-stale' })).rejects.toThrow(
-      'content revision changed',
-    );
     await expect(
       reselectOriginalBookSource('book-legacy', {
         fileName: 'wrong.txt',
@@ -172,17 +159,11 @@ describe('book asset store', () => {
       positionX: 40,
       positionY: 60,
       expectedMetadataRevision: 0,
-      expectedContentRevisionId: parsed.novel.activeContentRevisionId,
     });
     expect(metadata).toMatchObject({ kind: 'cover', contentHash, pixelWidth: 800, pixelHeight: 1200 });
-    expect(await getActiveBookCoverMetadata(parsed.novel.id)).toMatchObject({ id: metadata.id, contentHash });
     expect(await getActiveBookCover(parsed.novel.id)).toMatchObject({ metadata: { id: metadata.id }, blob });
 
-    await removeBookCover(parsed.novel.id, {
-      metadataRevision: 1,
-      activeContentRevisionId: parsed.novel.activeContentRevisionId,
-    });
-    expect(await getActiveBookCoverMetadata(parsed.novel.id)).toBeUndefined();
+    await removeBookCover(parsed.novel.id, 1);
     expect(await getActiveBookCover(parsed.novel.id)).toBeUndefined();
     expect(await lifecycleTombstones()).toContainEqual(
       expect.objectContaining({
@@ -204,43 +185,8 @@ describe('book asset store', () => {
       positionX: 40,
       positionY: 60,
       expectedMetadataRevision: 2,
-      expectedContentRevisionId: parsed.novel.activeContentRevisionId,
     });
     expect((await lifecycleTombstones()).find((item) => item.id === `cover:${parsed.novel.id}`)).toBeUndefined();
-  });
-
-  it('does not attach an older-incarnation cover mutation to the active content revision', async () => {
-    const parsed = await parseNovelTextForSample('Revision fenced cover', '1화\n\n본문');
-    await saveImportedNovel(parsed);
-    const blob = new Blob(['cover'], { type: 'image/webp' });
-    const input = {
-      blob,
-      fileName: 'cover.webp',
-      contentType: 'image/webp' as const,
-      contentHash: integrityHash(await blob.arrayBuffer()),
-      pixelWidth: 800,
-      pixelHeight: 1200,
-      fit: 'crop' as const,
-      positionX: 50,
-      positionY: 50,
-      expectedMetadataRevision: 0,
-      expectedContentRevisionId: 'stale-revision',
-    };
-
-    await expect(saveBookCover(parsed.novel.id, input)).rejects.toThrow('content revision changed');
-    await expect(
-      saveGeneratedBookCover(parsed.novel.id, {
-        ...generatedInput('stale-generated', 0x55),
-        expectedContentRevisionId: 'stale-revision',
-      }),
-    ).rejects.toThrow('content revision changed');
-    await expect(
-      removeBookCover(parsed.novel.id, {
-        metadataRevision: 0,
-        activeContentRevisionId: 'stale-revision',
-      }),
-    ).rejects.toThrow('content revision changed');
-    expect(await getActiveBookCover(parsed.novel.id)).toBeUndefined();
   });
 
   it('replaces stale generated previews but never overwrites a user cover', async () => {

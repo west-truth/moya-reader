@@ -44,10 +44,6 @@ export interface SyncTombstone {
   vaultBookId?: string;
   /** Legacy v1 fallback retained for older Vault manifests. */
   bookHash?: string;
-  /** Exact local content incarnation removed by a permanent book purge. */
-  contentRevisionId?: string;
-  /** Distinguishes a permanent purge marker from the reversible trash marker. */
-  purged?: boolean;
   pageIndex?: number;
   deletedAt: string;
   createdAt: string;

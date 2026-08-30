@@ -14,7 +14,7 @@ import {
   type ChapterStructureRepository,
   type ChapterStructureReviewItem,
 } from './chapter-structure-repository';
-import { getActiveBookSourceSnapshot } from '../storage/book-asset-store';
+import { exportBookSource } from '../storage/book-asset-store';
 import { getBookmarks, getHighlights, getNotes } from '../storage/annotation-store';
 import { getCorrections } from '../storage/analysis-artifact-store';
 import { CHAPTER_STRUCTURE_STORES } from '../storage/chapter-structure-schema';
@@ -27,7 +27,7 @@ import { openReaderDb } from '../storage/reader-database';
 interface LoadedStructureSnapshot {
   readonly novel: Novel;
   readonly snapshot: ChapterStructureSnapshot;
-  readonly source: Pick<NonNullable<Awaited<ReturnType<typeof getActiveBookSourceSnapshot>>>, 'metadata' | 'blob'>;
+  readonly source: NonNullable<Awaited<ReturnType<typeof exportBookSource>>>;
 }
 
 function randomId(prefix: string): string {
@@ -43,9 +43,7 @@ function chapterIds(chapters: readonly Chapter[]): Set<string> {
 }
 
 async function loadStructureSnapshot(bookId: string, revisionId?: string): Promise<LoadedStructureSnapshot> {
-  const active = await getActiveBookSourceSnapshot(bookId);
-  const novel = active?.novel;
-  const source = active ? { metadata: active.metadata, blob: active.blob } : undefined;
+  const [novel, source] = await Promise.all([getNovel(bookId), exportBookSource(bookId)]);
   if (!novel) throw new Error('책을 찾을 수 없습니다.');
   if (!source) throw new Error('구조 보정에는 보관된 source가 필요합니다. 원본을 다시 선택하거나 재구성하세요.');
   const contentRevisionId = revisionId ?? novel.activeContentRevisionId;

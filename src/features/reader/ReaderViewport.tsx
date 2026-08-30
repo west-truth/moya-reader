@@ -28,7 +28,6 @@ export interface ReaderViewportApi {
   readonly flow: ReaderRuntimeFlow;
   readonly resetContent: () => void;
   readonly flushPosition: () => Promise<void>;
-  readonly flushPositionImmediately: () => Promise<void>;
   readonly scrollToParagraph: (paragraphId: string) => Promise<boolean>;
   readonly scrollToParagraphIndex: (
     paragraphIndex: number,
@@ -95,7 +94,6 @@ function createViewportApiProxy(
     },
     resetContent: () => current()?.resetContent(),
     flushPosition: () => current()?.flushPosition() ?? Promise.resolve(),
-    flushPositionImmediately: () => current()?.flushPositionImmediately() ?? Promise.resolve(),
     scrollToParagraph: (paragraphId) => current()?.scrollToParagraph(paragraphId) ?? Promise.resolve(false),
     scrollToParagraphIndex: (paragraphIndex, align, behavior) =>
       current()?.scrollToParagraphIndex(paragraphIndex, align, behavior) ?? Promise.resolve(),
@@ -518,7 +516,6 @@ function VirtualizedReaderViewportComponent({
     flow: 'scroll',
     resetContent: pages.reset,
     flushPosition: progress.flush,
-    flushPositionImmediately: progress.flushImmediately,
     scrollToParagraph,
     scrollToParagraphIndex,
     scrubTo,
@@ -793,7 +790,6 @@ function VirtualizedReaderViewportComponent({
                 measureElement={measureVirtualRow}
                 onSelectCorrectionSegment={(segmentId) => screenHandle.getActions().selectCorrectionSegment(segmentId)}
                 assetRepository={assetRepository}
-                contentRevisionId={novel.activeContentRevisionId}
                 onDocumentLink={onDocumentLink}
               />
             );

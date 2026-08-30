@@ -7,7 +7,6 @@ import {
   finalizeExternalSourceLinks,
   finalizeImporterResolvedExternalSourceLinks,
   finalizedExternalSourceLinks,
-  recordExternalSourceActivation,
   reconcilePendingExternalSourceLinks,
 } from './link-import-reconciliation';
 
@@ -24,7 +23,6 @@ const baseLink: ExternalSourceLink = {
     stagedAt: '2026-08-29T00:01:00.000Z',
     hadExistingLink: true,
     previousActiveContentRevisionId: 'content-old',
-    activatedContentRevisionId: 'content-new',
     expectedActiveSourceContentHash: 'source-new',
     importedRemoteRevision: 'new',
     importedSourceContentHash: 'new-hash',
@@ -99,41 +97,6 @@ describe('external source link import reconciliation', () => {
       [expect.objectContaining({ id: 'link-1', pendingImport: undefined })],
       [],
     );
-  });
-
-  it('records the exact importer content incarnation before finalizing a link', async () => {
-    const compareAndSwapPendingLinks = vi.fn(async () => true);
-    const state = { compareAndSwapPendingLinks } as never;
-    const unbound = {
-      ...baseLink,
-      pendingImport: { ...baseLink.pendingImport!, activatedContentRevisionId: undefined },
-    } satisfies ExternalSourceLink;
-
-    const activated = await recordExternalSourceActivation(state, [unbound], novel);
-
-    expect(activated[0]?.pendingImport?.activatedContentRevisionId).toBe('content-new');
-    expect(compareAndSwapPendingLinks).toHaveBeenCalledWith(
-      [{ id: 'link-1', operationId: 'operation-1' }],
-      [
-        expect.objectContaining({
-          pendingImport: expect.objectContaining({ activatedContentRevisionId: 'content-new' }),
-        }),
-      ],
-      [],
-    );
-  });
-
-  it('does not finalize an activation receipt onto a later same-id replacement', async () => {
-    const saveLinks = vi.fn(async () => undefined);
-    const state = { saveLinks } as never;
-
-    await expect(
-      finalizeExternalSourceLinks(state, [baseLink], {
-        ...novel,
-        activeContentRevisionId: 'content-replacement',
-      }),
-    ).rejects.toThrow();
-    expect(saveLinks).not.toHaveBeenCalled();
   });
 
   it('finalizes an importer-resolved aggregate with the returned revision and source hash', async () => {

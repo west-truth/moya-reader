@@ -87,7 +87,7 @@ import {
   searchParagraphPage as searchStoredParagraphPage,
 } from '../storage/reader-query-store';
 import type { BookContentRevisionHandle } from '../storage/content-revision-read-handle';
-import type { SaveReadingPositionInput } from './reader-repository';
+import type { NovelMetadataPatch, SaveReadingPositionInput } from './reader-repository';
 import {
   getVoiceCastingWorkspace,
   listAcceptedSpeakerUtterances,
@@ -115,12 +115,12 @@ export class IndexedDbReaderRepository
     return getNovel(id);
   }
 
-  patchNovelMetadata(...args: Parameters<ReaderRepository['patchNovelMetadata']>): Promise<void> {
-    return patchNovelMetadata(...args);
+  patchNovelMetadata(novelId: string, patch: NovelMetadataPatch): Promise<void> {
+    return patchNovelMetadata(novelId, patch);
   }
 
-  deleteNovel(...args: Parameters<ReaderRepository['deleteNovel']>): Promise<void> {
-    return deleteNovel(...args);
+  deleteNovel(novelId: string, expectedRevision?: number): Promise<void> {
+    return deleteNovel(novelId, expectedRevision);
   }
 
   saveImportedNovel(parsed: ParsedNovel): Promise<void> {
@@ -135,8 +135,8 @@ export class IndexedDbReaderRepository
     return getReadingPosition(novelId);
   }
 
-  clearReadingPosition(novelId: string, expectedContentRevisionId?: string): Promise<void> {
-    return clearReadingPosition(novelId, expectedContentRevisionId);
+  clearReadingPosition(novelId: string): Promise<void> {
+    return clearReadingPosition(novelId);
   }
 
   addNovelReadingTime(novelId: string, seconds: number, readAt?: string): Promise<void> {

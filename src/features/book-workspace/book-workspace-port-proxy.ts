@@ -13,7 +13,6 @@ export interface BookWorkspacePortRef<Port> {
 export function createBookWorkspacePortProxy(input: {
   readonly repository: BookWorkspaceRepositoryPort;
   readonly catalog?: BookWorkspacePorts['catalog'];
-  readonly associationLifecycle?: BookWorkspacePorts['associationLifecycle'];
   readonly transition: BookWorkspacePortRef<BookWorkspaceTransitionPort>;
   readonly adjacent: BookWorkspacePortRef<BookWorkspaceAdjacentFeaturePort>;
   readonly environment: BookWorkspaceEnvironmentPort;
@@ -21,7 +20,6 @@ export function createBookWorkspacePortProxy(input: {
   return {
     repository: input.repository,
     catalog: input.catalog,
-    associationLifecycle: input.associationLifecycle,
     transition: {
       flushReaderSession: () => input.transition.current.flushReaderSession(),
       resetAnalysis: () => input.transition.current.resetAnalysis(),

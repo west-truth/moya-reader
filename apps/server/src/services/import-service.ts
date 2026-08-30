@@ -38,12 +38,6 @@ import {
   reserveObjectDeletions,
 } from './object-delete-outbox.js';
 import { mergeSeriesImageArchiveDelta } from '@noveldesk/fixed-document-core/series-image-archive';
-import { IMAGE_SERIES_BOOK_LOCK_NAMESPACE } from './book-operation-lock.js';
-import {
-  assertBookGenerationTicket,
-  assertCreateOnlyBookTarget,
-  BookGenerationChangedError,
-} from './book-generation-ticket.js';
 
 const PARAGRAPHS_PER_PAGE = 120;
 const SERVER_IMPORT_CHAPTER_BATCH_SIZE = 100;
@@ -72,8 +66,6 @@ interface UploadSessionRow {
   source_content_hash?: string | null;
   import_mode?: 'replace_book' | 'append_image_series';
   base_active_content_revision_id?: string | null;
-  target_book_generation?: number | string | null;
-  target_active_content_revision_id?: string | null;
 }
 
 interface ImageSeriesAppendBaseRow {
@@ -96,18 +88,11 @@ type ImportJobStage =
   'queued' | 'reading' | 'decoding' | 'splitting_chapters' | 'writing' | 'ready' | 'failed' | 'cancelled';
 
 interface Queryable {
-  query<T extends pg.QueryResultRow = pg.QueryResultRow>(
-    text: string,
-    values?: unknown[],
-  ): Promise<{ rows: T[]; rowCount: number | null }>;
+  query<T extends pg.QueryResultRow = pg.QueryResultRow>(text: string, values?: unknown[]): Promise<pg.QueryResult<T>>;
 }
 
 interface CommandQueryable {
   query(text: string, values?: unknown[]): Promise<unknown>;
-}
-
-interface RevisionLookupQueryable {
-  query(text: string, values?: unknown[]): Promise<{ rows: Array<{ id: string }>; rowCount: number | null }>;
 }
 
 interface ImportJobProgressPatch {
@@ -593,14 +578,14 @@ export async function replaceParsedBookContent(client: CommandQueryable, bookId:
   await client.query('delete from chapters where book_id = $1', [bookId]);
 }
 
-async function readUploadSession(pool: pg.Pool, uploadId: string): Promise<UploadSessionRow> {
+async function readUploadBuffer(
+  pool: pg.Pool,
+  uploadId: string,
+): Promise<{ session: UploadSessionRow; buffer: Buffer }> {
   const sessionResult = await pool.query<UploadSessionRow>('select * from upload_sessions where id = $1', [uploadId]);
   const session = sessionResult.rows[0];
   if (!session) throw new Error(`Upload session not found: ${uploadId}`);
-  return session;
-}
 
-async function readUploadBuffer(pool: pg.Pool, uploadId: string, session: UploadSessionRow): Promise<Buffer> {
   const chunksResult = await pool.query<UploadChunkRow>(
     'select chunk_index, size_bytes, storage_path from upload_chunks where upload_id = $1 order by chunk_index asc',
     [uploadId],
@@ -637,7 +622,7 @@ async function readUploadBuffer(pool: pg.Pool, uploadId: string, session: Upload
     throw new Error(`Upload size mismatch: expected ${expectedBytes}, got ${offset}`);
   }
 
-  return buffer;
+  return { session, buffer };
 }
 
 export function arrayBufferFromBuffer(buffer: Buffer): ArrayBuffer {
@@ -650,7 +635,7 @@ export function arrayBufferFromBuffer(buffer: Buffer): ArrayBuffer {
 async function lockImageSeriesAppend(pool: pg.Pool, bookId: string): Promise<pg.PoolClient> {
   const client = await pool.connect();
   try {
-    await client.query('select pg_advisory_lock(hashtextextended($1, $2))', [bookId, IMAGE_SERIES_BOOK_LOCK_NAMESPACE]);
+    await client.query('select pg_advisory_lock(hashtextextended($1, 7319))', [bookId]);
     return client;
   } catch (error) {
     client.release();
@@ -660,10 +645,7 @@ async function lockImageSeriesAppend(pool: pg.Pool, bookId: string): Promise<pg.
 
 async function unlockImageSeriesAppend(client: pg.PoolClient, bookId: string): Promise<void> {
   try {
-    await client.query('select pg_advisory_unlock(hashtextextended($1, $2))', [
-      bookId,
-      IMAGE_SERIES_BOOK_LOCK_NAMESPACE,
-    ]);
+    await client.query('select pg_advisory_unlock(hashtextextended($1, 7319))', [bookId]);
   } finally {
     client.release();
   }
@@ -687,34 +669,6 @@ async function loadImageSeriesAppendBase(
   if (row.format !== 'image_archive') throw new Error('만화 작품에만 회차 delta를 추가할 수 있습니다.');
   if (!row.active_content_revision_id) throw new Error('기존 만화 작품의 활성 본문 revision을 찾지 못했습니다.');
   return row;
-}
-
-export async function assertImageSeriesAppendRebase(
-  queryable: RevisionLookupQueryable,
-  input: {
-    readonly userId: string;
-    readonly bookId: string;
-    readonly requestedBaseContentRevisionId: string;
-    readonly activeContentRevisionId: string;
-    readonly replacesExistingSection: boolean;
-  },
-): Promise<void> {
-  if (input.requestedBaseContentRevisionId === input.activeContentRevisionId) return;
-  if (input.replacesExistingSection) throw new Error('image_series_append_base_changed');
-
-  // New sections may be rebased over another append from the same physical
-  // incarnation. A hard purge cascades the old revision history, so requiring
-  // the requested base to remain attached to this book prevents an R1 upload
-  // from being replayed onto a newly created R2 with the same deterministic ID.
-  const sameIncarnation = await queryable.query(
-    `select revision.id
-       from book_content_revisions revision
-       join library_books book on book.id = revision.book_id and book.user_id = $2
-      where revision.id = $1 and revision.book_id = $3
-      limit 1`,
-    [input.requestedBaseContentRevisionId, input.userId, input.bookId],
-  );
-  if (!sameIncarnation.rows[0]) throw new Error('image_series_append_base_changed');
 }
 
 async function finalizeNoopImageSeriesAppend(
@@ -817,32 +771,7 @@ export async function processImportJob(
   let appendLockBookId: string | undefined;
   try {
     await assertImportExecutionActive(pool, jobId, attempt.executionId);
-    const session = await readUploadSession(pool, uploadId);
-    const lifecycleBookId = session.client_book_id?.trim();
-    if (lifecycleBookId) {
-      appendLockBookId = lifecycleBookId;
-      appendLockClient = await lockImageSeriesAppend(pool, lifecycleBookId);
-      await assertImportExecutionActive(pool, jobId, attempt.executionId);
-      const importMode = session.import_mode ?? 'replace_book';
-      const targetGeneration =
-        session.target_book_generation === null || session.target_book_generation === undefined
-          ? undefined
-          : Number(session.target_book_generation);
-      if (targetGeneration === undefined && importMode !== 'append_image_series') {
-        throw new BookGenerationChangedError('generation_changed');
-      }
-      if (targetGeneration !== undefined) {
-        await assertBookGenerationTicket(appendLockClient, {
-          userId: session.user_id,
-          bookId: lifecycleBookId,
-          expectedGeneration: targetGeneration,
-          expectedActiveContentRevisionId:
-            importMode === 'replace_book' ? (session.target_active_content_revision_id ?? undefined) : undefined,
-          requireExisting: importMode === 'append_image_series' || Boolean(session.target_active_content_revision_id),
-        });
-      }
-    }
-    const uploadBuffer = await readUploadBuffer(pool, uploadId, session);
+    const { session, buffer: uploadBuffer } = await readUploadBuffer(pool, uploadId);
     let buffer: Buffer | undefined = uploadBuffer;
     const bytesRead = buffer.length;
     const totalBytes = Number(session.size_bytes);
@@ -855,13 +784,14 @@ export async function processImportJob(
     let canonicalContentType = session.content_type;
     let appendBaseContentRevisionId: string | undefined;
     let appendNoopTotalChapters = 0;
-    let changedDocumentSectionIds: readonly string[] = [];
     const importMode = session.import_mode ?? 'replace_book';
     const incrementalImageSeriesAppend = importMode === 'append_image_series';
     if (incrementalImageSeriesAppend) {
       const bookId = session.client_book_id?.trim();
       if (!bookId) throw new Error('회차 delta에 대상 만화 작품 ID가 없습니다.');
-      if (!appendLockClient) throw new Error('book lifecycle lock was not acquired');
+      appendLockBookId = bookId;
+      appendLockClient = await lockImageSeriesAppend(pool, bookId);
+      await assertImportExecutionActive(pool, jobId, attempt.executionId);
       const appendBase = await loadImageSeriesAppendBase(appendLockClient, session.user_id, bookId);
       appendBaseContentRevisionId = appendBase.active_content_revision_id;
       appendNoopTotalChapters = Number(appendBase.total_chapters);
@@ -877,13 +807,12 @@ export async function processImportJob(
         targetBookId: bookId,
         signal: importAbort.signal,
       });
-      await assertImageSeriesAppendRebase(appendLockClient, {
-        userId: session.user_id,
-        bookId,
-        requestedBaseContentRevisionId: String(session.base_active_content_revision_id),
-        activeContentRevisionId: appendBaseContentRevisionId,
-        replacesExistingSection: merged.replacedSectionIds.length > 0,
-      });
+      if (
+        session.base_active_content_revision_id !== appendBaseContentRevisionId &&
+        merged.replacedSectionIds.length > 0
+      ) {
+        throw new Error('image_series_append_base_changed');
+      }
       if (merged.changedSectionIds.length === 0) {
         await finalizeNoopImageSeriesAppend(appendLockClient, {
           uploadId,
@@ -900,7 +829,6 @@ export async function processImportJob(
         await removeUploadDirectory(config, uploadId);
         return;
       }
-      changedDocumentSectionIds = merged.changedSectionIds;
       buffer = Buffer.from(await merged.file.arrayBuffer());
       sourceContentHash = integrityHash(buffer);
       canonicalFileName = appendBase.source_file_name || merged.file.name;
@@ -967,15 +895,6 @@ export async function processImportJob(
         }),
         session.client_book_id,
       );
-    }
-    if (lifecycleBookId && parsed.novel.id !== lifecycleBookId) {
-      throw new BookGenerationChangedError('generation_changed');
-    }
-    if (!appendLockClient) {
-      appendLockBookId = parsed.novel.id;
-      appendLockClient = await lockImageSeriesAppend(pool, parsed.novel.id);
-      await assertImportExecutionActive(pool, jobId, attempt.executionId);
-      await assertCreateOnlyBookTarget(appendLockClient, session.user_id, parsed.novel.id);
     }
     arrayBuffer = undefined;
     await updateImportJobProgress(
@@ -1120,24 +1039,6 @@ export async function processImportJob(
     const releaseTransactionClient = client !== appendLockClient;
     try {
       await client.query('begin');
-      const targetGeneration =
-        session.target_book_generation === null || session.target_book_generation === undefined
-          ? undefined
-          : Number(session.target_book_generation);
-      if (lifecycleBookId && targetGeneration !== undefined) {
-        await assertBookGenerationTicket(client, {
-          userId: session.user_id,
-          bookId: parsed.novel.id,
-          expectedGeneration: targetGeneration,
-          expectedActiveContentRevisionId: incrementalImageSeriesAppend
-            ? undefined
-            : (session.target_active_content_revision_id ?? undefined),
-          requireExisting: incrementalImageSeriesAppend || Boolean(session.target_active_content_revision_id),
-          forUpdate: true,
-        });
-      } else if (!lifecycleBookId) {
-        await assertCreateOnlyBookTarget(client, session.user_id, parsed.novel.id, true);
-      }
       if (appendBaseContentRevisionId) {
         const currentBase = await client.query<{ id: string }>(
           `select id from library_books
@@ -1178,21 +1079,6 @@ export async function processImportJob(
         sourceFileName: parsed.novel.sourceFileName,
         sourceEncoding: parsed.novel.sourceEncoding,
       });
-      // prepareBookReplacement (or the append base check above) now owns the
-      // canonical book row. Invalidate exact markers only after that fence so
-      // an old-revision reader write cannot race this activation.
-      if (!incrementalImageSeriesAppend) {
-        await client.query('delete from fixed_document_section_read_states where book_id = $1 and user_id = $2', [
-          parsed.novel.id,
-          session.user_id,
-        ]);
-      } else if (changedDocumentSectionIds.length > 0) {
-        await client.query(
-          `delete from fixed_document_section_read_states
-            where book_id = $1 and user_id = $2 and document_section_id = any($3::text[])`,
-          [parsed.novel.id, session.user_id, changedDocumentSectionIds],
-        );
-      }
       await client.query(
         `
           insert into library_books (
@@ -1255,20 +1141,15 @@ export async function processImportJob(
         );
         obsoleteSourceKeys.push(...orphanedSource.rows.map((row) => row.storage_key));
       }
-      const activeCover = await client.query<{
-        id: string | null;
-        provenance: string | null;
-        cover_removed_at: string | null;
-      }>(
-        `select asset.id, asset.provenance, book.cover_removed_at
+      const activeCover = await client.query<{ id: string | null; provenance: string | null }>(
+        `select asset.id, asset.provenance
            from library_books book
            left join book_assets asset on asset.id = book.cover_asset_id
           where book.id = $1 and book.user_id = $2`,
         [parsed.novel.id, session.user_id],
       );
       const preserveExistingCover =
-        (incrementalImageSeriesAppend &&
-          (Boolean(activeCover.rows[0]?.id) || Boolean(activeCover.rows[0]?.cover_removed_at))) ||
+        (incrementalImageSeriesAppend && Boolean(activeCover.rows[0]?.id)) ||
         activeCover.rows[0]?.provenance === 'user_supplied' ||
         activeCover.rows[0]?.provenance === 'approved_enrichment';
       const removedAssets = await client.query<{ storage_key: string }>(
@@ -1352,7 +1233,7 @@ export async function processImportJob(
       if (cover && !preserveExistingCover) {
         await client.query(
           `update library_books set cover_asset_id = $1, cover_fit = 'contain', cover_position_x = 50,
-             cover_position_y = 50, cover_removed_at = null where id = $2 and user_id = $3`,
+             cover_position_y = 50 where id = $2 and user_id = $3`,
           [cover.id, parsed.novel.id, session.user_id],
         );
       }
@@ -1470,8 +1351,7 @@ export async function processImportJob(
       return;
     }
     const message = error instanceof Error ? error.message : String(error);
-    const terminalConflict = error instanceof BookGenerationChangedError;
-    if (attempt.finalAttempt || terminalConflict) {
+    if (attempt.finalAttempt) {
       await pool.query(
         "update upload_sessions set status = 'failed', updated_at = now() where id = $1 and status not in ('imported', 'cancelled')",
         [uploadId],

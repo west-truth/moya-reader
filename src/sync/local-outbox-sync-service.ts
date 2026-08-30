@@ -58,15 +58,10 @@ export interface SyncEventSource {
       fit: 'crop' | 'contain';
       positionX: number;
       positionY: number;
-      expectedMetadataRevision?: number;
-      expectedContentRevisionId?: string;
       provenance?: 'user_supplied' | 'approved_enrichment' | 'generated_preview';
     },
   ): Promise<unknown>;
-  removeBookCover?(
-    bookId: string,
-    expectation?: { metadataRevision?: number; activeContentRevisionId?: string },
-  ): Promise<unknown>;
+  removeBookCover?(bookId: string): Promise<unknown>;
 }
 
 export interface LocalOutboxSyncServiceOptions {
@@ -267,24 +262,6 @@ export class LocalOutboxSyncService {
       : undefined;
   }
 
-  private coverMutationExpectation(
-    event: SyncEvent,
-  ): { metadataRevision?: number; activeContentRevisionId?: string } | undefined {
-    const payload = objectValue(event.payload);
-    const novel = objectValue(payload?.novel);
-    const metadataRevision = novel?.metadataRevision;
-    const activeContentRevisionId = payload
-      ? fieldText(payload, 'contentRevisionId', 'content_revision_id')
-      : undefined;
-    const expectation = {
-      ...(typeof metadataRevision === 'number' && Number.isSafeInteger(metadataRevision) && metadataRevision >= 0
-        ? { metadataRevision }
-        : {}),
-      ...(activeContentRevisionId ? { activeContentRevisionId } : {}),
-    };
-    return Object.keys(expectation).length ? expectation : undefined;
-  }
-
   private async syncPushedCoverAssets(claim: ActiveClaim, result: PushSyncResult): Promise<void> {
     if (!this.client.saveBookCover && !this.client.removeBookCover) return;
     const rejectionById = new Map((result.rejected ?? []).map((item) => [item.id, item]));
@@ -295,9 +272,8 @@ export class LocalOutboxSyncService {
       if (rejection && !this.isTerminalRejection(rejection)) continue;
       const bookId = item.event.novelId ?? item.event.entityId;
       if (!bookId) continue;
-      const expectation = this.coverMutationExpectation(item.event);
       if (mutation === 'remove') {
-        await this.client.removeBookCover?.(bookId, expectation);
+        await this.client.removeBookCover?.(bookId);
         continue;
       }
       const cover = await getActiveBookCover(bookId);
@@ -317,12 +293,6 @@ export class LocalOutboxSyncService {
         fit: novel?.coverFit === 'contain' ? 'contain' : 'crop',
         positionX: Number(novel?.coverPositionX) || 50,
         positionY: Number(novel?.coverPositionY) || 50,
-        ...(expectation?.metadataRevision === undefined
-          ? {}
-          : { expectedMetadataRevision: expectation.metadataRevision }),
-        ...(expectation?.activeContentRevisionId
-          ? { expectedContentRevisionId: expectation.activeContentRevisionId }
-          : {}),
         provenance:
           cover.metadata.provenance === 'approved_enrichment' || cover.metadata.provenance === 'generated_preview'
             ? cover.metadata.provenance

@@ -70,7 +70,7 @@ export async function loadHostedRemoteRefreshState(input: HostedRemoteRefreshInp
     refreshedCurrentChapter,
   ] = await Promise.all([
     input.repository.getReadingPosition(freshNovel.id),
-    input.repository.listChapters(freshNovel.id, freshNovel.activeContentRevisionId),
+    input.repository.listChapters(freshNovel.id),
     input.repository.listBookmarks(freshNovel.id),
     input.repository.listHighlights(freshNovel.id),
     input.repository.listNotes(freshNovel.id),

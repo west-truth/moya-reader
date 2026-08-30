@@ -2,7 +2,6 @@ import type { Novel } from '../domain/types';
 import type { JsonValue, SyncEvent } from '../sync/types';
 import { analysisStatusValue } from './analysis-status';
 import { requestToPromise } from './indexeddb-transaction';
-import { canonicalRemoteContentRevisionId } from './content-revision-identity';
 
 function record(value: JsonValue | undefined): Record<string, JsonValue> {
   return value && typeof value === 'object' && !Array.isArray(value) ? value : {};
@@ -24,11 +23,6 @@ export async function applyBookMetadataSyncEvent(tx: IDBTransaction, event: Sync
   const existing = await requestToPromise<Novel | undefined>(store.get(event.novelId));
   if (!existing) return;
   const payload = record(event.payload);
-  const contentRevisionId = optionalString(payload, 'contentRevisionId');
-  const canonicalContentRevisionId = await canonicalRemoteContentRevisionId(tx, existing);
-  if (contentRevisionId ? contentRevisionId !== canonicalContentRevisionId : Boolean(canonicalContentRevisionId)) {
-    return;
-  }
   const novel = record(payload.novel);
   const title =
     (typeof novel.title === 'string' && novel.title) ||

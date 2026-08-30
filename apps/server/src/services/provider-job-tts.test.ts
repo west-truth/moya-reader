@@ -85,10 +85,6 @@ describe('provider job TTS', () => {
     };
 
     const handleQuery = vi.fn(async (sql: string, params?: unknown[]) => {
-      if (sql.includes('select active_content_revision_id') && sql.includes('from library_books')) {
-        return { rowCount: 1, rows: [{ active_content_revision_id: 'content_revision_1' }] };
-      }
-      if (sql.includes('pg_advisory_xact_lock')) return { rowCount: 1, rows: [] };
       if (sql.includes('select id, user_id, book_id, chapter_id')) {
         return { rows: [jobRow] };
       }
@@ -209,7 +205,7 @@ describe('provider job TTS', () => {
     );
     expect(writes).toHaveLength(1);
     expect(writes[0]).toMatchObject({
-      key: 'tts/book_1/content_revision_1/chapter_1/tts_cache_1.mp3',
+      key: 'tts/book_1/chapter_1/tts_cache_1.mp3',
       contentType: 'audio/mpeg',
     });
     expect([...writes[0].body]).toEqual([0x49, 0x44, 0x33, 0x04]);
@@ -287,10 +283,6 @@ describe('provider job TTS', () => {
     };
     const insertedCacheParams: unknown[][] = [];
     const handleQuery = vi.fn(async (sql: string, params?: unknown[]) => {
-      if (sql.includes('select active_content_revision_id') && sql.includes('from library_books')) {
-        return { rowCount: 1, rows: [{ active_content_revision_id: 'content_revision_1' }] };
-      }
-      if (sql.includes('pg_advisory_xact_lock')) return { rowCount: 1, rows: [] };
       if (sql.includes('select id, user_id, book_id, chapter_id')) return { rows: [jobRow] };
       if (sql.trim() === 'begin' || sql.trim() === 'commit' || sql.trim() === 'rollback') {
         return { rowCount: 0, rows: [] };
@@ -389,9 +381,6 @@ describe('provider job TTS', () => {
     };
 
     const handleQuery = vi.fn(async (sql: string, params?: unknown[]) => {
-      if (sql.includes('select active_content_revision_id') && sql.includes('from library_books')) {
-        return { rowCount: 1, rows: [{ active_content_revision_id: 'content_revision_1' }] };
-      }
       if (sql.includes('select id, user_id, book_id, chapter_id')) {
         return { rows: [jobRow] };
       }
@@ -525,9 +514,6 @@ describe('provider job TTS', () => {
     };
 
     const handleQuery = vi.fn(async (sql: string, params?: unknown[]) => {
-      if (sql.includes('select active_content_revision_id') && sql.includes('from library_books')) {
-        return { rowCount: 1, rows: [{ active_content_revision_id: 'content_revision_1' }] };
-      }
       if (sql.includes('select id, user_id, book_id, chapter_id')) {
         return { rows: [jobRow] };
       }

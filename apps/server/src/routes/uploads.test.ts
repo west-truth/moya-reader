@@ -176,38 +176,26 @@ describe('upload routes', () => {
   });
 
   it('stores a safe client book id during upload initialization', async () => {
-    const client = {
-      query: vi.fn(async (sql: string, params?: unknown[]) => {
-        if (sql === 'begin' || sql === 'commit' || sql === 'rollback' || sql.includes('pg_advisory_xact_lock')) {
-          return { rows: [] };
-        }
-        if (sql.includes('insert into book_id_generations')) return { rows: [] };
-        if (sql.includes('from book_id_generations') || sql.includes('from library_books')) return { rows: [] };
-        if (sql.includes('insert into upload_sessions')) {
-          expect(params).toEqual([
-            expect.stringMatching(/^upload_/),
-            'user_test',
-            'local.txt',
-            12,
-            'text/plain',
-            'utf-8',
-            'mixed',
-            'hash_hint',
-            'novel_local_1',
-            3,
-            undefined,
-            'replace_book',
-            undefined,
-            0,
-            undefined,
-          ]);
-          return { rows: [] };
-        }
-        throw new Error(`unexpected query: ${sql}`);
+    const pool = {
+      query: vi.fn(async (_sql: string, params?: unknown[]) => {
+        expect(params).toEqual([
+          expect.stringMatching(/^upload_/),
+          'user_test',
+          'local.txt',
+          12,
+          'text/plain',
+          'utf-8',
+          'mixed',
+          'hash_hint',
+          'novel_local_1',
+          3,
+          undefined,
+          'replace_book',
+          undefined,
+        ]);
+        return { rows: [] };
       }),
-      release: vi.fn(),
-    };
-    const pool = { connect: vi.fn(async () => client) } as unknown as pg.Pool;
+    } as unknown as pg.Pool;
     const queue = { add: vi.fn() } as unknown as Queue;
     const app = await appWithUploads(pool, queue);
 
@@ -234,17 +222,8 @@ describe('upload routes', () => {
 
   it('stores an image-series append upload with its optimistic base revision', async () => {
     const sourceContentHash = `sha256:${'a'.repeat(64)}`;
-    const client = {
-      query: vi.fn(async (sql: string, params?: unknown[]) => {
-        if (sql === 'begin' || sql === 'commit' || sql === 'rollback' || sql.includes('pg_advisory_xact_lock')) {
-          return { rows: [] };
-        }
-        if (sql.includes('insert into book_id_generations')) return { rows: [] };
-        if (sql.includes('from book_id_generations')) return { rows: [{ generation: '4' }] };
-        if (sql.includes('from library_books')) {
-          return { rows: [{ active_content_revision_id: 'content_revision_7', deleted_at: null }] };
-        }
-        if (sql.includes('from book_content_revisions')) return { rows: [{ id: 'content_revision_7' }] };
+    const pool = {
+      query: vi.fn(async (_sql: string, params?: unknown[]) => {
         expect(params).toEqual([
           expect.stringMatching(/^upload_/),
           'user_test',
@@ -259,14 +238,10 @@ describe('upload routes', () => {
           sourceContentHash,
           'append_image_series',
           'content_revision_7',
-          4,
-          'content_revision_7',
         ]);
         return { rows: [] };
       }),
-      release: vi.fn(),
-    };
-    const pool = { connect: vi.fn(async () => client) } as unknown as pg.Pool;
+    } as unknown as pg.Pool;
     const app = await appWithUploads(pool, { add: vi.fn() } as unknown as Queue);
 
     const response = await app.inject({
@@ -286,36 +261,6 @@ describe('upload routes', () => {
 
     expect(response.statusCode).toBe(200);
     expect(response.json().uploadId).toMatch(/^upload_/);
-    await app.close();
-  });
-
-  it('rejects upload initialization against a trashed canonical book', async () => {
-    const client = {
-      query: vi.fn(async (sql: string) => {
-        if (sql === 'begin' || sql === 'rollback' || sql.includes('pg_advisory_xact_lock')) return { rows: [] };
-        if (sql.includes('insert into book_id_generations')) return { rows: [] };
-        if (sql.includes('from book_id_generations')) return { rows: [{ generation: '1' }] };
-        if (sql.includes('from library_books')) {
-          return {
-            rows: [{ active_content_revision_id: 'content_revision_1', deleted_at: '2026-08-31T00:00:00.000Z' }],
-          };
-        }
-        throw new Error(`unexpected query: ${sql}`);
-      }),
-      release: vi.fn(),
-    };
-    const pool = { connect: vi.fn(async () => client) } as unknown as pg.Pool;
-    const app = await appWithUploads(pool, { add: vi.fn() } as unknown as Queue);
-
-    const response = await app.inject({
-      method: 'POST',
-      url: '/api/uploads/init',
-      payload: { fileName: 'stale.txt', sizeBytes: 12, clientBookId: 'book_trashed', totalChunks: 1 },
-    });
-
-    expect(response.statusCode).toBe(409);
-    expect(response.json()).toEqual({ error: 'book_target_is_trashed' });
-    expect(client.query.mock.calls.some(([sql]) => String(sql).includes('insert into upload_sessions'))).toBe(false);
     await app.close();
   });
 

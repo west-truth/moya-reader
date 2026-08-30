@@ -506,7 +506,6 @@ describeWithPostgres('book replacement revision lifecycle', () => {
             chapterProgress: 0.5,
             scrollTop: 260,
             updatedAt: '2026-07-05T00:02:00.000Z',
-            contentRevisionId: String(book.rows[0].active_content_revision_id),
           },
         },
         revision: {

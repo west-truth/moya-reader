@@ -94,44 +94,6 @@ export function finalizedExternalSourceLinks(
   });
 }
 
-/**
- * Binds a durable import intent to the exact content incarnation returned by
- * the importer. A later replacement with the same book id or source hash must
- * never inherit this link.
- */
-export async function recordExternalSourceActivation(
-  state: ExternalSourceLocalState,
-  staged: readonly ExternalSourceLink[],
-  novel: Novel,
-): Promise<ExternalSourceLink[]> {
-  if (!novel.activeContentRevisionId || staged.length === 0 || staged.some((link) => !link.pendingImport)) {
-    throw new Error('가져온 작품의 본문 세대를 확인하지 못했습니다.');
-  }
-  const activated = staged.map((link) => ({
-    ...link,
-    pendingImport: {
-      ...link.pendingImport!,
-      activatedContentRevisionId: novel.activeContentRevisionId,
-    },
-  }));
-  const expected = staged.map((link) => ({ id: link.id, operationId: link.pendingImport!.operationId }));
-  if (state.compareAndSwapPendingLinks) {
-    const applied = await state.compareAndSwapPendingLinks(expected, activated, []);
-    if (!applied) throw new Error('다른 창에서 작품 소스 연결이 변경되었습니다.');
-  } else {
-    await saveExternalSourceLinks(state, activated);
-  }
-  return activated;
-}
-
-function matchesActivatedContentRevision(link: ExternalSourceLink, novel: Novel): boolean {
-  return Boolean(
-    novel.activeContentRevisionId &&
-    link.pendingImport?.activatedContentRevisionId &&
-    link.pendingImport.activatedContentRevisionId === novel.activeContentRevisionId,
-  );
-}
-
 export async function finalizeExternalSourceLinks(
   state: ExternalSourceLocalState,
   staged: readonly ExternalSourceLink[],
@@ -142,7 +104,6 @@ export async function finalizeExternalSourceLinks(
     staged.some(
       (link) =>
         !link.pendingImport ||
-        !matchesActivatedContentRevision(link, novel) ||
         !novel.sourceContentHash ||
         normalizedHash(link.pendingImport.expectedActiveSourceContentHash) !== normalizedHash(novel.sourceContentHash),
     )
@@ -173,7 +134,6 @@ export async function finalizeImporterResolvedExternalSourceLinks(
     staged.some(
       (link) =>
         !link.pendingImport?.sourceHashResolvedByImporter ||
-        !matchesActivatedContentRevision(link, novel) ||
         link.localBookId !== novel.id ||
         !novel.activeContentRevisionId ||
         !novel.sourceContentHash,
@@ -217,8 +177,7 @@ export async function reconcilePendingExternalSourceLinks(
   for (const staged of groups.values()) {
     const novel = novelById.get(staged[0]!.localBookId);
     const importerResolvedSource = staged.every((link) => link.pendingImport?.sourceHashResolvedByImporter);
-    const activationMatches = Boolean(novel && staged.every((link) => matchesActivatedContentRevision(link, novel)));
-    if (importerResolvedSource && novel && !novel.deletedAt && activationMatches && options.resolveImporterApplied) {
+    if (importerResolvedSource && novel && !novel.deletedAt && options.resolveImporterApplied) {
       const importerApplied = await options.resolveImporterApplied(staged, novel).catch(() => undefined);
       if (importerApplied === true) {
         const finalized = await finalizeImporterResolvedExternalSourceLinks(state, staged, novel).catch(
@@ -235,7 +194,6 @@ export async function reconcilePendingExternalSourceLinks(
       !importerResolvedSource &&
       novel &&
       !novel.deletedAt &&
-      activationMatches &&
       novel.sourceContentHash &&
       staged.every(
         (link) =>

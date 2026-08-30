@@ -154,7 +154,6 @@ describe('sync AI and TTS event routes', () => {
     const client = {
       query: vi.fn(async (sql: string) => {
         if (sql === 'begin' || sql === 'commit' || sql === 'rollback') return { rowCount: 0, rows: [] };
-        if (sql.includes('pg_advisory_xact_lock')) return { rowCount: 1, rows: [] };
         if (sql.includes('from library_books') && sql.includes('for share')) {
           return { rowCount: 1, rows: [{ exists: true }] };
         }
@@ -370,7 +369,6 @@ describe('sync AI and TTS event routes', () => {
     const client = {
       query: vi.fn(async (sql: string) => {
         if (sql === 'begin' || sql === 'commit' || sql === 'rollback') return { rowCount: 0, rows: [] };
-        if (sql.includes('pg_advisory_xact_lock')) return { rowCount: 1, rows: [] };
         if (sql.includes('from library_books') && sql.includes('for share')) {
           return { rowCount: 1, rows: [{ exists: true }] };
         }

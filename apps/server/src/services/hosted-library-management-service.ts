@@ -10,7 +10,6 @@ import type {
   BatchLibraryTarget,
 } from '../../../../src/repositories/library-catalog-repository.js';
 import { createServerRevision, insertServerSyncEvent } from '../routes/books/sync-event-repository.js';
-import { lockImageSeriesBookLifecycle } from './book-operation-lock.js';
 
 function name(value: string): string {
   const normalized = value.trim().replace(/\s+/g, ' ');
@@ -273,30 +272,14 @@ async function applyBookBatchCommand(
   command: BatchLibraryCommand,
   target: BatchLibraryTarget,
 ): Promise<BatchLibraryItemResult> {
-  const bookResult = await client.query(
-    `select book.*,
-            exists(
-              select 1 from book_id_generations identity
-               where identity.user_id = $2 and identity.book_id = book.id and identity.generation > 1
-            ) as has_prior_purge
-       from library_books book
-      where book.id = $1 and book.user_id = $2
-      for update of book`,
-    [target.bookId, userId],
-  );
+  const bookResult = await client.query('select * from library_books where id = $1 and user_id = $2 for update', [
+    target.bookId,
+    userId,
+  ]);
   const book = bookResult.rows[0];
   if (!book) return { bookId: target.bookId, status: 'failed', reason: 'book_not_found' };
   if (target.expectedRevision !== undefined && Number(book.metadata_revision) !== target.expectedRevision) {
     return { bookId: target.bookId, status: 'failed', reason: 'metadata_revision_changed' };
-  }
-  if (
-    target.expectedContentRevisionId !== undefined &&
-    String(book.active_content_revision_id) !== target.expectedContentRevisionId
-  ) {
-    return { bookId: target.bookId, status: 'failed', reason: 'content_revision_changed' };
-  }
-  if (target.expectedContentRevisionId === undefined && Boolean(book.has_prior_purge)) {
-    return { bookId: target.bookId, status: 'failed', reason: 'content_revision_required' };
   }
   if (command.kind === 'add_to_shelf' || command.kind === 'remove_from_shelf') {
     await setMembership(client, userId, command.shelfId, target.bookId, command.kind === 'add_to_shelf');
@@ -325,21 +308,20 @@ async function applyBookBatchCommand(
       metadataRevision: Number(updated.rows[0].metadata_revision),
       updatedAt: now,
     };
-    const payload = { novel, contentRevisionId: String(book.active_content_revision_id) };
-    const revision = createServerRevision({
-      entityType: 'book',
-      entityId: target.bookId,
-      novelId: target.bookId,
-      updatedAt: now,
-      payload,
-    });
+    const payload = { novel };
     await insertServerSyncEvent(client, userId, {
-      seed: `batch_metadata:${target.bookId}:${now}:${revision.payloadHash}`,
+      seed: `batch_metadata:${target.bookId}:${now}`,
       type: 'book_updated',
       bookId: target.bookId,
       entityId: target.bookId,
       payload,
-      revision,
+      revision: createServerRevision({
+        entityType: 'book',
+        entityId: target.bookId,
+        novelId: target.bookId,
+        updatedAt: now,
+        payload,
+      }),
       createdAt: now,
     });
     return { bookId: target.bookId, status: 'applied', metadataRevision: novel.metadataRevision };
@@ -359,21 +341,20 @@ async function applyBookBatchCommand(
       metadataRevision: Number(updated.rows[0].metadata_revision),
       updatedAt: now,
     };
-    const payload = { novel, contentRevisionId: String(book.active_content_revision_id) };
-    const revision = createServerRevision({
-      entityType: 'book',
-      entityId: target.bookId,
-      novelId: target.bookId,
-      updatedAt: now,
-      payload,
-    });
+    const payload = { novel };
     await insertServerSyncEvent(client, userId, {
-      seed: `batch_favorite:${target.bookId}:${now}:${revision.payloadHash}`,
+      seed: `batch_favorite:${target.bookId}:${now}`,
       type: 'book_updated',
       bookId: target.bookId,
       entityId: target.bookId,
       payload,
-      revision,
+      revision: createServerRevision({
+        entityType: 'book',
+        entityId: target.bookId,
+        novelId: target.bookId,
+        updatedAt: now,
+        payload,
+      }),
       createdAt: now,
     });
     return { bookId: target.bookId, status: 'applied', metadataRevision: novel.metadataRevision };
@@ -390,19 +371,8 @@ async function applyBookBatchCommand(
   const metadataRevision = Number(updated.rows[0].metadata_revision);
   const type = movingToTrash ? ('book_trashed' as const) : ('book_restored' as const);
   const payload = movingToTrash
-    ? {
-        bookId: target.bookId,
-        deletedAt: now,
-        deletedByDeviceId: 'server-batch',
-        metadataRevision,
-        contentRevisionId: String(book.active_content_revision_id),
-      }
-    : {
-        bookId: target.bookId,
-        restoredAt: now,
-        metadataRevision,
-        contentRevisionId: String(book.active_content_revision_id),
-      };
+    ? { bookId: target.bookId, deletedAt: now, deletedByDeviceId: 'server-batch', metadataRevision }
+    : { bookId: target.bookId, restoredAt: now, metadataRevision };
   await insertServerSyncEvent(client, userId, {
     seed: `${type}:${target.bookId}:${now}`,
     type,
@@ -444,17 +414,6 @@ export async function applyHostedLibraryBatch(
         results: existing.rows[0].results,
         createdAt: new Date(existing.rows[0].created_at).toISOString(),
       };
-    }
-    const bookIds = [...new Set(targets.map((target) => target.bookId))].sort();
-    for (const bookId of bookIds) await lockImageSeriesBookLifecycle(client, bookId);
-    if (bookIds.length > 0) {
-      await client.query(
-        `select id from library_books
-          where user_id = $1 and id = any($2::text[])
-          order by id
-          for update`,
-        [config.defaultUserId, bookIds],
-      );
     }
     const results: BatchLibraryItemResult[] = [];
     for (const target of targets) {

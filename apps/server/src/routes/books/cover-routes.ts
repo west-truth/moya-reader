@@ -4,7 +4,6 @@ import { detectCoverContentType } from '@noveldesk/text-core/image-format';
 import { integrityHash, persistentId128 } from '@noveldesk/text-core/hash';
 import type { ServerConfig } from '../../config.js';
 import { createS3Client, deleteObject, getObjectBuffer, putRawBookObject } from '../../services/object-storage.js';
-import { lockImageSeriesBookLifecycle } from '../../services/book-operation-lock.js';
 import { createServerRevision, insertServerSyncEvent } from './sync-event-repository.js';
 
 interface CoverHeaders {
@@ -18,12 +17,10 @@ interface CoverHeaders {
   'x-cover-position-y'?: string;
   'x-cover-provenance'?: string;
   'x-expected-metadata-revision'?: string;
-  'x-expected-content-revision-id'?: string;
 }
 
 interface ApprovedEnrichmentCoverRestoreBody {
   expectedMetadataRevision?: number;
-  expectedContentRevisionId?: string;
   expectedActiveAssetId?: string;
   expectedActiveContentHash?: string;
   previousAssetId?: string;
@@ -45,30 +42,6 @@ function boundedNumber(value: string | undefined, min: number, max: number): num
 function expectedRevision(value: string | undefined): number | undefined {
   const parsed = Number(value);
   return Number.isSafeInteger(parsed) && parsed >= 0 ? parsed : undefined;
-}
-
-function expectedContentRevision(value: string | undefined): string | undefined {
-  return typeof value === 'string' && value.trim() ? value.trim() : undefined;
-}
-
-interface CoverMutationBookRow {
-  active_content_revision_id?: unknown;
-  has_prior_purge?: unknown;
-}
-
-export function coverContentRevisionConflict(
-  book: CoverMutationBookRow,
-  expectedContentRevisionId: string | undefined,
-): 'content_revision_required' | 'content_revision_changed' | undefined {
-  if (!expectedContentRevisionId) return book.has_prior_purge ? 'content_revision_required' : undefined;
-  return book.active_content_revision_id === expectedContentRevisionId ? undefined : 'content_revision_changed';
-}
-
-function contentRevisionError(reply: FastifyReply, conflict: ReturnType<typeof coverContentRevisionConflict>) {
-  if (conflict === 'content_revision_required') {
-    return reply.code(409).send({ error: 'book content revision is required' });
-  }
-  return reply.code(409).send({ error: 'book content revision changed' });
 }
 
 function isoTimestamp(value: unknown): string {
@@ -123,24 +96,16 @@ async function emitCoverSync(
   userId: string,
   bookId: string,
   novel: Record<string, unknown>,
-  contentRevisionId: string | undefined,
   updatedAt: string,
 ) {
-  const payload = { novel, contentRevisionId };
-  const revision = createServerRevision({
-    entityType: 'book',
-    entityId: bookId,
-    novelId: bookId,
-    updatedAt,
-    payload,
-  });
+  const payload = { novel };
   await insertServerSyncEvent(client, userId, {
-    seed: `book_cover:${bookId}:${updatedAt}:${revision.payloadHash}`,
+    seed: `book_cover:${bookId}:${updatedAt}`,
     type: 'book_updated',
     bookId,
     entityId: bookId,
     payload,
-    revision,
+    revision: createServerRevision({ entityType: 'book', entityId: bookId, novelId: bookId, updatedAt, payload }),
     createdAt: updatedAt,
   });
 }
@@ -217,11 +182,6 @@ export async function registerBookCoverRoutes(
     } catch {
       return reply.code(400).send({ error: 'cover file name is invalid' });
     }
-    const rawExpectedContentRevisionId = header(request.headers['x-expected-content-revision-id']);
-    const expectedContentRevisionId = expectedContentRevision(rawExpectedContentRevisionId);
-    if (rawExpectedContentRevisionId !== undefined && !expectedContentRevisionId) {
-      return reply.code(400).send({ error: 'expected content revision id is invalid' });
-    }
     const now = new Date().toISOString();
     const id = persistentId128('cover_asset', [request.params.bookId, contentHash, now]);
     const storageKey = `${config.defaultUserId}/${request.params.bookId}/covers/${id}/${fileName}`;
@@ -235,12 +195,8 @@ export async function registerBookCoverRoutes(
     let commitAttempted = false;
     try {
       await client.query('begin');
-      await lockImageSeriesBookLifecycle(client, request.params.bookId);
       const bookResult = await client.query(
-        `select id, cover_asset_id, metadata_revision, active_content_revision_id,
-                exists(select 1 from book_id_generations identity
-                       where identity.user_id = $2 and identity.book_id = $1 and identity.generation > 1) as has_prior_purge
-           from library_books
+        `select id, cover_asset_id, metadata_revision from library_books
            where id = $1 and user_id = $2 and deleted_at is null for update`,
         [request.params.bookId, config.defaultUserId],
       );
@@ -256,14 +212,6 @@ export async function registerBookCoverRoutes(
         await deleteObject(createS3Client(config), config, storageKey).catch(() => undefined);
         return reply.code(409).send({ error: 'book metadata revision changed' });
       }
-      const contentConflict = coverContentRevisionConflict(book, expectedContentRevisionId);
-      if (contentConflict) {
-        await client.query('rollback');
-        await deleteObject(createS3Client(config), config, storageKey).catch(() => undefined);
-        return contentRevisionError(reply, contentConflict);
-      }
-      const contentRevisionId =
-        typeof book.active_content_revision_id === 'string' ? book.active_content_revision_id : undefined;
       if (book.cover_asset_id) {
         const current = (
           await client.query('select * from book_assets where id = $1 and user_id = $2 and book_id = $3 for update', [
@@ -299,14 +247,13 @@ export async function registerBookCoverRoutes(
       }
       await client.query(
         `insert into book_assets
-             (id, user_id, book_id, content_revision_id, kind, provenance, status, storage_key, file_name, content_type,
+             (id, user_id, book_id, kind, provenance, status, storage_key, file_name, content_type,
               byte_length, content_hash, pixel_width, pixel_height, created_at, activated_at)
-           values ($1, $2, $3, $4, 'cover', $5, 'active', $6, $7, $8, $9, $10, $11, $12, $13, $13)`,
+           values ($1, $2, $3, 'cover', $4, 'active', $5, $6, $7, $8, $9, $10, $11, $12, $12)`,
         [
           id,
           config.defaultUserId,
           request.params.bookId,
-          contentRevisionId ?? null,
           requestedProvenance,
           storageKey,
           fileName,
@@ -320,8 +267,7 @@ export async function registerBookCoverRoutes(
       );
       const updated = await client.query(
         `update library_books set cover_asset_id = $1, cover_fit = $2, cover_position_x = $3,
-             cover_position_y = $4, cover_removed_at = null,
-             metadata_revision = metadata_revision + 1, updated_at = $5
+             cover_position_y = $4, metadata_revision = metadata_revision + 1, updated_at = $5
            where id = $6 and user_id = $7
            returning metadata_revision`,
         [id, fit, positionX, positionY, now, request.params.bookId, config.defaultUserId],
@@ -338,11 +284,9 @@ export async function registerBookCoverRoutes(
           coverFit: fit,
           coverPositionX: positionX,
           coverPositionY: positionY,
-          coverRemovedAt: null,
           metadataRevision,
           updatedAt: now,
         },
-        contentRevisionId,
         now,
       );
       commitAttempted = true;
@@ -367,7 +311,6 @@ export async function registerBookCoverRoutes(
       cover: await coverRow(pool, config.defaultUserId, request.params.bookId),
       previousCover: previousCover ?? null,
       metadataRevision,
-      coverRemovedAt: null,
     };
   };
 
@@ -401,7 +344,6 @@ export async function registerBookCoverRoutes(
       if (
         !Number.isSafeInteger(body.expectedMetadataRevision) ||
         Number(body.expectedMetadataRevision) < 0 ||
-        (body.expectedContentRevisionId !== undefined && !body.expectedContentRevisionId.trim()) ||
         !body.expectedActiveAssetId?.trim() ||
         !body.expectedActiveContentHash?.trim() ||
         !completePreviousReference ||
@@ -440,16 +382,11 @@ export async function registerBookCoverRoutes(
       const client = await pool.connect();
       let restoredCover: Record<string, unknown> | undefined;
       let metadataRevision: number;
-      let coverRemovedAt: string | null;
       try {
         await client.query('begin');
-        await lockImageSeriesBookLifecycle(client, request.params.bookId);
         const book = (
           await client.query(
-            `select id, cover_asset_id, metadata_revision, active_content_revision_id,
-                    exists(select 1 from book_id_generations identity
-                           where identity.user_id = $2 and identity.book_id = $1 and identity.generation > 1) as has_prior_purge
-             from library_books
+            `select id, cover_asset_id, metadata_revision from library_books
              where id = $1 and user_id = $2 and deleted_at is null for update`,
             [request.params.bookId, config.defaultUserId],
           )
@@ -464,16 +401,6 @@ export async function registerBookCoverRoutes(
         ) {
           await client.query('rollback');
           return reply.code(409).send({ error: 'book metadata revision changed' });
-        }
-        const contentRevisionId =
-          typeof book.active_content_revision_id === 'string' ? book.active_content_revision_id : undefined;
-        const contentConflict = coverContentRevisionConflict(
-          book,
-          expectedContentRevision(body.expectedContentRevisionId),
-        );
-        if (contentConflict) {
-          await client.query('rollback');
-          return contentRevisionError(reply, contentConflict);
         }
 
         const active = (
@@ -510,7 +437,6 @@ export async function registerBookCoverRoutes(
         }
 
         const now = new Date().toISOString();
-        coverRemovedAt = restoredCover ? null : now;
         await client.query(
           `update book_assets set status = 'superseded'
            where id = $1 and user_id = $2 and book_id = $3`,
@@ -525,16 +451,14 @@ export async function registerBookCoverRoutes(
         }
         const updated = await client.query(
           `update library_books set cover_asset_id = $1, cover_fit = $2, cover_position_x = $3,
-             cover_position_y = $4, cover_removed_at = $5,
-             metadata_revision = metadata_revision + 1, updated_at = $6
-           where id = $7 and user_id = $8
+             cover_position_y = $4, metadata_revision = metadata_revision + 1, updated_at = $5
+           where id = $6 and user_id = $7
            returning metadata_revision`,
           [
             restoredCover?.id ?? null,
             restoredCover ? body.previousFit : 'crop',
             restoredCover ? body.previousPositionX : 50,
             restoredCover ? body.previousPositionY : 50,
-            coverRemovedAt,
             now,
             request.params.bookId,
             config.defaultUserId,
@@ -552,11 +476,9 @@ export async function registerBookCoverRoutes(
             coverFit: restoredCover ? body.previousFit : 'crop',
             coverPositionX: restoredCover ? body.previousPositionX : 50,
             coverPositionY: restoredCover ? body.previousPositionY : 50,
-            coverRemovedAt,
             metadataRevision,
             updatedAt: now,
           },
-          contentRevisionId,
           now,
         );
         await client.query('commit');
@@ -570,98 +492,74 @@ export async function registerBookCoverRoutes(
       return {
         cover: restoredCover ? await coverRow(pool, config.defaultUserId, request.params.bookId) : null,
         metadataRevision,
-        coverRemovedAt,
       };
     },
   );
 
-  app.delete<{
-    Params: { bookId: string };
-    Body: { expectedRevision?: number; expectedContentRevisionId?: string };
-  }>('/api/books/:bookId/cover', async (request, reply) => {
-    const client = await pool.connect();
-    let storageKey: string | undefined;
-    let coverRemovedAt: string | undefined;
-    let metadataRevision: number | undefined;
-    try {
-      await client.query('begin');
-      await lockImageSeriesBookLifecycle(client, request.params.bookId);
-      const bookResult = await client.query(
-        `select id, cover_asset_id, metadata_revision, active_content_revision_id,
-                  exists(select 1 from book_id_generations identity
-                         where identity.user_id = $2 and identity.book_id = $1 and identity.generation > 1) as has_prior_purge
-           from library_books
+  app.delete<{ Params: { bookId: string }; Body: { expectedRevision?: number } }>(
+    '/api/books/:bookId/cover',
+    async (request, reply) => {
+      const client = await pool.connect();
+      let storageKey: string | undefined;
+      try {
+        await client.query('begin');
+        const bookResult = await client.query(
+          `select id, cover_asset_id, metadata_revision from library_books
            where id = $1 and user_id = $2 and deleted_at is null for update`,
-        [request.params.bookId, config.defaultUserId],
-      );
-      const book = bookResult.rows[0];
-      if (!book) {
-        await client.query('rollback');
-        return reply.code(404).send({ error: 'book not found' });
-      }
-      if (
-        request.body?.expectedRevision !== undefined &&
-        request.body.expectedRevision !== Number(book.metadata_revision)
-      ) {
-        await client.query('rollback');
-        return reply.code(409).send({ error: 'book metadata revision changed' });
-      }
-      if (request.body?.expectedContentRevisionId !== undefined && !request.body.expectedContentRevisionId.trim()) {
-        await client.query('rollback');
-        return reply.code(400).send({ error: 'expected content revision id is invalid' });
-      }
-      const contentRevisionId =
-        typeof book.active_content_revision_id === 'string' ? book.active_content_revision_id : undefined;
-      const contentConflict = coverContentRevisionConflict(
-        book,
-        expectedContentRevision(request.body?.expectedContentRevisionId),
-      );
-      if (contentConflict) {
-        await client.query('rollback');
-        return contentRevisionError(reply, contentConflict);
-      }
-      const now = new Date().toISOString();
-      await client.query(
-        `update library_books set cover_asset_id = null, cover_fit = 'crop', cover_position_x = 50,
-             cover_position_y = 50, cover_removed_at = $1,
-             metadata_revision = metadata_revision + 1, updated_at = $1
+          [request.params.bookId, config.defaultUserId],
+        );
+        const book = bookResult.rows[0];
+        if (!book) {
+          await client.query('rollback');
+          return reply.code(404).send({ error: 'book not found' });
+        }
+        if (
+          request.body?.expectedRevision !== undefined &&
+          request.body.expectedRevision !== Number(book.metadata_revision)
+        ) {
+          await client.query('rollback');
+          return reply.code(409).send({ error: 'book metadata revision changed' });
+        }
+        if (!book.cover_asset_id) {
+          await client.query('commit');
+          return { ok: true as const };
+        }
+        const now = new Date().toISOString();
+        await client.query(
+          `update library_books set cover_asset_id = null, cover_fit = 'crop', cover_position_x = 50,
+             cover_position_y = 50, metadata_revision = metadata_revision + 1, updated_at = $1
            where id = $2 and user_id = $3`,
-        [now, request.params.bookId, config.defaultUserId],
-      );
-      coverRemovedAt = now;
-      metadataRevision = Number(book.metadata_revision) + 1;
-      if (book.cover_asset_id) {
+          [now, request.params.bookId, config.defaultUserId],
+        );
         const removed = await client.query('delete from book_assets where id = $1 returning storage_key', [
           book.cover_asset_id,
         ]);
         storageKey = removed.rows[0] ? String(removed.rows[0].storage_key) : undefined;
+        await emitCoverSync(
+          client,
+          config.defaultUserId,
+          request.params.bookId,
+          {
+            id: request.params.bookId,
+            coverAssetId: null,
+            coverContentHash: null,
+            coverFit: 'crop',
+            coverPositionX: 50,
+            coverPositionY: 50,
+            metadataRevision: Number(book.metadata_revision) + 1,
+            updatedAt: now,
+          },
+          now,
+        );
+        await client.query('commit');
+      } catch (error) {
+        await client.query('rollback').catch(() => undefined);
+        throw error;
+      } finally {
+        client.release();
       }
-      await emitCoverSync(
-        client,
-        config.defaultUserId,
-        request.params.bookId,
-        {
-          id: request.params.bookId,
-          coverAssetId: null,
-          coverContentHash: null,
-          coverFit: 'crop',
-          coverPositionX: 50,
-          coverPositionY: 50,
-          coverRemovedAt: now,
-          metadataRevision,
-          updatedAt: now,
-        },
-        contentRevisionId,
-        now,
-      );
-      await client.query('commit');
-    } catch (error) {
-      await client.query('rollback').catch(() => undefined);
-      throw error;
-    } finally {
-      client.release();
-    }
-    if (storageKey) await deleteObject(createS3Client(config), config, storageKey).catch(() => undefined);
-    return { ok: true, coverRemovedAt, metadataRevision };
-  });
+      if (storageKey) await deleteObject(createS3Client(config), config, storageKey).catch(() => undefined);
+      return { ok: true };
+    },
+  );
 }
