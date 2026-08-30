@@ -427,6 +427,7 @@ describe('SourceHubScreen', () => {
     expect(markup).toContain('큰 파일은 잠시 걸릴 수 있습니다');
     expect(markup).toContain('aria-label="외부 작품 가져오기 진행률"');
     expect(markup).toContain('value="0"');
+    expect(markup).toContain('라이브러리</button>');
   });
 
   it('renders nothing after the active source loses its connection', () => {

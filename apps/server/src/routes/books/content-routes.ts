@@ -14,7 +14,8 @@ export async function registerBookContentRoutes(
         select b.id, b.active_content_revision_id, b.format, b.title, b.author, b.series_title, b.series_index, b.tags,
                b.description, b.language, b.cover_asset_id, b.cover_fit, b.cover_position_x, b.cover_position_y,
                b.source_file_name, b.source_encoding,
-               b.normalized_text_hash, b.total_chapters, b.total_characters, b.total_paragraphs, b.cover_seed,
+               b.normalized_text_hash, b.total_chapters, b.total_characters, b.total_paragraphs,
+               b.document_section_count, b.cover_seed,
                b.analysis_status, b.favorite, b.metadata_revision, b.created_at, b.updated_at,
                o.id as source_asset_id, o.raw_text_hash as source_content_hash,
                o.content_type as source_content_type, o.size_bytes as source_byte_length,
@@ -62,7 +63,8 @@ export async function registerBookContentRoutes(
     const result = await pool.query(
       `
         select id, book_id, chapter_index, title, text_hash, raw_start_offset, raw_end_offset,
-               character_count, paragraph_count, created_at, updated_at
+               character_count, paragraph_count, document_section_id, document_section_title,
+               document_section_index, document_page_index_in_section, created_at, updated_at
         from chapters
         where book_id = $1
         order by chapter_index asc
@@ -76,7 +78,9 @@ export async function registerBookContentRoutes(
     const result = await pool.query(
       `
         select c.id, c.book_id, c.chapter_index, c.title, c.text_hash, c.raw_start_offset,
-               c.raw_end_offset, c.character_count, c.paragraph_count, c.created_at, c.updated_at
+               c.raw_end_offset, c.character_count, c.paragraph_count, c.document_section_id,
+               c.document_section_title, c.document_section_index, c.document_page_index_in_section,
+               c.created_at, c.updated_at
         from chapters c
         join library_books b on b.id = c.book_id
         where c.id = $1 and b.user_id = $2 and b.deleted_at is null

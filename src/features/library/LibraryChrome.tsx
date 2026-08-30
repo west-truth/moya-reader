@@ -53,7 +53,6 @@ function FilterNavigation({ model, actions, close }: LibraryScreenProps & { clos
             key={item.value}
             type="button"
             className={!model.externalSources.active && model.filter === item.value ? 'active' : ''}
-            disabled={model.externalSources.busy}
             onClick={() => {
               actions.controls.setFilter(item.value);
               close?.();
@@ -77,7 +76,6 @@ function ShelfNavigation({ model, actions, close }: LibraryScreenProps & { close
       <button
         type="button"
         className={!model.externalSources.active && !model.management.activeShelfId ? 'active' : ''}
-        disabled={model.externalSources.busy}
         onClick={() => {
           actions.controls.setShelf(undefined);
           close?.();
@@ -93,7 +91,6 @@ function ShelfNavigation({ model, actions, close }: LibraryScreenProps & { close
           key={shelf.id}
           type="button"
           className={!model.externalSources.active && model.management.activeShelfId === shelf.id ? 'active' : ''}
-          disabled={model.externalSources.busy}
           onClick={() => {
             actions.controls.setShelf(shelf.id);
             close?.();
@@ -123,7 +120,7 @@ function SourceNavigation({ model, actions, close }: LibraryScreenProps & { clos
             key={source.id}
             type="button"
             className={active ? 'active' : ''}
-            disabled={model.externalSources.busy}
+            disabled={model.externalSources.busy && source.id !== model.externalSources.activeSourceId}
             aria-label={`${source.title} 소스 열기`}
             aria-current={active ? 'page' : undefined}
             onClick={() => {
@@ -151,7 +148,6 @@ export function LibrarySidebar(props: LibraryScreenProps) {
         className="library-brand-lockup"
         type="button"
         onClick={() => goLibraryHome(props)}
-        disabled={model.externalSources.busy}
         aria-label="라이브러리 메인"
       >
         <img src="/branding/moya-wordmark.png" alt="MOYA" />
@@ -191,7 +187,7 @@ export function LibrarySidebar(props: LibraryScreenProps) {
         )}
       </div>
       <footer className="library-sidebar-footer">
-        <button type="button" disabled={model.externalSources.busy} onClick={actions.header.openSettings}>
+        <button type="button" onClick={actions.header.openSettings}>
           <Settings size={18} /> <span>설정</span>
         </button>
         <p>파일과 독서 기록은 이 기기에 저장됩니다.</p>

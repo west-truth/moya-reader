@@ -6,7 +6,7 @@ import { integrityHash, persistentId128 } from '@noveldesk/text-core/hash';
 import { paragraphPageId, parsedChapterId, parsedParagraphId } from '@noveldesk/text-core/identity/parser';
 import type { ParagraphPage, ParsedNovel, ParsedNovelImport } from '@noveldesk/contracts';
 import type { ServerConfig } from '../config.js';
-import { BlobWriter, Uint8ArrayReader, ZipWriter } from '@zip.js/zip.js';
+import { BlobWriter, TextReader, Uint8ArrayReader, ZipWriter } from '@zip.js/zip.js';
 
 vi.mock('./object-storage.js', () => ({
   createS3Client: vi.fn(() => ({})),
@@ -199,6 +199,44 @@ async function singlePageComicArchive(): Promise<Buffer> {
   );
   const writer = new ZipWriter(new BlobWriter('application/zip'));
   await writer.add('001.png', new Uint8ArrayReader(png));
+  return Buffer.from(await (await writer.close()).arrayBuffer());
+}
+
+async function twoReleaseSeriesComicArchive(): Promise<Buffer> {
+  const png = Uint8Array.from(
+    Buffer.from(
+      'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Wl2ZQAAAABJRU5ErkJggg==',
+      'base64',
+    ),
+  );
+  const firstPage = 'chapters/000001/00001.png';
+  const secondPage = 'chapters/000002/00001.png';
+  const writer = new ZipWriter(new BlobWriter('application/zip'));
+  await writer.add(firstPage, new Uint8ArrayReader(png));
+  await writer.add(secondPage, new Uint8ArrayReader(png));
+  await writer.add(
+    'moya-series.json',
+    new TextReader(
+      JSON.stringify({
+        schemaVersion: 1,
+        collection: { remoteId: 'manga:41', title: '연재 작품' },
+        chapters: [
+          {
+            remoteId: 'chapter:101',
+            title: '1화',
+            pageCount: 1,
+            entryNames: [firstPage],
+          },
+          {
+            remoteId: 'chapter:102',
+            title: '2화',
+            pageCount: 1,
+            entryNames: [secondPage],
+          },
+        ],
+      }),
+    ),
+  );
   return Buffer.from(await (await writer.close()).arrayBuffer());
 }
 
@@ -478,7 +516,7 @@ describe('server import service', () => {
     expect(objectDeleteParams?.[0]).toContain('user_test/sources/old/server-single.txt');
     expect(libraryBookParams?.[10]).toMatch(/^sha256:[0-9a-f]{64}$/);
     expect(chapterInsertParams).toBeDefined();
-    expect(chapterInsertParams).toHaveLength(11);
+    expect(chapterInsertParams).toHaveLength(15);
     expect(chapterInsertParams?.[3]).toBe('server-single');
     expect(chapterInsertParams?.[4]).toMatch(/^sha256:[0-9a-f]{64}$/);
     expect(pageInsertParams?.[0]).toBe(
@@ -505,6 +543,87 @@ describe('server import service', () => {
     expect(client.query).toHaveBeenCalledWith('delete from upload_chunks where upload_id = $1', ['upload_single']);
     expect(uploadDirectoryRemoved).toBe(true);
     expect(client.release).toHaveBeenCalledTimes(1);
+  });
+
+  it('persists fixed-document section identity and section count during server import', async () => {
+    const tempDir = await mkdtemp(path.join(os.tmpdir(), 'moya-import-series-'));
+    const bytes = await twoReleaseSeriesComicArchive();
+    const uploadDir = path.join(tempDir, 'uploads', 'upload_series');
+    const chunkPath = path.join(uploadDir, '00000000.part');
+    await mkdir(uploadDir, { recursive: true });
+    await writeFile(chunkPath, bytes);
+
+    let libraryBookSql: string | undefined;
+    let libraryBookParams: unknown[] | undefined;
+    let chapterInsertSql: string | undefined;
+    let chapterInsertParams: unknown[] | undefined;
+    const client = {
+      query: vi.fn(async (sql: string, params?: unknown[]) => {
+        if (sql === 'begin' || sql === 'commit' || sql === 'rollback') return { rows: [], rowCount: 1 };
+        if (sql.includes('insert into library_books')) {
+          libraryBookSql = sql;
+          libraryBookParams = params;
+        }
+        if (sql.includes('insert into chapters')) {
+          chapterInsertSql = sql;
+          chapterInsertParams = params;
+        }
+        if (sql.includes("update upload_sessions set status = 'imported'")) {
+          return { rows: [{ id: 'upload_series' }], rowCount: 1 };
+        }
+        return { rows: [], rowCount: 1 };
+      }),
+      release: vi.fn(),
+    };
+    const pool = {
+      query: vi.fn(async (sql: string) => {
+        if (sql.includes('select * from upload_sessions')) {
+          return {
+            rows: [
+              {
+                id: 'upload_series',
+                user_id: 'user_test',
+                file_name: 'series.cbz',
+                size_bytes: String(bytes.length),
+                content_type: 'application/vnd.comicbook+zip',
+                encoding: 'auto',
+                total_chunks: 1,
+              },
+            ],
+          };
+        }
+        if (sql.includes('from upload_chunks')) {
+          return { rows: [{ chunk_index: 0, size_bytes: bytes.length, storage_path: chunkPath }] };
+        }
+        return { rows: [], rowCount: 1 };
+      }),
+      connect: vi.fn(async () => client),
+    };
+
+    try {
+      await processImportJob(
+        pool as unknown as Parameters<typeof processImportJob>[0],
+        { ...testConfig(), dataDir: tempDir },
+        'job_series',
+        'upload_series',
+      );
+    } finally {
+      await rm(tempDir, { recursive: true, force: true });
+    }
+
+    expect(libraryBookSql).toContain('document_section_count');
+    expect(libraryBookSql).toContain('document_section_count = excluded.document_section_count');
+    expect(libraryBookParams?.[15]).toBe(2);
+    expect(chapterInsertSql).toContain(
+      'document_section_id, document_section_title,\n        document_section_index, document_page_index_in_section',
+    );
+    expect(chapterInsertSql).toContain('document_section_id = excluded.document_section_id');
+    expect(chapterInsertSql).toContain('document_section_title = excluded.document_section_title');
+    expect(chapterInsertSql).toContain('document_section_index = excluded.document_section_index');
+    expect(chapterInsertSql).toContain('document_page_index_in_section = excluded.document_page_index_in_section');
+    expect(chapterInsertParams).toHaveLength(30);
+    expect(chapterInsertParams?.slice(9, 13)).toEqual(['chapter:101', '1화', 1, 1]);
+    expect(chapterInsertParams?.slice(24, 28)).toEqual(['chapter:102', '2화', 2, 1]);
   });
 
   it('keeps an import queued while BullMQ still has retry attempts remaining', async () => {

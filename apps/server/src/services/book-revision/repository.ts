@@ -346,6 +346,169 @@ export async function clearQuarantinedCanonicalState(
   await client.query('delete from notes where book_id = $1 and deleted_at is null', [replacement.bookId]);
 }
 
+export async function restoreExactAnchoredReaderState(
+  client: pg.PoolClient,
+  replacement: PreparedBookReplacement,
+): Promise<number> {
+  const readingPositions = await client.query(
+    `
+      insert into reading_positions (
+        book_id, user_id, chapter_id, paragraph_id, paragraph_index, offset_in_paragraph,
+        chapter_progress, scroll_top, device_id, updated_at
+      )
+      select state.book_id, state.user_id, state.chapter_id, state.paragraph_id, state.paragraph_index,
+             state.offset_in_paragraph, state.chapter_progress, state.scroll_top, state.device_id, state.updated_at
+        from book_revision_quarantine quarantine
+        cross join lateral jsonb_populate_record(null::reading_positions, quarantine.payload) state
+        join chapters chapter on chapter.id = state.chapter_id and chapter.book_id = state.book_id
+       where quarantine.replacement_run_id = $1 and quarantine.book_id = $2
+         and quarantine.artifact_type = 'reading_position'
+         and (
+           state.paragraph_id is null or exists (
+             select 1 from paragraph_search paragraph
+              where paragraph.book_id = state.book_id
+                and paragraph.chapter_id = state.chapter_id
+                and paragraph.paragraph_id = state.paragraph_id
+           )
+         )
+      on conflict (book_id, user_id) do update
+        set chapter_id = excluded.chapter_id,
+            paragraph_id = excluded.paragraph_id,
+            paragraph_index = excluded.paragraph_index,
+            offset_in_paragraph = excluded.offset_in_paragraph,
+            chapter_progress = excluded.chapter_progress,
+            scroll_top = excluded.scroll_top,
+            device_id = excluded.device_id,
+            updated_at = excluded.updated_at
+    `,
+    [replacement.runId, replacement.bookId],
+  );
+  const bookmarks = await client.query(
+    `
+      insert into bookmarks (
+        id, book_id, user_id, chapter_id, paragraph_id, label, progress, scroll_top,
+        created_at, updated_at, deleted_at
+      )
+      select state.id, state.book_id, state.user_id, state.chapter_id, state.paragraph_id, state.label,
+             state.progress, state.scroll_top, state.created_at, state.updated_at, state.deleted_at
+        from book_revision_quarantine quarantine
+        cross join lateral jsonb_populate_record(null::bookmarks, quarantine.payload) state
+        join chapters chapter on chapter.id = state.chapter_id and chapter.book_id = state.book_id
+       where quarantine.replacement_run_id = $1 and quarantine.book_id = $2
+         and quarantine.artifact_type = 'bookmark'
+         and (
+           state.paragraph_id is null or exists (
+             select 1 from paragraph_search paragraph
+              where paragraph.book_id = state.book_id
+                and paragraph.chapter_id = state.chapter_id
+                and paragraph.paragraph_id = state.paragraph_id
+           )
+         )
+      on conflict (id) do update
+        set chapter_id = excluded.chapter_id,
+            paragraph_id = excluded.paragraph_id,
+            label = excluded.label,
+            progress = excluded.progress,
+            scroll_top = excluded.scroll_top,
+            updated_at = excluded.updated_at,
+            deleted_at = excluded.deleted_at
+    `,
+    [replacement.runId, replacement.bookId],
+  );
+  const highlights = await client.query(
+    `
+      insert into highlights (
+        id, book_id, user_id, chapter_id, paragraph_id, quote, color, progress,
+        created_at, updated_at, deleted_at
+      )
+      select state.id, state.book_id, state.user_id, state.chapter_id, state.paragraph_id, state.quote,
+             state.color, state.progress, state.created_at, state.updated_at, state.deleted_at
+        from book_revision_quarantine quarantine
+        cross join lateral jsonb_populate_record(null::highlights, quarantine.payload) state
+        join chapters chapter on chapter.id = state.chapter_id and chapter.book_id = state.book_id
+       where quarantine.replacement_run_id = $1 and quarantine.book_id = $2
+         and quarantine.artifact_type = 'highlight'
+         and exists (
+           select 1 from paragraph_search paragraph
+            where paragraph.book_id = state.book_id
+              and paragraph.chapter_id = state.chapter_id
+              and paragraph.paragraph_id = state.paragraph_id
+         )
+      on conflict (id) do update
+        set chapter_id = excluded.chapter_id,
+            paragraph_id = excluded.paragraph_id,
+            quote = excluded.quote,
+            color = excluded.color,
+            progress = excluded.progress,
+            updated_at = excluded.updated_at,
+            deleted_at = excluded.deleted_at
+    `,
+    [replacement.runId, replacement.bookId],
+  );
+  const notes = await client.query(
+    `
+      insert into notes (
+        id, book_id, user_id, chapter_id, paragraph_id, quote, body, progress,
+        created_at, updated_at, deleted_at
+      )
+      select state.id, state.book_id, state.user_id, state.chapter_id, state.paragraph_id, state.quote,
+             state.body, state.progress, state.created_at, state.updated_at, state.deleted_at
+        from book_revision_quarantine quarantine
+        cross join lateral jsonb_populate_record(null::notes, quarantine.payload) state
+        join chapters chapter on chapter.id = state.chapter_id and chapter.book_id = state.book_id
+       where quarantine.replacement_run_id = $1 and quarantine.book_id = $2
+         and quarantine.artifact_type = 'note'
+         and (
+           state.paragraph_id is null or exists (
+             select 1 from paragraph_search paragraph
+              where paragraph.book_id = state.book_id
+                and paragraph.chapter_id = state.chapter_id
+                and paragraph.paragraph_id = state.paragraph_id
+           )
+         )
+      on conflict (id) do update
+        set chapter_id = excluded.chapter_id,
+            paragraph_id = excluded.paragraph_id,
+            quote = excluded.quote,
+            body = excluded.body,
+            progress = excluded.progress,
+            updated_at = excluded.updated_at,
+            deleted_at = excluded.deleted_at
+    `,
+    [replacement.runId, replacement.bookId],
+  );
+  await client.query(
+    `
+      update book_revision_quarantine quarantine
+         set remap_status = 'remapped',
+             remapped_entity_id = case
+               when quarantine.artifact_type = 'reading_position' then quarantine.source_entity_id
+               else quarantine.payload ->> 'id'
+             end,
+             remapped_at = now()
+       where quarantine.replacement_run_id = $1 and quarantine.book_id = $2
+         and quarantine.artifact_type in ('reading_position', 'bookmark', 'highlight', 'note')
+         and exists (
+           select 1 from chapters chapter
+            where chapter.id = quarantine.payload ->> 'chapter_id'
+              and chapter.book_id = quarantine.book_id
+         )
+         and (
+           quarantine.payload ->> 'paragraph_id' is null or exists (
+             select 1 from paragraph_search paragraph
+              where paragraph.book_id = quarantine.book_id
+                and paragraph.chapter_id = quarantine.payload ->> 'chapter_id'
+                and paragraph.paragraph_id = quarantine.payload ->> 'paragraph_id'
+           )
+         )
+    `,
+    [replacement.runId, replacement.bookId],
+  );
+  return (
+    (readingPositions.rowCount ?? 0) + (bookmarks.rowCount ?? 0) + (highlights.rowCount ?? 0) + (notes.rowCount ?? 0)
+  );
+}
+
 export async function finalizeReplacementRun(
   client: pg.PoolClient,
   replacement: PreparedBookReplacement,

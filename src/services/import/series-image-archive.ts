@@ -267,7 +267,7 @@ export async function buildSeriesImageArchive(input: SeriesImageArchiveInput): P
       for (const [pageIndex, page] of chapter.pages.entries()) {
         input.signal.throwIfAborted();
         const entryName = `${folder}/${String(pageIndex + 1).padStart(5, '0')}.${page.extension}`;
-        await writer.add(entryName, new BlobReader(page.blob));
+        await writer.add(entryName, new BlobReader(page.blob), { level: 0 });
         entryNames.push(entryName);
       }
       manifestChapters.push({

@@ -39,6 +39,7 @@ create table if not exists library_books (
   total_chapters integer not null,
   total_characters integer not null,
   total_paragraphs integer not null,
+  document_section_count integer,
   cover_seed integer not null default 0,
   favorite boolean not null default false,
   analysis_status text not null default 'not_analyzed',
@@ -67,6 +68,10 @@ create table if not exists chapters (
   raw_end_offset integer not null,
   character_count integer not null,
   paragraph_count integer not null,
+  document_section_id text,
+  document_section_title text,
+  document_section_index integer,
+  document_page_index_in_section integer,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now(),
   unique (book_id, chapter_index)

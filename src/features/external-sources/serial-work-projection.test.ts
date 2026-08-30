@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import type { ExternalSourceLink } from '../../external-sources/contracts';
+import type { ExternalItemSummary, ExternalSourceLink } from '../../external-sources/contracts';
 import { testChapter, testNovel } from '../book-workspace/book-workspace-test-fixtures';
 import {
   externalReleaseRevisionChanged,
@@ -101,6 +101,34 @@ describe('projectLocalSeries', () => {
     expect(projection.links).toHaveLength(1);
   });
 
+  it('keeps legacy hosted release pages grouped while the Suwayomi source is offline', () => {
+    const novel = testNovel({
+      format: 'image_archive',
+      title: '기존 연동 만화',
+      documentSectionCount: 2,
+      totalChapters: 3,
+      lastReadChapterId: 'chapter-3',
+      lastReadChapterIndex: 3,
+      lastReadProgress: 0.5,
+    });
+    const chapters = [
+      testChapter(1, { title: '1화 · 1페이지', documentSectionTitle: '1화', documentSectionIndex: 1 }),
+      testChapter(2, { title: '1화 · 2페이지', documentSectionTitle: '1화', documentSectionIndex: 1 }),
+      testChapter(3, { title: '2화 · 1페이지', documentSectionTitle: '2화', documentSectionIndex: 2 }),
+    ];
+
+    const projection = projectLocalSeries(novel, chapters, []);
+
+    expect(projection.items).toMatchObject([
+      { title: '1화', subtitle: '2페이지', release: { sourceOrder: 1 } },
+      { title: '2화', subtitle: '1페이지', release: { sourceOrder: 2 } },
+    ]);
+    expect([...projectLocalSeriesReadingStates(novel, chapters)]).toEqual([
+      [`local-section:${novel.id}:1`, 'read'],
+      [`local-section:${novel.id}:2`, 'current'],
+    ]);
+  });
+
   it('projects previous, current and following comic releases from the saved page identity', () => {
     const novel = testNovel({
       format: 'image_archive',
@@ -129,6 +157,72 @@ describe('projectLocalSeries', () => {
       ['release:1', 'unread'],
       ['release:2', 'unread'],
       ['release:3', 'unread'],
+    ]);
+  });
+
+  it('projects canonical document section ids around the saved fixed-document page', () => {
+    const novel = testNovel({
+      format: 'image_archive',
+      lastReadChapterId: 'chapter-3',
+      lastReadChapterIndex: 3,
+      lastReadProgress: 0.5,
+    });
+    const chapters = [
+      testChapter(1, { documentSectionId: 'chapter:101', documentSectionTitle: '1화', documentSectionIndex: 1 }),
+      testChapter(2, { documentSectionId: 'chapter:101', documentSectionTitle: '1화', documentSectionIndex: 1 }),
+      testChapter(3, { documentSectionId: 'chapter:102', documentSectionTitle: '2화', documentSectionIndex: 2 }),
+      testChapter(4, { documentSectionId: 'chapter:103', documentSectionTitle: '3화', documentSectionIndex: 3 }),
+    ];
+
+    expect([...projectLocalSeriesReadingStates(novel, chapters)]).toEqual([
+      ['chapter:101', 'read'],
+      ['chapter:102', 'current'],
+      ['chapter:103', 'unread'],
+    ]);
+  });
+
+  it('recovers section ids for legacy hosted pages from unique remote release titles', () => {
+    const novel = testNovel({
+      format: 'image_archive',
+      lastReadChapterId: 'chapter-3',
+      lastReadChapterIndex: 3,
+      lastReadProgress: 0.5,
+    });
+    const chapters = [
+      testChapter(1, { title: '1화 · 1페이지' }),
+      testChapter(2, { title: '1화 · 2페이지' }),
+      testChapter(3, { title: '2화 · 1페이지' }),
+      testChapter(4, { title: '2화 · 2페이지' }),
+      testChapter(5, { title: '3화 · 1페이지' }),
+    ];
+    const remoteItems = [
+      {
+        key: { connectorId: 'moya.external.suwayomi', remoteId: 'chapter:101' },
+        kind: 'file',
+        title: '1화',
+        release: { title: '1화', sourceOrder: 1 },
+        importability: 'supported',
+      },
+      {
+        key: { connectorId: 'moya.external.suwayomi', remoteId: 'chapter:102' },
+        kind: 'file',
+        title: '2화',
+        release: { title: '2화', sourceOrder: 2 },
+        importability: 'supported',
+      },
+      {
+        key: { connectorId: 'moya.external.suwayomi', remoteId: 'chapter:103' },
+        kind: 'file',
+        title: '3화',
+        release: { title: '3화', sourceOrder: 3 },
+        importability: 'supported',
+      },
+    ] satisfies readonly ExternalItemSummary[];
+
+    expect([...projectLocalSeriesReadingStates(novel, chapters, remoteItems)]).toEqual([
+      ['chapter:101', 'read'],
+      ['chapter:102', 'current'],
+      ['chapter:103', 'unread'],
     ]);
   });
 });

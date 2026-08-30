@@ -13,6 +13,7 @@ describe('book routes', () => {
       query: vi.fn(async (sql: string, params?: unknown[]) => {
         expect(sql).toContain('left join reading_positions');
         expect(sql).toContain('left join chapters rc');
+        expect(sql).toContain('b.document_section_count');
         expect(sql).toContain('rc.chapter_index as last_read_chapter_index');
         expect(params).toEqual(['user_test', 1001, 0]);
         return {
@@ -25,6 +26,7 @@ describe('book routes', () => {
               total_chapters: 12,
               total_characters: 12345,
               total_paragraphs: 678,
+              document_section_count: 6,
               last_read_chapter_id: 'chapter_2',
               last_read_chapter_index: 2,
               last_read_paragraph_id: 'paragraph_88',
@@ -45,6 +47,7 @@ describe('book routes', () => {
         expect.objectContaining({
           id: 'book_1',
           title: 'Server Novel',
+          document_section_count: 6,
           last_read_chapter_id: 'chapter_2',
           last_read_chapter_index: 2,
           last_read_progress: 0.42,
@@ -65,6 +68,7 @@ describe('book routes', () => {
       total_chapters: 2,
       total_characters: 2000,
       total_paragraphs: 20,
+      document_section_count: 2,
       cover_seed: 'seed',
       favorite: false,
       created_at: '2026-07-05T00:00:00.000Z',
@@ -82,12 +86,33 @@ describe('book routes', () => {
       updated_at: '2026-07-05T00:02:00.000Z',
     };
     const chapters = [
-      { id: 'chapter_1', book_id: 'book_1', chapter_index: 0, title: '1화', paragraph_count: 10 },
-      { id: 'chapter_2', book_id: 'book_1', chapter_index: 1, title: '2화', paragraph_count: 10 },
+      {
+        id: 'chapter_1',
+        book_id: 'book_1',
+        chapter_index: 0,
+        title: '1화 · 1페이지',
+        paragraph_count: 1,
+        document_section_id: 'chapter:101',
+        document_section_title: '1화',
+        document_section_index: 1,
+        document_page_index_in_section: 1,
+      },
+      {
+        id: 'chapter_2',
+        book_id: 'book_1',
+        chapter_index: 1,
+        title: '2화 · 1페이지',
+        paragraph_count: 1,
+        document_section_id: 'chapter:102',
+        document_section_title: '2화',
+        document_section_index: 2,
+        document_page_index_in_section: 1,
+      },
     ];
     const pool = {
       query: vi.fn(async (sql: string, params?: unknown[]) => {
         if (sql.includes('from library_books') && sql.includes('source_file_name')) {
+          expect(sql).toContain('b.document_section_count');
           expect(params).toEqual(['book_1', 'user_test']);
           return { rows: [book] };
         }
@@ -99,7 +124,19 @@ describe('book routes', () => {
           expect(params).toEqual(['book_1', 'user_test']);
           return { rows: [{ id: 'book_1' }] };
         }
+        if (sql.includes('from chapters c') && sql.includes('where c.id = $1')) {
+          expect(sql).toContain('c.document_section_id');
+          expect(sql).toContain('c.document_section_title');
+          expect(sql).toContain('c.document_section_index');
+          expect(sql).toContain('c.document_page_index_in_section');
+          expect(params).toEqual(['chapter_2', 'user_test']);
+          return { rows: [chapters[1]] };
+        }
         if (sql.includes('from chapters') && sql.includes('order by chapter_index')) {
+          expect(sql).toContain('document_section_id');
+          expect(sql).toContain('document_section_title');
+          expect(sql).toContain('document_section_index');
+          expect(sql).toContain('document_page_index_in_section');
           expect(params).toEqual(['book_1']);
           return { rows: chapters };
         }
@@ -110,11 +147,14 @@ describe('book routes', () => {
 
     const manifestResponse = await app.inject({ method: 'GET', url: '/api/books/book_1/manifest' });
     const chaptersResponse = await app.inject({ method: 'GET', url: '/api/books/book_1/chapters' });
+    const chapterResponse = await app.inject({ method: 'GET', url: '/api/chapters/chapter_2' });
 
     expect(manifestResponse.statusCode).toBe(200);
     expect(manifestResponse.json()).toEqual({ book, readingPosition });
     expect(chaptersResponse.statusCode).toBe(200);
     expect(chaptersResponse.json()).toEqual({ chapters });
+    expect(chapterResponse.statusCode).toBe(200);
+    expect(chapterResponse.json()).toEqual({ chapter: chapters[1] });
 
     await app.close();
   });

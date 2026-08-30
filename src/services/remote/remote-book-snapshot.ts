@@ -150,6 +150,10 @@ export function mapServerBook(row: SnapshotJsonRecord): Novel {
     totalChapters: numberValue(row.total_chapters),
     totalCharacters: numberValue(row.total_characters),
     totalParagraphs: numberValue(row.total_paragraphs),
+    documentSectionCount:
+      row.document_section_count === null || row.document_section_count === undefined
+        ? undefined
+        : numberValue(row.document_section_count),
     coverSeed: numberValue(row.cover_seed),
     lastReadChapterId: stringValue(row.last_read_chapter_id) || undefined,
     lastReadChapterIndex:
@@ -181,6 +185,16 @@ export function mapServerChapter(row: SnapshotJsonRecord): Chapter {
     rawEndOffset: numberValue(row.raw_end_offset),
     characterCount: numberValue(row.character_count),
     paragraphCount: numberValue(row.paragraph_count),
+    documentSectionId: stringValue(row.document_section_id) || undefined,
+    documentSectionTitle: stringValue(row.document_section_title) || undefined,
+    documentSectionIndex:
+      row.document_section_index === null || row.document_section_index === undefined
+        ? undefined
+        : numberValue(row.document_section_index),
+    documentPageIndexInSection:
+      row.document_page_index_in_section === null || row.document_page_index_in_section === undefined
+        ? undefined
+        : numberValue(row.document_page_index_in_section),
     createdAt: stringValue(row.created_at, new Date(0).toISOString()),
     updatedAt: stringValue(row.updated_at, new Date(0).toISOString()),
   };

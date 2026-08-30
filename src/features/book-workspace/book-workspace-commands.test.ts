@@ -176,6 +176,69 @@ describe('BookWorkspaceController commands', () => {
     expect(controller.getSnapshot()).toMatchObject({ selectedNovel: freshNovel, localReadingPosition: position });
   });
 
+  it('projects a saved fixed-document page locally and schedules only the progress mutation refresh', async () => {
+    const novel = testNovel({ format: 'image_archive', activeContentRevisionId: 'revision-1' });
+    const chapters = [testChapter(1), testChapter(2), testChapter(3)];
+    const harness = createBookWorkspaceTestHarness({ novel, chapters });
+    const refreshAfterLocalMutation = vi.fn(async (_kind?: 'progress' | 'statistics') => {
+      harness.calls.push('adjacent.refreshAfterLocalMutation');
+    });
+    const refreshNovels = vi.fn(async () => {
+      harness.calls.push('adjacent.refreshNovels');
+    });
+    const controller = new BookWorkspaceController(
+      {
+        ...harness.ports,
+        adjacent: {
+          ...harness.ports.adjacent,
+          refreshAfterLocalMutation,
+          refreshNovels,
+        },
+      },
+      testWorkspaceState({ selectedNovel: novel, novels: [novel], chapters }),
+    );
+
+    await controller.saveFixedDocumentPage(1);
+
+    expect(harness.progressUpdates).toEqual([
+      {
+        novelId: novel.id,
+        expectedContentRevisionId: 'revision-1',
+        chapterId: chapters[1]!.id,
+        scrollTop: 1,
+        chapterProgress: 1,
+        paragraphIndex: 1,
+        offsetInParagraph: 0,
+      },
+    ]);
+    expect(controller.getSnapshot()).toMatchObject({
+      currentChapter: chapters[1],
+      localReadingPosition: {
+        chapterId: chapters[1]!.id,
+        chapterProgress: 1,
+        scrollTop: 1,
+      },
+      selectedNovel: {
+        lastReadChapterId: chapters[1]!.id,
+        lastReadChapterIndex: chapters[1]!.index,
+        lastReadOffset: 1,
+        lastReadProgress: 2 / 3,
+      },
+      novels: [
+        {
+          lastReadChapterId: chapters[1]!.id,
+          lastReadChapterIndex: chapters[1]!.index,
+          lastReadOffset: 1,
+          lastReadProgress: 2 / 3,
+        },
+      ],
+    });
+    expect(refreshAfterLocalMutation).toHaveBeenCalledOnce();
+    expect(refreshAfterLocalMutation).toHaveBeenCalledWith('progress');
+    expect(refreshNovels).not.toHaveBeenCalled();
+    expect(harness.calls).toEqual(['repository.saveReadingPosition', 'adjacent.refreshAfterLocalMutation']);
+  });
+
   it('projects committed location and session time before scheduling adjacent refreshes', () => {
     const novel = testNovel();
     const chapter = testChapter(2);
@@ -225,11 +288,7 @@ describe('BookWorkspaceController commands', () => {
         readingSeconds: 30,
       },
     });
-    expect(harness.calls).toEqual([
-      'adjacent.refreshAfterLocalMutation',
-      'adjacent.refreshNovels',
-      'adjacent.refreshAfterLocalMutation',
-    ]);
+    expect(harness.calls).toEqual(['adjacent.refreshAfterLocalMutation', 'adjacent.refreshAfterLocalMutation']);
   });
 
   it('ignores a location commit emitted by a chapter that is no longer active', () => {

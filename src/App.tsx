@@ -1326,7 +1326,7 @@ export default function App() {
     listChapters: (novelId) => readerRepository.listChapters(novelId),
     openNovel: (novel, target) =>
       target?.documentSectionId
-        ? bookWorkspace.openDocumentSection(novel, target.documentSectionId)
+        ? bookWorkspace.openDocumentSection(novel, target.documentSectionId, target.documentSectionTitle)
         : bookWorkspace.openNovel(novel),
     listNovels: () => readerRepository.listNovels(),
     onLibraryChanged: async () => {

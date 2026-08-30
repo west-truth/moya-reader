@@ -8,6 +8,33 @@ import { parseSerialReleaseName } from '../../domain/serial-release-name';
 
 export type SerialReleaseReadingState = 'current' | 'read' | 'unread';
 
+function normalizedSectionTitle(value: string): string {
+  return value.normalize('NFKC').replace(/\s+/gu, ' ').trim().toLocaleLowerCase();
+}
+
+export function legacyFixedDocumentSectionTitle(chapterTitle: string): string | undefined {
+  const match = /^(.*?)\s*·\s*[1-9][0-9]*페이지$/u.exec(chapterTitle.trim());
+  return match?.[1]?.trim() || undefined;
+}
+
+function legacyLocalSectionId(novelId: string, chapter: Chapter, sectionTitle: string): string {
+  return `local-section:${novelId}:${chapter.documentSectionIndex ?? normalizedSectionTitle(sectionTitle)}`;
+}
+
+function remoteSectionIdsByTitle(items: readonly ExternalItemSummary[]): ReadonlyMap<string, string> {
+  const candidates = new Map<string, string[]>();
+  items.forEach((item) => {
+    if (!item.release?.title) return;
+    const title = normalizedSectionTitle(item.release.title);
+    candidates.set(title, [...(candidates.get(title) ?? []), item.key.remoteId]);
+  });
+  const resolved = new Map<string, string>();
+  candidates.forEach((ids, title) => {
+    if (ids.length === 1) resolved.set(title, ids[0]!);
+  });
+  return resolved;
+}
+
 function comparableRemoteRevision(connectorId: string, remoteId: string, revision: string): string {
   if (!connectorId.startsWith('moya.external.suwayomi') || !remoteId.startsWith('chapter:')) return revision;
   const parts = revision.split(':');
@@ -39,15 +66,25 @@ export function localSeriesDetail(novel: Novel): ExternalSourceWorkDetail {
 export function projectLocalSeriesReadingStates(
   novel: Novel,
   chapters: readonly Chapter[],
+  remoteItems: readonly ExternalItemSummary[] = [],
 ): ReadonlyMap<string, SerialReleaseReadingState> {
   const orderedChapters = [...chapters].sort((left, right) => left.index - right.index);
   const hasDocumentSections = orderedChapters.some((chapter) => Boolean(chapter.documentSectionId));
   const legacySectionId = `local-legacy:${novel.id}`;
+  const remoteIds = remoteSectionIdsByTitle(remoteItems);
+  const sectionId = (chapter: Chapter): string | undefined => {
+    if (chapter.documentSectionId) return chapter.documentSectionId;
+    const legacyTitle = chapter.documentSectionTitle ?? legacyFixedDocumentSectionTitle(chapter.title);
+    if (legacyTitle) {
+      return remoteIds.get(normalizedSectionTitle(legacyTitle)) ?? legacyLocalSectionId(novel.id, chapter, legacyTitle);
+    }
+    return !hasDocumentSections && novel.format === 'image_archive' ? legacySectionId : undefined;
+  };
   const sectionIds = [
     ...new Set(
       orderedChapters.flatMap((chapter) => {
-        if (chapter.documentSectionId) return [chapter.documentSectionId];
-        return !hasDocumentSections && novel.format === 'image_archive' ? [legacySectionId] : [];
+        const id = sectionId(chapter);
+        return id ? [id] : [];
       }),
     ),
   ];
@@ -64,7 +101,7 @@ export function projectLocalSeriesReadingStates(
   const currentChapter =
     orderedChapters.find((chapter) => chapter.id === novel.lastReadChapterId) ??
     orderedChapters.find((chapter) => chapter.index === novel.lastReadChapterIndex);
-  const currentSectionId = currentChapter?.documentSectionId ?? (!hasDocumentSections ? legacySectionId : undefined);
+  const currentSectionId = currentChapter ? sectionId(currentChapter) : undefined;
   const currentSectionIndex = currentSectionId ? sectionIds.indexOf(currentSectionId) : -1;
   if (currentSectionIndex < 0) return new Map(sectionIds.map((sectionId) => [sectionId, 'unread'] as const));
 
@@ -85,15 +122,17 @@ export function projectLocalSeries(
   [...chapters]
     .sort((left, right) => left.index - right.index)
     .forEach((chapter) => {
-      if (!chapter.documentSectionId || !chapter.documentSectionTitle) return;
-      const existing = sections.get(chapter.documentSectionId);
+      const sectionTitle = chapter.documentSectionTitle ?? legacyFixedDocumentSectionTitle(chapter.title);
+      if (!sectionTitle) return;
+      const sectionId = chapter.documentSectionId ?? legacyLocalSectionId(novel.id, chapter, sectionTitle);
+      const existing = sections.get(sectionId);
       if (existing) {
         existing.pageCount += 1;
         if (chapter.updatedAt > (existing.updatedAt ?? '')) existing.updatedAt = chapter.updatedAt;
         return;
       }
-      sections.set(chapter.documentSectionId, {
-        title: chapter.documentSectionTitle,
+      sections.set(sectionId, {
+        title: sectionTitle,
         index: chapter.documentSectionIndex ?? sections.size + 1,
         pageCount: 1,
         updatedAt: chapter.updatedAt,
