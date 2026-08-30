@@ -195,6 +195,17 @@ describe('hosted backup restore', () => {
           ],
         ],
         [
+          'fixed_document_section_read_states',
+          [
+            {
+              book_id: 'book_1',
+              user_id: 'old_user',
+              document_section_id: 'chapter:6',
+              last_read_at: '2026-08-30T01:06:00.000Z',
+            },
+          ],
+        ],
+        [
           'voice_casting_states',
           [
             {
@@ -244,6 +255,15 @@ describe('hosted backup restore', () => {
     expect(serializedValues).not.toContain('"paragraph_1"');
     expect(serializedValues).toContain('paragraph_1__copy_');
     expect(serializedValues).toContain('book_1__copy_');
+    const sectionReadStateInsert = calls.find((call) =>
+      call.sql.includes('insert into "fixed_document_section_read_states"'),
+    );
+    expect(sectionReadStateInsert?.values).toEqual([
+      expect.stringMatching(/^book_1__copy_/),
+      'user_1',
+      'chapter:6',
+      '2026-08-30T01:06:00.000Z',
+    ]);
     expect(calls.some((call) => call.sql.includes('insert into "voice_casting_states"'))).toBe(false);
   });
 });

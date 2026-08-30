@@ -10,9 +10,11 @@ import { hashBlobInChunks } from './chunked-file-reader';
 import { ImportController, ImportFileInput, ImportProgress, ImportResult, ImportService } from './import-service';
 
 export const DEFAULT_SERVER_UPLOAD_CHUNK_BYTES = 2 * 1024 * 1024;
+export const DEFAULT_SERVER_UPLOAD_CONCURRENCY = 4;
 export const DEFAULT_SERVER_IMPORT_ACTIVITY_TIMEOUT_MS = 90_000;
 export const DEFAULT_SERVER_IMPORT_RESPONSE_TIMEOUT_MS = 20_000;
 const DEFAULT_CHUNK_RETRIES = 3;
+const MIN_PARALLEL_UPLOAD_CHUNKS = 4;
 const IMPORT_JOB_POLL_INTERVAL_MS = 700;
 const UPLOAD_SESSION_PREFIX = 'noveldesk.remoteUploadSession.';
 const MAX_STORED_UPLOAD_SESSION_AGE_MS = 7 * 24 * 60 * 60 * 1000;
@@ -228,6 +230,7 @@ export class ServerUploadImportService implements ImportService {
     private readonly uploadSessionStore: RemoteUploadSessionStore = new BrowserRemoteUploadSessionStore(),
     private readonly importActivityTimeoutMs = DEFAULT_SERVER_IMPORT_ACTIVITY_TIMEOUT_MS,
     private readonly importResponseTimeoutMs = DEFAULT_SERVER_IMPORT_RESPONSE_TIMEOUT_MS,
+    private readonly uploadConcurrency = DEFAULT_SERVER_UPLOAD_CONCURRENCY,
   ) {}
 
   importFile(input: ImportFileInput, onProgress: (progress: ImportProgress) => void): ImportController {
@@ -404,49 +407,22 @@ export class ServerUploadImportService implements ImportService {
     onProgress: (progress: ImportProgress) => void,
   ): ReturnType<RemoteApiClient['completeUpload']> {
     let uploadStatus = initialStatus ?? (await this.client.getUpload(uploadId, signal));
-    let uploadedBytes = numberValue(uploadStatus.uploadedBytes);
-    for (let chunkIndex = 0; chunkIndex < totalChunks; chunkIndex += 1) {
-      if (signal.aborted) throw new DOMException('Import cancelled', 'AbortError');
-      if (receivedChunks(uploadStatus).has(chunkIndex)) {
-        onProgress({
-          jobId: localJobId,
-          status: 'reading',
-          bytesRead: uploadedBytes,
-          totalBytes: input.file.size,
-          chaptersDetected: 0,
-          paragraphsWritten: 0,
-          message: `서버 업로드 상태 확인 ${chunkIndex + 1}/${totalChunks}`,
-        });
-        continue;
-      }
-      uploadStatus = await this.uploadChunkWithResume(
-        localJobId,
-        input,
-        uploadId,
-        chunkIndex,
-        totalChunks,
-        uploadStatus,
-        signal,
-        onProgress,
-      );
-      uploadedBytes = numberValue(uploadStatus.uploadedBytes, uploadedBytes);
-      onProgress({
-        jobId: localJobId,
-        status: 'reading',
-        bytesRead: uploadedBytes,
-        totalBytes: input.file.size,
-        chaptersDetected: 0,
-        paragraphsWritten: 0,
-        message: `서버로 업로드 중 ${chunkIndex + 1}/${totalChunks}`,
-      });
-    }
+    uploadStatus = await this.uploadPendingChunks(
+      localJobId,
+      input,
+      uploadId,
+      totalChunks,
+      uploadStatus,
+      signal,
+      onProgress,
+    );
 
     uploadStatus = await this.reconcileMissingChunks(
       localJobId,
       input,
       uploadId,
       totalChunks,
-      await this.client.getUpload(uploadId, signal),
+      uploadStatus,
       signal,
       onProgress,
     );
@@ -658,6 +634,89 @@ export class ServerUploadImportService implements ImportService {
     }
 
     throw lastError instanceof Error ? lastError : new Error('서버 업로드 청크 전송에 실패했습니다.');
+  }
+
+  private async uploadPendingChunks(
+    localJobId: string,
+    input: ImportFileInput,
+    uploadId: string,
+    totalChunks: number,
+    initialStatus: RemoteUploadStatus,
+    signal: AbortSignal,
+    onProgress: (progress: ImportProgress) => void,
+  ): Promise<RemoteUploadStatus> {
+    const completedChunkIndexes = receivedChunks(initialStatus);
+    const pendingChunkIndexes = Array.from({ length: totalChunks }, (_, chunkIndex) => chunkIndex).filter(
+      (chunkIndex) => !completedChunkIndexes.has(chunkIndex),
+    );
+    if (pendingChunkIndexes.length === 0) return this.client.getUpload(uploadId, signal);
+
+    const configuredConcurrency = Math.max(1, Math.floor(this.uploadConcurrency));
+    const workerCount =
+      pendingChunkIndexes.length >= MIN_PARALLEL_UPLOAD_CHUNKS
+        ? Math.min(configuredConcurrency, pendingChunkIndexes.length)
+        : 1;
+    const batchController = new AbortController();
+    const abortBatch = () => batchController.abort(signal.reason);
+    signal.addEventListener('abort', abortBatch, { once: true });
+    if (signal.aborted) abortBatch();
+
+    let nextPendingIndex = 0;
+    let firstError: unknown;
+    const uploadedBytes = () =>
+      [...completedChunkIndexes].reduce((sum, chunkIndex) => {
+        const { start, end } = chunkByteRange(input.file.size, this.chunkBytes, chunkIndex);
+        return sum + Math.max(0, end - start);
+      }, 0);
+    let highestReportedBytes = uploadedBytes();
+    const reportUploadProgress = (progress: ImportProgress) => {
+      highestReportedBytes = Math.min(input.file.size, Math.max(highestReportedBytes, progress.bytesRead));
+      onProgress({ ...progress, bytesRead: highestReportedBytes });
+    };
+
+    const uploadNext = async () => {
+      while (!batchController.signal.aborted) {
+        const pendingIndex = nextPendingIndex;
+        nextPendingIndex += 1;
+        const chunkIndex = pendingChunkIndexes[pendingIndex];
+        if (chunkIndex === undefined) return;
+        try {
+          await this.uploadChunkWithResume(
+            localJobId,
+            input,
+            uploadId,
+            chunkIndex,
+            totalChunks,
+            initialStatus,
+            batchController.signal,
+            reportUploadProgress,
+          );
+          completedChunkIndexes.add(chunkIndex);
+          reportUploadProgress({
+            jobId: localJobId,
+            status: 'reading',
+            bytesRead: uploadedBytes(),
+            totalBytes: input.file.size,
+            chaptersDetected: 0,
+            paragraphsWritten: 0,
+            message: `서버로 업로드 중 ${completedChunkIndexes.size}/${totalChunks}`,
+          });
+        } catch (error) {
+          if (!firstError && !signal.aborted) firstError = error;
+          batchController.abort(error);
+          throw error;
+        }
+      }
+    };
+
+    try {
+      await Promise.allSettled(Array.from({ length: workerCount }, () => uploadNext()));
+    } finally {
+      signal.removeEventListener('abort', abortBatch);
+    }
+    if (signal.aborted) throw new DOMException('Import cancelled', 'AbortError');
+    if (firstError) throw firstError;
+    return this.client.getUpload(uploadId, signal);
   }
 
   private async reconcileMissingChunks(

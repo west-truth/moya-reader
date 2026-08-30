@@ -132,12 +132,14 @@ describe('book routes', () => {
           expect(params).toEqual(['chapter_2', 'user_test']);
           return { rows: [chapters[1]] };
         }
-        if (sql.includes('from chapters') && sql.includes('order by chapter_index')) {
+        if (sql.includes('from chapters c') && sql.includes('order by c.chapter_index')) {
           expect(sql).toContain('document_section_id');
           expect(sql).toContain('document_section_title');
           expect(sql).toContain('document_section_index');
           expect(sql).toContain('document_page_index_in_section');
-          expect(params).toEqual(['book_1']);
+          expect(sql).toContain('fixed_document_section_read_states');
+          expect(sql).toContain('document_section_read_at');
+          expect(params).toEqual(['book_1', 'user_test']);
           return { rows: chapters };
         }
         throw new Error(`unexpected query: ${sql}`);
@@ -278,7 +280,7 @@ describe('book routes', () => {
     const pool = {
       query: vi.fn(async (sql: string, params?: unknown[]) => {
         if (sql.includes('select exists(') && sql.includes('from chapters c')) {
-          expect(params).toEqual(['book_1', 'user_test', 'chapter_1']);
+          expect(params).toEqual(['book_1', 'user_test', 'chapter_1', 'chapter:6']);
           return { rows: [{ exists: true }] };
         }
         if (sql.includes('insert into reading_positions')) {
@@ -295,6 +297,11 @@ describe('book routes', () => {
             '2026-07-05T00:03:00.000Z',
           ]);
           return { rowCount: 1, rows: [{ updated_at: '2026-07-05T00:03:00.000Z' }] };
+        }
+        if (sql.includes('insert into fixed_document_section_read_states')) {
+          expect(sql).toContain('on conflict (book_id, user_id, document_section_id)');
+          expect(params).toEqual(['book_1', 'user_test', 'chapter:6', '2026-07-05T00:03:00.000Z']);
+          return { rowCount: 1, rows: [] };
         }
         if (sql.includes('insert into sync_events')) {
           expect(params?.[1]).toBe('user_test');
@@ -333,6 +340,7 @@ describe('book routes', () => {
       url: '/api/books/book_1/reading-position',
       payload: {
         chapterId: 'chapter_1',
+        documentSectionId: 'chapter:6',
         paragraphId: 'paragraph_7',
         paragraphIndex: 7,
         offsetInParagraph: 2,
@@ -345,7 +353,7 @@ describe('book routes', () => {
 
     expect(response.statusCode).toBe(200);
     expect(response.json()).toEqual({ ok: true, applied: true });
-    expect(pool.query).toHaveBeenCalledTimes(3);
+    expect(pool.query).toHaveBeenCalledTimes(4);
 
     await app.close();
   });

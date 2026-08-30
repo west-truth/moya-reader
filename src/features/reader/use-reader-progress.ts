@@ -73,6 +73,7 @@ export function useReaderPositionPersistence(
             novelId: pending.novel.id,
             expectedContentRevisionId: pending.novel.activeContentRevisionId,
             chapterId: pending.chapter.id,
+            documentSectionId: pending.chapter.documentSectionId,
             scrollTop: pending.location.scrollTop,
             chapterProgress: pending.location.progress,
             paragraphId: pending.location.paragraph?.id,

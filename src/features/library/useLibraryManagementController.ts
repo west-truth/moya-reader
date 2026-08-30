@@ -41,7 +41,52 @@ export function metadataEditCanRebase(base: Novel, current: Novel, patch: BookMe
 }
 
 function coverIdentityChanged(base: Novel, current: Novel): boolean {
-  return base.coverAssetId !== current.coverAssetId || base.coverContentHash !== current.coverContentHash;
+  return (
+    base.coverAssetId !== current.coverAssetId ||
+    base.coverContentHash !== current.coverContentHash ||
+    (base.coverFit ?? 'crop') !== (current.coverFit ?? 'crop') ||
+    (base.coverPositionX ?? 50) !== (current.coverPositionX ?? 50) ||
+    (base.coverPositionY ?? 50) !== (current.coverPositionY ?? 50)
+  );
+}
+
+function metadataRevision(book: Novel): number {
+  return book.metadataRevision ?? 0;
+}
+
+function newerMetadataSnapshot(left: Novel, right: Novel): Novel {
+  return metadataRevision(right) >= metadataRevision(left) ? right : left;
+}
+
+function metadataPatchAlreadyApplied(book: Novel, patch: BookMetadataPatch): boolean {
+  return (Object.keys(patch) as Array<keyof BookMetadataPatch>).every((field) =>
+    sameMetadataValue(comparableMetadataValue(book, field), patch[field] ?? null),
+  );
+}
+
+function applyMetadataPatchSnapshot(
+  book: Novel,
+  patch: BookMetadataPatch,
+  metadataRevision: number,
+  changedAt: string,
+): Novel {
+  const next: Novel = { ...book, metadataRevision, updatedAt: changedAt };
+  if (patch.title !== undefined) next.title = patch.title;
+  if (patch.author !== undefined) next.author = patch.author ?? undefined;
+  if (patch.seriesTitle !== undefined) next.seriesTitle = patch.seriesTitle ?? undefined;
+  if (patch.seriesIndex !== undefined) next.seriesIndex = patch.seriesIndex ?? undefined;
+  if (patch.tags !== undefined) next.tags = [...patch.tags];
+  if (patch.description !== undefined) next.description = patch.description ?? undefined;
+  if (patch.language !== undefined) next.language = patch.language ?? undefined;
+  if (patch.favorite !== undefined) next.favorite = patch.favorite;
+  if (patch.coverFit !== undefined) next.coverFit = patch.coverFit;
+  if (patch.coverPositionX !== undefined) next.coverPositionX = patch.coverPositionX;
+  if (patch.coverPositionY !== undefined) next.coverPositionY = patch.coverPositionY;
+  return next;
+}
+
+function metadataRevisionConflict(cause: unknown): boolean {
+  return cause instanceof Error && /metadata revision changed|metadata_revision_changed/iu.test(cause.message);
 }
 
 function libraryManagementError(cause: unknown): string {
@@ -106,6 +151,14 @@ export function useLibraryManagementController(
   const [error, setError] = useState<string>();
   const [lastBatchReceipt, setLastBatchReceipt] = useState<BatchLibraryReceipt>();
   const busyRef = useRef(false);
+  const latestBooksRef = useRef(new Map<string, Novel>());
+
+  const rememberBook = useCallback((book: Novel): Novel => {
+    const remembered = latestBooksRef.current.get(book.id);
+    const latest = remembered ? newerMetadataSnapshot(remembered, book) : book;
+    latestBooksRef.current.set(book.id, latest);
+    return latest;
+  }, []);
 
   const refresh = useCallback(async () => {
     if (!input.catalog) return;
@@ -165,7 +218,7 @@ export function useLibraryManagementController(
       refresh,
       setActiveShelf: setActiveShelfIdState,
       openShelves: () => setPanel({ kind: 'shelves' }),
-      openMetadata: (book) => setPanel({ kind: 'metadata', book }),
+      openMetadata: (book) => setPanel({ kind: 'metadata', book: rememberBook(book) }),
       confirmDiscard: input.confirm,
       closePanel: () => setPanel(undefined),
       refreshOpenMetadata: async () => {
@@ -173,8 +226,11 @@ export function useLibraryManagementController(
         try {
           const fresh = await input.getNovel(panel.book.id);
           if (!fresh) return;
+          const latest = rememberBook(fresh);
           setPanel((current) =>
-            current?.kind === 'metadata' && current.book.id === fresh.id ? { kind: 'metadata', book: fresh } : current,
+            current?.kind === 'metadata' && current.book.id === latest.id
+              ? { kind: 'metadata', book: latest }
+              : current,
           );
         } catch {
           const message = '적용된 작품 정보를 화면에 다시 불러오지 못했습니다. 편집창을 다시 열어 주세요.';
@@ -235,8 +291,9 @@ export function useLibraryManagementController(
             setPanel(undefined);
             return;
           }
-          const current = await input.getNovel(book.id);
-          if (!current) throw new Error('작품을 다시 불러오지 못했습니다.');
+          const loaded = await input.getNovel(book.id);
+          if (!loaded) throw new Error('작품을 다시 불러오지 못했습니다.');
+          let current = rememberBook(loaded);
           const coverWasEdited =
             cover.kind !== 'keep' ||
             patch.coverFit !== undefined ||
@@ -248,13 +305,89 @@ export function useLibraryManagementController(
           }
           let expectedRevision = current.metadataRevision ?? 0;
           if (cover.kind === 'replace') {
-            await input.assets!.saveCover(book.id, { ...cover.input, expectedMetadataRevision: expectedRevision });
+            let savedCover;
+            try {
+              savedCover = await input.assets!.saveCover(book.id, {
+                ...cover.input,
+                expectedMetadataRevision: expectedRevision,
+              });
+            } catch (cause) {
+              if (!metadataRevisionConflict(cause)) throw cause;
+              const fresh = await input.getNovel(book.id);
+              if (!fresh || coverIdentityChanged(current, fresh) || !metadataEditCanRebase(current, fresh, patch)) {
+                if (fresh) {
+                  current = rememberBook(fresh);
+                  setPanel({ kind: 'metadata', book: current });
+                }
+                throw new LibraryMetadataEditConflictError();
+              }
+              current = rememberBook(fresh);
+              expectedRevision = metadataRevision(current);
+              savedCover = await input.assets!.saveCover(book.id, {
+                ...cover.input,
+                expectedMetadataRevision: expectedRevision,
+              });
+            }
             expectedRevision += 1;
+            current = rememberBook({
+              ...current,
+              coverAssetId: savedCover.id,
+              coverContentHash: savedCover.contentHash,
+              coverFit: cover.input.fit,
+              coverPositionX: cover.input.positionX,
+              coverPositionY: cover.input.positionY,
+              metadataRevision: expectedRevision,
+              updatedAt: savedCover.createdAt,
+            });
           } else if (cover.kind === 'remove' && current.coverAssetId) {
-            await input.assets!.removeCover(book.id, expectedRevision);
+            try {
+              await input.assets!.removeCover(book.id, expectedRevision);
+            } catch (cause) {
+              if (!metadataRevisionConflict(cause)) throw cause;
+              const fresh = await input.getNovel(book.id);
+              if (!fresh || coverIdentityChanged(current, fresh) || !metadataEditCanRebase(current, fresh, patch)) {
+                if (fresh) {
+                  current = rememberBook(fresh);
+                  setPanel({ kind: 'metadata', book: current });
+                }
+                throw new LibraryMetadataEditConflictError();
+              }
+              current = rememberBook(fresh);
+              expectedRevision = metadataRevision(current);
+              await input.assets!.removeCover(book.id, expectedRevision);
+            }
             expectedRevision += 1;
+            current = rememberBook({
+              ...current,
+              coverAssetId: undefined,
+              coverContentHash: undefined,
+              metadataRevision: expectedRevision,
+              updatedAt: new Date().toISOString(),
+            });
           }
-          if (Object.keys(patch).length > 0) await input.catalog!.patchMetadata(book.id, patch, expectedRevision);
+          if (Object.keys(patch).length > 0) {
+            try {
+              const receipt = await input.catalog!.patchMetadata(book.id, patch, expectedRevision);
+              current = rememberBook(
+                applyMetadataPatchSnapshot(current, patch, receipt.metadataRevision, receipt.changedAt),
+              );
+            } catch (cause) {
+              if (!metadataRevisionConflict(cause)) throw cause;
+              const fresh = await input.getNovel(book.id);
+              if (!fresh) throw cause;
+              if (metadataPatchAlreadyApplied(fresh, patch)) {
+                rememberBook(fresh);
+              } else if (metadataEditCanRebase(current, fresh, patch)) {
+                current = rememberBook(fresh);
+                const receipt = await input.catalog!.patchMetadata(book.id, patch, metadataRevision(current));
+                rememberBook(applyMetadataPatchSnapshot(current, patch, receipt.metadataRevision, receipt.changedAt));
+              } else {
+                current = rememberBook(fresh);
+                setPanel({ kind: 'metadata', book: current });
+                throw new LibraryMetadataEditConflictError();
+              }
+            }
+          }
           await input.refreshNovels();
           await input.refreshAfterMutation();
           setPanel(undefined);
@@ -299,6 +432,7 @@ export function useLibraryManagementController(
       lastBatchReceipt,
       memberships,
       panel,
+      rememberBook,
       refresh,
       run,
       selectedBookIds,

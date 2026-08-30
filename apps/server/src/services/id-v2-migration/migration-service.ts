@@ -48,6 +48,7 @@ const RESTORE_ORDER: readonly BookBackupTable[] = [
   'paragraph_pages',
   'paragraph_search',
   'reading_positions',
+  'fixed_document_section_read_states',
   'bookmarks',
   'highlights',
   'notes',

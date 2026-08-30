@@ -189,6 +189,7 @@ function hostedClient() {
           document_section_title: '1화',
           document_section_index: 1,
           document_page_index_in_section: 1,
+          document_section_read_at: '2026-07-05T00:04:00.000Z',
           created_at: now,
           updated_at: now,
         },
@@ -374,6 +375,7 @@ describe('RemoteReaderRepository', () => {
       documentSectionTitle: '1화',
       documentSectionIndex: 1,
       documentPageIndexInSection: 1,
+      documentSectionReadAt: '2026-07-05T00:04:00.000Z',
     });
     expect(page).toMatchObject({
       id: 'page_chapter_1_0',
@@ -418,6 +420,7 @@ describe('RemoteReaderRepository', () => {
     await repository.saveReadingPosition({
       novelId: 'book_1',
       chapterId: 'chapter_1',
+      documentSectionId: 'chapter:11',
       scrollTop: 123.7,
       chapterProgress: 1.5,
       paragraphId: 'paragraph_9',
@@ -429,6 +432,7 @@ describe('RemoteReaderRepository', () => {
       'book_1',
       expect.objectContaining({
         chapterId: 'chapter_1',
+        documentSectionId: 'chapter:11',
         paragraphId: 'paragraph_9',
         paragraphIndex: 9,
         offsetInParagraph: 4,

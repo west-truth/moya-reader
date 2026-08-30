@@ -172,6 +172,8 @@ export interface UseExternalSourceControllerOptions {
   readonly state: ExternalSourceLocalState;
   readonly importService: ImportService;
   readonly assets?: BookAssetRepository;
+  /** The backing reader persists exact fixed-document section read markers. */
+  readonly supportsExactDocumentSectionReadMarkers?: boolean;
   readonly extensionRevision: number;
   listNovels(): Promise<Novel[]>;
   listChapters(novelId: string): Promise<Chapter[]>;
@@ -790,7 +792,11 @@ export function useExternalSourceController(options: UseExternalSourceController
       setLocalSeriesBookId(novel.id);
       setLocalSeriesSeedNovel(novel);
       setLocalSeriesSourceId(sourceId);
-      setLocalSeriesReadingStates(projectLocalSeriesReadingStates(novel, chapters));
+      setLocalSeriesReadingStates(
+        projectLocalSeriesReadingStates(novel, chapters, [], {
+          allowSequentialFallback: !optionsRef.current.supportsExactDocumentSectionReadMarkers,
+        }),
+      );
       setLocalSeriesChapters(chapters);
       setNovels([...nextNovels.filter((candidate) => candidate.id !== novel.id), novel]);
       setLinks(local.links);
@@ -927,9 +933,19 @@ export function useExternalSourceController(options: UseExternalSourceController
     if (!localSeriesBookId) return localSeriesReadingStates;
     const localNovel = novelById.get(localSeriesBookId) ?? localSeriesSeedNovel;
     return localNovel
-      ? projectLocalSeriesReadingStates(localNovel, localSeriesChapters, rawItems)
+      ? projectLocalSeriesReadingStates(localNovel, localSeriesChapters, rawItems, {
+          allowSequentialFallback: !options.supportsExactDocumentSectionReadMarkers,
+        })
       : localSeriesReadingStates;
-  }, [localSeriesBookId, localSeriesChapters, localSeriesReadingStates, localSeriesSeedNovel, novelById, rawItems]);
+  }, [
+    localSeriesBookId,
+    localSeriesChapters,
+    localSeriesReadingStates,
+    localSeriesSeedNovel,
+    options.supportsExactDocumentSectionReadMarkers,
+    novelById,
+    rawItems,
+  ]);
   const items = useMemo<readonly ExternalSourceItemView[]>(
     () =>
       rawItems.map((item) => {

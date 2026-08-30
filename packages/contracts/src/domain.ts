@@ -232,6 +232,8 @@ export interface Chapter {
   documentSectionTitle?: string;
   documentSectionIndex?: number;
   documentPageIndexInSection?: number;
+  /** Last time this exact logical fixed-document section was opened by the current user. */
+  documentSectionReadAt?: string;
   createdAt: string;
   updatedAt: string;
 }

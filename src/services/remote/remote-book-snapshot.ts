@@ -195,6 +195,7 @@ export function mapServerChapter(row: SnapshotJsonRecord): Chapter {
       row.document_page_index_in_section === null || row.document_page_index_in_section === undefined
         ? undefined
         : numberValue(row.document_page_index_in_section),
+    documentSectionReadAt: stringValue(row.document_section_read_at) || undefined,
     createdAt: stringValue(row.created_at, new Date(0).toISOString()),
     updatedAt: stringValue(row.updated_at, new Date(0).toISOString()),
   };

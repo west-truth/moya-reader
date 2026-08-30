@@ -62,14 +62,20 @@ export async function registerBookContentRoutes(
 
     const result = await pool.query(
       `
-        select id, book_id, chapter_index, title, text_hash, raw_start_offset, raw_end_offset,
-               character_count, paragraph_count, document_section_id, document_section_title,
-               document_section_index, document_page_index_in_section, created_at, updated_at
-        from chapters
-        where book_id = $1
-        order by chapter_index asc
+        select c.id, c.book_id, c.chapter_index, c.title, c.text_hash, c.raw_start_offset, c.raw_end_offset,
+               c.character_count, c.paragraph_count, c.document_section_id, c.document_section_title,
+               c.document_section_index, c.document_page_index_in_section,
+               section_state.last_read_at as document_section_read_at,
+               c.created_at, c.updated_at
+        from chapters c
+        left join fixed_document_section_read_states section_state
+          on section_state.book_id = c.book_id
+         and section_state.user_id = $2
+         and section_state.document_section_id = c.document_section_id
+        where c.book_id = $1
+        order by c.chapter_index asc
       `,
-      [request.params.bookId],
+      [request.params.bookId, config.defaultUserId],
     );
     return { chapters: mapChapterRows(result.rows) };
   });
@@ -80,9 +86,14 @@ export async function registerBookContentRoutes(
         select c.id, c.book_id, c.chapter_index, c.title, c.text_hash, c.raw_start_offset,
                c.raw_end_offset, c.character_count, c.paragraph_count, c.document_section_id,
                c.document_section_title, c.document_section_index, c.document_page_index_in_section,
+               section_state.last_read_at as document_section_read_at,
                c.created_at, c.updated_at
         from chapters c
         join library_books b on b.id = c.book_id
+        left join fixed_document_section_read_states section_state
+          on section_state.book_id = c.book_id
+         and section_state.user_id = b.user_id
+         and section_state.document_section_id = c.document_section_id
         where c.id = $1 and b.user_id = $2 and b.deleted_at is null
       `,
       [request.params.chapterId, config.defaultUserId],

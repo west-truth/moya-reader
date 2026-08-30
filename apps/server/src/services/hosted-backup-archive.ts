@@ -15,6 +15,7 @@ export const HOSTED_BACKUP_BOOK_TABLES = [
   'chapters',
   'paragraph_pages',
   'reading_positions',
+  'fixed_document_section_read_states',
   'bookmarks',
   'highlights',
   'notes',

@@ -309,6 +309,8 @@ describe('sync reader event routes', () => {
           return { rowCount: 1, rows: [{ id: params?.[0] }] };
         }
         if (sql.includes('insert into reading_positions')) {
+          expect(sql).toContain('insert into fixed_document_section_read_states');
+          expect(sql).toContain('join chapters chapter');
           materializedParams.push(params ?? []);
           return { rowCount: 1, rows: [] };
         }

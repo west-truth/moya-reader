@@ -178,7 +178,11 @@ describe('BookWorkspaceController commands', () => {
 
   it('projects a saved fixed-document page locally and schedules only the progress mutation refresh', async () => {
     const novel = testNovel({ format: 'image_archive', activeContentRevisionId: 'revision-1' });
-    const chapters = [testChapter(1), testChapter(2), testChapter(3)];
+    const chapters = [
+      testChapter(1, { documentSectionId: 'chapter:1' }),
+      testChapter(2, { documentSectionId: 'chapter:2' }),
+      testChapter(3, { documentSectionId: 'chapter:3' }),
+    ];
     const harness = createBookWorkspaceTestHarness({ novel, chapters });
     const refreshAfterLocalMutation = vi.fn(async (_kind?: 'progress' | 'statistics') => {
       harness.calls.push('adjacent.refreshAfterLocalMutation');
@@ -205,6 +209,7 @@ describe('BookWorkspaceController commands', () => {
         novelId: novel.id,
         expectedContentRevisionId: 'revision-1',
         chapterId: chapters[1]!.id,
+        documentSectionId: 'chapter:2',
         scrollTop: 1,
         chapterProgress: 1,
         paragraphIndex: 1,

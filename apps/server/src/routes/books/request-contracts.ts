@@ -15,6 +15,7 @@ export interface BookPatchBody extends NormalizedBookMetadataPatch {
 
 export interface ReadingPositionBody {
   chapterId?: string;
+  documentSectionId?: string;
   paragraphId?: string;
   paragraphIndex?: number;
   offsetInParagraph?: number;
@@ -293,6 +294,7 @@ export function validateReadingPositionBody(value: unknown): ValidationResult<Va
     ok: true,
     value: {
       chapterId,
+      documentSectionId: optionalStringField(body, 'documentSectionId'),
       paragraphId: optionalStringField(body, 'paragraphId'),
       paragraphIndex,
       offsetInParagraph,
