@@ -326,13 +326,13 @@ docker compose -f compose.yaml -f compose.metadata-collector.yaml up -d --build
 ### 선택 기능: Suwayomi/Mihon source
 
 사용자 소유 Suwayomi Server에 설치한 Mihon 호환 source를 모야의 `설정 → 소스`와 Source Hub에서 탐색할 수
-있습니다. Moya Web과 Suwayomi를 같은 Nginx Proxy Manager Docker network에 붙이는 선택형 profile은 다음과
-같이 시작합니다.
+있습니다. `compose.npm.yaml`은 Moya Web을 Nginx Proxy Manager network에 연결하고,
+`compose.suwayomi.yaml`은 선택형 Suwayomi runtime만 별도로 추가합니다.
 
 ```bash
 docker network create npm_proxy # 같은 이름의 network가 이미 있으면 생략
-docker compose -f compose.yaml -f compose.public.yaml -f compose.suwayomi.yaml config --quiet
-docker compose -f compose.yaml -f compose.public.yaml -f compose.suwayomi.yaml up -d --build
+docker compose -f compose.yaml -f compose.public.yaml -f compose.npm.yaml -f compose.suwayomi.yaml config --quiet
+docker compose -f compose.yaml -f compose.public.yaml -f compose.npm.yaml -f compose.suwayomi.yaml up -d --build
 ```
 
 실행 전 `.env`에 `SUWAYOMI_AUTH_USERNAME`, `SUWAYOMI_AUTH_PASSWORD`와 외부 HTTPS origin인
@@ -340,6 +340,8 @@ docker compose -f compose.yaml -f compose.public.yaml -f compose.suwayomi.yaml u
 alias `moya-suwayomi:4567`로 연결합니다. 데이터와 설치 source는 `suwayomi-data` volume에 남으므로 일반
 업데이트에 `docker compose down -v`를 사용하면 안 됩니다. 전체 NPM/WireGuard·OAuth 설정은
 [개인 배포 예제](docs/operations/nginx-proxy-manager-wireguard.md)를 따르십시오.
+
+Suwayomi 없이 Moya만 NPM에 연결할 때는 위 명령에서 `-f compose.suwayomi.yaml`만 제외합니다.
 
 ## 선택 기능: 로컬 한국어 TTS
 

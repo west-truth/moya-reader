@@ -92,4 +92,37 @@ describe('serial release filename parser', () => {
       parseSerialReleaseName('작품 1화.cbz').releaseKey,
     );
   });
+
+  it('strips an OS duplicate suffix only for an explicit catalog source filename', () => {
+    expect(
+      parseSerialReleaseName('아기는 악당을 키운다 완 (1).txt', undefined, {
+        stripFileCopySuffix: true,
+      }),
+    ).toMatchObject({
+      workTitle: '아기는 악당을 키운다',
+      completion: 'complete',
+      confidence: 'low',
+      evidence: ['file_copy_suffix', 'completion:complete'],
+    });
+    expect(
+      parseSerialReleaseName('[텍본] 바바리안 퀘스트 1-315 完 (2).txt.zip', undefined, {
+        stripFileCopySuffix: true,
+      }),
+    ).toMatchObject({
+      workTitle: '바바리안 퀘스트',
+      releaseKey: 'c:1-315',
+      completion: 'complete',
+    });
+  });
+
+  it('preserves a meaningful parenthesized number outside the source-copy boundary', () => {
+    expect(parseSerialReleaseName('작품 (1).txt').workTitle).toBe('작품 (1)');
+    expect(parseSerialReleaseName('작품 (1) 2화.txt', undefined, { stripFileCopySuffix: true })).toMatchObject({
+      workTitle: '작품 (1)',
+      releaseKey: 'c:2',
+    });
+    expect(parseSerialReleaseName('작품 (01).txt', undefined, { stripFileCopySuffix: true }).workTitle).toBe(
+      '작품 (01)',
+    );
+  });
 });

@@ -1,8 +1,9 @@
 import { act, create, type ReactTestRenderer } from 'react-test-renderer';
 import { describe, expect, it, vi } from 'vitest';
+import { BlobWriter, Uint8ArrayReader, ZipWriter } from '@zip.js/zip.js';
 import type { ExtensionContributionId } from '@noveldesk/extension-contracts';
 import { sha256 } from '../../domain/hash';
-import type { Chapter, Novel } from '../../domain/types';
+import type { BookAssetMetadata, Chapter, Novel } from '../../domain/types';
 import type { ExternalSourceBrowseState, ExternalSourceLink } from '../../external-sources/contracts';
 import type {
   ExternalSourceCatalogPreference,
@@ -11,6 +12,7 @@ import type {
   ExternalSourceSubscriptionRecord,
 } from '../../external-sources/local-state';
 import type { ImportService } from '../../services/import/import-service';
+import type { BookAssetRepository } from '../../repositories/book-asset-repository';
 import { testChapter } from '../book-workspace/book-workspace-test-fixtures';
 import {
   useExternalSourceController,
@@ -66,6 +68,9 @@ async function createHarness(input: {
   subscriptions?: ExternalSourceSubscriptionRecord[];
   catalogPreference?: ExternalSourceCatalogPreference;
   browse?: ExternalSourceBrowseState;
+  serial?: boolean;
+  downloadedFile?: File;
+  assets?: BookAssetRepository;
 }) {
   const oldContent = '기존 원격 원문';
   const oldHash = await sha256(oldContent);
@@ -121,17 +126,20 @@ async function createHarness(input: {
   };
   let latestImportedNovel: Novel | undefined;
   const importFile = vi.fn<ImportService['importFile']>((request) => {
-    latestImportedNovel =
-      input.importedContent ??
-      novel({
-        id: request.clientBookId ?? 'book-new',
-        sourceContentHash: downloadedHash,
-        activeContentRevisionId: 'content-new',
-      });
     return {
       jobId: 'import-job',
       cancel: vi.fn(),
-      promise: input.importError ? Promise.reject(input.importError) : Promise.resolve({ novel: latestImportedNovel }),
+      promise: (async () => {
+        if (input.importError) throw input.importError;
+        latestImportedNovel =
+          input.importedContent ??
+          novel({
+            id: request.clientBookId ?? 'book-new',
+            sourceContentHash: input.serial ? await sha256(await request.file.arrayBuffer()) : downloadedHash,
+            activeContentRevisionId: 'content-new',
+          });
+        return { novel: latestImportedNovel };
+      })(),
     };
   });
   const registry: ExternalSourceRegistryPort = {
@@ -158,17 +166,30 @@ async function createHarness(input: {
         throw new Error('folder not found');
       }
       return {
-        items: [
-          {
-            key: ITEM_KEY,
-            kind: 'work' as const,
-            title: 'work.txt',
-            mimeType: 'text/plain',
-            thumbnailUrl: input.thumbnailUrl,
-            remoteRevision: 'remote-r2',
-            importability: 'supported' as const,
-          },
-        ],
+        items: input.serial
+          ? [
+              {
+                key: ITEM_KEY,
+                kind: 'file' as const,
+                title: '1화',
+                mimeType: 'application/vnd.comicbook+zip',
+                remoteRevision: 'remote-r2',
+                collection: { remoteId: 'manga:1', title: '연동 작품' },
+                release: { title: '1화', chapterNumber: 1 },
+                importability: 'supported' as const,
+              },
+            ]
+          : [
+              {
+                key: ITEM_KEY,
+                kind: 'work' as const,
+                title: 'work.txt',
+                mimeType: 'text/plain',
+                thumbnailUrl: input.thumbnailUrl,
+                remoteRevision: 'remote-r2',
+                importability: 'supported' as const,
+              },
+            ],
         browse: input.browse
           ? {
               ...input.browse,
@@ -178,7 +199,7 @@ async function createHarness(input: {
       };
     }),
     downloadExternalSource: vi.fn(async () => ({
-      file: new File([input.downloadedContent], 'work.txt', { type: 'text/plain' }),
+      file: input.downloadedFile ?? new File([input.downloadedContent], 'work.txt', { type: 'text/plain' }),
       remoteRevision: 'remote-r2',
     })),
     canPickExternalSource: vi.fn(() => Boolean(input.pickable)),
@@ -197,6 +218,7 @@ async function createHarness(input: {
       hostContext: { brokers: { get: () => undefined } },
       state,
       importService: { importFile },
+      assets: input.assets,
       extensionRevision: 0,
       listNovels: async () => (input.localBookMissing ? [] : [currentNovel]),
       listChapters: async () => input.chapters ?? [],
@@ -249,6 +271,18 @@ async function createHarness(input: {
     renderer,
     oldHash,
   };
+}
+
+async function singlePageComicFile(): Promise<File> {
+  const page = Uint8Array.from(
+    Buffer.from(
+      'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Wl2ZQAAAABJRU5ErkJggg==',
+      'base64',
+    ),
+  );
+  const writer = new ZipWriter(new BlobWriter('application/vnd.comicbook+zip'));
+  await writer.add('001.png', new Uint8ArrayReader(page));
+  return new File([await writer.close()], '1화.cbz', { type: 'application/vnd.comicbook+zip' });
 }
 
 describe('useExternalSourceController remote updates', () => {
@@ -643,6 +677,89 @@ describe('useExternalSourceController remote updates', () => {
       );
     } finally {
       vi.stubGlobal('fetch', previousFetch);
+      await act(async () => harness.renderer.unmount());
+    }
+  });
+
+  it('persists the subscribed Suwayomi source cover after the first hosted chapter import', async () => {
+    const coverBytes = Uint8Array.from(
+      Buffer.from(
+        'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Y9WlS8AAAAASUVORK5CYII=',
+        'base64',
+      ),
+    );
+    const coverUrl = `data:image/png;base64,${Buffer.from(coverBytes).toString('base64')}`;
+    const saveApprovedEnrichmentCover = vi.fn(async (_bookId, input) => ({
+      current: {
+        id: 'source-cover',
+        bookId: _bookId,
+        kind: 'cover',
+        provenance: 'approved_enrichment',
+        status: 'active',
+        storageKey: 'source-cover',
+        fileName: input.fileName,
+        contentType: input.contentType,
+        byteLength: input.blob.size,
+        contentHash: input.contentHash,
+        pixelWidth: input.pixelWidth,
+        pixelHeight: input.pixelHeight,
+        createdAt: '2026-08-30T00:00:00.000Z',
+        activatedAt: '2026-08-30T00:00:00.000Z',
+      } satisfies BookAssetMetadata,
+      metadataRevision: 1,
+    }));
+    const assets = {
+      getActiveCover: vi.fn(async () => undefined),
+      saveApprovedEnrichmentCover,
+    } as unknown as BookAssetRepository;
+    const previousCreateImageBitmap = globalThis.createImageBitmap;
+    vi.stubGlobal(
+      'createImageBitmap',
+      vi.fn(async () => ({ width: 1, height: 1, close: vi.fn() }) as unknown as ImageBitmap),
+    );
+    const timestamp = '2026-08-30T00:00:00.000Z';
+    const harness = await createHarness({
+      downloadedContent: '',
+      downloadedFile: await singlePageComicFile(),
+      localBookMissing: true,
+      serial: true,
+      assets,
+      subscriptions: [
+        {
+          id: 'subscription-1',
+          connectorId: SOURCE_ID,
+          accountConnectionId: 'fixture-account',
+          collectionRemoteId: 'manga:1',
+          navigationRef: 'manga:1',
+          title: '연동 작품',
+          thumbnailUrl: coverUrl,
+          knownReleaseIds: ['work-1'],
+          newReleaseIds: [],
+          availableReleaseCount: 1,
+          lastCheckedAt: timestamp,
+          createdAt: timestamp,
+          updatedAt: timestamp,
+          schemaVersion: 1,
+        },
+      ],
+    });
+
+    try {
+      await act(async () => {
+        await harness.controller.importSelected();
+      });
+
+      expect(saveApprovedEnrichmentCover).toHaveBeenCalledWith(
+        expect.any(String),
+        expect.objectContaining({
+          contentType: 'image/png',
+          expectedMetadataRevision: 0,
+          fit: 'crop',
+        }),
+      );
+      expect(harness.notify).toHaveBeenCalledWith(expect.stringContaining('1개 회차'), 'success');
+    } finally {
+      vi.stubGlobal('createImageBitmap', previousCreateImageBitmap);
       await act(async () => harness.renderer.unmount());
     }
   });

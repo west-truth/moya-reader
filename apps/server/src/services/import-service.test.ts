@@ -534,72 +534,78 @@ describe('server import service', () => {
     expect(queries.some(({ sql }) => sql.includes("update upload_sessions set status = 'failed'"))).toBe(false);
   });
 
-  it('keeps a user cover while scheduling the incoming archive cover for durable cleanup', async () => {
-    const tempDir = await mkdtemp(path.join(os.tmpdir(), 'moya-import-cover-'));
-    const bytes = await singlePageComicArchive();
-    const uploadDir = path.join(tempDir, 'uploads', 'upload_cover');
-    const chunkPath = path.join(uploadDir, '00000000.part');
-    await mkdir(uploadDir, { recursive: true });
-    await writeFile(chunkPath, bytes);
-    const lifecycleQueries: Array<{ sql: string; params?: unknown[] }> = [];
-    const insertedAssetKinds: string[] = [];
-    const client = {
-      query: vi.fn(async (sql: string, params?: unknown[]) => {
-        lifecycleQueries.push({ sql, params });
-        if (sql === 'begin' || sql === 'commit' || sql === 'rollback') return { rows: [], rowCount: 1 };
-        if (sql.includes('select asset.provenance')) return { rows: [{ provenance: 'user_supplied' }], rowCount: 1 };
-        if (sql.includes('insert into book_assets')) insertedAssetKinds.push(String(params?.[3]));
-        if (sql.includes("update upload_sessions set status = 'imported'")) {
-          return { rows: [{ id: 'upload_cover' }], rowCount: 1 };
-        }
-        return { rows: [], rowCount: 1 };
-      }),
-      release: vi.fn(),
-    };
-    const pool = {
-      query: vi.fn(async (sql: string) => {
-        if (sql.includes('select * from upload_sessions')) {
-          return {
-            rows: [
-              {
-                id: 'upload_cover',
-                user_id: 'user_test',
-                file_name: 'comic.cbz',
-                size_bytes: String(bytes.length),
-                content_type: 'application/zip',
-                encoding: 'auto',
-                total_chunks: 1,
-              },
-            ],
-          };
-        }
-        if (sql.includes('from upload_chunks')) {
-          return { rows: [{ chunk_index: 0, size_bytes: bytes.length, storage_path: chunkPath }] };
-        }
-        return { rows: [], rowCount: 1 };
-      }),
-      connect: vi.fn(async () => client),
-    };
-    try {
-      await processImportJob(
-        pool as unknown as Parameters<typeof processImportJob>[0],
-        { ...testConfig(), dataDir: tempDir },
-        'job_cover',
-        'upload_cover',
-      );
-    } finally {
-      await rm(tempDir, { recursive: true, force: true });
-    }
+  it.each(['user_supplied', 'approved_enrichment'] as const)(
+    'keeps an existing %s cover while scheduling the incoming archive cover for durable cleanup',
+    async (coverProvenance) => {
+      const tempDir = await mkdtemp(path.join(os.tmpdir(), 'moya-import-cover-'));
+      const bytes = await singlePageComicArchive();
+      const uploadDir = path.join(tempDir, 'uploads', 'upload_cover');
+      const chunkPath = path.join(uploadDir, '00000000.part');
+      await mkdir(uploadDir, { recursive: true });
+      await writeFile(chunkPath, bytes);
+      const lifecycleQueries: Array<{ sql: string; params?: unknown[] }> = [];
+      const insertedAssetKinds: string[] = [];
+      const client = {
+        query: vi.fn(async (sql: string, params?: unknown[]) => {
+          lifecycleQueries.push({ sql, params });
+          if (sql === 'begin' || sql === 'commit' || sql === 'rollback') return { rows: [], rowCount: 1 };
+          if (sql.includes('select asset.provenance')) return { rows: [{ provenance: coverProvenance }], rowCount: 1 };
+          if (sql.includes('insert into book_assets')) insertedAssetKinds.push(String(params?.[3]));
+          if (sql.includes("update upload_sessions set status = 'imported'")) {
+            return { rows: [{ id: 'upload_cover' }], rowCount: 1 };
+          }
+          return { rows: [], rowCount: 1 };
+        }),
+        release: vi.fn(),
+      };
+      const pool = {
+        query: vi.fn(async (sql: string) => {
+          if (sql.includes('select * from upload_sessions')) {
+            return {
+              rows: [
+                {
+                  id: 'upload_cover',
+                  user_id: 'user_test',
+                  file_name: 'comic.cbz',
+                  size_bytes: String(bytes.length),
+                  content_type: 'application/zip',
+                  encoding: 'auto',
+                  total_chunks: 1,
+                },
+              ],
+            };
+          }
+          if (sql.includes('from upload_chunks')) {
+            return { rows: [{ chunk_index: 0, size_bytes: bytes.length, storage_path: chunkPath }] };
+          }
+          return { rows: [], rowCount: 1 };
+        }),
+        connect: vi.fn(async () => client),
+      };
+      try {
+        await processImportJob(
+          pool as unknown as Parameters<typeof processImportJob>[0],
+          { ...testConfig(), dataDir: tempDir },
+          'job_cover',
+          'upload_cover',
+        );
+      } finally {
+        await rm(tempDir, { recursive: true, force: true });
+      }
 
-    expect(insertedAssetKinds).toEqual(['document_page']);
-    const releaseIndex = lifecycleQueries.findIndex(({ sql }) => sql.startsWith('delete from object_delete_outbox'));
-    const cleanupIndex = lifecycleQueries.findIndex(({ sql }) => sql.includes('insert into object_delete_outbox'));
-    expect(releaseIndex).toBeGreaterThanOrEqual(0);
-    expect(cleanupIndex).toBeGreaterThan(releaseIndex);
-    expect(lifecycleQueries[cleanupIndex]?.params?.[0]).toEqual([
-      expect.stringMatching(/\/staged\/job_cover\/legacy\/attempt-1\/[^/]+\/001\.png$/),
-    ]);
-  });
+      expect(insertedAssetKinds).toEqual(['document_page']);
+      expect(lifecycleQueries.find(({ sql }) => sql.includes("status = 'superseded'"))?.sql).toContain(
+        "kind <> 'cover'",
+      );
+      const releaseIndex = lifecycleQueries.findIndex(({ sql }) => sql.startsWith('delete from object_delete_outbox'));
+      const cleanupIndex = lifecycleQueries.findIndex(({ sql }) => sql.includes('insert into object_delete_outbox'));
+      expect(releaseIndex).toBeGreaterThanOrEqual(0);
+      expect(cleanupIndex).toBeGreaterThan(releaseIndex);
+      expect(lifecycleQueries[cleanupIndex]?.params?.[0]).toEqual([
+        expect.stringMatching(/\/staged\/job_cover\/legacy\/attempt-1\/[^/]+\/001\.png$/),
+      ]);
+    },
+  );
 
   it('ignores a retained BullMQ delivery after its execution fence was superseded', async () => {
     const pool = {

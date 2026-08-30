@@ -14,7 +14,9 @@ const files = {
   composeMetadataCollector: read('compose.metadata-collector.yaml'),
   composeMetadataCollectorAuth: read('compose.metadata-collector-auth.yaml'),
   composePublic: read('compose.public.yaml'),
+  composeNpm: read('compose.npm.yaml'),
   composeSuwayomi: read('compose.suwayomi.yaml'),
+  readme: read('README.md'),
   dockerignore: read('.dockerignore'),
   localTTSDockerfile: read('deploy/local-tts.Dockerfile'),
   metadataCollectorDockerfile: read('deploy/metadata-collector.Dockerfile'),
@@ -111,10 +113,11 @@ const metadataCollector = blockAfter(files.composeMetadataCollector, '  metadata
 const metadataCollectorVolumes = blockAfter(files.composeMetadataCollector, 'volumes:');
 const metadataCollectorAuthApi = blockAfter(files.composeMetadataCollectorAuth, '  api:');
 const metadataCollectorAuth = blockAfter(files.composeMetadataCollectorAuth, '  metadata-collector:');
-const suwayomiWeb = blockAfter(files.composeSuwayomi, '  web:');
-const suwayomiApi = blockAfter(files.composeSuwayomi, '  api:');
-const suwayomiPostgres = blockAfter(files.composeSuwayomi, '  postgres:');
-const suwayomiMinio = blockAfter(files.composeSuwayomi, '  minio:');
+const npmWeb = blockAfter(files.composeNpm, '  web:');
+const npmApi = blockAfter(files.composeNpm, '  api:');
+const npmPostgres = blockAfter(files.composeNpm, '  postgres:');
+const npmMinio = blockAfter(files.composeNpm, '  minio:');
+const npmNetworks = blockAfter(files.composeNpm, 'networks:');
 const suwayomi = blockAfter(files.composeSuwayomi, '  suwayomi:');
 const suwayomiNetworks = blockAfter(files.composeSuwayomi, 'networks:');
 const suwayomiVolumes = blockAfter(files.composeSuwayomi, 'volumes:');
@@ -177,7 +180,12 @@ check(
 );
 
 for (const key of [
-  'DATABASE_URL: ${DATABASE_URL:-postgres://${POSTGRES_USER:-noveldesk}:${POSTGRES_PASSWORD:-noveldesk}@postgres:5432/${POSTGRES_DB:-noveldesk}}',
+  'DATABASE_URL: ${DATABASE_URL:-}',
+  'PGHOST: postgres',
+  'PGPORT: 5432',
+  'PGUSER: ${POSTGRES_USER:-noveldesk}',
+  'PGPASSWORD: ${POSTGRES_PASSWORD:-noveldesk}',
+  'PGDATABASE: ${POSTGRES_DB:-noveldesk}',
   'REDIS_URL: ${REDIS_URL:-redis://redis:6379}',
   'S3_ENDPOINT: ${S3_ENDPOINT:-http://minio:9000}',
   'S3_BUCKET: ${S3_BUCKET:-noveldesk-uploads}',
@@ -244,6 +252,8 @@ for (const ignoredPath of [
   'smart-novel-reader-codex-pack/',
   'ui-reference/',
   'fixtures/generated/',
+  '.codex-remote-attachments/',
+  '.tmp/',
 ]) {
   check(`.dockerignore excludes ${ignoredPath}`, includes(files.dockerignore, ignoredPath));
 }
@@ -450,8 +460,8 @@ check(
 
 check('Suwayomi overlay declares the compatibility runtime', Boolean(suwayomi));
 check(
-  'Suwayomi overlay uses the official stable image by default',
-  includes(suwayomi, 'ghcr.io/suwayomi/suwayomi-server:${SUWAYOMI_IMAGE_TAG:-stable}'),
+  'Suwayomi overlay uses a reviewed version by default',
+  includes(suwayomi, 'ghcr.io/suwayomi/suwayomi-server:${SUWAYOMI_IMAGE_TAG:-v2.3.2243}'),
 );
 check('Suwayomi is not published directly to a host port', !matches(suwayomi, /^ {4}ports:/m));
 check('Suwayomi exposes only its Docker-network port', matches(suwayomi, /expose:\s*\n\s+- ['"]4567['"]/));
@@ -479,26 +489,37 @@ check(
     !includes(suwayomi, '$${AUTH_PASSWORD}'),
 );
 check(
-  'Moya and Suwayomi share the configurable external NPM network',
-  includes(suwayomiWeb, 'npm-proxy:') &&
-    includes(suwayomiWeb, '${MOYA_PROXY_HOSTNAME:-moya-web}') &&
+  'Moya and Suwayomi use the configurable external NPM network',
+  includes(npmWeb, 'npm-proxy:') &&
+    includes(npmWeb, '${MOYA_PROXY_HOSTNAME:-moya-web}') &&
     includes(suwayomi, '${SUWAYOMI_PROXY_HOSTNAME:-moya-suwayomi}') &&
+    includes(npmNetworks, 'name: ${NPM_DOCKER_NETWORK:-npm_proxy}') &&
+    includes(npmNetworks, 'external: true') &&
     includes(suwayomiNetworks, 'name: ${NPM_DOCKER_NETWORK:-npm_proxy}') &&
     includes(suwayomiNetworks, 'external: true'),
 );
 check(
-  'Suwayomi NPM overlay independently fails closed without the public override',
-  includes(suwayomiApi, 'SERVER_EXPOSURE: external') &&
-    includes(suwayomiApi, 'READER_AUTH_TOKEN: ${READER_AUTH_TOKEN:?') &&
-    includes(suwayomiPostgres, 'POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?') &&
-    includes(suwayomiMinio, 'MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:?'),
+  'NPM overlay independently fails closed without the public override',
+  includes(npmApi, 'SERVER_EXPOSURE: external') &&
+    includes(npmApi, 'READER_AUTH_TOKEN: ${READER_AUTH_TOKEN:?') &&
+    includes(npmPostgres, 'POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?') &&
+    includes(npmMinio, 'MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:?'),
+);
+check(
+  'Suwayomi is isolated from the Moya database and queue network',
+  includes(suwayomi, 'npm-proxy:') && !matches(suwayomi, /^\s+default:/m),
 );
 check(
   'NPM WireGuard guide documents the combined self-host path',
-  includes(files.npmWireGuardGuide, 'compose.suwayomi.yaml') &&
+  includes(files.npmWireGuardGuide, 'compose.npm.yaml') &&
+    includes(files.npmWireGuardGuide, 'compose.suwayomi.yaml') &&
     includes(files.npmWireGuardGuide, 'moya-web:80') &&
     includes(files.npmWireGuardGuide, 'moya-suwayomi:4567') &&
     includes(files.npmWireGuardGuide, 'MOYA_SUWAYOMI_DEFAULT_URL='),
+);
+check(
+  'repository README includes the required NPM overlay in self-host commands',
+  includes(files.readme, 'compose.npm.yaml'),
 );
 
 check('public override forces external exposure', includes(files.composePublic, 'SERVER_EXPOSURE: external'));

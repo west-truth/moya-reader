@@ -9,6 +9,7 @@ _KNOWN_LIBRARY_EXTENSION = re.compile(
     r"\.(?:txt|md|markdown|epub|pdf|mobi|azw3?|fb2|zip|cbz|rar|cbr|7z|cb7)$",
     re.IGNORECASE,
 )
+_TRAILING_FILE_COPY_SUFFIX = re.compile(r"\s+\([1-9]\d{0,3}\)\s*$")
 _LEADING_NOISE_GROUP = re.compile(
     r"^\s*[\[(（【](?:텍본|웹소설|카카오페이지|네이버\s*시리즈|리디|노벨피아|문피아|"
     r"digital|raw|scan|scans|kor|korean|jpn|japanese|eng|english)[\])）】]+\s*",
@@ -105,11 +106,23 @@ def _strip_cosmetic_label(match: re.Match[str], *, preserve_brackets: bool = Fal
 
 def _title_source(title: str, *, preserve_brackets: bool = False) -> str:
     value = _unicode_text(title).replace("_", " ").strip()
+    stripped_file_extension = False
     while True:
         stripped = _KNOWN_LIBRARY_EXTENSION.sub("", value).strip()
         if stripped == value:
             break
+        stripped_file_extension = True
         value = stripped
+
+    # OS/browser duplicate names append `` (N)`` before the extension. Require
+    # actual filename evidence so a real title ending in ``(1)`` stays intact.
+    if stripped_file_extension:
+        value = _TRAILING_FILE_COPY_SUFFIX.sub("", value).strip()
+        while True:
+            stripped = _KNOWN_LIBRARY_EXTENSION.sub("", value).strip()
+            if stripped == value:
+                break
+            value = stripped
 
     previous = ""
     while value != previous:

@@ -1,4 +1,4 @@
-import { useEffect, useState, type ReactNode } from 'react';
+import { useEffect, useRef, useState, type ReactNode } from 'react';
 import type { Novel } from '../../domain/types';
 import { useOptionalAppRuntime } from '../../app/runtime/RuntimeProvider';
 
@@ -116,9 +116,31 @@ function ResolvedCoverImage({ novel }: { readonly novel: Novel }) {
 }
 
 export function BookCover({ novel, className, children }: BookCoverProps) {
+  const rootRef = useRef<HTMLDivElement>(null);
+  const [shouldLoad, setShouldLoad] = useState(() => typeof globalThis.IntersectionObserver === 'undefined');
+
+  useEffect(() => {
+    if (shouldLoad || !novel.coverAssetId) return;
+    const root = rootRef.current;
+    if (!root || typeof globalThis.IntersectionObserver === 'undefined') {
+      setShouldLoad(true);
+      return;
+    }
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (!entries.some((entry) => entry.isIntersecting)) return;
+        setShouldLoad(true);
+        observer.disconnect();
+      },
+      { rootMargin: '600px 0px' },
+    );
+    observer.observe(root);
+    return () => observer.disconnect();
+  }, [novel.coverAssetId, shouldLoad]);
+
   return (
-    <div className={className}>
-      {novel.coverAssetId ? <ResolvedCoverImage novel={novel} /> : <FallbackCover novel={novel} />}
+    <div ref={rootRef} className={className}>
+      {novel.coverAssetId && shouldLoad ? <ResolvedCoverImage novel={novel} /> : <FallbackCover novel={novel} />}
       {children}
     </div>
   );

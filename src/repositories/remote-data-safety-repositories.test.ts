@@ -196,6 +196,132 @@ describe('remote data safety repositories', () => {
     });
   });
 
+  it.each(['archive_embedded', 'epub_embedded'] as const)(
+    'keeps %s provenance from inline hosted cover metadata without a second request',
+    async (provenance) => {
+      const blob = new Blob(['jpeg'], { type: 'image/jpeg' });
+      const getBookCoverMetadata = vi.fn();
+      const client = {
+        getBookCoverMetadata,
+        getBookCover: vi.fn(async () => ({
+          blob,
+          headers: new Headers(),
+          metadata: {
+            id: `cover_${provenance}`,
+            book_id: 'book_1',
+            provenance,
+            status: 'active',
+            file_name: 'embedded.jpg',
+            content_type: 'image/jpeg',
+            byte_length: blob.size,
+            content_hash: `sha256:${provenance}`,
+            created_at: '2026-08-30T00:00:00.000Z',
+          },
+        })),
+      } as unknown as RemoteApiClient;
+      const repository = new RemoteBookAssetRepository(client);
+
+      await expect(repository.getActiveCover('book_1')).resolves.toMatchObject({
+        metadata: { provenance },
+      });
+      expect(getBookCoverMetadata).not.toHaveBeenCalled();
+    },
+  );
+
+  it('retains and restores hosted approved enrichment covers through the safe repository port', async () => {
+    const blob = new Blob(['jpeg'], { type: 'image/jpeg' });
+    const current = {
+      id: 'cover_approved',
+      book_id: 'book_1',
+      provenance: 'approved_enrichment',
+      status: 'active',
+      content_hash: 'sha256:approved',
+      content_type: 'image/jpeg',
+      byte_length: blob.size,
+    };
+    const previous = {
+      id: 'cover_previous',
+      book_id: 'book_1',
+      provenance: 'user_supplied',
+      status: 'superseded',
+      content_hash: 'sha256:previous',
+      content_type: 'image/jpeg',
+      byte_length: 12,
+    };
+    const client = {
+      saveApprovedEnrichmentBookCover: vi.fn(async () => ({
+        cover: current,
+        previousCover: previous,
+        metadataRevision: 4,
+      })),
+      restoreApprovedEnrichmentBookCover: vi.fn(async () => ({
+        cover: { ...previous, status: 'active' },
+        metadataRevision: 5,
+      })),
+    } as unknown as RemoteApiClient;
+    const repository = new RemoteBookAssetRepository(client);
+    const saved = await repository.saveApprovedEnrichmentCover?.('book_1', {
+      blob,
+      fileName: 'approved.jpg',
+      contentType: 'image/jpeg',
+      contentHash: 'sha256:approved',
+      pixelWidth: 480,
+      pixelHeight: 720,
+      fit: 'contain',
+      positionX: 50,
+      positionY: 50,
+      expectedMetadataRevision: 3,
+    });
+
+    expect(saved).toMatchObject({
+      current: { id: 'cover_approved', provenance: 'approved_enrichment', status: 'active' },
+      previous: { id: 'cover_previous', status: 'superseded' },
+      metadataRevision: 4,
+    });
+    expect(client.saveApprovedEnrichmentBookCover).toHaveBeenCalledWith(
+      'book_1',
+      blob,
+      expect.objectContaining({ expectedMetadataRevision: 3 }),
+    );
+
+    await expect(
+      repository.restoreApprovedEnrichmentCover?.('book_1', {
+        expectedMetadataRevision: 4,
+        expectedActiveAssetId: 'cover_approved',
+        expectedActiveContentHash: 'sha256:approved',
+        previousAssetId: 'cover_previous',
+        previousContentHash: 'sha256:previous',
+        previousFit: 'crop',
+        previousPositionX: 50,
+        previousPositionY: 50,
+      }),
+    ).resolves.toMatchObject({ current: { id: 'cover_previous', status: 'active' }, metadataRevision: 5 });
+  });
+
+  it('explains a hosted Web/server version mismatch before an approved cover can mutate data', async () => {
+    const client = {
+      saveApprovedEnrichmentBookCover: vi.fn(async () => {
+        throw new RemoteApiError('Route not found', 404);
+      }),
+    } as unknown as RemoteApiClient;
+    const repository = new RemoteBookAssetRepository(client);
+
+    await expect(
+      repository.saveApprovedEnrichmentCover?.('book_1', {
+        blob: new Blob(['jpeg'], { type: 'image/jpeg' }),
+        fileName: 'approved.jpg',
+        contentType: 'image/jpeg',
+        contentHash: 'sha256:approved',
+        pixelWidth: 480,
+        pixelHeight: 720,
+        fit: 'contain',
+        positionX: 50,
+        positionY: 50,
+        expectedMetadataRevision: 3,
+      }),
+    ).rejects.toThrow('Moya Web과 서버를 함께 업데이트해 주세요.');
+  });
+
   it('treats an authored-cover race as a skipped generated preview', async () => {
     const client = {
       saveBookCover: vi.fn(async () => {

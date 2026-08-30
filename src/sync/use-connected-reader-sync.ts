@@ -320,14 +320,17 @@ export function useConnectedReaderSync(input: ConnectedReaderSyncInput) {
     return result?.state;
   }, [applyLocalState, controller, readerRepository, refreshSyncState, runtime.libraryCatalogRepository, syncService]);
 
-  const schedulePendingMutationPush = useCallback(() => {
-    if (!syncService || !mutationPushPendingRef.current || serverAttachBusyRef.current) return;
-    controller.scheduleMutationPush(async () => {
-      if (serverAttachBusyRef.current) return;
-      mutationPushPendingRef.current = false;
-      await flushSyncState();
-    });
-  }, [controller, flushSyncState, syncService]);
+  const schedulePendingMutationPush = useCallback(
+    (delayMs?: number) => {
+      if (!syncService || !mutationPushPendingRef.current || serverAttachBusyRef.current) return;
+      controller.scheduleMutationPush(async () => {
+        if (serverAttachBusyRef.current) return;
+        mutationPushPendingRef.current = false;
+        await flushSyncState();
+      }, delayMs);
+    },
+    [controller, flushSyncState, syncService],
+  );
 
   useEffect(() => {
     if (!serverAttachBusy) schedulePendingMutationPush();
@@ -340,14 +343,17 @@ export function useConnectedReaderSync(input: ConnectedReaderSyncInput) {
     [controller],
   );
 
-  const refreshAfterLocalMutation = useCallback(async () => {
-    const state = await refreshSyncState();
-    if (syncService && state && state.status !== 'conflict') {
-      mutationPushPendingRef.current = true;
-      schedulePendingMutationPush();
-    }
-    return state;
-  }, [refreshSyncState, schedulePendingMutationPush, syncService]);
+  const refreshAfterLocalMutation = useCallback(
+    async (kind?: string) => {
+      const state = await refreshSyncState();
+      if (syncService && state && state.status !== 'conflict') {
+        mutationPushPendingRef.current = true;
+        schedulePendingMutationPush(kind === 'progress' ? 5_000 : undefined);
+      }
+      return state;
+    },
+    [refreshSyncState, schedulePendingMutationPush, syncService],
+  );
 
   return {
     connectedSyncController: controller,

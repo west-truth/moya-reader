@@ -99,6 +99,55 @@ function remoteSnapshotNotFound(error: unknown): boolean {
   return error instanceof RemoteApiError && error.status === 404;
 }
 
+async function remoteError(response: Response): Promise<RemoteApiError> {
+  const raw = await response.text();
+  if (!raw) return new RemoteApiError(response.statusText, response.status);
+  try {
+    const payload = JSON.parse(raw) as unknown;
+    if (typeof payload === 'object' && payload !== null) {
+      const record = payload as Record<string, unknown>;
+      const message =
+        (typeof record.error === 'string' && record.error) ||
+        (typeof record.message === 'string' && record.message) ||
+        response.statusText;
+      return new RemoteApiError(message, response.status, payload);
+    }
+  } catch {
+    // Plain-text responses remain valid error messages.
+  }
+  return new RemoteApiError(raw, response.status);
+}
+
+function decodedHeader(value: string | null): string | undefined {
+  if (!value) return undefined;
+  try {
+    return decodeURIComponent(value);
+  } catch {
+    return value;
+  }
+}
+
+function coverMetadataFromHeaders(bookId: string, headers: Headers): JsonRecord | undefined {
+  const id = headers.get('x-asset-id');
+  const provenance = headers.get('x-asset-provenance');
+  const contentHash = headers.get('x-asset-content-hash') ?? headers.get('etag');
+  if (!id || !provenance || !contentHash) return undefined;
+  return {
+    id,
+    book_id: bookId,
+    provenance,
+    status: headers.get('x-asset-status') ?? 'active',
+    file_name: decodedHeader(headers.get('x-asset-file-name')),
+    content_type: headers.get('content-type') ?? 'image/jpeg',
+    byte_length: Number(headers.get('content-length')) || 0,
+    content_hash: contentHash,
+    pixel_width: Number(headers.get('x-asset-pixel-width')) || undefined,
+    pixel_height: Number(headers.get('x-asset-pixel-height')) || undefined,
+    created_at: headers.get('x-asset-created-at') ?? undefined,
+    activated_at: headers.get('x-asset-activated-at') ?? undefined,
+  };
+}
+
 export interface RemoteProviderJob extends ProviderJob {
   readonly stage?: string;
   readonly progress?: JsonValue;
@@ -634,8 +683,7 @@ export class RemoteApiClient {
     );
     if (!response.ok) {
       if (response.status === 401) this.options.onUnauthorized?.();
-      const message = await response.text();
-      throw new RemoteApiError(message || response.statusText, response.status);
+      throw await remoteError(response);
     }
     if (response.status === 204) return undefined as T;
     return response.json() as Promise<T>;
@@ -652,8 +700,7 @@ export class RemoteApiClient {
     });
     if (!response.ok) {
       if (response.status === 401) this.options.onUnauthorized?.();
-      const message = await response.text();
-      throw new RemoteApiError(message || response.statusText, response.status);
+      throw await remoteError(response);
     }
     return { blob: await response.blob(), headers: response.headers, status: response.status };
   }
@@ -734,8 +781,9 @@ export class RemoteApiClient {
     return this.request(`/books/${encodeURIComponent(bookId)}/cover/metadata`);
   }
 
-  getBookCover(bookId: string): Promise<{ blob: Blob; headers: Headers; status: number }> {
-    return this.requestBlob(`/books/${encodeURIComponent(bookId)}/cover`);
+  async getBookCover(bookId: string): Promise<{ blob: Blob; headers: Headers; status: number; metadata?: JsonRecord }> {
+    const response = await this.requestBlob(`/books/${encodeURIComponent(bookId)}/cover`);
+    return { ...response, metadata: coverMetadataFromHeaders(bookId, response.headers) };
   }
 
   getBookResource(bookId: string, assetId: string): Promise<{ blob: Blob; headers: Headers; status: number }> {
@@ -757,7 +805,7 @@ export class RemoteApiClient {
       expectedMetadataRevision?: number;
       provenance?: 'user_supplied' | 'approved_enrichment' | 'generated_preview';
     },
-  ): Promise<{ cover: JsonRecord }> {
+  ): Promise<{ cover: JsonRecord; previousCover?: JsonRecord; metadataRevision?: number }> {
     return this.request(`/books/${encodeURIComponent(bookId)}/cover`, {
       method: 'PUT',
       body: cover,
@@ -776,6 +824,58 @@ export class RemoteApiClient {
           ? {}
           : { 'X-Expected-Metadata-Revision': String(metadata.expectedMetadataRevision) }),
       },
+    });
+  }
+
+  saveApprovedEnrichmentBookCover(
+    bookId: string,
+    cover: Blob,
+    metadata: {
+      fileName: string;
+      contentType: string;
+      contentHash: string;
+      pixelWidth: number;
+      pixelHeight: number;
+      fit: 'crop' | 'contain';
+      positionX: number;
+      positionY: number;
+      expectedMetadataRevision: number;
+    },
+  ): Promise<{ cover: JsonRecord; previousCover: JsonRecord | null; metadataRevision: number }> {
+    return this.request(`/books/${encodeURIComponent(bookId)}/cover/approved-enrichment`, {
+      method: 'PUT',
+      body: cover,
+      headers: {
+        'Content-Type': 'application/octet-stream',
+        'X-Cover-File-Name': encodeURIComponent(metadata.fileName),
+        'X-Cover-Content-Type': metadata.contentType,
+        'X-Cover-Content-Hash': metadata.contentHash,
+        'X-Cover-Width': String(metadata.pixelWidth),
+        'X-Cover-Height': String(metadata.pixelHeight),
+        'X-Cover-Fit': metadata.fit,
+        'X-Cover-Position-X': String(metadata.positionX),
+        'X-Cover-Position-Y': String(metadata.positionY),
+        'X-Expected-Metadata-Revision': String(metadata.expectedMetadataRevision),
+      },
+    });
+  }
+
+  restoreApprovedEnrichmentBookCover(
+    bookId: string,
+    input: {
+      expectedMetadataRevision: number;
+      expectedActiveAssetId: string;
+      expectedActiveContentHash: string;
+      previousAssetId?: string;
+      previousContentHash?: string;
+      previousFit: 'crop' | 'contain';
+      previousPositionX: number;
+      previousPositionY: number;
+    },
+  ): Promise<{ cover: JsonRecord | null; metadataRevision: number }> {
+    return this.request(`/books/${encodeURIComponent(bookId)}/cover/approved-enrichment/restore`, {
+      method: 'POST',
+      body: JSON.stringify(input),
     });
   }
 
@@ -1547,8 +1647,7 @@ export class RemoteApiClient {
     });
     if (!response.ok) {
       if (response.status === 401) this.options.onUnauthorized?.();
-      const message = await response.text();
-      throw new RemoteApiError(message || response.statusText, response.status);
+      throw await remoteError(response);
     }
     return response.blob();
   }

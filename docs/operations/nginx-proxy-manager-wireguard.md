@@ -1,7 +1,7 @@
 # WireGuard 전용 Nginx Proxy Manager 배포 예제
 
 Status: configuration example; target host verification pending
-Last reviewed: 2026-08-24
+Last reviewed: 2026-08-30
 
 이 문서는 Nginx Proxy Manager(NPM)를 이미 Docker로 운영하고, WireGuard에 연결된 개인 기기에서만
 모야와 Suwayomi에 접근하는 구성을 설명한다. 예시 도메인은 다음과 같다.
@@ -63,7 +63,8 @@ SUWAYOMI_PROXY_HOSTNAME=moya-suwayomi
 TRUSTED_PROXY_HOPS=2
 ```
 
-`compose.suwayomi.yaml`을 포함한 Compose 구성을 사용하면 Web과 Suwayomi가 이 외부 network에 연결된다.
+`compose.npm.yaml`은 Moya Web만 이 외부 network에 연결한다. Suwayomi도 사용할 때만
+`compose.suwayomi.yaml`을 추가한다. 두 override를 함께 쓰면 Web과 Suwayomi가 각각 이 외부 network에 연결된다.
 호스트의 `8080`을 계속 loopback에만 두더라도 NPM은 Docker network 안에서 `moya-web:80`으로 접근할 수 있다.
 `TRUSTED_PROXY_HOPS=2`는 API 앞의 Moya Web과 NPM 두 홉만 신뢰한다. NPM 없이 Moya Web에 직접 접속하는
 기본 Compose는 `.env.example`의 `1`을 유지한다.
@@ -113,9 +114,9 @@ proxy_send_timeout 900s;
 소유자 계정 생성 때 한 번만 초기 설정 코드로 쓰며 이후 기기는 아이디·비밀번호로 로그인한다. NPM은
 `Set-Cookie`, `Host`, `X-Forwarded-Proto`를 그대로 전달해야 30일 HttpOnly 세션이 다음 접속에도 복구된다.
 
-`compose.suwayomi.yaml`은 Web을 외부 NPM network에 연결하므로 같은 필수 자격증명과 external exposure 검사를
-overlay 안에서도 반복한다. 실수로 `compose.public.yaml`을 빠뜨려도 Compose 설정 단계에서 중단되며, 표준 실행
-명령은 계속 세 파일을 모두 사용한다.
+`compose.npm.yaml`은 Web을 외부 NPM network에 연결하며 같은 필수 자격증명과 external exposure 검사를
+반복한다. 실수로 `compose.public.yaml`을 빠뜨려도 Compose 설정 단계에서 중단된다. Suwayomi는 이 파일과
+분리되어 있으므로, 연결하지 않아도 Moya의 공개 Web·동기화·가져오기 기능에는 영향이 없다.
 
 `compose.metadata-collector.yaml`을 함께 사용하는 경우도 NPM 설정은 바뀌지 않는다. 표지·작품 정보 요청은
 같은 Moya `/api` gateway를 거쳐 내부 수집기로 전달되므로 별도 Proxy Host, Custom Location 또는 8000 포트
@@ -161,6 +162,9 @@ SUWAYOMI_AUTH_PASSWORD=충분히긴별도비밀번호
 `EXTENSION_STORES` 환경 변수를 강제로 주입하지 않으므로 WebUI에서 저장한 목록을 다음 재시작 때 빈 값으로
 덮어쓰지 않는다. 이용 권한이 있는 source와 콘텐츠만 등록한다.
 
+Suwayomi 컨테이너는 Moya의 기본 Docker network에 들어가지 않고 NPM network에만 연결된다. 따라서 설치한
+제3자 Mihon 확장 런타임이 Moya PostgreSQL·Redis·MinIO·API service에 직접 접근하지 않는다.
+
 Suwayomi 데이터는 `suwayomi-data` named volume에 남는다. 평상시 업데이트에 `docker compose down -v`를
 사용하면 안 된다. 해당 명령은 설치한 source, 설정과 library 데이터를 삭제하는 초기화 작업이다.
 
@@ -174,6 +178,7 @@ Suwayomi 주소는 scheme, host와 선택적 port만 있는 별도 origin이어�
 userinfo는 지원하지 않는다.
 
 ```dotenv
+# Suwayomi를 실제로 쓸 때만 입력한다. 사용하지 않으면 빈 값으로 둔다.
 MOYA_SUWAYOMI_DEFAULT_URL=https://suwayomi.example.com
 
 MOYA_DROPBOX_APP_KEY=공개앱키
@@ -221,18 +226,23 @@ OAuth 제공자가 Moya나 Suwayomi 컨테이너에 server-to-server callback을
 
 ```bash
 docker network inspect npm_proxy
-docker compose -f compose.yaml -f compose.public.yaml -f compose.suwayomi.yaml config --quiet
-docker compose -f compose.yaml -f compose.public.yaml -f compose.suwayomi.yaml up -d --build
-docker compose -f compose.yaml -f compose.public.yaml -f compose.suwayomi.yaml ps
+docker compose -f compose.yaml -f compose.public.yaml -f compose.npm.yaml -f compose.suwayomi.yaml config --quiet
+docker compose -f compose.yaml -f compose.public.yaml -f compose.npm.yaml -f compose.suwayomi.yaml up -d --build
+docker compose -f compose.yaml -f compose.public.yaml -f compose.npm.yaml -f compose.suwayomi.yaml ps
 ```
 
-GitHub에서 제품 업데이트를 받은 뒤에는 같은 Compose 파일 조합을 유지한다. Suwayomi `stable` image도
-갱신하려면 먼저 image를 pull한다.
+Suwayomi를 쓰지 않는다면 마지막 `-f compose.suwayomi.yaml`만 뺀다. GitHub에서 제품 업데이트를 받은 뒤에는
+같은 Compose 파일 조합을 유지한다. 업데이트 전에 PostgreSQL·MinIO와 `server-data`를 함께 백업한다. 새 migration이
+적용된 뒤에는 예전 코드만 checkout하는 방식의 rollback이 막힐 수 있으므로, 복구할 때는 같은 시점의 데이터
+snapshot을 함께 복원하거나 최신 코드에서 forward-fix한다.
+
+기본 Suwayomi tag는 검토한 버전으로 고정되어 있다. 새 버전으로 올릴 때만 `.env`의 `SUWAYOMI_IMAGE_TAG`를
+바꾸고 release note와 volume backup을 확인한 뒤 image를 pull한다.
 
 ```bash
 git pull --ff-only
-docker compose -f compose.yaml -f compose.public.yaml -f compose.suwayomi.yaml pull suwayomi
-docker compose -f compose.yaml -f compose.public.yaml -f compose.suwayomi.yaml up -d --build --remove-orphans
+docker compose -f compose.yaml -f compose.public.yaml -f compose.npm.yaml -f compose.suwayomi.yaml pull suwayomi
+docker compose -f compose.yaml -f compose.public.yaml -f compose.npm.yaml -f compose.suwayomi.yaml up -d --build --remove-orphans
 ```
 
 `.env`와 named volume은 Git 대상이 아니므로 정상적인 pull/recreate로 삭제되지 않는다. `COMPOSE_PROJECT_NAME`과
@@ -243,7 +253,7 @@ Compose 파일 조합을 설치 후 임의로 바꾸면 다른 이름의 빈 vol
 WireGuard에 연결된 PC와 모바일 기기에서 각각 확인한다.
 
 - `https://moya.example.com/health`가 응답하고 인증서 경고가 없는가?
-- 모야에서 `.env`와 같은 Reader bearer token을 저장한 뒤 Library와 import가 동작하는가?
+- 첫 기기에서 복구 token으로 소유자 계정을 만든 뒤, 모바일에서 아이디·비밀번호 로그인과 자동 세션 복구가 되는가?
 - Dropbox 로그인 후 정확한 Moya 주소로 돌아오고 연결이 유지되는가?
 - Google Picker에서 선택한 파일이 Source Hub에 남는가?
 - `https://suwayomi.example.com`에 인증 없이 데이터가 노출되지 않는가?

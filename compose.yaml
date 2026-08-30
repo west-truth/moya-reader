@@ -5,7 +5,12 @@ x-service-logging: &service-logging
     max-file: ${LOG_MAX_FILES:-5}
 
 x-server-common-environment: &server-common-environment
-  DATABASE_URL: ${DATABASE_URL:-postgres://${POSTGRES_USER:-noveldesk}:${POSTGRES_PASSWORD:-noveldesk}@postgres:5432/${POSTGRES_DB:-noveldesk}}
+  DATABASE_URL: ${DATABASE_URL:-}
+  PGHOST: postgres
+  PGPORT: 5432
+  PGUSER: ${POSTGRES_USER:-noveldesk}
+  PGPASSWORD: ${POSTGRES_PASSWORD:-noveldesk}
+  PGDATABASE: ${POSTGRES_DB:-noveldesk}
   REDIS_URL: ${REDIS_URL:-redis://redis:6379}
   S3_ENDPOINT: ${S3_ENDPOINT:-http://minio:9000}
   S3_REGION: ${S3_REGION:-us-east-1}

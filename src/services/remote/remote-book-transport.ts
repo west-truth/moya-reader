@@ -10,8 +10,22 @@ import type { RemoteRequest } from './remote-api-contracts';
 export class RemoteBookTransport {
   constructor(private readonly request: RemoteRequest) {}
 
-  listBooks(signal?: AbortSignal): Promise<{ books: Record<string, unknown>[] }> {
-    return this.request('/books', { signal });
+  async listBooks(signal?: AbortSignal): Promise<{ books: Record<string, unknown>[] }> {
+    const books: Record<string, unknown>[] = [];
+    const seenCursors = new Set<string>();
+    let path = '/books';
+    while (true) {
+      const page = await this.request<{
+        books: Record<string, unknown>[];
+        nextCursor?: string;
+      }>(path, { signal });
+      books.push(...page.books);
+      const cursor = page.nextCursor?.trim();
+      if (!cursor) return { books };
+      if (seenCursors.has(cursor)) throw new Error('The server repeated a library cursor.');
+      seenCursors.add(cursor);
+      path = `/books?limit=1000&cursor=${encodeURIComponent(cursor)}`;
+    }
   }
 
   getBookManifest(bookId: string, sourceRevision?: string, signal?: AbortSignal): Promise<RemoteBookManifestResponse> {

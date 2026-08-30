@@ -158,6 +158,26 @@ describe('webnovel metadata enrichment extension mapping', () => {
     expect(collector.resolve).toHaveBeenCalledWith({ query: '바바리안 퀘스트', author: '작가' }, undefined);
   });
 
+  it('removes an OS duplicate suffix before the first metadata lookup', async () => {
+    const collector = {
+      resolve: vi.fn(async () => resolution),
+      downloadCover: vi.fn(async () => ({
+        blob: new Blob([Uint8Array.from([0xff]).buffer as ArrayBuffer], { type: 'image/jpeg' }),
+        contentType: 'image/jpeg' as const,
+        byteLength: 1,
+      })),
+    };
+
+    await createWebNovelMetadataEnrichmentProposal(collector, {
+      ...book,
+      title: '아기는 악당을 키운다 완 (1)',
+      sourceFileName: '아기는 악당을 키운다 완 (1).txt',
+    });
+
+    expect(collector.resolve).toHaveBeenCalledTimes(1);
+    expect(collector.resolve).toHaveBeenCalledWith({ query: '아기는 악당을 키운다', author: '작가' }, undefined);
+  });
+
   it('falls back to the preserved title only when the canonical lookup has no result', async () => {
     const notFound: WebNovelMetadataCollectorResolveResult = {
       ...resolution,

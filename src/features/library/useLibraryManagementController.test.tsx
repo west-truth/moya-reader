@@ -1,0 +1,125 @@
+import { act, create, type ReactTestRenderer } from 'react-test-renderer';
+import { describe, expect, it, vi } from 'vitest';
+import type { Novel } from '../../domain/types';
+import type { BookAssetRepository } from '../../repositories/book-asset-repository';
+import type { LibraryCatalogRepository } from '../../repositories/library-catalog-repository';
+import { useLibraryManagementController, type LibraryManagementController } from './useLibraryManagementController';
+
+function novel(overrides: Partial<Novel> = {}): Novel {
+  return {
+    id: 'book-1',
+    title: '기존 제목',
+    sourceFileName: '기존 제목.txt',
+    normalizedTextHash: 'hash',
+    totalChapters: 1,
+    totalCharacters: 10,
+    totalParagraphs: 1,
+    coverSeed: 1,
+    createdAt: '2026-08-30T00:00:00.000Z',
+    updatedAt: '2026-08-30T00:00:00.000Z',
+    metadataRevision: 1,
+    ...overrides,
+  } as Novel;
+}
+
+async function harness(input: { current: Novel; patchMetadata?: LibraryCatalogRepository['patchMetadata'] }) {
+  let controller!: LibraryManagementController;
+  let renderer!: ReactTestRenderer;
+  const notify = vi.fn();
+  const catalog = {
+    listShelves: vi.fn(async () => []),
+    listShelfMemberships: vi.fn(async () => []),
+    patchMetadata:
+      input.patchMetadata ??
+      vi.fn(async (bookId: string, _patch: unknown, expectedRevision?: number) => ({
+        bookId,
+        metadataRevision: (expectedRevision ?? 0) + 1,
+        changedAt: '2026-08-30T00:00:01.000Z',
+      })),
+  } as unknown as LibraryCatalogRepository;
+  const assets = {} as BookAssetRepository;
+  function Harness() {
+    controller = useLibraryManagementController({
+      catalog,
+      assets,
+      getNovel: vi.fn(async () => input.current),
+      refreshNovels: vi.fn(async () => undefined),
+      refreshAfterMutation: vi.fn(async () => undefined),
+      notify,
+      confirm: vi.fn(() => true),
+    });
+    return null;
+  }
+  await act(async () => {
+    renderer = create(<Harness />);
+  });
+  return {
+    get controller() {
+      return controller;
+    },
+    renderer,
+    catalog,
+    notify,
+  };
+}
+
+describe('useLibraryManagementController metadata saves', () => {
+  it('rebases unrelated server changes onto the latest metadata revision', async () => {
+    const base = novel({ author: '작가', metadataRevision: 1 });
+    const current = novel({ author: '작가', favorite: true, metadataRevision: 2 });
+    const mounted = await harness({ current });
+
+    act(() => mounted.controller.openMetadata(base));
+    await act(async () => mounted.controller.saveBookDetails(base, { title: '새 제목' }, { kind: 'keep' }));
+
+    expect(mounted.catalog.patchMetadata).toHaveBeenCalledWith('book-1', { title: '새 제목' }, 2);
+    expect(mounted.controller.panel).toBeUndefined();
+    await act(async () => mounted.renderer.unmount());
+  });
+
+  it('preserves the editor and refuses to overwrite a field changed elsewhere', async () => {
+    const base = novel({ author: '기존 작가', metadataRevision: 1 });
+    const current = novel({ author: '자동 적용 작가', metadataRevision: 2 });
+    const mounted = await harness({ current });
+
+    act(() => mounted.controller.openMetadata(base));
+    await act(async () => mounted.controller.saveBookDetails(base, { author: '직접 입력 작가' }, { kind: 'keep' }));
+
+    expect(mounted.catalog.patchMetadata).not.toHaveBeenCalled();
+    expect(mounted.controller.panel).toMatchObject({ kind: 'metadata', book: current });
+    expect(mounted.notify).toHaveBeenCalledWith(expect.stringContaining('현재 입력은 보존'), 'danger');
+    await act(async () => mounted.renderer.unmount());
+  });
+
+  it('admits only one mutation when the save action is tapped twice before a render', async () => {
+    let release!: () => void;
+    const pending = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const patchMetadata = vi.fn(async (bookId: string, _patch: unknown, expectedRevision?: number) => {
+      await pending;
+      return {
+        bookId,
+        metadataRevision: (expectedRevision ?? 0) + 1,
+        changedAt: '2026-08-30T00:00:01.000Z',
+      };
+    });
+    const base = novel();
+    const mounted = await harness({ current: base, patchMetadata });
+
+    act(() => mounted.controller.openMetadata(base));
+    let first!: Promise<void>;
+    let second!: Promise<void>;
+    act(() => {
+      first = mounted.controller.saveBookDetails(base, { title: '새 제목' }, { kind: 'keep' });
+      second = mounted.controller.saveBookDetails(base, { title: '새 제목' }, { kind: 'keep' });
+    });
+    release();
+    await act(async () => {
+      await Promise.all([first, second]);
+    });
+
+    expect(patchMetadata).toHaveBeenCalledOnce();
+    await act(async () => mounted.renderer.unmount());
+  });
+});

@@ -19,6 +19,7 @@ export interface SerialReleaseName {
 }
 
 const KNOWN_LIBRARY_EXTENSION = /\.(?:txt|md|markdown|epub|pdf|mobi|azw3?|fb2|zip|cbz|rar|cbr|7z|cb7)$/iu;
+const TRAILING_FILE_COPY_SUFFIX = /\s+\((?<copy>[1-9]\d{0,3})\)\s*$/u;
 const LEADING_NOISE_GROUP =
   /^\s*[[(（【](?:텍본|웹소설|카카오페이지|네이버\s*시리즈|리디|노벨피아|문피아|digital|raw|scan|scans|kor|korean|jpn|japanese|eng|english)[\])）】]+\s*/iu;
 const TRAILING_NOISE_GROUP =
@@ -48,13 +49,40 @@ function lastPathSegment(value: string): string {
   return value.replace(/\\/gu, '/').split('/').at(-1)?.trim() ?? value.trim();
 }
 
-function cleanBaseName(value: string): string {
-  let cleaned = lastPathSegment(value).normalize('NFKC').trim();
+interface PreparedBaseName {
+  readonly value: string;
+  readonly fileCopySuffix?: number;
+}
+
+function stripKnownLibraryExtensions(value: string): { readonly value: string; readonly stripped: boolean } {
+  let stripped = false;
+  let cleaned = value;
   let previousExtension = '';
   while (cleaned !== previousExtension) {
     previousExtension = cleaned;
-    cleaned = cleaned.replace(KNOWN_LIBRARY_EXTENSION, '').trim();
+    const next = cleaned.replace(KNOWN_LIBRARY_EXTENSION, '').trim();
+    if (next !== cleaned) stripped = true;
+    cleaned = next;
   }
+  return { value: cleaned, stripped };
+}
+
+function prepareBaseName(value: string, stripFileCopySuffix: boolean): PreparedBaseName {
+  const initial = lastPathSegment(value).normalize('NFKC').trim();
+  const beforeCopy = stripKnownLibraryExtensions(initial);
+  if (!stripFileCopySuffix || !beforeCopy.stripped) return { value: beforeCopy.value };
+
+  const copySuffix = TRAILING_FILE_COPY_SUFFIX.exec(beforeCopy.value);
+  if (!copySuffix?.groups?.copy) return { value: beforeCopy.value };
+  const withoutCopy = beforeCopy.value.slice(0, copySuffix.index).trim();
+  return {
+    value: stripKnownLibraryExtensions(withoutCopy).value,
+    fileCopySuffix: Number.parseInt(copySuffix.groups.copy, 10),
+  };
+}
+
+function cleanPreparedBaseName(value: string): string {
+  let cleaned = value;
   cleaned = cleaned
     .replace(/[‐‑‒–—―]/gu, '-')
     .replace(/[〜～]/gu, '~')
@@ -73,13 +101,11 @@ function cleanBaseName(value: string): string {
   return cleaned.replace(/\s+/gu, ' ');
 }
 
-function completionFromName(value: string): SerialReleaseName['completion'] {
-  let baseName = lastPathSegment(value).normalize('NFKC').trim();
-  let previous = '';
-  while (baseName !== previous) {
-    previous = baseName;
-    baseName = baseName.replace(KNOWN_LIBRARY_EXTENSION, '').trim();
-  }
+function cleanBaseName(value: string): string {
+  return cleanPreparedBaseName(prepareBaseName(value, false).value);
+}
+
+function completionFromBaseName(baseName: string): SerialReleaseName['completion'] {
   if (COMPLETE_SUFFIX.test(baseName)) return 'complete';
   if (ONGOING_SUFFIX.test(baseName)) return 'ongoing';
   return undefined;
@@ -135,11 +161,17 @@ function numericToken(match: RegExpExecArray | undefined): NumericToken | undefi
   };
 }
 
-export function parseSerialReleaseName(value: string, fallbackWorkTitle?: string): SerialReleaseName {
-  const completion = completionFromName(value);
-  const displayBaseName = cleanBaseName(value);
+export function parseSerialReleaseName(
+  value: string,
+  fallbackWorkTitle?: string,
+  options: { readonly stripFileCopySuffix?: boolean } = {},
+): SerialReleaseName {
+  const prepared = prepareBaseName(value, options.stripFileCopySuffix === true);
+  const completion = completionFromBaseName(prepared.value);
+  const displayBaseName = cleanPreparedBaseName(prepared.value);
   const fallback = fallbackWorkTitle ? cleanBaseName(fallbackWorkTitle) : undefined;
   const evidence: string[] = [];
+  if (prepared.fileCopySuffix !== undefined) evidence.push('file_copy_suffix');
   if (completion) evidence.push(`completion:${completion}`);
   const removalRanges: Array<{ start: number; end: number }> = [];
 
@@ -251,7 +283,11 @@ export function parseSerialReleaseName(value: string, fallbackWorkTitle?: string
   }
 
   const explicit = evidence.some(
-    (item) => item !== 'bare_chapter_with_parent' && item !== 'bare_range' && !item.startsWith('completion:'),
+    (item) =>
+      item !== 'bare_chapter_with_parent' &&
+      item !== 'bare_range' &&
+      item !== 'file_copy_suffix' &&
+      !item.startsWith('completion:'),
   );
   const confidence: SerialReleaseName['confidence'] = explicit
     ? workTitle

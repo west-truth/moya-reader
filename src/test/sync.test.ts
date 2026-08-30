@@ -4,6 +4,7 @@ import { LocalOutboxSyncService, SyncEventSource } from '../sync/local-outbox-sy
 import {
   applyRemoteSyncEvents,
   discardSyncOutboxItems,
+  enqueueSyncEvent,
   getBookmarks,
   getCharacters,
   getCorrections,
@@ -16,6 +17,7 @@ import {
   listSyncOutbox,
   resetReaderDbForTests,
   saveCharacters,
+  saveBookmark,
   saveCorrection,
   saveHighlight,
   saveImportedNovel,
@@ -111,6 +113,97 @@ describe('LocalOutboxSyncService', () => {
     expect(state).toMatchObject({ mode: 'connected', status: 'idle', pendingCount: 0 });
   });
 
+  it('pushes a large local outbox in bounded batches', async () => {
+    const parsed = parsedNovel('novel-bounded-push');
+    await saveImportedNovel(parsed);
+    for (let index = 0; index < 205; index += 1) {
+      await saveBookmark({
+        id: `bookmark-${index}`,
+        novelId: parsed.novel.id,
+        chapterId: parsed.chapters[0].id,
+        label: `Bookmark ${index}`,
+        progress: index / 205,
+        scrollTop: index,
+        createdAt: new Date(Date.UTC(2026, 6, 4, 0, 0, index)).toISOString(),
+      });
+    }
+    const batchSizes: number[] = [];
+    const source: SyncEventSource = {
+      async pushSync(events) {
+        batchSizes.push(events.length);
+        return { accepted: events.length };
+      },
+      async pullSync() {
+        return { cursor: 0, events: [] };
+      },
+    };
+
+    const state = await new LocalOutboxSyncService(source).flushPending();
+
+    expect(batchSizes).toEqual([100, 100, 6]);
+    expect(state).toMatchObject({ status: 'idle', pendingCount: 0 });
+  });
+
+  it('does not split one compound operation across bounded push requests', async () => {
+    for (let index = 0; index < 99; index += 1) {
+      await enqueueSyncEvent(
+        'book_deleted',
+        { novelId: `standalone-${index}` },
+        { novelId: `standalone-${index}`, entityId: `standalone-${index}` },
+      );
+    }
+    for (let index = 0; index < 2; index += 1) {
+      await enqueueSyncEvent(
+        'book_deleted',
+        { novelId: `compound-${index}`, compoundOperationId: 'compound-boundary' },
+        { novelId: `compound-${index}`, entityId: `compound-${index}` },
+      );
+    }
+    const batches: SyncEvent[][] = [];
+    const source: SyncEventSource = {
+      async pushSync(events) {
+        batches.push(events);
+        return { accepted: events.length };
+      },
+      async pullSync() {
+        return { cursor: 0, events: [] };
+      },
+    };
+
+    await new LocalOutboxSyncService(source).flushPending();
+
+    expect(batches.map((batch) => batch.length)).toEqual([99, 2]);
+    expect(
+      batches[1].every(
+        (event) => (event.payload as Record<string, unknown>).compoundOperationId === 'compound-boundary',
+      ),
+    ).toBe(true);
+  });
+
+  it('keeps an oversized compound operation atomic instead of slicing it', async () => {
+    for (let index = 0; index < 101; index += 1) {
+      await enqueueSyncEvent(
+        'book_deleted',
+        { novelId: `large-compound-${index}`, compoundOperationId: 'compound-large' },
+        { novelId: `large-compound-${index}`, entityId: `large-compound-${index}` },
+      );
+    }
+    const batchSizes: number[] = [];
+    const source: SyncEventSource = {
+      async pushSync(events) {
+        batchSizes.push(events.length);
+        return { accepted: events.length };
+      },
+      async pullSync() {
+        return { cursor: 0, events: [] };
+      },
+    };
+
+    await new LocalOutboxSyncService(source).flushPending();
+
+    expect(batchSizes).toEqual([101]);
+  });
+
   it('uploads an approved enrichment cover without reclassifying it as user supplied', async () => {
     await saveImportedNovel(parsedNovel('novel-approved-cover'));
     const bytes = new Uint8Array([0x89, 0x50, 0x4e, 0x47]);
@@ -126,6 +219,7 @@ describe('LocalOutboxSyncService', () => {
       positionY: 50,
       expectedMetadataRevision: 0,
     });
+    await patchNovelMetadata('novel-approved-cover', { title: 'Updated after cover selection' });
     let uploadedProvenance: string | undefined;
     const source: SyncEventSource = {
       async pushSync(events) {
@@ -742,6 +836,112 @@ describe('LocalOutboxSyncService', () => {
 
     expect(settings).toMatchObject({ fontSize: 22, theme: 'sepia' });
     expect(state).toMatchObject({ mode: 'connected', status: 'idle', lastRemoteCursor: 7, pendingCount: 0 });
+  });
+
+  it('drains a remote backlog larger than one server page before reporting idle', async () => {
+    const calls: number[] = [];
+    const firstPage: SyncEvent[] = Array.from({ length: 500 }, (_, index) => ({
+      id: `remote-settings-page-1-${index}`,
+      type: 'settings_updated',
+      deviceId: 'server',
+      entityId: 'reader-settings',
+      payload: { settings: { id: 'reader-settings', fontSize: 18, theme: 'dark' } },
+      createdAt: new Date(Date.UTC(2026, 6, 4, 0, 0, index)).toISOString(),
+    }));
+    const finalEvent: SyncEvent = {
+      id: 'remote-settings-page-2',
+      type: 'settings_updated',
+      deviceId: 'server',
+      entityId: 'reader-settings',
+      payload: { settings: { id: 'reader-settings', fontSize: 26, theme: 'sepia' } },
+      createdAt: '2026-07-04T01:00:00.000Z',
+    };
+    const source: SyncEventSource = {
+      async pushSync() {
+        throw new Error('push should not run without pending events');
+      },
+      async pullSync(since) {
+        calls.push(since ?? 0);
+        return since === 0 ? { cursor: 500, events: firstPage } : { cursor: 501, events: [finalEvent] };
+      },
+    };
+
+    const state = await new LocalOutboxSyncService(source).flushPending();
+
+    expect(calls).toEqual([0, 500]);
+    expect(await getSettings()).toMatchObject({ fontSize: 26, theme: 'sepia' });
+    expect(state).toMatchObject({ status: 'idle', lastRemoteCursor: 501 });
+  });
+
+  it('drains a cover replace followed by a later remove even when the current cover is already gone', async () => {
+    const parsed = parsedNovel('novel-cover-backlog');
+    await saveImportedNovel(parsed);
+    await updateSyncOutboxItems(
+      (await listSyncOutbox()).map((item) => item.id),
+      'sent',
+    );
+    const replaceEvent: SyncEvent = {
+      id: 'remote-cover-replace',
+      type: 'book_updated',
+      deviceId: 'server',
+      novelId: parsed.novel.id,
+      entityId: parsed.novel.id,
+      payload: {
+        novel: {
+          id: parsed.novel.id,
+          coverAssetId: 'remote-cover',
+          coverContentHash: 'sha256:remote-cover',
+          metadataRevision: 1,
+        },
+        coverMutation: 'replace',
+      },
+      createdAt: '2026-07-04T01:00:00.000Z',
+    };
+    const filler: SyncEvent[] = Array.from({ length: 499 }, (_, index) => ({
+      id: `remote-cover-filler-${index}`,
+      type: 'settings_updated',
+      deviceId: 'server',
+      entityId: 'reader-settings',
+      payload: { settings: { id: 'reader-settings', fontSize: 18, theme: 'dark' } },
+      createdAt: new Date(Date.UTC(2026, 6, 4, 1, 0, index + 1)).toISOString(),
+    }));
+    const removeEvent: SyncEvent = {
+      id: 'remote-cover-remove',
+      type: 'book_updated',
+      deviceId: 'server',
+      novelId: parsed.novel.id,
+      entityId: parsed.novel.id,
+      payload: {
+        novel: { id: parsed.novel.id, coverAssetId: null, coverContentHash: null, metadataRevision: 2 },
+        coverMutation: 'remove',
+      },
+      createdAt: '2026-07-04T02:00:00.000Z',
+    };
+    const calls: number[] = [];
+    let coverRequests = 0;
+    const source: SyncEventSource = {
+      async pushSync() {
+        throw new Error('push should not run without pending events');
+      },
+      async pullSync(since) {
+        calls.push(since ?? 0);
+        return since === 0
+          ? { cursor: 500, events: [replaceEvent, ...filler] }
+          : { cursor: 501, events: [removeEvent] };
+      },
+      async getBookCover() {
+        coverRequests += 1;
+        const error = new Error('cover not found') as Error & { status: number };
+        error.status = 404;
+        throw error;
+      },
+    };
+
+    const state = await new LocalOutboxSyncService(source).flushPending();
+
+    expect(calls).toEqual([0, 500]);
+    expect(coverRequests).toBe(1);
+    expect(state).toMatchObject({ status: 'idle', lastRemoteCursor: 501 });
   });
 
   it('pulls and applies remote AI/TTS voice profile and correction events without re-queuing them', async () => {
