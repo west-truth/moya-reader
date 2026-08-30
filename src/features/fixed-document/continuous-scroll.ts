@@ -62,6 +62,19 @@ export function continuousComicPageEstimatedHeight(input: ContinuousPageEstimate
   const dimensions =
     input.dimensions && input.dimensions.width > 0 && input.dimensions.height > 0 ? input.dimensions : undefined;
 
+  // Borderless vertical reading is the webtoon path: every page spans the
+  // viewport width regardless of the fit preference used by paged layouts.
+  // Before an image ratio is known, keep the placeholder near one viewport
+  // tall so loading does not create an unnecessarily large initial jump.
+  if (input.seamless) {
+    return Math.max(
+      1,
+      dimensions
+        ? widthLimit * (dimensions.height / dimensions.width)
+        : widthLimit * Math.max(1, input.viewportHeight / Math.max(1, input.viewportWidth)),
+    );
+  }
+
   if (input.fit === 'width') {
     return Math.max(1, widthLimit * (dimensions ? dimensions.height / dimensions.width : 1.5));
   }

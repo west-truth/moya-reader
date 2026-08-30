@@ -14,7 +14,17 @@ function controller(overrides: Partial<ChapterStructureController> = {}): Chapte
       paragraphCount: 2,
       characterCount: 90,
       sourcePreview: '1화 시작\n\n첫 문단',
-      splitCandidates: [{ paragraphId: 'paragraph_2', paragraphIndex: 2, label: '두 번째 문단', sourceOffset: 50 }],
+      splitCandidates: [
+        {
+          paragraphId: 'paragraph_2',
+          paragraphIndex: 2,
+          label: '2화 새로운 시작',
+          sourceOffset: 50,
+          headingFamily: 'numbered_hwa_jang',
+          headingNumber: 2,
+          headingTitle: '2화 새로운 시작',
+        },
+      ],
     },
     {
       id: 'chapter_2',
@@ -41,7 +51,7 @@ function controller(overrides: Partial<ChapterStructureController> = {}): Chapte
     },
     openPanel: vi.fn(async () => undefined),
     closePanel: vi.fn(),
-    previewCommand: vi.fn(async () => undefined),
+    previewCommands: vi.fn(async () => undefined),
     clearPreview: vi.fn(),
     applyPreview: vi.fn(async () => undefined),
     rollbackLatest: vi.fn(async () => undefined),
@@ -50,13 +60,14 @@ function controller(overrides: Partial<ChapterStructureController> = {}): Chapte
 }
 
 describe('ChapterStructurePanel', () => {
-  it('renders all supported chapter commands for the selected chapter', () => {
+  it('renders visual boundary controls and keeps infrequent commands folded', () => {
     const markup = renderToStaticMarkup(<ChapterStructurePanel controller={controller()} />);
     expect(markup).toContain('화 구조 편집');
-    expect(markup).toContain('제목 변경 미리보기');
-    expect(markup).toContain('경계 추가 미리보기');
-    expect(markup).toContain('다음 화와 합치기 미리보기');
-    expect(markup).toContain('이 지점부터 재분석');
+    expect(markup).toContain('경계 제거');
+    expect(markup).toContain('새 화가 시작되는 줄을 선택하세요.');
+    expect(markup).toContain('2화 새로운 시작');
+    expect(markup).toContain('직접 수정');
+    expect(markup).toContain('다시 나눈 결과 보기');
   });
 
   it('renders impact and apply controls for a prepared preview', () => {
@@ -85,7 +96,7 @@ describe('ChapterStructurePanel', () => {
         })}
       />,
     );
-    expect(markup).toContain('변경 미리보기');
+    expect(markup).toContain('변경 결과');
     expect(markup).toContain('변경 제목');
     expect(markup).toContain('변경 적용');
   });

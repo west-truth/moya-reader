@@ -15,7 +15,7 @@ export interface ChapterStructureController {
   readonly preview?: ChapterStructurePreview;
   openPanel(bookId: string): Promise<void>;
   closePanel(): void;
-  previewCommand(command: ChapterStructureCommand): Promise<void>;
+  previewCommands(commands: readonly ChapterStructureCommand[]): Promise<void>;
   clearPreview(): void;
   applyPreview(): Promise<void>;
   rollbackLatest(): Promise<void>;
@@ -71,14 +71,14 @@ export function useChapterStructureController(options: Options): ChapterStructur
     setPreview(undefined);
   }, [busy]);
 
-  const previewCommand = useCallback(
-    async (command: ChapterStructureCommand) => {
+  const previewCommands = useCallback(
+    async (commands: readonly ChapterStructureCommand[]) => {
       const repository = optionsRef.current.repository;
       const bookId = bookIdRef.current;
-      if (!repository || !bookId || busy) return;
+      if (!repository || !bookId || busy || commands.length === 0) return;
       setBusy(true);
       try {
-        setPreview(await repository.preview(bookId, [command]));
+        setPreview(await repository.preview(bookId, commands));
       } catch (error) {
         optionsRef.current.notify(
           error instanceof Error ? error.message : '구조 변경을 미리 보지 못했습니다.',
@@ -136,7 +136,7 @@ export function useChapterStructureController(options: Options): ChapterStructur
     preview,
     openPanel,
     closePanel,
-    previewCommand,
+    previewCommands,
     clearPreview: () => setPreview(undefined),
     applyPreview,
     rollbackLatest,

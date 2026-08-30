@@ -2339,12 +2339,15 @@
 
   .library-mobile-drawer > .modal-drawer-content {
     padding: 0;
-    overflow: hidden;
+    overflow-x: hidden;
+    overflow-y: auto;
+    overscroll-behavior-y: contain;
+    touch-action: pan-y;
+    -webkit-overflow-scrolling: touch;
   }
 
   .library-mobile-drawer-scroll {
     padding: 20px 13px;
-    overflow-y: auto;
   }
 
   .library-mobile-drawer-scroll h2 {

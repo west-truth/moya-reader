@@ -16,18 +16,17 @@ import type { ReaderViewportApi, ReaderViewportLayerProps } from './ReaderViewpo
 import { useReaderGestureHandlers } from './use-reader-gestures';
 import { useReaderPositionPersistence } from './use-reader-progress';
 import {
+  bestFittingTextEnd,
   compareReaderAnchors,
   LruMap,
   pageIndexForAnchor,
   rebasePageBoundariesAtAnchor,
-  safeOversizedSentenceEnd,
-  sentenceEnds,
   sliceParagraphForPage,
   spliceForwardPageBoundaries,
   type ReaderPageFragment,
 } from './reader-pagination-model';
 
-const PAGINATION_RENDERER_VERSION = 'reader-pagination-v6-responsive-images';
+const PAGINATION_RENDERER_VERSION = 'reader-pagination-v7-dense-whitespace-fit';
 const PAGE_MAP_CACHE_LIMIT = 24;
 const PAGE_FRAGMENT_CACHE_LIMIT = 12;
 const PAGE_PREFETCH_RADIUS = 2;
@@ -551,31 +550,17 @@ export function PaginatedReaderViewport(
               break;
             }
 
-            let fit = offset;
-            for (const sentenceEnd of sentenceEnds(paragraph.text, offset)) {
-              const candidate = measurementBlock(paragraph, offset, sentenceEnd);
+            const pageParagraph = paragraph;
+            const fit = bestFittingTextEnd(pageParagraph.text, offset, (endOffset) => {
+              const candidate = measurementBlock(pageParagraph, offset, endOffset);
               measure.append(candidate);
               const fits = fitsPage();
               candidate.remove();
-              if (!fits) break;
-              fit = sentenceEnd;
-            }
-            if (fit === offset) {
-              let low = Math.min(offset + 1, paragraph.text.length);
-              let high = paragraph.text.length;
-              let measuredFit = low;
-              while (low <= high) {
-                const middle = Math.floor((low + high) / 2);
-                const candidate = measurementBlock(paragraph, offset, middle);
-                replaceMeasurementBody(measure, candidate);
-                if (fitsPage()) {
-                  measuredFit = middle;
-                  low = middle + 1;
-                } else {
-                  high = middle - 1;
-                }
-              }
-              fit = safeOversizedSentenceEnd(paragraph.text, offset, measuredFit);
+              return fits;
+            });
+            if (fit === offset && existingBlocks) {
+              pageEnd = anchorFor(paragraph, paragraphIndex, offset);
+              break;
             }
             pageEnd = anchorFor(paragraph, paragraphIndex, fit);
             break;
@@ -702,36 +687,20 @@ export function PaginatedReaderViewport(
           offset = 0;
           pageStart = { paragraphIndex, offset: 0, paragraphId: '' };
         } else {
-          let fit = offset;
-          for (const sentenceEnd of sentenceEnds(paragraph.text, offset)) {
-            const candidate = measurementBlock(paragraph, offset, sentenceEnd);
+          const fit = bestFittingTextEnd(paragraph.text, offset, (endOffset) => {
+            const candidate = measurementBlock(paragraph, offset, endOffset);
             measure.append(candidate);
             const fits = fitsPage();
             candidate.remove();
-            if (!fits) break;
-            fit = sentenceEnd;
-          }
+            return fits;
+          });
           if (fit === offset && existingBlocks) {
             publishBoundary(paragraph.id, paragraphIndex, offset);
             pageStart = { paragraphIndex, offset, paragraphId: paragraph.id };
             continue;
           }
           if (fit === offset) {
-            let low = Math.min(offset + 1, paragraph.text.length);
-            let high = paragraph.text.length;
-            let measuredFit = low;
-            while (low <= high) {
-              const middle = Math.floor((low + high) / 2);
-              const candidate = measurementBlock(paragraph, offset, middle);
-              replaceMeasurementBody(measure, candidate);
-              if (fitsPage()) {
-                measuredFit = middle;
-                low = middle + 1;
-              } else {
-                high = middle - 1;
-              }
-            }
-            fit = safeOversizedSentenceEnd(paragraph.text, offset, measuredFit);
+            throw new Error('Pagination could not fit source text on an empty page.');
           }
           replaceMeasurementBody(measure, measurementBlock(paragraph, offset, fit));
           publishBoundary(paragraph.id, paragraphIndex, fit);

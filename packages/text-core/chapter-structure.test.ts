@@ -7,7 +7,8 @@ import {
 } from './chapter-structure';
 
 async function fixture(): Promise<ChapterStructureSnapshot> {
-  const source = '1화 시작\n\n첫 문단입니다.\n\n둘째 문단입니다.\n\n2화 다음\n\n셋째 문단입니다.\n\n넷째 문단입니다.';
+  const source =
+    '1화 시작\n\n첫 문단입니다.\n\n둘째 문단입니다.\n\n셋째 문단입니다.\n\n2화 다음\n\n넷째 문단입니다.\n\n다섯째 문단입니다.';
   const bytes = new TextEncoder().encode(source);
   const parsed = await parseNovelFile('structure.txt', bytes.buffer, 'utf-8');
   return {
@@ -55,6 +56,37 @@ describe('chapter structure commands', () => {
     expect(result.chapters).toHaveLength(1);
     expect(result.chapters[0]).toMatchObject({ rawStartOffset: 0, rawEndOffset: snapshot.sourceText.length });
     expect(result.paragraphs.map((paragraph) => paragraph.text).join('\n')).toContain('넷째 문단입니다.');
+  });
+
+  it('adds multiple boundaries to one original chapter from the last offset first', async () => {
+    const snapshot = await fixture();
+    const first = chapterStructureViews(snapshot)[0];
+    expect(first.splitCandidates).toHaveLength(2);
+
+    const result = applyChapterStructureCommands(snapshot, [
+      {
+        kind: 'split',
+        chapterId: first.id,
+        sourceOffset: first.splitCandidates[1].sourceOffset,
+        title: '세 번째 구간',
+      },
+      {
+        kind: 'split',
+        chapterId: first.id,
+        sourceOffset: first.splitCandidates[0].sourceOffset,
+        title: '두 번째 구간',
+      },
+    ]);
+
+    expect(result.chapters.map((chapter) => chapter.title)).toEqual([
+      '1화 시작',
+      '두 번째 구간',
+      '세 번째 구간',
+      '2화 다음',
+    ]);
+    expect(result.paragraphs.map((paragraph) => paragraph.text)).toEqual(
+      snapshot.paragraphs.map((paragraph) => paragraph.text),
+    );
   });
 
   it('rejects split offsets that are not paragraph boundaries', async () => {

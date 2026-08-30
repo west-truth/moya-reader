@@ -999,9 +999,9 @@ export default function FixedDocumentScreen({
       if (!continuousView) return;
       const virtualIndex = continuousVirtualIndexByPage.get(normalized);
       if (virtualIndex === undefined) pendingContinuousPageRef.current = normalized;
-      else continuousVirtualizer.scrollToIndex(virtualIndex, { align: 'center' });
+      else continuousVirtualizer.scrollToIndex(virtualIndex, { align: seamlessContinuousView ? 'start' : 'center' });
     },
-    [continuousView, continuousVirtualIndexByPage, continuousVirtualizer, totalPages],
+    [continuousView, continuousVirtualIndexByPage, continuousVirtualizer, seamlessContinuousView, totalPages],
   );
 
   const turnPage = useCallback(
@@ -1763,23 +1763,6 @@ export default function FixedDocumentScreen({
     zoom,
   ]);
 
-  useEffect(() => {
-    if (!seamlessContinuousView || !archiveEstimateDimensions) return;
-    const virtualIndex = continuousVirtualIndexByPage.get(pageIndex) ?? 0;
-    const frame = window.requestAnimationFrame(() =>
-      continuousVirtualizer.scrollToIndex(virtualIndex, { align: 'center' }),
-    );
-    return () => window.cancelAnimationFrame(frame);
-    // Settle once when the representative image ratio replaces the fallback estimate.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [
-    archiveEstimateDimensions?.height,
-    archiveEstimateDimensions?.width,
-    continuousSectionKey,
-    continuousVirtualizer,
-    seamlessContinuousView,
-  ]);
-
   useLayoutEffect(() => {
     if (!continuousView) return;
     const pendingPage = pendingContinuousPageRef.current;
@@ -1792,12 +1775,14 @@ export default function FixedDocumentScreen({
       continuousVirtualizer.scrollToIndex(virtualIndex, { align: 'start' });
     }
     const frame = window.requestAnimationFrame(() =>
-      continuousVirtualizer.scrollToIndex(virtualIndex, { align: pendingPage === undefined ? 'center' : 'start' }),
+      continuousVirtualizer.scrollToIndex(virtualIndex, {
+        align: pendingPage === undefined && !seamlessContinuousView ? 'center' : 'start',
+      }),
     );
     return () => window.cancelAnimationFrame(frame);
     // Settle when the layout or active episode changes. Scroll tracking owns later page changes inside the episode.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [continuousSectionKey, continuousView, effectiveViewMode]);
+  }, [continuousSectionKey, continuousView, effectiveViewMode, seamlessContinuousView]);
 
   useEffect(() => {
     if (!sidebarOpen) return;
@@ -2425,7 +2410,10 @@ export default function FixedDocumentScreen({
             onClick={() => {
               if (novel.format === 'image_archive') {
                 const next = nextComicViewMode(viewMode);
-                preserveFocalPoint(() => setViewMode(next));
+                preserveFocalPoint(() => {
+                  setViewMode(next);
+                  if (next === 'continuous-seamless') setZoom(1);
+                });
                 updateComicProfile({
                   mode: comicViewModeToProfileMode(next),
                   seamlessVertical: next === 'continuous-seamless',
@@ -3290,7 +3278,10 @@ export default function FixedDocumentScreen({
                 value={viewMode}
                 onChange={(event) => {
                   const next = event.target.value as ViewMode;
-                  preserveFocalPoint(() => setViewMode(next));
+                  preserveFocalPoint(() => {
+                    setViewMode(next);
+                    if (next === 'continuous-seamless') setZoom(1);
+                  });
                   updateComicProfile({
                     mode: comicViewModeToProfileMode(next),
                     seamlessVertical: next === 'continuous-seamless',

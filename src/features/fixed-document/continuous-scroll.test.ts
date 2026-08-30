@@ -53,7 +53,7 @@ describe('continuous comic scroll stability', () => {
     ).toBe(672);
   });
 
-  it('uses the complete viewport for borderless continuous pages on desktop and mobile', () => {
+  it('always fits borderless continuous pages to the viewport width on desktop and mobile', () => {
     const portrait = { width: 690, height: 1_600 };
 
     expect(
@@ -65,7 +65,7 @@ describe('continuous comic scroll stability', () => {
         seamless: true,
         dimensions: portrait,
       }),
-    ).toBe(769);
+    ).toBeCloseTo((809 * 1_600) / 690, 4);
     expect(
       continuousComicPageEstimatedHeight({
         fit: 'page',
@@ -75,7 +75,29 @@ describe('continuous comic scroll stability', () => {
         seamless: true,
         dimensions: portrait,
       }),
-    ).toBeCloseTo(844, 4);
+    ).toBeCloseTo((390 * 1_600) / 690, 4);
+    expect(
+      continuousComicPageEstimatedHeight({
+        fit: 'height',
+        viewportWidth: 390,
+        viewportHeight: 844,
+        zoom: 1,
+        seamless: true,
+        dimensions: portrait,
+      }),
+    ).toBeCloseTo((390 * 1_600) / 690, 4);
+  });
+
+  it('uses a viewport-height placeholder until a borderless page ratio is known', () => {
+    expect(
+      continuousComicPageEstimatedHeight({
+        fit: 'page',
+        viewportWidth: 390,
+        viewportHeight: 844,
+        zoom: 1,
+        seamless: true,
+      }),
+    ).toBe(844);
   });
 
   it('uses the median page ratio instead of a cover outlier', () => {
