@@ -22,6 +22,15 @@ import {
 
 type Listener = () => void;
 
+function normalizedDocumentSectionTitle(value: string): string {
+  return value.normalize('NFKC').replace(/\s+/gu, ' ').trim().toLocaleLowerCase();
+}
+
+function legacyDocumentSectionTitle(chapter: Chapter): string | undefined {
+  const match = /^(.*?)\s*·\s*[1-9][0-9]*페이지$/u.exec(chapter.title.trim());
+  return match?.[1]?.trim() || undefined;
+}
+
 function resolveUpdate<Value>(update: BookWorkspaceUpdate<Value>, previous: Value): Value {
   return typeof update === 'function' ? (update as (value: Value) => Value)(previous) : update;
 }
@@ -136,6 +145,7 @@ export class BookWorkspaceController {
     generation: number,
     prefetched?: { chapters: Chapter[]; readingPosition?: ReadingPosition },
     documentSectionId?: string,
+    documentSectionTitle?: string,
   ): Promise<boolean> {
     const [chapters, annotations, readingPosition] = await Promise.all([
       prefetched ? Promise.resolve(prefetched.chapters) : this.ports.repository.listChapters(novel.id),
@@ -143,8 +153,17 @@ export class BookWorkspaceController {
       prefetched ? Promise.resolve(prefetched.readingPosition) : this.ports.repository.getReadingPosition(novel.id),
     ]);
     if (!this.navigationIsCurrent(generation)) return false;
+    const normalizedRequestedTitle = documentSectionTitle
+      ? normalizedDocumentSectionTitle(documentSectionTitle)
+      : undefined;
     const documentEntryChapter = documentSectionId
-      ? chapters.find((chapter) => chapter.documentSectionId === documentSectionId)
+      ? (chapters.find((chapter) => chapter.documentSectionId === documentSectionId) ??
+        (normalizedRequestedTitle
+          ? chapters.find((chapter) => {
+              const title = chapter.documentSectionTitle ?? legacyDocumentSectionTitle(chapter);
+              return title ? normalizedDocumentSectionTitle(title) === normalizedRequestedTitle : false;
+            })
+          : undefined))
       : undefined;
     this.updateState({
       remoteReadingPosition: undefined,
@@ -173,8 +192,18 @@ export class BookWorkspaceController {
     await this.openNovelForNavigation(novel, this.beginNavigation());
   };
 
-  readonly openDocumentSection = async (novel: Novel, documentSectionId: string): Promise<void> => {
-    await this.openNovelForNavigation(novel, this.beginNavigation(), undefined, documentSectionId);
+  readonly openDocumentSection = async (
+    novel: Novel,
+    documentSectionId: string,
+    documentSectionTitle?: string,
+  ): Promise<void> => {
+    await this.openNovelForNavigation(
+      novel,
+      this.beginNavigation(),
+      undefined,
+      documentSectionId,
+      documentSectionTitle,
+    );
   };
 
   private async openChapterForNavigation(
@@ -282,6 +311,15 @@ export class BookWorkspaceController {
         offsetInParagraph: 0,
       });
       const updatedAt = new Date().toISOString();
+      const updatedNovel: Novel = {
+        ...novel,
+        lastReadChapterId: chapter.id,
+        lastReadChapterIndex: chapter.index,
+        lastReadOffset: pageIndex,
+        lastReadProgress: progress,
+        lastReadAt: updatedAt,
+        updatedAt,
+      };
       this.updateState({
         currentChapter: chapter,
         localReadingPosition: {
@@ -295,18 +333,10 @@ export class BookWorkspaceController {
           deviceId: 'device_local',
           updatedAt,
         },
-        selectedNovel: {
-          ...novel,
-          lastReadChapterId: chapter.id,
-          lastReadChapterIndex: chapter.index,
-          lastReadOffset: pageIndex,
-          lastReadProgress: progress,
-          lastReadAt: updatedAt,
-          updatedAt,
-        },
+        selectedNovel: updatedNovel,
+        novels: this.state.novels.map((candidate) => (candidate.id === updatedNovel.id ? updatedNovel : candidate)),
       });
       void this.ports.adjacent.refreshAfterLocalMutation('progress');
-      void this.ports.adjacent.refreshNovels();
     } catch (error) {
       this.locationPersistenceFailed(error);
     }
@@ -589,7 +619,6 @@ export class BookWorkspaceController {
       },
     });
     void this.ports.adjacent.refreshAfterLocalMutation('progress');
-    void this.ports.adjacent.refreshNovels();
   };
 
   readonly locationPersistenceFailed = (error: unknown): void => {

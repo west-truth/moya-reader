@@ -27,7 +27,11 @@ import { integrityHash, persistentId128 } from '@noveldesk/text-core/hash';
 import { paragraphPageId, parsedChapterId, parsedParagraphId } from '@noveldesk/text-core/identity/parser';
 import { validateUploadCompleteness } from './upload-validation.js';
 import { removeUploadDirectory } from './upload-cleanup.js';
-import { finalizeBookReplacement, prepareBookReplacement } from './book-revision/service.js';
+import {
+  finalizeBookReplacement,
+  prepareBookReplacement,
+  restoreExactAnchoredReaderState,
+} from './book-revision/service.js';
 import {
   enqueueObjectDeletions,
   releaseObjectDeletionReservations,
@@ -433,17 +437,22 @@ export async function insertChapterBatch(client: pg.PoolClient, chapters: Chapte
       chapter.rawEndOffset,
       chapter.characterCount,
       chapter.paragraphCount,
+      chapter.documentSectionId ?? null,
+      chapter.documentSectionTitle ?? null,
+      chapter.documentSectionIndex ?? null,
+      chapter.documentPageIndexInSection ?? null,
       chapter.createdAt,
       chapter.updatedAt,
     );
-    return `($${offset + 1}, $${offset + 2}, $${offset + 3}, $${offset + 4}, $${offset + 5}, $${offset + 6}, $${offset + 7}, $${offset + 8}, $${offset + 9}, $${offset + 10}, $${offset + 11})`;
+    return `($${offset + 1}, $${offset + 2}, $${offset + 3}, $${offset + 4}, $${offset + 5}, $${offset + 6}, $${offset + 7}, $${offset + 8}, $${offset + 9}, $${offset + 10}, $${offset + 11}, $${offset + 12}, $${offset + 13}, $${offset + 14}, $${offset + 15})`;
   });
 
   await client.query(
     `
       insert into chapters (
         id, book_id, chapter_index, title, text_hash, raw_start_offset, raw_end_offset,
-        character_count, paragraph_count, created_at, updated_at
+        character_count, paragraph_count, document_section_id, document_section_title,
+        document_section_index, document_page_index_in_section, created_at, updated_at
       )
       values ${rows.join(', ')}
       on conflict (id) do update
@@ -454,6 +463,10 @@ export async function insertChapterBatch(client: pg.PoolClient, chapters: Chapte
             raw_end_offset = excluded.raw_end_offset,
             character_count = excluded.character_count,
             paragraph_count = excluded.paragraph_count,
+            document_section_id = excluded.document_section_id,
+            document_section_title = excluded.document_section_title,
+            document_section_index = excluded.document_section_index,
+            document_page_index_in_section = excluded.document_page_index_in_section,
             updated_at = excluded.updated_at
     `,
     values,
@@ -768,15 +781,36 @@ export async function processImportJob(
     }
     if (parsed.consumeEmbeddedAssets) {
       let streamedAssets = 0;
-      for await (const asset of parsed.consumeEmbeddedAssets()) {
+      let assetBatch: Array<{ asset: ParsedNovelImportAsset; storageKey: string }> = [];
+      const flushAssetBatch = async () => {
+        if (assetBatch.length === 0) return;
+        const currentBatch = assetBatch;
+        assetBatch = [];
         await assertImportExecutionActive(pool, jobId, attempt.executionId);
-        const assetStorageKey = `${session.user_id}/${parsed.novel.id}/staged/${jobId}/${attempt.executionId ?? 'legacy'}/attempt-${attempt.attemptNumber}/${asset.id}/${asset.fileName}`;
-        await reserveObjectDeletions(pool, [assetStorageKey], 'import_asset_staging');
-        await putRawBookObject(s3Client, config, assetStorageKey, Buffer.from(asset.bytes), asset.contentType);
-        uploadedObjectKeys.push(assetStorageKey);
-        const { bytes: _releasedBytes, ...metadata } = asset;
-        storedAssets.push({ ...metadata, byteLength: asset.bytes.byteLength, storageKey: assetStorageKey });
-        streamedAssets += 1;
+        await reserveObjectDeletions(
+          pool,
+          currentBatch.map((entry) => entry.storageKey),
+          'import_asset_staging',
+        );
+        const outcomes = await Promise.allSettled(
+          currentBatch.map(async ({ asset, storageKey: assetStorageKey }) => {
+            await putRawBookObject(s3Client, config, assetStorageKey, Buffer.from(asset.bytes), asset.contentType);
+            uploadedObjectKeys.push(assetStorageKey);
+            const { bytes: _releasedBytes, ...metadata } = asset;
+            return { ...metadata, byteLength: asset.bytes.byteLength, storageKey: assetStorageKey };
+          }),
+        );
+        const failed = outcomes.find((outcome): outcome is PromiseRejectedResult => outcome.status === 'rejected');
+        if (failed) throw failed.reason;
+        storedAssets.push(
+          ...outcomes
+            .filter(
+              (outcome): outcome is PromiseFulfilledResult<(typeof storedAssets)[number]> =>
+                outcome.status === 'fulfilled',
+            )
+            .map((outcome) => outcome.value),
+        );
+        streamedAssets += currentBatch.length;
         if (streamedAssets % 8 === 0) {
           await updateImportJobProgress(
             pool,
@@ -789,6 +823,25 @@ export async function processImportJob(
             attempt.executionId,
           );
         }
+      };
+      for await (const asset of parsed.consumeEmbeddedAssets()) {
+        await assertImportExecutionActive(pool, jobId, attempt.executionId);
+        const assetStorageKey = `${session.user_id}/${parsed.novel.id}/staged/${jobId}/${attempt.executionId ?? 'legacy'}/attempt-${attempt.attemptNumber}/${asset.id}/${asset.fileName}`;
+        assetBatch.push({ asset, storageKey: assetStorageKey });
+        if (assetBatch.length >= SERVER_IMPORT_EAGER_ASSET_CONCURRENCY) await flushAssetBatch();
+      }
+      await flushAssetBatch();
+      if (streamedAssets > 0 && streamedAssets % 8 !== 0) {
+        await updateImportJobProgress(
+          pool,
+          jobId,
+          {
+            status: 'processing',
+            stage: 'writing',
+            message: `문서 페이지 리소스를 저장하는 중입니다. ${streamedAssets.toLocaleString()}개`,
+          },
+          attempt.executionId,
+        );
       }
     }
     arrayBuffer = undefined;
@@ -833,9 +886,9 @@ export async function processImportJob(
           insert into library_books (
             id, user_id, object_id, format, title, author, description, language, source_file_name, source_encoding,
             normalized_text_hash, total_chapters, total_characters, total_paragraphs, cover_seed, favorite,
-            created_at, updated_at
+            document_section_count, created_at, updated_at
           )
-          values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, false, $16, $17)
+          values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, false, $16, $17, $18)
           on conflict (id) do update
             set object_id = excluded.object_id,
                 format = excluded.format,
@@ -846,6 +899,7 @@ export async function processImportJob(
                 total_characters = excluded.total_characters,
                 total_paragraphs = excluded.total_paragraphs,
                 cover_seed = excluded.cover_seed,
+                document_section_count = excluded.document_section_count,
                 deleted_at = null,
                 deleted_by_device_id = null,
                 metadata_revision = library_books.metadata_revision + 1,
@@ -867,6 +921,7 @@ export async function processImportJob(
           parsed.novel.totalCharacters,
           parsed.novel.totalParagraphs,
           normalizeCoverSeedForPersistence(parsed.novel.coverSeed),
+          parsed.novel.documentSectionCount ?? null,
           parsed.novel.createdAt,
           parsed.novel.updatedAt,
         ],
@@ -996,6 +1051,9 @@ export async function processImportJob(
           attempt.executionId,
         );
         if (attempt.executionId && !progressUpdated) throw new ImportExecutionStoppedError('cancelled');
+      }
+      if (replacement && parsed.novel.format === 'image_archive' && parsed.novel.documentSectionCount) {
+        await restoreExactAnchoredReaderState(client, replacement);
       }
       if (replacement) await finalizeBookReplacement(client, replacement);
       const importPayload = { bookId: parsed.novel.id };

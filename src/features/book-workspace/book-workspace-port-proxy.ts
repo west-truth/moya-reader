@@ -36,7 +36,7 @@ export function createBookWorkspacePortProxy(input: {
       resetCorrection: () => input.adjacent.current.resetCorrection(),
       resetAnnotationEditor: () => input.adjacent.current.resetAnnotationEditor(),
       refreshNovels: () => input.adjacent.current.refreshNovels(),
-      refreshAfterLocalMutation: () => input.adjacent.current.refreshAfterLocalMutation(),
+      refreshAfterLocalMutation: (kind) => input.adjacent.current.refreshAfterLocalMutation(kind),
       refreshSyncState: () => input.adjacent.current.refreshSyncState(),
       refreshAfterLocationConflict: () => input.adjacent.current.refreshAfterLocationConflict(),
     },

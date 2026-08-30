@@ -598,8 +598,8 @@ export default function SourceHubScreen({
               </form>
             )}
             <div className="source-hub-topbar-actions">
-              {seriesNovel && (
-                <button className="ghost-btn" type="button" disabled={controller.busy} onClick={controller.close}>
+              {(seriesNovel || controller.busy) && (
+                <button className="ghost-btn" type="button" onClick={controller.close}>
                   <ArrowLeft size={16} /> 라이브러리
                 </button>
               )}
@@ -634,7 +634,7 @@ export default function SourceHubScreen({
                 <button
                   type="button"
                   className="detail-back-button"
-                  disabled={controller.busy}
+                  disabled={controller.busy && !seriesNovel}
                   onClick={() => void (seriesNovel ? controller.close() : controller.goBack())}
                 >
                   <ArrowLeft size={17} /> {seriesNovel ? '서재로' : '소스로'}

@@ -128,6 +128,7 @@ describe('BookWorkspaceController navigation', () => {
       testChapter(1, { documentSectionId: 'chapter:11', documentSectionTitle: '01화' }),
       testChapter(2, { documentSectionId: 'chapter:11', documentSectionTitle: '01화' }),
       testChapter(3, { documentSectionId: 'chapter:12', documentSectionTitle: '02화' }),
+      testChapter(4, { documentSectionId: 'chapter:12', documentSectionTitle: '02화' }),
     ];
     const harness = createBookWorkspaceTestHarness({
       novel,
@@ -141,6 +142,30 @@ describe('BookWorkspaceController navigation', () => {
     expect(controller.getSnapshot()).toMatchObject({
       view: 'document',
       selectedNovel: novel,
+      currentChapter: chapters[2],
+      fixedDocumentOpenChapterId: chapters[2]?.id,
+    });
+  });
+
+  it('opens a legacy self-host comic release by its preserved page-title prefix', async () => {
+    const novel = testNovel({ format: 'image_archive' });
+    const chapters = [
+      testChapter(1, { title: '01화 · 1페이지' }),
+      testChapter(2, { title: '01화 · 2페이지' }),
+      testChapter(3, { title: '02화 · 1페이지' }),
+      testChapter(4, { title: '02화 · 2페이지' }),
+    ];
+    const harness = createBookWorkspaceTestHarness({
+      novel,
+      chapters,
+      position: testPosition({ chapterId: chapters[0]!.id }),
+    });
+    const controller = new BookWorkspaceController(harness.ports);
+
+    await controller.openDocumentSection(novel, 'chapter:12', '02화');
+
+    expect(controller.getSnapshot()).toMatchObject({
+      view: 'document',
       currentChapter: chapters[2],
       fixedDocumentOpenChapterId: chapters[2]?.id,
     });

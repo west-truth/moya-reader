@@ -164,7 +164,6 @@ export function BookWorkspaceScreens({
   };
 
   const goLibraryHome = () => {
-    if (externalSources.busy) return;
     externalSources.close();
     controller.setLibraryQuery('');
     controller.setLibraryFilter('all');
@@ -250,7 +249,6 @@ export function BookWorkspaceScreens({
       openImport,
       openLibraryFolders,
       openExternalSource: (sourceId) => {
-        if (externalSources.busy) return;
         controller.setView('library');
         externalSources.show(sourceId);
       },
@@ -263,7 +261,6 @@ export function BookWorkspaceScreens({
     },
     controls: {
       setFilter: (filter) => {
-        if (externalSources.busy) return;
         externalSources.close();
         controller.setView('library');
         controller.setLibraryFilter(filter);
@@ -272,7 +269,6 @@ export function BookWorkspaceScreens({
       setViewMode: controller.setLibraryViewMode,
       emptyTrash: controller.emptyTrash,
       setShelf: (shelfId) => {
-        if (externalSources.busy) return;
         externalSources.close();
         controller.setView('library');
         libraryManagement.setActiveShelf(shelfId);

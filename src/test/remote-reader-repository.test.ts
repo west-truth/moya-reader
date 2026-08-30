@@ -134,6 +134,7 @@ function hostedClient() {
           total_chapters: 1,
           total_characters: 1000,
           total_paragraphs: 40,
+          document_section_count: 1,
           cover_seed: 7,
           favorite: true,
           last_read_chapter_id: 'chapter_1',
@@ -156,6 +157,7 @@ function hostedClient() {
         total_chapters: 1,
         total_characters: 1000,
         total_paragraphs: 40,
+        document_section_count: 1,
         cover_seed: 7,
         favorite: true,
       },
@@ -183,6 +185,10 @@ function hostedClient() {
           raw_end_offset: 1000,
           character_count: 1000,
           paragraph_count: 40,
+          document_section_id: 'chapter:11',
+          document_section_title: '1화',
+          document_section_index: 1,
+          document_page_index_in_section: 1,
           created_at: now,
           updated_at: now,
         },
@@ -348,6 +354,7 @@ describe('RemoteReaderRepository', () => {
       lastReadParagraphId: 'paragraph_9',
       lastReadOffset: 240,
       lastReadProgress: 0.45,
+      documentSectionCount: 1,
     });
     expect(manifestNovel).toMatchObject({
       id: 'book_1',
@@ -356,8 +363,18 @@ describe('RemoteReaderRepository', () => {
       lastReadOffset: 240,
       lastReadProgress: 0.45,
       updatedAt: '2026-07-05T00:05:00.000Z',
+      documentSectionCount: 1,
     });
-    expect(chapter).toMatchObject({ id: 'chapter_1', novelId: 'book_1', index: 1, title: '1화' });
+    expect(chapter).toMatchObject({
+      id: 'chapter_1',
+      novelId: 'book_1',
+      index: 1,
+      title: '1화',
+      documentSectionId: 'chapter:11',
+      documentSectionTitle: '1화',
+      documentSectionIndex: 1,
+      documentPageIndexInSection: 1,
+    });
     expect(page).toMatchObject({
       id: 'page_chapter_1_0',
       novelId: 'book_1',

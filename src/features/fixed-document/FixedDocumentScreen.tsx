@@ -122,6 +122,7 @@ import {
   shouldAnchorContinuousPageResize,
   type ContinuousImageDimensions,
 } from './continuous-scroll';
+import { projectFixedDocumentSections } from './fixed-document-sections';
 import './fixed-document.css';
 
 GlobalWorkerOptions.workerSrc = pdfWorkerUrl;
@@ -659,22 +660,10 @@ export default function FixedDocumentScreen({
   annotationSyncRevision,
 }: FixedDocumentScreenProps) {
   const sortedChapters = useMemo(() => [...chapters].sort((left, right) => left.index - right.index), [chapters]);
-  const documentSections = useMemo(() => {
-    const sections: Array<{ id: string; title: string; startPageIndex: number; pageCount: number }> = [];
-    sortedChapters.forEach((chapter, index) => {
-      if (!chapter.documentSectionId || !chapter.documentSectionTitle) return;
-      const current = sections.at(-1);
-      if (current?.id === chapter.documentSectionId) current.pageCount += 1;
-      else
-        sections.push({
-          id: chapter.documentSectionId,
-          title: chapter.documentSectionTitle,
-          startPageIndex: index,
-          pageCount: 1,
-        });
-    });
-    return sections;
-  }, [sortedChapters]);
+  const documentSections = useMemo(
+    () => projectFixedDocumentSections(novel.id, sortedChapters),
+    [novel.id, sortedChapters],
+  );
   const totalPages = sortedChapters.length;
   const [pageIndex, setPageIndex] = useState(() => initialPage(sortedChapters, readingPosition, initialChapterId));
   const [pageDraft, setPageDraft] = useState(String(pageIndex + 1));
@@ -1015,6 +1004,22 @@ export default function FixedDocumentScreen({
     },
     [continuousView, continuousVirtualIndexByPage, continuousVirtualizer, seamlessContinuousView, totalPages],
   );
+
+  const explicitEntryTarget = initialChapterId
+    ? `${novel.id}:${novel.activeContentRevisionId ?? ''}:${initialChapterId}`
+    : undefined;
+  const appliedEntryTargetRef = useRef<string>();
+  useEffect(() => {
+    if (!explicitEntryTarget) {
+      appliedEntryTargetRef.current = undefined;
+      return;
+    }
+    if (appliedEntryTargetRef.current === explicitEntryTarget) return;
+    const targetPage = sortedChapters.findIndex((chapter) => chapter.id === initialChapterId);
+    if (targetPage < 0) return;
+    appliedEntryTargetRef.current = explicitEntryTarget;
+    goToPage(targetPage);
+  }, [explicitEntryTarget, goToPage, initialChapterId, sortedChapters]);
 
   const turnPage = useCallback(
     (step: -1 | 1) => {

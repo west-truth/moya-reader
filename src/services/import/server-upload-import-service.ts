@@ -220,6 +220,7 @@ class BrowserRemoteUploadSessionStore implements RemoteUploadSessionStore {
 }
 
 export class ServerUploadImportService implements ImportService {
+  readonly supportsExpectedSourceContentHash = true;
   constructor(
     private readonly client: RemoteApiClient,
     private readonly chunkBytes = DEFAULT_SERVER_UPLOAD_CHUNK_BYTES,
@@ -280,19 +281,25 @@ export class ServerUploadImportService implements ImportService {
         message: '서버 업로드를 준비하고 있습니다.',
       });
 
-      const sourceContentHash = await hashBlobInChunks(input.file, {
-        shouldCancel: () => signal.aborted,
-        onProgress: ({ bytesRead }) =>
-          onProgress({
-            jobId: localJobId,
-            status: 'reading',
-            bytesRead,
-            totalBytes: input.file.size,
-            chaptersDetected: 0,
-            paragraphsWritten: 0,
-            message: '재개 가능한 업로드를 위해 파일 무결성을 확인하고 있습니다.',
-          }),
-      });
+      const suppliedSourceHash = input.expectedSourceContentHash?.trim().toLocaleLowerCase();
+      if (suppliedSourceHash && !/^sha256:[a-f0-9]{64}$/u.test(suppliedSourceHash)) {
+        throw new Error('미리 계산한 원문 무결성 값이 올바르지 않습니다.');
+      }
+      const sourceContentHash =
+        suppliedSourceHash ??
+        (await hashBlobInChunks(input.file, {
+          shouldCancel: () => signal.aborted,
+          onProgress: ({ bytesRead }) =>
+            onProgress({
+              jobId: localJobId,
+              status: 'reading',
+              bytesRead,
+              totalBytes: input.file.size,
+              chaptersDetected: 0,
+              paragraphsWritten: 0,
+              message: '재개 가능한 업로드를 위해 파일 무결성을 확인하고 있습니다.',
+            }),
+        }));
       uploadSession = await this.prepareUploadSession(
         localJobId,
         input,

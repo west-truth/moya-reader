@@ -71,6 +71,7 @@ async function createHarness(input: {
   browse?: ExternalSourceBrowseState;
   serial?: boolean;
   downloadedFile?: File;
+  downloadGate?: Promise<void>;
   assets?: BookAssetRepository;
 }) {
   const oldContent = '기존 원격 원문';
@@ -199,10 +200,13 @@ async function createHarness(input: {
           : undefined,
       };
     }),
-    downloadExternalSource: vi.fn(async () => ({
-      file: input.downloadedFile ?? new File([input.downloadedContent], 'work.txt', { type: 'text/plain' }),
-      remoteRevision: 'remote-r2',
-    })),
+    downloadExternalSource: vi.fn(async () => {
+      await input.downloadGate;
+      return {
+        file: input.downloadedFile ?? new File([input.downloadedContent], 'work.txt', { type: 'text/plain' }),
+        remoteRevision: 'remote-r2',
+      };
+    }),
     canPickExternalSource: vi.fn(() => Boolean(input.pickable)),
     pickExternalSource: vi.fn(async () => ({ selectedCount: 1, addedCount: 1 })),
     canRemoveExternalSourceItem: vi.fn(() => Boolean(input.pickable)),
@@ -417,6 +421,69 @@ describe('useExternalSourceController remote updates', () => {
       expect.any(Function),
     );
     expect(harness.currentLink.activeContentRevisionId).toBe('content-card');
+    await act(async () => harness.renderer.unmount());
+  });
+
+  it('keeps an active download running when the source screen is closed', async () => {
+    let releaseDownload!: () => void;
+    const downloadGate = new Promise<void>((resolve) => {
+      releaseDownload = resolve;
+    });
+    const harness = await createHarness({ downloadedContent: '백그라운드 원문', downloadGate });
+    act(() => harness.controller.show(SOURCE_ID));
+    expect(harness.controller.open).toBe(true);
+
+    let importPromise!: Promise<void>;
+    await act(async () => {
+      importPromise = harness.controller.importItem(harness.controller.items[0]!);
+      await Promise.resolve();
+    });
+    expect(harness.controller.busy).toBe(true);
+
+    act(() => harness.controller.close());
+    expect(harness.controller.open).toBe(false);
+    expect(harness.notify).toHaveBeenCalledWith('다운로드는 백그라운드에서 계속됩니다.');
+    act(() => harness.controller.show(SOURCE_ID));
+    expect(harness.controller.open).toBe(true);
+    act(() => harness.controller.close());
+
+    releaseDownload();
+    await act(async () => {
+      await importPromise;
+    });
+    expect(harness.importFile).toHaveBeenCalledOnce();
+    expect(harness.controller.busy).toBe(false);
+    await act(async () => harness.renderer.unmount());
+  });
+
+  it('does not interrupt the current screen after a background chapter download finishes', async () => {
+    let releaseDownload!: () => void;
+    const downloadGate = new Promise<void>((resolve) => {
+      releaseDownload = resolve;
+    });
+    const harness = await createHarness({
+      downloadedContent: '',
+      downloadedFile: await singlePageComicFile(),
+      downloadGate,
+      localBookMissing: true,
+      serial: true,
+    });
+    act(() => harness.controller.show(SOURCE_ID));
+
+    let importPromise!: Promise<void>;
+    await act(async () => {
+      importPromise = harness.controller.importAndOpen(harness.controller.items[0]!);
+      await Promise.resolve();
+    });
+    expect(harness.controller.busy).toBe(true);
+    act(() => harness.controller.close());
+
+    releaseDownload();
+    await act(async () => {
+      await importPromise;
+    });
+    expect(harness.importFile).toHaveBeenCalledOnce();
+    expect(harness.openNovel).not.toHaveBeenCalled();
     await act(async () => harness.renderer.unmount());
   });
 

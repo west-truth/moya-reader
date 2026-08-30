@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { ExtensionContributionId, ExternalSourceContributionDescriptor } from '@noveldesk/extension-contracts';
 import { integrityHash, persistentId128 } from '@noveldesk/text-core/hash';
-import { sha256 } from '../../domain/hash';
 import type { Chapter, Novel } from '../../domain/types';
 import type {
   ExternalItemSummary,
@@ -177,7 +176,10 @@ export interface UseExternalSourceControllerOptions {
   listNovels(): Promise<Novel[]>;
   listChapters(novelId: string): Promise<Chapter[]>;
   getNovel(id: string): Promise<Novel | undefined>;
-  openNovel(novel: Novel, target?: { readonly documentSectionId?: string }): void | Promise<void>;
+  openNovel(
+    novel: Novel,
+    target?: { readonly documentSectionId?: string; readonly documentSectionTitle?: string },
+  ): void | Promise<void>;
   onLibraryChanged(): Promise<void>;
   notify(message: string, tone?: ToastTone): void;
   confirm(message: string): boolean;
@@ -373,6 +375,7 @@ export function useExternalSourceController(options: UseExternalSourceController
   const [localSeriesReadingStates, setLocalSeriesReadingStates] = useState<
     ReadonlyMap<string, SerialReleaseReadingState>
   >(() => new Map());
+  const [localSeriesChapters, setLocalSeriesChapters] = useState<readonly Chapter[]>([]);
   const [browse, setBrowse] = useState<ExternalSourceBrowseState>();
   const [filterValues, setFilterValues] = useState<Readonly<Record<string, ExternalSourceFilterValue>>>({});
   const [breadcrumbs, setBreadcrumbs] = useState<readonly ExternalSourceBreadcrumb[]>([{ label: '최상위 폴더' }]);
@@ -387,6 +390,11 @@ export function useExternalSourceController(options: UseExternalSourceController
   const foregroundSubscriptionChecksRef = useRef(new Set<string>());
   const importRef = useRef<ImportController>();
   const mountedRef = useRef(true);
+  const openRef = useRef(open);
+
+  useEffect(() => {
+    openRef.current = open;
+  }, [open]);
 
   const contributions = useMemo(() => {
     void options.extensionRevision;
@@ -720,7 +728,12 @@ export function useExternalSourceController(options: UseExternalSourceController
 
   const show = useCallback(
     (requestedSourceId?: ExtensionContributionId) => {
-      if (busy) return;
+      if (busy) {
+        if (requestedSourceId && requestedSourceId !== activeSourceId) return;
+        openRef.current = true;
+        setOpen(true);
+        return;
+      }
       const sourceId =
         (requestedSourceId &&
         sources.some((source) => source.id === requestedSourceId && source.connection.state === 'connected')
@@ -736,6 +749,7 @@ export function useExternalSourceController(options: UseExternalSourceController
       setLocalSeriesSeedNovel(undefined);
       setLocalSeriesSourceId(undefined);
       setLocalSeriesReadingStates(new Map());
+      setLocalSeriesChapters([]);
       setOpen(true);
       setActiveSourceId(sourceId);
       void loadSourceStart(sourceId);
@@ -744,13 +758,18 @@ export function useExternalSourceController(options: UseExternalSourceController
   );
 
   const close = useCallback(() => {
-    if (busy) return;
+    const wasOpen = openRef.current;
     listAbortRef.current?.abort();
+    openRef.current = false;
     setOpen(false);
-    setLocalSeriesBookId(undefined);
-    setLocalSeriesSeedNovel(undefined);
-    setLocalSeriesSourceId(undefined);
-    setLocalSeriesReadingStates(new Map());
+    if (!busy) {
+      setLocalSeriesBookId(undefined);
+      setLocalSeriesSeedNovel(undefined);
+      setLocalSeriesSourceId(undefined);
+      setLocalSeriesReadingStates(new Map());
+      setLocalSeriesChapters([]);
+    }
+    if (busy && wasOpen) optionsRef.current.notify('다운로드는 백그라운드에서 계속됩니다.');
   }, [busy]);
 
   const showLocalSeries = useCallback(
@@ -772,6 +791,7 @@ export function useExternalSourceController(options: UseExternalSourceController
       setLocalSeriesSeedNovel(novel);
       setLocalSeriesSourceId(sourceId);
       setLocalSeriesReadingStates(projectLocalSeriesReadingStates(novel, chapters));
+      setLocalSeriesChapters(chapters);
       setNovels([...nextNovels.filter((candidate) => candidate.id !== novel.id), novel]);
       setLinks(local.links);
       setRawItems(local.items);
@@ -804,6 +824,7 @@ export function useExternalSourceController(options: UseExternalSourceController
       setLocalSeriesSeedNovel(undefined);
       setLocalSeriesSourceId(undefined);
       setLocalSeriesReadingStates(new Map());
+      setLocalSeriesChapters([]);
       setActiveSourceId(id);
       await loadSourceStart(id);
     },
@@ -902,6 +923,13 @@ export function useExternalSourceController(options: UseExternalSourceController
 
   const linkByKey = useMemo(() => new Map(links.map((link) => [externalItemKeyId(link.source), link])), [links]);
   const novelById = useMemo(() => new Map(novels.map((novel) => [novel.id, novel])), [novels]);
+  const effectiveLocalSeriesReadingStates = useMemo(() => {
+    if (!localSeriesBookId) return localSeriesReadingStates;
+    const localNovel = novelById.get(localSeriesBookId) ?? localSeriesSeedNovel;
+    return localNovel
+      ? projectLocalSeriesReadingStates(localNovel, localSeriesChapters, rawItems)
+      : localSeriesReadingStates;
+  }, [localSeriesBookId, localSeriesChapters, localSeriesReadingStates, localSeriesSeedNovel, novelById, rawItems]);
   const items = useMemo<readonly ExternalSourceItemView[]>(
     () =>
       rawItems.map((item) => {
@@ -924,11 +952,11 @@ export function useExternalSourceController(options: UseExternalSourceController
           localBookTitle: localNovel?.title,
           readingState:
             item.release && localSeriesBookId
-              ? (localSeriesReadingStates.get(item.key.remoteId) ?? 'unread')
+              ? (effectiveLocalSeriesReadingStates.get(item.key.remoteId) ?? 'unread')
               : undefined,
         };
       }),
-    [linkByKey, localSeriesBookId, localSeriesReadingStates, novelById, rawItems, selectedKeys],
+    [linkByKey, effectiveLocalSeriesReadingStates, localSeriesBookId, novelById, rawItems, selectedKeys],
   );
 
   const activeSubscription = useMemo(() => {
@@ -1114,7 +1142,13 @@ export function useExternalSourceController(options: UseExternalSourceController
                 sourceContentHash:
                   normalizedHash(legacyLink.importedSourceContentHash) ??
                   normalizedHash(existingNovel?.sourceContentHash) ??
-                  (existingSource ? await sha256(await existingSource.blob.arrayBuffer()) : ''),
+                  (existingSource
+                    ? (normalizedHash(
+                        await hashBlobInChunks(existingSource.blob, {
+                          shouldCancel: () => abort.signal.aborted,
+                        }),
+                      ) ?? '')
+                    : ''),
               }
             : undefined;
 
@@ -1147,7 +1181,12 @@ export function useExternalSourceController(options: UseExternalSourceController
             abort.signal,
           );
           setProgress((current) => (current ? { ...current, phase: 'verifying' } : current));
-          const sourceHash = await sha256(await downloaded.file.arrayBuffer());
+          const sourceHash =
+            normalizedHash(
+              await hashBlobInChunks(downloaded.file, {
+                shouldCancel: () => abort.signal.aborted,
+              }),
+            ) ?? '';
           const existingLink = knownLinks.find(
             (link) => externalItemKeyId(link.source) === externalItemKeyId(item.key),
           );
@@ -1247,6 +1286,9 @@ export function useExternalSourceController(options: UseExternalSourceController
               encoding: 'auto',
               chapterSplitMode: 'auto',
               clientBookId: localBookId,
+              ...(optionsRef.current.importService.supportsExpectedSourceContentHash
+                ? { expectedSourceContentHash: expectedActiveSourceContentHash }
+                : {}),
             },
             (progressDetail) => {
               if (!mountedRef.current) return;
@@ -1431,14 +1473,19 @@ export function useExternalSourceController(options: UseExternalSourceController
               fileName: item.title,
               phase: 'verifying',
             });
-            const sourceHash = await sha256(await downloaded.file.arrayBuffer());
+            const sourceHash =
+              normalizedHash(
+                await hashBlobInChunks(downloaded.file, {
+                  shouldCancel: () => abort.signal.aborted,
+                }),
+              ) ?? '';
             const existingLink = knownLinks.get(externalItemKeyId(item.key));
             let target = existingLink ? knownNovels.find((novel) => novel.id === existingLink.localBookId) : undefined;
             if (!target) {
               target = knownNovels.find(
                 (novel) =>
-                  normalizedHash(novel.sourceContentHash) === sourceHash ||
-                  normalizedHash(novel.rawTextHash) === sourceHash,
+                  normalizedHash(novel.sourceContentHash) === normalizedHash(sourceHash) ||
+                  normalizedHash(novel.rawTextHash) === normalizedHash(sourceHash),
               );
             }
             let importedNovel = target;
@@ -1615,6 +1662,7 @@ export function useExternalSourceController(options: UseExternalSourceController
     async (item: ExternalSourceItemView) => {
       if (!item.release || item.importState !== 'available') return;
       await importItems([item]);
+      if (!openRef.current) return;
       const link = (await optionsRef.current.state.listLinks(item.key.connectorId)).find(
         (candidate) => externalItemKeyId(candidate.source) === externalItemKeyId(item.key),
       );
@@ -1624,8 +1672,12 @@ export function useExternalSourceController(options: UseExternalSourceController
       setLocalSeriesBookId(novel.id);
       setLocalSeriesSeedNovel(novel);
       setLocalSeriesSourceId(item.key.connectorId as ExtensionContributionId);
+      setLocalSeriesChapters(await optionsRef.current.listChapters(novel.id));
       setOpen(false);
-      await optionsRef.current.openNovel(novel, { documentSectionId: item.key.remoteId });
+      await optionsRef.current.openNovel(novel, {
+        documentSectionId: item.key.remoteId,
+        documentSectionTitle: item.release.title,
+      });
     },
     [importItems],
   );
@@ -1646,14 +1698,20 @@ export function useExternalSourceController(options: UseExternalSourceController
         setLocalSeriesBookId(novel.id);
         setLocalSeriesSeedNovel(novel);
         setLocalSeriesSourceId(item.key.connectorId as ExtensionContributionId);
+        setLocalSeriesChapters(await optionsRef.current.listChapters(novel.id));
       } else {
         setLocalSeriesBookId(undefined);
         setLocalSeriesSeedNovel(undefined);
         setLocalSeriesSourceId(undefined);
         setLocalSeriesReadingStates(new Map());
+        setLocalSeriesChapters([]);
       }
       setOpen(false);
-      if (item.release) await optionsRef.current.openNovel(novel, { documentSectionId: item.key.remoteId });
+      if (item.release)
+        await optionsRef.current.openNovel(novel, {
+          documentSectionId: item.key.remoteId,
+          documentSectionTitle: item.release.title,
+        });
       else await optionsRef.current.openNovel(novel);
     },
     [busy],
@@ -2154,6 +2212,7 @@ export function useExternalSourceController(options: UseExternalSourceController
       setLocalSeriesSeedNovel(undefined);
       setLocalSeriesSourceId(undefined);
       setLocalSeriesReadingStates(new Map());
+      setLocalSeriesChapters([]);
       setActiveSourceId(sourceId);
       setOpen(true);
       setQuery('');

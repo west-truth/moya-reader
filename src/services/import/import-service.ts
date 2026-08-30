@@ -34,6 +34,8 @@ export interface ImportFileInput {
   encoding: EncodingMode;
   chapterSplitMode?: ChapterSplitMode;
   clientBookId?: string;
+  /** Exact source hash already computed by a trusted caller. The Hosted server still verifies the uploaded bytes. */
+  expectedSourceContentHash?: string;
   /**
    * Optional pre-activation fence used by trusted restore paths. Supporting
    * implementations must reject before replacing canonical content when the
@@ -57,6 +59,7 @@ export interface ImportController {
 export interface ImportService {
   readonly supportsArchivePassword?: boolean;
   readonly supportsExpectedNormalizedTextHash?: boolean;
+  readonly supportsExpectedSourceContentHash?: boolean;
   importFile(input: ImportFileInput, onProgress: (progress: ImportProgress) => void): ImportController;
 }
 

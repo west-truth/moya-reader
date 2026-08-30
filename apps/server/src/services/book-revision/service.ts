@@ -17,6 +17,7 @@ import {
   insertReplacementGraphRevision,
   lockExistingBookRevision,
   quarantineBookDerivedState,
+  restoreExactAnchoredReaderState as restoreExactAnchoredReaderStateRows,
 } from './repository.js';
 import {
   remapConfirmedCharacterRelations,
@@ -133,4 +134,11 @@ export async function finalizeBookReplacement(
   };
   await finalizeReplacementRun(client, replacement, graphRevisionId, summary);
   return summary;
+}
+
+export async function restoreExactAnchoredReaderState(
+  client: pg.PoolClient,
+  preparation: BookReplacementPreparation,
+): Promise<number> {
+  return restoreExactAnchoredReaderStateRows(client, preparation.replacement);
 }
