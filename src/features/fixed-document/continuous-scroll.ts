@@ -24,6 +24,8 @@ export interface ContinuousDocumentSection {
   readonly pageCount: number;
 }
 
+const DESKTOP_SEAMLESS_MAX_WIDTH = 900;
+
 export function continuousComicSectionIndex(sections: readonly ContinuousDocumentSection[], pageIndex: number): number {
   return sections.findIndex(
     (section) => pageIndex >= section.startPageIndex && pageIndex < section.startPageIndex + section.pageCount,
@@ -55,9 +57,8 @@ export function representativeContinuousImageDimensions(
 
 export function continuousComicPageEstimatedHeight(input: ContinuousPageEstimateInput): number {
   const mobile = input.viewportWidth < 720;
-  const widthInset = input.seamless ? 0 : mobile ? 16 : 72;
   const heightInset = input.seamless ? 0 : mobile ? 28 : 68;
-  const widthLimit = Math.max(1, input.viewportWidth - widthInset) * input.zoom;
+  const widthLimit = continuousComicPageWidth(input);
   const heightLimit = Math.max(1, input.viewportHeight - heightInset) * input.zoom;
   const dimensions =
     input.dimensions && input.dimensions.width > 0 && input.dimensions.height > 0 ? input.dimensions : undefined;
@@ -84,6 +85,17 @@ export function continuousComicPageEstimatedHeight(input: ContinuousPageEstimate
   return Math.max(1, dimensions.height * Math.min(1, widthLimit / dimensions.width, heightLimit / dimensions.height));
 }
 
+export function continuousComicPageWidth(input: ContinuousPageEstimateInput): number {
+  const mobile = input.viewportWidth < 720;
+  const widthInset = input.seamless ? 0 : mobile ? 16 : 72;
+  const viewportWidth = Math.max(1, input.viewportWidth - widthInset);
+  if (!input.seamless || mobile) return viewportWidth * input.zoom;
+
+  const intrinsicWidth =
+    input.dimensions && input.dimensions.width > 0 ? input.dimensions.width : DESKTOP_SEAMLESS_MAX_WIDTH;
+  return Math.min(viewportWidth, intrinsicWidth, DESKTOP_SEAMLESS_MAX_WIDTH) * input.zoom;
+}
+
 export function continuousPageNearestViewportCenter(
   items: readonly ContinuousPageMeasurement[],
   scrollTop: number,
@@ -96,6 +108,10 @@ export function continuousPageNearestViewportCenter(
   }, undefined)?.index;
 }
 
-export function shouldAnchorContinuousPageResize(itemEnd: number, scrollOffset: number): boolean {
-  return itemEnd <= scrollOffset;
+export function shouldAnchorContinuousPageResize(
+  itemEnd: number,
+  scrollOffset: number,
+  focalRestorePending = false,
+): boolean {
+  return !focalRestorePending && itemEnd <= scrollOffset;
 }
