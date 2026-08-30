@@ -31,6 +31,7 @@ export async function activateEmbeddedAssetsInTransaction(
     contentRevisionId: string;
     activatedAt: string;
     preserveExisting?: boolean;
+    preserveExistingCover?: boolean;
   },
 ): Promise<{ assets: BookAssetMetadata[]; preservedCover?: BookAssetMetadata }> {
   const store = tx.objectStore(BOOK_ASSET_STORES.assets);
@@ -50,10 +51,11 @@ export async function activateEmbeddedAssetsInTransaction(
   const activeCovers = await requestToPromise<StoredBookAsset[]>(
     store.index('bookId_kind_status').getAll([input.bookId, 'cover', 'active']),
   );
-  const preservedCover = input.preserveExisting
-    ? activeCovers[0]
-    : (activeCovers.find((asset) => asset.provenance === 'user_supplied') ??
-      activeCovers.find((asset) => asset.provenance === 'approved_enrichment'));
+  const preservedCover =
+    input.preserveExisting || input.preserveExistingCover
+      ? activeCovers[0]
+      : (activeCovers.find((asset) => asset.provenance === 'user_supplied') ??
+        activeCovers.find((asset) => asset.provenance === 'approved_enrichment'));
   if (!preservedCover) {
     activeCovers.forEach((asset) => {
       if (!incomingIds.has(asset.id)) store.put({ ...asset, status: 'superseded' } satisfies StoredBookAsset);

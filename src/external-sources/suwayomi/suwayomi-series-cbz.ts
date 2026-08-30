@@ -10,6 +10,7 @@ export interface SuwayomiSeriesChapterInput {
   readonly release: ExternalSourceReleaseDescriptor;
   readonly remoteRevision?: string;
   readonly sourceContentHash: string;
+  readonly expectedPreviousSourceContentHash?: string;
   readonly file: Blob;
   /** Request-scoped only; used by local archive imports and never written to the manifest. */
   readonly archivePassword?: string;
@@ -17,6 +18,7 @@ export interface SuwayomiSeriesChapterInput {
 
 export interface SuwayomiSeriesArchiveInput {
   readonly collection: ExternalSourceCollectionDescriptor;
+  readonly targetBookId?: string;
   readonly chapters: readonly SuwayomiSeriesChapterInput[];
   readonly existingArchive?: Blob;
   readonly existingLegacyChapter?: Omit<SuwayomiSeriesChapterInput, 'file'>;

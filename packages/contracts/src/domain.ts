@@ -232,6 +232,9 @@ export interface Chapter {
   documentSectionTitle?: string;
   documentSectionIndex?: number;
   documentPageIndexInSection?: number;
+  /** Original release bytes identity used for local duplicate/conflict checks. */
+  documentSectionSourceContentHash?: string;
+  documentSectionRemoteRevision?: string;
   /** Last time this exact logical fixed-document section was opened by the current user. */
   documentSectionReadAt?: string;
   createdAt: string;

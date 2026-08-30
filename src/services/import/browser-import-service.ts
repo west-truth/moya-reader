@@ -37,6 +37,8 @@ export async function assertLocalImportCapacity(fileSize: number): Promise<void>
 export class BrowserImportService implements ImportService {
   readonly supportsArchivePassword = true;
   readonly supportsExpectedNormalizedTextHash = true;
+  readonly supportsExpectedSourceContentHash = true;
+  readonly supportsIncrementalImageSeriesAppend = true;
 
   importFile(input: ImportFileInput, onProgress: (progress: ImportProgress) => void): ImportController {
     const jobId = stableId('import', `${input.file.name}:${input.file.size}:${Date.now()}`, 12);
@@ -110,6 +112,9 @@ export class BrowserImportService implements ImportService {
             encoding: input.encoding,
             chapterSplitMode: input.chapterSplitMode ?? 'auto',
             clientBookId: input.clientBookId,
+            importMode: input.importMode,
+            baseActiveContentRevisionId: input.baseActiveContentRevisionId,
+            expectedSourceContentHash: input.expectedSourceContentHash,
             expectedNormalizedTextHash: input.expectedNormalizedTextHash,
             archivePassword: input.archivePassword,
           });

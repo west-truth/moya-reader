@@ -14,6 +14,8 @@ export interface RemoteUploadStatus {
   fileName?: string;
   sizeBytes: number;
   chapterSplitMode?: ChapterSplitMode;
+  importMode?: 'replace_book' | 'append_image_series';
+  baseActiveContentRevisionId?: string;
   status: string;
   totalChunks?: number | null;
   expectedBytes: number;

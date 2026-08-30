@@ -420,6 +420,7 @@ async function createStagingContentRevision(input: {
   sourceRevision?: string;
   sourceHash?: string;
   expected: ContentRevisionExpectedCounts;
+  expectedBaseActiveContentRevisionId?: string;
   appendDelta?: {
     baseRevision: BookContentRevisionRecord;
     logicalCounts: StoredContentRevisionCounts;
@@ -457,6 +458,7 @@ async function activateStagedContentRevision(input: {
   sourceAssetId?: string;
   embeddedAssetIds?: readonly string[];
   preserveExistingEmbeddedAssets?: boolean;
+  preserveExistingCover?: boolean;
 }): Promise<void> {
   return activateStoredContentRevision(await openReaderDb(), {
     revision: input.revision,
@@ -467,6 +469,7 @@ async function activateStagedContentRevision(input: {
     sourceAssetId: input.sourceAssetId,
     embeddedAssetIds: input.embeddedAssetIds,
     preserveExistingEmbeddedAssets: input.preserveExistingEmbeddedAssets,
+    preserveExistingCover: input.preserveExistingCover,
     queueBookImported: input.emitBookImported
       ? async (tx, novel) => {
           await queueSyncEventInTransaction(tx, 'book_imported', jsonValue({ novel }), {
@@ -1755,6 +1758,7 @@ async function stageAndActivateImportedNovel(input: {
     source: 'local_import',
     sourceHash: input.novel.rawTextHash || input.novel.normalizedTextHash,
     expected,
+    expectedBaseActiveContentRevisionId: input.options.expectedBaseActiveContentRevisionId,
     appendDelta: appendDelta
       ? { baseRevision: appendDelta.baseRevision, logicalCounts: appendDelta.logicalCounts }
       : undefined,
@@ -1838,7 +1842,8 @@ async function stageAndActivateImportedNovel(input: {
           shouldCancel: input.options.shouldCancel,
           sourceAssetId: stagedSourceAssetId,
           embeddedAssetIds: stagedEmbeddedAssetIds,
-          preserveExistingEmbeddedAssets: Boolean(appendDelta),
+          preserveExistingEmbeddedAssets: Boolean(appendDelta) || input.options.preserveExistingEmbeddedAssets,
+          preserveExistingCover: input.options.preserveExistingCover,
         }),
       input.options.shouldCancel,
     );

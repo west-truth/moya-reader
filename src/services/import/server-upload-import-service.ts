@@ -49,6 +49,8 @@ export interface StoredUploadSession {
   lastModified: number;
   encoding: ImportFileInput['encoding'];
   chapterSplitMode?: NonNullable<ImportFileInput['chapterSplitMode']>;
+  importMode?: NonNullable<ImportFileInput['importMode']>;
+  baseActiveContentRevisionId?: string;
   clientBookId?: string;
   chunkBytes: number;
   totalChunks: number;
@@ -157,6 +159,8 @@ function uploadSessionKey(
     sourceContentHash,
   ];
   if (input.clientBookId) parts.push(input.clientBookId);
+  parts.push(input.importMode ?? 'replace_book');
+  if (input.baseActiveContentRevisionId) parts.push(input.baseActiveContentRevisionId);
   return parts.map((part) => encodeURIComponent(part)).join('|');
 }
 
@@ -223,6 +227,7 @@ class BrowserRemoteUploadSessionStore implements RemoteUploadSessionStore {
 
 export class ServerUploadImportService implements ImportService {
   readonly supportsExpectedSourceContentHash = true;
+  readonly supportsIncrementalImageSeriesAppend = true;
   constructor(
     private readonly client: RemoteApiClient,
     private readonly chunkBytes = DEFAULT_SERVER_UPLOAD_CHUNK_BYTES,
@@ -283,6 +288,13 @@ export class ServerUploadImportService implements ImportService {
         paragraphsWritten: 0,
         message: '서버 업로드를 준비하고 있습니다.',
       });
+
+      if (
+        input.importMode === 'append_image_series' &&
+        (!input.clientBookId?.trim() || !input.baseActiveContentRevisionId?.trim())
+      ) {
+        throw new Error('만화 회차 증분 업로드에 작품과 기준 본문 revision이 필요합니다.');
+      }
 
       const suppliedSourceHash = input.expectedSourceContentHash?.trim().toLocaleLowerCase();
       if (suppliedSourceHash && !/^sha256:[a-f0-9]{64}$/u.test(suppliedSourceHash)) {
@@ -487,12 +499,25 @@ export class ServerUploadImportService implements ImportService {
         contentType: input.file.type || 'text/plain',
         encoding: input.encoding,
         chapterSplitMode: input.chapterSplitMode ?? 'auto',
+        importMode: input.importMode ?? 'replace_book',
+        baseActiveContentRevisionId: input.baseActiveContentRevisionId,
         totalChunks,
         clientBookId: input.clientBookId,
         sourceContentHash,
       },
       signal,
     );
+    let verifiedStatus: RemoteUploadStatus | undefined;
+    if (input.importMode === 'append_image_series') {
+      verifiedStatus = await this.client.getUpload(upload.uploadId, signal);
+      if (
+        verifiedStatus.importMode !== 'append_image_series' ||
+        verifiedStatus.baseActiveContentRevisionId !== input.baseActiveContentRevisionId
+      ) {
+        await this.client.cancelUpload(upload.uploadId).catch(() => undefined);
+        throw new Error('연결된 서버가 만화 회차 증분 업로드를 지원하지 않습니다. 서버를 먼저 업데이트해 주세요.');
+      }
+    }
     const now = new Date().toISOString();
     this.uploadSessionStore.write(sessionKey, {
       uploadId: upload.uploadId,
@@ -501,6 +526,8 @@ export class ServerUploadImportService implements ImportService {
       lastModified: fileLastModified(input.file),
       encoding: input.encoding,
       chapterSplitMode: input.chapterSplitMode ?? 'auto',
+      importMode: input.importMode ?? 'replace_book',
+      baseActiveContentRevisionId: input.baseActiveContentRevisionId,
       clientBookId: input.clientBookId,
       chunkBytes: this.chunkBytes,
       totalChunks,
@@ -508,7 +535,7 @@ export class ServerUploadImportService implements ImportService {
       createdAt: now,
       updatedAt: now,
     });
-    return { uploadId: upload.uploadId, sessionKey };
+    return { uploadId: upload.uploadId, sessionKey, status: verifiedStatus };
   }
 
   private canResumeStoredUpload(
@@ -524,6 +551,8 @@ export class ServerUploadImportService implements ImportService {
       stored.sourceContentHash === sourceContentHash &&
       status.sourceContentHash === sourceContentHash &&
       status.fileName === input.file.name &&
+      (status.importMode ?? 'replace_book') === (input.importMode ?? 'replace_book') &&
+      (status.baseActiveContentRevisionId ?? undefined) === (input.baseActiveContentRevisionId ?? undefined) &&
       status.expectedBytes === input.file.size &&
       status.expectedChunks === totalChunks &&
       (status.totalChunks === undefined || status.totalChunks === null || status.totalChunks === totalChunks)
@@ -547,6 +576,8 @@ export class ServerUploadImportService implements ImportService {
       stored.sourceContentHash === sourceContentHash &&
       status.sourceContentHash === sourceContentHash &&
       status.fileName === input.file.name &&
+      (status.importMode ?? 'replace_book') === (input.importMode ?? 'replace_book') &&
+      (status.baseActiveContentRevisionId ?? undefined) === (input.baseActiveContentRevisionId ?? undefined) &&
       status.expectedBytes === input.file.size &&
       status.expectedChunks === totalChunks &&
       (status.totalChunks === undefined || status.totalChunks === null || status.totalChunks === totalChunks)

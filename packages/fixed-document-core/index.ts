@@ -87,6 +87,8 @@ export interface MoyaSeriesManifestChapter {
   readonly title: string;
   readonly chapterNumber?: number;
   readonly sourceOrder?: number;
+  readonly remoteRevision?: string;
+  readonly sourceContentHash?: string;
   readonly pageCount: number;
   readonly entryNames: readonly string[];
 }
@@ -142,7 +144,12 @@ function parseMoyaSeriesManifest(text: string): MoyaSeriesManifest {
     !Array.isArray(manifest.chapters) ||
     !manifest.chapters.every(
       (chapter) =>
-        Boolean(chapter?.remoteId && chapter.title) &&
+        typeof chapter?.remoteId === 'string' &&
+        Boolean(chapter.remoteId) &&
+        typeof chapter.title === 'string' &&
+        Boolean(chapter.title) &&
+        (chapter.remoteRevision === undefined || typeof chapter.remoteRevision === 'string') &&
+        (chapter.sourceContentHash === undefined || typeof chapter.sourceContentHash === 'string') &&
         Number.isInteger(chapter.pageCount) &&
         chapter.pageCount > 0 &&
         Array.isArray(chapter.entryNames) &&
@@ -1197,6 +1204,8 @@ function materializeFixedImport(input: {
       documentSectionTitle: location?.section.title,
       documentSectionIndex: location ? location.sectionIndex + 1 : undefined,
       documentPageIndexInSection: location ? location.pageIndexInSection + 1 : undefined,
+      documentSectionSourceContentHash: location?.section.sourceContentHash,
+      documentSectionRemoteRevision: location?.section.remoteRevision,
       createdAt: now,
       updatedAt: now,
     };

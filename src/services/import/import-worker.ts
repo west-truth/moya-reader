@@ -14,6 +14,9 @@ interface StartMessage {
   encoding: EncodingMode;
   chapterSplitMode?: ChapterSplitMode;
   clientBookId?: string;
+  importMode?: 'replace_book' | 'append_image_series';
+  baseActiveContentRevisionId?: string;
+  expectedSourceContentHash?: string;
   expectedNormalizedTextHash?: string;
   archivePassword?: string;
 }
@@ -96,6 +99,9 @@ async function runImport(message: StartMessage): Promise<void> {
       encoding,
       chapterSplitMode: message.chapterSplitMode ?? 'auto',
       clientBookId: message.clientBookId,
+      importMode: message.importMode,
+      baseActiveContentRevisionId: message.baseActiveContentRevisionId,
+      expectedSourceContentHash: message.expectedSourceContentHash,
       expectedNormalizedTextHash: message.expectedNormalizedTextHash,
       archivePassword: message.archivePassword,
       shouldCancel: () => cancelled && activeJobId === jobId,

@@ -7,8 +7,9 @@ import {
   ZipWriter,
   type FileEntry,
 } from '@zip.js/zip.js';
+import { materializeImageArchiveImport, parseImageArchive } from '@noveldesk/fixed-document-core';
 import { describe, expect, it, vi } from 'vitest';
-import type { Novel } from '../../domain/types';
+import type { Chapter, Novel } from '../../domain/types';
 import type { BookAssetRepository } from '../../repositories/book-asset-repository';
 import {
   buildLocalSeriesImportFile,
@@ -24,7 +25,7 @@ const PNG_1X1 = Uint8Array.from(
 async function chapter(name: string, pages = 1): Promise<File> {
   const writer = new ZipWriter(new BlobWriter('application/vnd.comicbook+zip'));
   for (let index = 0; index < pages; index += 1) {
-    await writer.add(`${String(index + 1).padStart(3, '0')}.png`, new Uint8ArrayReader(PNG_1X1));
+    await writer.add(`${name}-${String(index + 1).padStart(3, '0')}.png`, new Uint8ArrayReader(PNG_1X1));
   }
   return new File([await writer.close()], name, { type: 'application/vnd.comicbook+zip' });
 }
@@ -117,6 +118,65 @@ describe('local series import', () => {
     } as unknown as BookAssetRepository;
 
     await expect(planLocalSeriesImport(selected!, novel(), assets)).resolves.toMatchObject({
+      addCount: 0,
+      duplicateCount: 1,
+      conflictCount: 0,
+    });
+  });
+
+  it('keeps exact duplicate detection when the local runtime plans a delta without exporting the aggregate', async () => {
+    const source = await chapter('서른의 봄 1화.cbz');
+    const inspection = await inspectLocalSeriesImport([source], [novel()]);
+    const release = inspection!.releases[0]!;
+    const existingChapter = {
+      id: 'fixed-page-1',
+      novelId: 'book-1',
+      index: 1,
+      title: '1화 · 1페이지',
+      documentSectionId: release.id,
+      documentSectionTitle: release.parsed.releaseTitle,
+      documentSectionSourceContentHash: release.contentHash,
+    } as Chapter;
+
+    await expect(
+      planLocalSeriesImport(inspection!, novel(), undefined, {
+        incrementalAppend: true,
+        existingChapters: [existingChapter],
+      }),
+    ).resolves.toMatchObject({
+      addCount: 0,
+      duplicateCount: 1,
+      conflictCount: 0,
+      incrementalAppend: true,
+    });
+  });
+
+  it('materializes the release hash needed to detect a duplicate after a real fixed-document import', async () => {
+    const source = await chapter('서른의 봄 1화.cbz');
+    const firstInspection = await inspectLocalSeriesImport([source], []);
+    const aggregate = await buildLocalSeriesImportFile(
+      await planLocalSeriesImport(firstInspection!, undefined, undefined),
+      new AbortController().signal,
+    );
+    const aggregateBytes = new Uint8Array(await aggregate!.arrayBuffer());
+    const document = await parseImageArchive(aggregate!);
+    const imported = materializeImageArchiveImport({
+      fileName: aggregate!.name,
+      sourceBytes: aggregateBytes,
+      document,
+      clientBookId: 'book-1',
+    });
+    const duplicateInspection = await inspectLocalSeriesImport([source], [imported.novel]);
+
+    expect(imported.chapters[0]).toMatchObject({
+      documentSectionSourceContentHash: firstInspection!.releases[0]!.contentHash,
+    });
+    await expect(
+      planLocalSeriesImport(duplicateInspection!, imported.novel, undefined, {
+        incrementalAppend: true,
+        existingChapters: imported.chapters,
+      }),
+    ).resolves.toMatchObject({
       addCount: 0,
       duplicateCount: 1,
       conflictCount: 0,

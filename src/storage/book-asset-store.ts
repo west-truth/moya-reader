@@ -212,6 +212,47 @@ export async function exportBookSource(bookId: string): Promise<ExportedBookSour
   return stored ? { metadata, blob: stored.blob } : undefined;
 }
 
+export interface ActiveBookSourceSnapshot extends ExportedBookSource {
+  readonly novel: Novel;
+}
+
+/**
+ * Reads the active content/source pointers and the exact source blob from one
+ * IndexedDB snapshot. Delta imports must not combine a newer Novel row with an
+ * older source lookup performed in a separate transaction.
+ */
+export async function getActiveBookSourceSnapshot(bookId: string): Promise<ActiveBookSourceSnapshot | undefined> {
+  const db = await openReaderDb();
+  const tx = db.transaction(['novels', BOOK_ASSET_STORES.assets, BOOK_ASSET_STORES.blobs], 'readonly');
+  const novel = await requestToPromise<Novel | undefined>(tx.objectStore('novels').get(bookId));
+  const metadata = novel?.sourceAssetId
+    ? await requestToPromise<StoredBookAsset | undefined>(
+        tx.objectStore(BOOK_ASSET_STORES.assets).get(novel.sourceAssetId),
+      )
+    : undefined;
+  const stored = metadata
+    ? await requestToPromise<StoredBookAssetBlob | undefined>(
+        tx.objectStore(BOOK_ASSET_STORES.blobs).get(metadata.storageKey),
+      )
+    : undefined;
+  await transactionDone(tx);
+  if (
+    !novel?.activeContentRevisionId ||
+    !metadata ||
+    !stored ||
+    metadata.bookId !== novel.id ||
+    metadata.kind !== 'source' ||
+    metadata.status !== 'active' ||
+    metadata.contentRevisionId !== novel.activeContentRevisionId ||
+    metadata.contentHash.toLocaleLowerCase() !== stored.contentHash.toLocaleLowerCase() ||
+    (novel.sourceContentHash &&
+      novel.sourceContentHash.toLocaleLowerCase() !== metadata.contentHash.toLocaleLowerCase())
+  ) {
+    return undefined;
+  }
+  return { novel, metadata, blob: stored.blob };
+}
+
 export async function getActiveBookCover(bookId: string): Promise<ExportedBookCover | undefined> {
   const db = await openReaderDb();
   const tx = db.transaction([BOOK_ASSET_STORES.assets, BOOK_ASSET_STORES.blobs], 'readonly');

@@ -15,6 +15,7 @@ await build({
     '@noveldesk/contracts': '../../packages/contracts/index.ts',
     '@noveldesk/document-series-core': '../../packages/document-series-core/index.ts',
     '@noveldesk/epub-core': '../../packages/epub-core/index.ts',
+    '@noveldesk/fixed-document-core/series-image-archive': '../../packages/fixed-document-core/series-image-archive.ts',
     '@noveldesk/fixed-document-core': '../../packages/fixed-document-core/index.ts',
     '@noveldesk/text-core/hash': '../../packages/text-core/hash.ts',
     '@noveldesk/text-core/legacy-hash': '../../packages/text-core/legacy-hash.ts',

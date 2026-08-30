@@ -32,12 +32,14 @@ import {
 } from '../../external-sources/local-state';
 import type { ImportController, ImportProgress, ImportService } from '../../services/import/import-service';
 import { hashBlobInChunks } from '../../services/import/chunked-file-reader';
+import { readSeriesImageArchiveManifest } from '../../services/import/series-image-archive';
 import type { BookAssetRepository } from '../../repositories/book-asset-repository';
 import type { ToastTone } from '../../shared/ui/ToastHost';
 import type { SuwayomiSeriesChapterInput } from '../../external-sources/suwayomi/suwayomi-series-cbz';
 import {
   acquireExternalSourcePendingLinks,
   finalizeExternalSourceLinks,
+  finalizeImporterResolvedExternalSourceLinks,
   reconcilePendingExternalSourceLinks,
   restoreExternalSourceLinks,
   saveExternalSourceLinks,
@@ -52,6 +54,39 @@ import {
 
 const CACHE_TTL_MS = 15 * 60 * 1_000;
 const MAX_SOURCE_COVER_BYTES = 8 * 1024 * 1024;
+
+function normalizedSourceHash(value: string | undefined): string | undefined {
+  return value
+    ?.replace(/^sha256:/iu, '')
+    .trim()
+    .toLocaleLowerCase();
+}
+
+async function importerResolvedSeriesIsActive(
+  assets: BookAssetRepository | undefined,
+  staged: readonly ExternalSourceLink[],
+  novel: Novel,
+): Promise<boolean | undefined> {
+  if (!assets) return undefined;
+  if (!novel.activeContentRevisionId || !novel.sourceContentHash) return false;
+  const source = await assets.exportSource(novel.id);
+  if (!source || normalizedSourceHash(source.metadata.contentHash) !== normalizedSourceHash(novel.sourceContentHash)) {
+    return false;
+  }
+  const manifest = await readSeriesImageArchiveManifest(source.blob);
+  if (!manifest) return false;
+  const sections = new Map(manifest.chapters.map((chapter) => [chapter.remoteId, chapter]));
+  return staged.every((link) => {
+    const pending = link.pendingImport;
+    const section = sections.get(link.source.remoteId);
+    return Boolean(
+      pending?.sourceHashResolvedByImporter &&
+      section &&
+      (!pending.collectionRemoteId || pending.collectionRemoteId === manifest.collection.remoteId) &&
+      normalizedSourceHash(pending.importedSourceContentHash) === normalizedSourceHash(section.sourceContentHash),
+    );
+  });
+}
 
 type SerialItemSummary = ExternalItemSummary & Required<Pick<ExternalItemSummary, 'collection' | 'release'>>;
 type SerialSourceItem = ExternalSourceItemView & SerialItemSummary;
@@ -452,6 +487,11 @@ export function useExternalSourceController(options: UseExternalSourceController
           optionsRef.current.state,
           nextLinks,
           nextNovels,
+          Date.now(),
+          {
+            resolveImporterApplied: (staged, novel) =>
+              importerResolvedSeriesIsActive(optionsRef.current.assets, staged, novel),
+          },
         ).catch(() => nextLinks);
         if (!current || !mountedRef.current) return;
         setSubscriptions(records);
@@ -495,6 +535,11 @@ export function useExternalSourceController(options: UseExternalSourceController
       optionsRef.current.state,
       nextLinks,
       nextNovels,
+      Date.now(),
+      {
+        resolveImporterApplied: (staged, novel) =>
+          importerResolvedSeriesIsActive(optionsRef.current.assets, staged, novel),
+      },
     ).catch(() => nextLinks);
     if (!mountedRef.current) return;
     setLinks(reconciledLinks);
@@ -1135,10 +1180,18 @@ export function useExternalSourceController(options: UseExternalSourceController
         const existingNovel = existingLocalBookId
           ? knownNovels.find((novel) => novel.id === existingLocalBookId)
           : undefined;
-        const existingSource = existingLocalBookId
-          ? await optionsRef.current.assets?.exportSource(existingLocalBookId)
-          : undefined;
-        if (existingLocalBookId && !existingSource) {
+        const incrementalSeriesAppend = Boolean(
+          optionsRef.current.importService.supportsIncrementalImageSeriesAppend &&
+          existingNovel?.format === 'image_archive' &&
+          existingNovel.activeContentRevisionId &&
+          (existingNovel.documentSectionCount ?? 0) > 0 &&
+          relatedLinks.some((link) => link.collectionRemoteId === collection.remoteId),
+        );
+        const existingSource =
+          existingLocalBookId && !incrementalSeriesAppend
+            ? await optionsRef.current.assets?.exportSource(existingLocalBookId)
+            : undefined;
+        if (existingLocalBookId && !incrementalSeriesAppend && !existingSource) {
           throw new Error('기존 연재 작품의 원본을 찾지 못해 회차를 안전하게 합칠 수 없습니다.');
         }
         const legacyLink = relatedLinks.find(
@@ -1221,6 +1274,7 @@ export function useExternalSourceController(options: UseExternalSourceController
             release: item.release,
             remoteRevision: downloaded.remoteRevision ?? item.remoteRevision,
             sourceContentHash: sourceHash,
+            expectedPreviousSourceContentHash: existingLink?.importedSourceContentHash,
             file: downloaded.file,
           });
           changedCount += 1;
@@ -1239,12 +1293,13 @@ export function useExternalSourceController(options: UseExternalSourceController
           const { buildSuwayomiSeriesArchive } = await import('../../external-sources/suwayomi/suwayomi-series-cbz');
           const aggregate = await buildSuwayomiSeriesArchive({
             collection,
+            targetBookId: incrementalSeriesAppend ? existingLocalBookId : undefined,
             chapters: downloadedChapters,
-            existingArchive: existingSource?.blob,
-            existingLegacyChapter,
+            existingArchive: incrementalSeriesAppend ? undefined : existingSource?.blob,
+            existingLegacyChapter: incrementalSeriesAppend ? undefined : existingLegacyChapter,
             signal: abort.signal,
           });
-          const expectedActiveSourceContentHash = await hashBlobInChunks(aggregate, {
+          const uploadedSourceContentHash = await hashBlobInChunks(aggregate, {
             shouldCancel: () => abort.signal.aborted,
           });
           const localBookId =
@@ -1263,7 +1318,8 @@ export function useExternalSourceController(options: UseExternalSourceController
                   stagedAt,
                   hadExistingLink: true,
                   previousActiveContentRevisionId: existingNovel?.activeContentRevisionId,
-                  expectedActiveSourceContentHash,
+                  expectedActiveSourceContentHash: uploadedSourceContentHash,
+                  sourceHashResolvedByImporter: incrementalSeriesAppend || undefined,
                   collectionRemoteId: collection.remoteId,
                   importedRemoteRevision: link.importedRemoteRevision,
                   importedSourceContentHash: link.importedSourceContentHash,
@@ -1285,7 +1341,8 @@ export function useExternalSourceController(options: UseExternalSourceController
                 stagedAt,
                 hadExistingLink: Boolean(existingLink),
                 previousActiveContentRevisionId: existingNovel?.activeContentRevisionId,
-                expectedActiveSourceContentHash,
+                expectedActiveSourceContentHash: uploadedSourceContentHash,
+                sourceHashResolvedByImporter: incrementalSeriesAppend || undefined,
                 collectionRemoteId: collection.remoteId,
                 importedRemoteRevision: remoteRevision,
                 importedSourceContentHash: sourceHash,
@@ -1302,8 +1359,14 @@ export function useExternalSourceController(options: UseExternalSourceController
               encoding: 'auto',
               chapterSplitMode: 'auto',
               clientBookId: localBookId,
+              ...(incrementalSeriesAppend
+                ? {
+                    importMode: 'append_image_series' as const,
+                    baseActiveContentRevisionId: existingNovel?.activeContentRevisionId,
+                  }
+                : {}),
               ...(optionsRef.current.importService.supportsExpectedSourceContentHash
-                ? { expectedSourceContentHash: expectedActiveSourceContentHash }
+                ? { expectedSourceContentHash: uploadedSourceContentHash }
                 : {}),
             },
             (progressDetail) => {
@@ -1333,7 +1396,9 @@ export function useExternalSourceController(options: UseExternalSourceController
         const linkedAt = currentIso();
         let nextLinks: readonly ExternalSourceLink[];
         if (stagedLinks.length > 0) {
-          nextLinks = await finalizeExternalSourceLinks(optionsRef.current.state, stagedLinks, importedNovel);
+          nextLinks = incrementalSeriesAppend
+            ? await finalizeImporterResolvedExternalSourceLinks(optionsRef.current.state, stagedLinks, importedNovel)
+            : await finalizeExternalSourceLinks(optionsRef.current.state, stagedLinks, importedNovel);
         } else {
           const byKey = new Map<string, ExternalSourceLink>();
           relatedLinks

@@ -34,7 +34,18 @@ export interface ImportFileInput {
   encoding: EncodingMode;
   chapterSplitMode?: ChapterSplitMode;
   clientBookId?: string;
-  /** Exact source hash already computed by a trusted caller. The Hosted server still verifies the uploaded bytes. */
+  /**
+   * The input contains only new or changed image-series sections. Supporting
+   * local and Hosted boundaries merge it with the latest canonical aggregate
+   * before their normal atomic replacement path.
+   */
+  importMode?: 'replace_book' | 'append_image_series';
+  /**
+   * Required with `append_image_series`. Supporting boundaries may merge new
+   * sections over a newer base, but reject stale replacements of an existing section.
+   */
+  baseActiveContentRevisionId?: string;
+  /** Exact source hash already computed by a trusted caller. Supporting boundaries still verify the supplied bytes. */
   expectedSourceContentHash?: string;
   /**
    * Optional pre-activation fence used by trusted restore paths. Supporting
@@ -60,6 +71,7 @@ export interface ImportService {
   readonly supportsArchivePassword?: boolean;
   readonly supportsExpectedNormalizedTextHash?: boolean;
   readonly supportsExpectedSourceContentHash?: boolean;
+  readonly supportsIncrementalImageSeriesAppend?: boolean;
   importFile(input: ImportFileInput, onProgress: (progress: ImportProgress) => void): ImportController;
 }
 

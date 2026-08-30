@@ -190,6 +190,8 @@ describe('upload routes', () => {
           'novel_local_1',
           3,
           undefined,
+          'replace_book',
+          undefined,
         ]);
         return { rows: [] };
       }),
@@ -215,6 +217,95 @@ describe('upload routes', () => {
     expect(response.statusCode).toBe(200);
     expect(response.json().uploadId).toMatch(/^upload_/);
 
+    await app.close();
+  });
+
+  it('stores an image-series append upload with its optimistic base revision', async () => {
+    const sourceContentHash = `sha256:${'a'.repeat(64)}`;
+    const pool = {
+      query: vi.fn(async (_sql: string, params?: unknown[]) => {
+        expect(params).toEqual([
+          expect.stringMatching(/^upload_/),
+          'user_test',
+          '새 회차.cbz',
+          321,
+          'application/vnd.comicbook+zip',
+          'auto',
+          'auto',
+          undefined,
+          'book_series_1',
+          1,
+          sourceContentHash,
+          'append_image_series',
+          'content_revision_7',
+        ]);
+        return { rows: [] };
+      }),
+    } as unknown as pg.Pool;
+    const app = await appWithUploads(pool, { add: vi.fn() } as unknown as Queue);
+
+    const response = await app.inject({
+      method: 'POST',
+      url: '/api/uploads/init',
+      payload: {
+        fileName: '새 회차.cbz',
+        sizeBytes: 321,
+        contentType: 'application/vnd.comicbook+zip',
+        clientBookId: 'book_series_1',
+        sourceContentHash,
+        importMode: 'append_image_series',
+        baseActiveContentRevisionId: 'content_revision_7',
+        totalChunks: 1,
+      },
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json().uploadId).toMatch(/^upload_/);
+    await app.close();
+  });
+
+  it('rejects an image-series append without a target book and verified delta hash', async () => {
+    const pool = { query: vi.fn() } as unknown as pg.Pool;
+    const app = await appWithUploads(pool, { add: vi.fn() } as unknown as Queue);
+
+    const response = await app.inject({
+      method: 'POST',
+      url: '/api/uploads/init',
+      payload: {
+        fileName: '새 회차.cbz',
+        sizeBytes: 321,
+        importMode: 'append_image_series',
+        totalChunks: 1,
+      },
+    });
+
+    expect(response.statusCode).toBe(400);
+    expect(response.json().error).toContain('clientBookId and sourceContentHash');
+    expect(pool.query).not.toHaveBeenCalled();
+    await app.close();
+  });
+
+  it('rejects an otherwise valid image-series append without its optimistic base revision', async () => {
+    const pool = { query: vi.fn() } as unknown as pg.Pool;
+    const app = await appWithUploads(pool, { add: vi.fn() } as unknown as Queue);
+
+    const response = await app.inject({
+      method: 'POST',
+      url: '/api/uploads/init',
+      payload: {
+        fileName: '새 회차.cbz',
+        sizeBytes: 321,
+        contentType: 'application/vnd.comicbook+zip',
+        clientBookId: 'book_series_1',
+        sourceContentHash: `sha256:${'a'.repeat(64)}`,
+        importMode: 'append_image_series',
+        totalChunks: 1,
+      },
+    });
+
+    expect(response.statusCode).toBe(400);
+    expect(response.json().error).toContain('baseActiveContentRevisionId');
+    expect(pool.query).not.toHaveBeenCalled();
     await app.close();
   });
 

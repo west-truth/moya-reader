@@ -2,7 +2,7 @@ import { readFile } from 'node:fs/promises';
 import { randomUUID } from 'node:crypto';
 import pg from 'pg';
 import { ServerConfig } from '../config.js';
-import { createS3Client, putRawBookObject } from './object-storage.js';
+import { createS3Client, getObjectBuffer, putRawBookObject } from './object-storage.js';
 import { parseNovelFileForImport } from '@noveldesk/text-core/parser';
 import { materializeEpubImport, parseEpub } from '@noveldesk/epub-core';
 import { hasDocumentSeriesManifest, materializeDocumentSeriesArchive } from '@noveldesk/document-series-core';
@@ -37,6 +37,7 @@ import {
   releaseObjectDeletionReservations,
   reserveObjectDeletions,
 } from './object-delete-outbox.js';
+import { mergeSeriesImageArchiveDelta } from '@noveldesk/fixed-document-core/series-image-archive';
 
 const PARAGRAPHS_PER_PAGE = 120;
 const SERVER_IMPORT_CHAPTER_BATCH_SIZE = 100;
@@ -63,6 +64,18 @@ interface UploadSessionRow {
   total_chunks: number | null;
   client_book_id?: string | null;
   source_content_hash?: string | null;
+  import_mode?: 'replace_book' | 'append_image_series';
+  base_active_content_revision_id?: string | null;
+}
+
+interface ImageSeriesAppendBaseRow {
+  readonly id: string;
+  readonly format: string;
+  readonly active_content_revision_id: string;
+  readonly source_file_name: string;
+  readonly storage_key: string;
+  readonly content_type: string;
+  readonly total_chapters: number | string;
 }
 
 interface UploadChunkRow {
@@ -619,6 +632,107 @@ export function arrayBufferFromBuffer(buffer: Buffer): ArrayBuffer {
   return buffer.buffer.slice(buffer.byteOffset, buffer.byteOffset + buffer.byteLength) as ArrayBuffer;
 }
 
+async function lockImageSeriesAppend(pool: pg.Pool, bookId: string): Promise<pg.PoolClient> {
+  const client = await pool.connect();
+  try {
+    await client.query('select pg_advisory_lock(hashtextextended($1, 7319))', [bookId]);
+    return client;
+  } catch (error) {
+    client.release();
+    throw error;
+  }
+}
+
+async function unlockImageSeriesAppend(client: pg.PoolClient, bookId: string): Promise<void> {
+  try {
+    await client.query('select pg_advisory_unlock(hashtextextended($1, 7319))', [bookId]);
+  } finally {
+    client.release();
+  }
+}
+
+async function loadImageSeriesAppendBase(
+  queryable: Queryable,
+  userId: string,
+  bookId: string,
+): Promise<ImageSeriesAppendBaseRow> {
+  const result = await queryable.query<ImageSeriesAppendBaseRow>(
+    `select book.id, book.format, book.active_content_revision_id, book.source_file_name,
+            object.storage_key, object.content_type, book.total_chapters
+       from library_books book
+       join book_objects object on object.id = book.object_id
+      where book.id = $1 and book.user_id = $2 and book.deleted_at is null`,
+    [bookId, userId],
+  );
+  const row = result.rows[0];
+  if (!row) throw new Error('회차를 추가할 기존 만화 작품이나 원본을 찾지 못했습니다.');
+  if (row.format !== 'image_archive') throw new Error('만화 작품에만 회차 delta를 추가할 수 있습니다.');
+  if (!row.active_content_revision_id) throw new Error('기존 만화 작품의 활성 본문 revision을 찾지 못했습니다.');
+  return row;
+}
+
+async function finalizeNoopImageSeriesAppend(
+  client: pg.PoolClient,
+  input: {
+    readonly uploadId: string;
+    readonly jobId: string;
+    readonly bookId: string;
+    readonly userId: string;
+    readonly expectedContentRevisionId: string;
+    readonly bytesRead: number;
+    readonly totalBytes: number;
+    readonly totalChapters: number;
+    readonly attempt: ImportExecutionAttempt;
+  },
+): Promise<void> {
+  await client.query('begin');
+  try {
+    const current = await client.query<{ active_content_revision_id: string }>(
+      `select active_content_revision_id from library_books
+        where id = $1 and user_id = $2 and active_content_revision_id = $3
+        for update`,
+      [input.bookId, input.userId, input.expectedContentRevisionId],
+    );
+    if (!current.rows[0]) throw new Error('image_series_append_base_changed');
+    const activatedUpload = await client.query(
+      `update upload_sessions set status = 'imported', updated_at = now()
+        where id = $1 and status = 'queued'
+          and exists (
+            select 1 from import_jobs
+             where id = $2 and status = 'processing' and cancel_requested_at is null
+               ${input.attempt.executionId ? 'and active_queue_job_id = $3' : ''}
+          )
+        returning id`,
+      input.attempt.executionId
+        ? [input.uploadId, input.jobId, input.attempt.executionId]
+        : [input.uploadId, input.jobId],
+    );
+    if (activatedUpload.rowCount === 0) throw new ImportExecutionStoppedError('cancelled');
+    await client.query('delete from upload_chunks where upload_id = $1', [input.uploadId]);
+    const finalized = await updateImportJobProgress(
+      client,
+      input.jobId,
+      {
+        status: 'done',
+        stage: 'ready',
+        bytesRead: input.bytesRead,
+        totalBytes: input.totalBytes,
+        chaptersDetected: input.totalChapters,
+        paragraphsWritten: 0,
+        message: '이미 반영된 회차입니다.',
+        bookId: input.bookId,
+        errorMessage: null,
+      },
+      input.attempt.executionId,
+    );
+    if (input.attempt.executionId && !finalized) throw new ImportExecutionStoppedError('cancelled');
+    await client.query('commit');
+  } catch (error) {
+    await client.query('rollback');
+    throw error;
+  }
+}
+
 export async function processImportJob(
   pool: pg.Pool,
   config: ServerConfig,
@@ -636,6 +750,7 @@ export async function processImportJob(
     });
   }
 
+  const importAbort = new AbortController();
   const heartbeat = setInterval(() => {
     void pool
       .query(
@@ -643,21 +758,93 @@ export async function processImportJob(
           where id = $1 and status = 'processing'${attempt.executionId ? ' and active_queue_job_id = $2 and cancel_requested_at is null' : ''}`,
         attempt.executionId ? [jobId, attempt.executionId] : [jobId],
       )
+      .then((result) => {
+        if (attempt.executionId && (result.rowCount ?? 0) === 0) importAbort.abort();
+      })
       .catch(() => undefined);
   }, IMPORT_JOB_HEARTBEAT_MS);
   heartbeat.unref();
 
   const uploadedObjectKeys: string[] = [];
   let importCommitted = false;
+  let appendLockClient: pg.PoolClient | undefined;
+  let appendLockBookId: string | undefined;
   try {
     await assertImportExecutionActive(pool, jobId, attempt.executionId);
     const { session, buffer: uploadBuffer } = await readUploadBuffer(pool, uploadId);
     let buffer: Buffer | undefined = uploadBuffer;
     const bytesRead = buffer.length;
     const totalBytes = Number(session.size_bytes);
-    const sourceContentHash = integrityHash(buffer);
-    if (session.source_content_hash && sourceContentHash !== session.source_content_hash) {
+    const uploadedSourceContentHash = integrityHash(buffer);
+    if (session.source_content_hash && uploadedSourceContentHash !== session.source_content_hash) {
       throw new Error('Uploaded source bytes do not match sourceContentHash');
+    }
+    let sourceContentHash = uploadedSourceContentHash;
+    let canonicalFileName = session.file_name;
+    let canonicalContentType = session.content_type;
+    let appendBaseContentRevisionId: string | undefined;
+    let appendNoopTotalChapters = 0;
+    const importMode = session.import_mode ?? 'replace_book';
+    const incrementalImageSeriesAppend = importMode === 'append_image_series';
+    if (incrementalImageSeriesAppend) {
+      const bookId = session.client_book_id?.trim();
+      if (!bookId) throw new Error('회차 delta에 대상 만화 작품 ID가 없습니다.');
+      appendLockBookId = bookId;
+      appendLockClient = await lockImageSeriesAppend(pool, bookId);
+      await assertImportExecutionActive(pool, jobId, attempt.executionId);
+      const appendBase = await loadImageSeriesAppendBase(appendLockClient, session.user_id, bookId);
+      appendBaseContentRevisionId = appendBase.active_content_revision_id;
+      appendNoopTotalChapters = Number(appendBase.total_chapters);
+      const s3Client = createS3Client(config);
+      const existingObject = await getObjectBuffer(s3Client, config, appendBase.storage_key);
+      const merged = await mergeSeriesImageArchiveDelta({
+        existingArchive: new Blob([arrayBufferFromBuffer(existingObject.body)], {
+          type: appendBase.content_type || 'application/vnd.comicbook+zip',
+        }),
+        deltaArchive: new Blob([arrayBufferFromBuffer(buffer)], {
+          type: session.content_type || 'application/vnd.comicbook+zip',
+        }),
+        targetBookId: bookId,
+        signal: importAbort.signal,
+      });
+      if (
+        session.base_active_content_revision_id !== appendBaseContentRevisionId &&
+        merged.replacedSectionIds.length > 0
+      ) {
+        throw new Error('image_series_append_base_changed');
+      }
+      if (merged.changedSectionIds.length === 0) {
+        await finalizeNoopImageSeriesAppend(appendLockClient, {
+          uploadId,
+          jobId,
+          bookId,
+          userId: session.user_id,
+          expectedContentRevisionId: appendBaseContentRevisionId,
+          bytesRead,
+          totalBytes,
+          totalChapters: appendNoopTotalChapters,
+          attempt,
+        });
+        importCommitted = true;
+        await removeUploadDirectory(config, uploadId);
+        return;
+      }
+      buffer = Buffer.from(await merged.file.arrayBuffer());
+      sourceContentHash = integrityHash(buffer);
+      canonicalFileName = appendBase.source_file_name || merged.file.name;
+      canonicalContentType = appendBase.content_type || merged.file.type || 'application/vnd.comicbook+zip';
+      await updateImportJobProgress(
+        pool,
+        jobId,
+        {
+          status: 'processing',
+          stage: 'decoding',
+          bytesRead,
+          totalBytes,
+          message: `${merged.changedSectionIds.length.toLocaleString()}개 회차를 기존 작품에 반영하는 중입니다.`,
+        },
+        attempt.executionId,
+      );
     }
     await updateImportJobProgress(
       pool,
@@ -675,35 +862,35 @@ export async function processImportJob(
     let arrayBuffer: ArrayBuffer | undefined = arrayBufferFromBuffer(buffer);
     let parsed: ParsedNovelImport;
     const sourceBlob = new Blob([arrayBuffer]);
-    if (/\.zip$/i.test(session.file_name) && (await hasDocumentSeriesManifest(sourceBlob))) {
+    if (/\.zip$/i.test(canonicalFileName) && (await hasDocumentSeriesManifest(sourceBlob))) {
       parsed = await materializeDocumentSeriesArchive(sourceBlob, {
-        fileName: session.file_name,
+        fileName: canonicalFileName,
         clientBookId: session.client_book_id ?? undefined,
         sourceContentHash,
       });
-    } else if (/\.epub$/i.test(session.file_name)) {
+    } else if (/\.epub$/i.test(canonicalFileName)) {
       parsed = materializeEpubImport(await parseEpub(new Blob([arrayBuffer], { type: 'application/epub+zip' })), {
-        fileName: session.file_name,
+        fileName: canonicalFileName,
         sourceBytes: new Uint8Array(arrayBuffer),
         clientBookId: session.client_book_id ?? undefined,
       });
-    } else if (/\.pdf$/i.test(session.file_name)) {
+    } else if (/\.pdf$/i.test(canonicalFileName)) {
       parsed = await materializePdfImport({
-        fileName: session.file_name,
+        fileName: canonicalFileName,
         sourceBytes: new Uint8Array(arrayBuffer),
         clientBookId: session.client_book_id ?? undefined,
       });
-    } else if (/\.(zip|cbz|rar|cbr|7z|cb7)$/i.test(session.file_name)) {
-      const document = await openImageArchiveStream(new Blob([arrayBuffer]), { fileName: session.file_name });
+    } else if (/\.(zip|cbz|rar|cbr|7z|cb7)$/i.test(canonicalFileName)) {
+      const document = await openImageArchiveStream(new Blob([arrayBuffer]), { fileName: canonicalFileName });
       parsed = materializeStreamingImageArchiveImport({
-        fileName: session.file_name,
+        fileName: canonicalFileName,
         sourceContentHash,
         document,
         clientBookId: session.client_book_id ?? undefined,
       });
     } else {
       parsed = rekeyParsedNovelImport(
-        await parseNovelFileForImport(session.file_name, arrayBuffer, session.encoding, {
+        await parseNovelFileForImport(canonicalFileName, arrayBuffer, session.encoding, {
           chapterSplitMode: session.chapter_split_mode ?? 'auto',
         }),
         session.client_book_id,
@@ -726,12 +913,13 @@ export async function processImportJob(
     );
     const rawHash = parsed.novel.rawTextHash;
     const objectId = persistentId128('object', [rawHash]);
-    const storageKey = `${session.user_id}/sources/${objectId}/${jobId}/${attempt.executionId ?? randomUUID()}/attempt-${attempt.attemptNumber}/${session.file_name}`;
+    const storageKey = `${session.user_id}/sources/${objectId}/${jobId}/${attempt.executionId ?? randomUUID()}/attempt-${attempt.attemptNumber}/${canonicalFileName}`;
     const s3Client = createS3Client(config);
+    const canonicalSizeBytes = buffer.length;
 
     await assertImportExecutionActive(pool, jobId, attempt.executionId);
     await reserveObjectDeletions(pool, [storageKey], 'import_source_staging');
-    await putRawBookObject(s3Client, config, storageKey, buffer, session.content_type);
+    await putRawBookObject(s3Client, config, storageKey, buffer, canonicalContentType);
     uploadedObjectKeys.push(storageKey);
     buffer = undefined;
     const storedAssets: Array<Omit<ParsedNovelImportAsset, 'bytes'> & { byteLength: number; storageKey: string }> = [];
@@ -847,9 +1035,19 @@ export async function processImportJob(
     arrayBuffer = undefined;
     await assertImportExecutionActive(pool, jobId, attempt.executionId);
 
-    const client = await pool.connect();
+    const client = appendLockClient ?? (await pool.connect());
+    const releaseTransactionClient = client !== appendLockClient;
     try {
       await client.query('begin');
+      if (appendBaseContentRevisionId) {
+        const currentBase = await client.query<{ id: string }>(
+          `select id from library_books
+            where id = $1 and user_id = $2 and active_content_revision_id = $3 and deleted_at is null
+            for update`,
+          [parsed.novel.id, session.user_id, appendBaseContentRevisionId],
+        );
+        if (!currentBase.rows[0]) throw new Error('image_series_append_base_changed');
+      }
       await client.query('select pg_advisory_xact_lock(hashtextextended($1, 0))', [rawHash]);
       const previousSource = await client.query<{ storage_key: string }>(
         'select storage_key from book_objects where raw_text_hash = $1 for update',
@@ -866,7 +1064,7 @@ export async function processImportJob(
                 content_type = excluded.content_type,
                 size_bytes = excluded.size_bytes
         `,
-        [objectId, rawHash, storageKey, session.file_name, session.content_type, Number(session.size_bytes)],
+        [objectId, rawHash, storageKey, canonicalFileName, canonicalContentType, canonicalSizeBytes],
       );
       const previousBookObject = await client.query<{ object_id?: string | null }>(
         'select object_id from library_books where id = $1 and user_id = $2',
@@ -898,11 +1096,17 @@ export async function processImportJob(
                 total_chapters = excluded.total_chapters,
                 total_characters = excluded.total_characters,
                 total_paragraphs = excluded.total_paragraphs,
-                cover_seed = excluded.cover_seed,
+                cover_seed = case
+                  when $19::text = 'append_image_series' then library_books.cover_seed
+                  else excluded.cover_seed
+                end,
                 document_section_count = excluded.document_section_count,
                 deleted_at = null,
                 deleted_by_device_id = null,
-                metadata_revision = library_books.metadata_revision + 1,
+                metadata_revision = case
+                  when $19::text = 'append_image_series' then library_books.metadata_revision
+                  else library_books.metadata_revision + 1
+                end,
                 updated_at = excluded.updated_at
         `,
         [
@@ -924,6 +1128,7 @@ export async function processImportJob(
           parsed.novel.documentSectionCount ?? null,
           parsed.novel.createdAt,
           parsed.novel.updatedAt,
+          importMode,
         ],
       );
       if (previousBookObject.rows[0]?.object_id && previousBookObject.rows[0].object_id !== objectId) {
@@ -936,14 +1141,15 @@ export async function processImportJob(
         );
         obsoleteSourceKeys.push(...orphanedSource.rows.map((row) => row.storage_key));
       }
-      const activeCover = await client.query<{ provenance: string | null }>(
-        `select asset.provenance
+      const activeCover = await client.query<{ id: string | null; provenance: string | null }>(
+        `select asset.id, asset.provenance
            from library_books book
            left join book_assets asset on asset.id = book.cover_asset_id
           where book.id = $1 and book.user_id = $2`,
         [parsed.novel.id, session.user_id],
       );
       const preserveExistingCover =
+        (incrementalImageSeriesAppend && Boolean(activeCover.rows[0]?.id)) ||
         activeCover.rows[0]?.provenance === 'user_supplied' ||
         activeCover.rows[0]?.provenance === 'approved_enrichment';
       const removedAssets = await client.query<{ storage_key: string }>(
@@ -1122,7 +1328,7 @@ export async function processImportJob(
       await client.query('rollback');
       throw error;
     } finally {
-      client.release();
+      if (releaseTransactionClient) client.release();
     }
     if (importCommitted) await removeUploadDirectory(config, uploadId);
   } catch (error) {
@@ -1177,5 +1383,8 @@ export async function processImportJob(
     throw error;
   } finally {
     clearInterval(heartbeat);
+    if (appendLockClient && appendLockBookId) {
+      await unlockImageSeriesAppend(appendLockClient, appendLockBookId).catch(() => undefined);
+    }
   }
 }

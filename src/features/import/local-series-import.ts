@@ -1,5 +1,5 @@
 import { BlobReader, BlobWriter, ZipReader, type FileEntry } from '@zip.js/zip.js';
-import type { Novel } from '../../domain/types';
+import type { Chapter, Novel } from '../../domain/types';
 import { sha256, stableId } from '../../domain/hash';
 import {
   normalizeSerialWorkKey,
@@ -55,10 +55,20 @@ export interface LocalSeriesImportPlan {
   readonly targetNovel?: Novel;
   readonly targetSource?: ExportedBookSource;
   readonly existingManifest?: SeriesImageArchiveManifest;
+  /**
+   * The selected releases are a self-contained delta for a canonical local
+   * image series. The import boundary owns merging it with the active source.
+   */
+  readonly incrementalAppend?: boolean;
   readonly releases: readonly LocalSeriesPlannedRelease[];
   readonly addCount: number;
   readonly duplicateCount: number;
   readonly conflictCount: number;
+}
+
+export interface PlanLocalSeriesImportOptions {
+  readonly incrementalAppend?: boolean;
+  readonly existingChapters?: readonly Chapter[];
 }
 
 function isArchiveFile(file: File): boolean {
@@ -261,11 +271,19 @@ export async function planLocalSeriesImport(
   inspection: LocalSeriesImportInspection,
   targetNovel: Novel | undefined,
   assets: BookAssetRepository | undefined,
+  options: PlanLocalSeriesImportOptions = {},
 ): Promise<LocalSeriesImportPlan> {
-  const targetSource = targetNovel ? await assets?.exportSource(targetNovel.id) : undefined;
-  if (targetNovel && !targetSource) throw new Error('기존 작품의 원본을 찾지 못해 회차를 안전하게 추가할 수 없습니다.');
+  const incrementalAppend = Boolean(targetNovel && options.incrementalAppend);
+  const targetSource = targetNovel && !incrementalAppend ? await assets?.exportSource(targetNovel.id) : undefined;
+  if (targetNovel && !incrementalAppend && !targetSource) {
+    throw new Error('기존 작품의 원본을 찾지 못해 회차를 안전하게 추가할 수 없습니다.');
+  }
+  if (incrementalAppend && !options.existingChapters?.some((chapter) => chapter.documentSectionId)) {
+    throw new Error('기존 작품의 회차 구조를 확인하지 못해 회차를 안전하게 추가할 수 없습니다.');
+  }
   const existingManifest = targetSource ? await readSeriesImageArchiveManifest(targetSource.blob) : undefined;
   const existingByKey = new Map<string, { title: string; hash?: string }>();
+  const existingByRemoteId = new Map<string, { title: string; hash?: string }>();
   const existingHashes = new Set<string>();
   if (existingManifest) {
     for (const chapter of existingManifest.chapters) {
@@ -278,6 +296,18 @@ export async function planLocalSeriesImport(
     const hash = targetNovel.sourceContentHash ?? targetNovel.rawTextHash;
     existingByKey.set(key, { title: parsed.releaseTitle, hash });
     existingHashes.add(hash.toLocaleLowerCase());
+  } else if (incrementalAppend) {
+    const seenSections = new Set<string>();
+    for (const chapter of options.existingChapters ?? []) {
+      const remoteId = chapter.documentSectionId;
+      if (!remoteId || seenSections.has(remoteId)) continue;
+      seenSections.add(remoteId);
+      const title = chapter.documentSectionTitle ?? chapter.title;
+      const hash = chapter.documentSectionSourceContentHash;
+      existingByRemoteId.set(remoteId, { title, hash });
+      existingByKey.set(existingReleaseKey({ title }), { title, hash });
+      if (hash) existingHashes.add(hash.toLocaleLowerCase());
+    }
   }
 
   const selectedByKey = new Map<string, LocalSeriesReleaseCandidate>();
@@ -285,7 +315,7 @@ export async function planLocalSeriesImport(
   const releases: LocalSeriesPlannedRelease[] = [];
   for (const release of inspection.releases) {
     const hashKey = release.contentHash.toLocaleLowerCase();
-    const existing = existingByKey.get(release.releaseKey);
+    const existing = existingByRemoteId.get(release.id) ?? existingByKey.get(release.releaseKey);
     const selected = selectedByKey.get(release.releaseKey);
     let disposition: LocalSeriesReleaseDisposition = 'add';
     let existingTitle: string | undefined;
@@ -307,6 +337,7 @@ export async function planLocalSeriesImport(
     targetNovel,
     targetSource,
     existingManifest,
+    incrementalAppend,
     releases,
     addCount: releases.filter((release) => release.disposition === 'add').length,
     duplicateCount: releases.filter((release) => release.disposition === 'duplicate').length,
@@ -323,7 +354,10 @@ export async function buildLocalSeriesImportFile(
   if (!additions.length) return undefined;
   const workKey = plan.inspection.normalizedWorkKey;
   const chapters: SeriesImageChapterInput[] = additions.map((release, index) => ({
-    remoteId: release.id,
+    remoteId:
+      plan.incrementalAppend && plan.targetNovel
+        ? stableId('local_series_release', `${plan.targetNovel.id}:${release.releaseKey}`, 20)
+        : release.id,
     release: {
       title: release.parsed.releaseTitle,
       chapterNumber: release.parsed.chapterNumber,
@@ -361,9 +395,10 @@ export async function buildLocalSeriesImportFile(
       description: plan.targetNovel?.description,
       tags: plan.targetNovel?.tags,
     },
+    targetBookId: plan.incrementalAppend ? plan.targetNovel?.id : undefined,
     chapters,
-    existingArchive: plan.targetSource?.blob,
-    existingLegacyChapter,
+    existingArchive: plan.incrementalAppend ? undefined : plan.targetSource?.blob,
+    existingLegacyChapter: plan.incrementalAppend ? undefined : existingLegacyChapter,
     signal,
   });
 }

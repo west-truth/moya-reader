@@ -246,8 +246,13 @@ export interface ExternalSourceLink {
     readonly stagedAt: string;
     readonly hadExistingLink: boolean;
     readonly previousActiveContentRevisionId?: string;
-    /** Exact source asset hash expected on the activated local revision. */
+    /** Exact source hash expected after activation, or the uploaded delta hash when resolved by the importer. */
     readonly expectedActiveSourceContentHash: string;
+    /**
+     * The uploaded source is an image-series delta whose final aggregate hash is
+     * resolved by the active importer after merging it with the current book.
+     */
+    readonly sourceHashResolvedByImporter?: boolean;
     readonly collectionRemoteId?: string;
     readonly importedRemoteRevision?: string;
     readonly importedSourceContentHash?: string;

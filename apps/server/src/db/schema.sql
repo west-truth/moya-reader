@@ -202,6 +202,9 @@ create table if not exists upload_sessions (
   client_hash_hint text,
   source_content_hash text,
   client_book_id text,
+  import_mode text not null default 'replace_book'
+    check (import_mode in ('replace_book', 'append_image_series')),
+  base_active_content_revision_id text,
   status text not null default 'uploading',
   total_chunks integer,
   created_at timestamptz not null default now(),
@@ -246,6 +249,8 @@ alter table import_jobs add column if not exists message text;
 alter table upload_sessions add column if not exists client_book_id text;
 alter table upload_sessions add column if not exists chapter_split_mode text not null default 'auto';
 alter table upload_sessions add column if not exists source_content_hash text;
+alter table upload_sessions add column if not exists import_mode text not null default 'replace_book';
+alter table upload_sessions add column if not exists base_active_content_revision_id text;
 alter table import_jobs add column if not exists cancel_requested_at timestamptz;
 alter table import_jobs add column if not exists queue_generation bigint not null default 0;
 alter table import_jobs add column if not exists active_queue_job_id text;
