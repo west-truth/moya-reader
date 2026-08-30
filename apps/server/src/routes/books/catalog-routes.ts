@@ -774,7 +774,7 @@ export async function registerBookCatalogRoutes(
   app.delete('/api/trash/books', async () => {
     const client = await pool.connect();
     let purged: number | undefined;
-    let purgedBookIds: string[] = [];
+    const purgedBookIds: string[] = [];
     try {
       await client.query('begin');
       const trashCandidates = await client.query<{ id: string; active_content_revision_id: string }>(

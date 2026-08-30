@@ -87,7 +87,7 @@ import {
   searchParagraphPage as searchStoredParagraphPage,
 } from '../storage/reader-query-store';
 import type { BookContentRevisionHandle } from '../storage/content-revision-read-handle';
-import type { NovelMetadataPatch, SaveReadingPositionInput } from './reader-repository';
+import type { SaveReadingPositionInput } from './reader-repository';
 import {
   getVoiceCastingWorkspace,
   listAcceptedSpeakerUtterances,

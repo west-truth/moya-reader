@@ -1895,7 +1895,7 @@ export default function FixedDocumentScreen({
       rangeTransport?.abort();
       if (loaded) void loaded.destroy();
     };
-  }, [assets, novel.format, novel.id]);
+  }, [assets, novel.activeContentRevisionId, novel.format, novel.id]);
 
   useEffect(() => {
     if (novel.format !== 'pdf' || novel.coverAssetId || !pdf || !assets.saveGeneratedCover) return;
