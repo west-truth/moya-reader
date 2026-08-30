@@ -1,6 +1,7 @@
 import type { Chapter, Novel, ParagraphPage } from '../domain/types';
 import type { ReadingPosition } from '../sync/types';
 import { upgradeContentRevisionStores } from './content-revision-migration';
+import { EXACT_SECTION_READ_INDEXES } from './exact-section-read-schema';
 import {
   cleanupStaleImportArtifacts,
   pageBackedParagraphRef,
@@ -32,7 +33,7 @@ import { READER_PAGE_MAP_STORE, upgradeReaderPageMapStore } from './reader-page-
 import { BOOK_ENRICHMENT_STORES, upgradeBookEnrichmentStores } from './book-enrichment-schema';
 
 export const READER_DB_NAME = 'noveldesk-reader';
-export const READER_DB_VERSION = 38;
+export const READER_DB_VERSION = 39;
 
 export type ReaderStoreName =
   | 'novels'
@@ -214,6 +215,12 @@ function upgrade(db: IDBDatabase, transaction: IDBTransaction, oldVersion: numbe
   if (!db.objectStoreNames.contains('chapters')) {
     const store = createStore(db, 'chapters');
     store.createIndex('novelId', 'novelId');
+    store.createIndex(EXACT_SECTION_READ_INDEXES.legacySection, ['novelId', 'documentSectionId']);
+    store.createIndex(EXACT_SECTION_READ_INDEXES.legacyReadAt, ['novelId', 'documentSectionReadAt']);
+  } else {
+    const store = transaction.objectStore('chapters');
+    ensureIndex(store, EXACT_SECTION_READ_INDEXES.legacySection, ['novelId', 'documentSectionId']);
+    ensureIndex(store, EXACT_SECTION_READ_INDEXES.legacyReadAt, ['novelId', 'documentSectionReadAt']);
   }
   if (!db.objectStoreNames.contains('paragraphs')) {
     const store = createStore(db, 'paragraphs');

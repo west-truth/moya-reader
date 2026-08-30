@@ -159,6 +159,119 @@ describe('reader hot-path ownership', () => {
     expect(persisted).toEqual([0.8]);
   });
 
+  it('serializes an in-flight progress write and coalesces the queued pages to the newest one', async () => {
+    const timers = new Map<number, () => void>();
+    let nextTimer = 0;
+    let releaseFirst: (() => void) | undefined;
+    const persisted: number[] = [];
+    const persistence = new DebouncedProgressPersistence<number>(
+      {
+        set: (callback) => {
+          const handle = ++nextTimer;
+          timers.set(handle, callback);
+          return handle;
+        },
+        clear: (handle) => timers.delete(handle),
+      },
+      350,
+      async (value) => {
+        persisted.push(value);
+        if (value === 1) {
+          await new Promise<void>((resolve) => {
+            releaseFirst = resolve;
+          });
+        }
+      },
+    );
+
+    persistence.schedule(1);
+    const first = persistence.flush();
+    await Promise.resolve();
+    persistence.schedule(2);
+    persistence.schedule(6);
+    const last = persistence.flush();
+
+    expect(persisted).toEqual([1]);
+    releaseFirst?.();
+    await Promise.all([first, last]);
+    expect(persisted).toEqual([1, 6]);
+  });
+
+  it('keeps an immediate lifecycle flush behind an in-flight write and waits for both', async () => {
+    const timers = new Map<number, () => void>();
+    let nextTimer = 0;
+    let releaseFirst: (() => void) | undefined;
+    const persisted: string[] = [];
+    const persistence = new DebouncedProgressPersistence<number>(
+      {
+        set: (callback) => {
+          const handle = ++nextTimer;
+          timers.set(handle, callback);
+          return handle;
+        },
+        clear: (handle) => timers.delete(handle),
+      },
+      350,
+      async (value) => {
+        persisted.push(`${value}:start`);
+        if (value === 1) {
+          await new Promise<void>((resolve) => {
+            releaseFirst = resolve;
+          });
+        }
+        persisted.push(`${value}:end`);
+      },
+    );
+
+    persistence.schedule(1);
+    const first = persistence.flush();
+    await Promise.resolve();
+    persistence.schedule(2);
+    const lifecycle = persistence.flushImmediately();
+    let lifecycleSettled = false;
+    void lifecycle.then(() => {
+      lifecycleSettled = true;
+    });
+
+    await Promise.resolve();
+    expect(persisted).toEqual(['1:start']);
+    expect(lifecycleSettled).toBe(false);
+    releaseFirst?.();
+    await Promise.all([first, lifecycle]);
+    expect(persisted).toEqual(['1:start', '1:end', '2:start', '2:end']);
+    expect(lifecycleSettled).toBe(true);
+  });
+
+  it('awaits an already in-flight write when an immediate lifecycle flush has no pending value', async () => {
+    let release: (() => void) | undefined;
+    const persistence = new DebouncedProgressPersistence<number>(
+      {
+        set: () => 1,
+        clear: () => undefined,
+      },
+      350,
+      async () =>
+        new Promise<void>((resolve) => {
+          release = resolve;
+        }),
+    );
+
+    persistence.schedule(1);
+    const first = persistence.flush();
+    await Promise.resolve();
+    const lifecycle = persistence.flushImmediately();
+    let lifecycleSettled = false;
+    void lifecycle.then(() => {
+      lifecycleSettled = true;
+    });
+
+    await Promise.resolve();
+    expect(lifecycleSettled).toBe(false);
+    release?.();
+    await Promise.all([first, lifecycle]);
+    expect(lifecycleSettled).toBe(true);
+  });
+
   it('flushes reader state when hidden, page-hidden, and unmounted', async () => {
     let hidden = false;
     const visibilityListeners = new Set<() => void>();

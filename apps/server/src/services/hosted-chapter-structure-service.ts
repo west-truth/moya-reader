@@ -465,6 +465,7 @@ async function replaceHostedStructure(
   const nextRevisionNumber = Number(loaded.book.content_revision_number) + 1;
   const contentRevisionId = persistentId128('book_content_revision', [
     loaded.book.id,
+    loaded.book.active_content_revision_id,
     String(nextRevisionNumber),
     loaded.book.raw_text_hash,
     loaded.book.normalized_text_hash,

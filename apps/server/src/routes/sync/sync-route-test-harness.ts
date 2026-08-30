@@ -433,10 +433,15 @@ export function successfulInsertClient(onMaterialize: (sql: string, params?: unk
       ) {
         return { rowCount: 0, rows: [] };
       }
+      if (sql.includes('pg_advisory_xact_lock')) return { rowCount: 1, rows: [] };
+      if (sql.includes('join book_content_revisions')) return { rowCount: 1, rows: [{ should_accept: true }] };
       if (sql.includes('from library_books') && sql.includes('for share')) {
         return { rowCount: 1, rows: [{ exists: true }] };
       }
       if (sql.includes('select exists(select 1 from chapters')) return { rowCount: 1, rows: [{ exists: true }] };
+      if (sql.includes('document_section_id is not null')) {
+        return { rowCount: 1, rows: [{ has_section: false }] };
+      }
       if (sql.includes('select exists(select 1 from paragraph_search'))
         return { rowCount: 1, rows: [{ exists: true }] };
       if (sql.includes('from paragraph_search'))
@@ -485,16 +490,24 @@ export function syncRoundTripPool() {
     query: vi.fn(async (sql: string, params?: unknown[]) => {
       if (sql === 'begin' || sql === 'commit' || sql === 'rollback') return { rowCount: 0, rows: [] };
 
+      if (sql.includes('pg_advisory_xact_lock')) return { rowCount: 1, rows: [] };
+
       if (sql.includes('where user_id = $1 and sequence > $2')) {
         expect(params?.[0]).toBe('user_test');
         const since = Number(params?.[1] ?? 0);
         return { rows: eventRows.filter((row) => row.sequence > since).slice(0, 500) };
       }
 
+      if (sql.includes('join book_content_revisions')) {
+        return { rowCount: 1, rows: [{ should_accept: true }] };
+      }
       if (sql.includes('from library_books') && sql.includes('for share')) {
         return { rowCount: 1, rows: [{ exists: true }] };
       }
       if (sql.includes('select exists(select 1 from chapters')) return { rowCount: 1, rows: [{ exists: true }] };
+      if (sql.includes('document_section_id is not null')) {
+        return { rowCount: 1, rows: [{ has_section: false }] };
+      }
       if (sql.includes('select exists(select 1 from paragraph_search'))
         return { rowCount: 1, rows: [{ exists: true }] };
 
@@ -540,6 +553,8 @@ export function syncRoundTripPool() {
         updatedAtByEntity.set(`reading_positions:${userId}:${bookId}`, String(updatedAt));
         return { rowCount: 1, rows: [] };
       }
+
+      if (sql.includes('insert into fixed_document_section_read_states')) return { rowCount: 0, rows: [] };
 
       if (sql.includes('insert into bookmarks')) {
         const [id, , userId, , , , , , updatedAt] = params ?? [];

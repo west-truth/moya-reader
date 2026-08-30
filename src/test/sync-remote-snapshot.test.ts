@@ -2,8 +2,10 @@ import 'fake-indexeddb/auto';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { integrityHash } from '../domain/id-hash-contract';
 import type { Paragraph, ParagraphPage, ParsedNovel } from '../domain/types';
+import { getRemoteBookSnapshotStream } from '../services/remote/remote-book-snapshot';
 import {
   applyRemoteSyncEvents,
+  cacheRemoteBookSnapshot,
   cacheRemoteBookSnapshotStream,
   getBookmarks,
   getChapters,
@@ -21,6 +23,8 @@ import {
   saveReadingPosition,
 } from '../storage/db';
 import type { BookContentRevisionRecord } from '../storage/content-revisions';
+import { CONTENT_REVISION_STORES } from '../storage/content-revision-migration';
+import type { RevisionChapterRow } from '../storage/content-revision-store';
 import { LocalOutboxSyncService, type SyncEventSource } from '../sync/local-outbox-sync-service';
 import type { RemoteBookSnapshot, RemoteBookSnapshotStream, SyncEvent } from '../sync/types';
 
@@ -38,6 +42,14 @@ async function contentRevisions(novelId: string): Promise<BookContentRevisionRec
   const tx = db.transaction('book_content_revisions', 'readonly');
   return requestToPromise<BookContentRevisionRecord[]>(
     tx.objectStore('book_content_revisions').index('novelId').getAll(novelId),
+  );
+}
+
+async function revisionChapters(contentRevisionId: string): Promise<RevisionChapterRow[]> {
+  const db = await openReaderDb();
+  const tx = db.transaction(CONTENT_REVISION_STORES.chapters, 'readonly');
+  return requestToPromise<RevisionChapterRow[]>(
+    tx.objectStore(CONTENT_REVISION_STORES.chapters).index('contentRevisionId').getAll(contentRevisionId),
   );
 }
 
@@ -106,6 +118,118 @@ function page(id: string, paragraph: Paragraph, pageIndex = 0): ParagraphPage {
     endParagraphIndex: paragraph.index,
     paragraphs: [paragraph],
     textHash: integrityHash(JSON.stringify([paragraph.textHash])),
+  };
+}
+
+function fixedDocumentSnapshot(bookId: string, bodyVersion: string): RemoteBookSnapshot {
+  const chapters = Array.from({ length: 6 }, (_, zeroIndex) => {
+    const index = zeroIndex + 1;
+    const text = `${bodyVersion} section ${index}`;
+    return {
+      id: `${bookId}:chapter:${index}`,
+      novelId: bookId,
+      index,
+      title: `${index}화`,
+      normalizedText: text,
+      textHash: integrityHash(text),
+      rawStartOffset: zeroIndex * 100,
+      rawEndOffset: zeroIndex * 100 + text.length,
+      characterCount: text.length,
+      paragraphCount: 1,
+      documentSectionId: `section:${index}`,
+      documentSectionTitle: `${index}화`,
+      documentSectionIndex: index,
+      documentPageIndexInSection: 0,
+      documentSectionSourceContentHash: integrityHash(`${bodyVersion}:release:${index}`),
+      createdAt: NOW,
+      updatedAt: NOW,
+    };
+  });
+  const paragraphs = chapters.map((chapter) => ({
+    id: `${chapter.id}:paragraph:1`,
+    novelId: bookId,
+    chapterId: chapter.id,
+    index: 1,
+    text: chapter.normalizedText,
+    startOffsetInChapter: 0,
+    endOffsetInChapter: chapter.normalizedText.length,
+    textHash: integrityHash(chapter.normalizedText),
+  }));
+  const fullText = chapters.map((chapter) => chapter.normalizedText).join('\n');
+  const base = parsedNovel(bookId).novel;
+  return {
+    novel: {
+      ...base,
+      format: 'image_archive',
+      title: `Fixed document ${bodyVersion}`,
+      rawText: '',
+      normalizedText: '',
+      rawTextHash: integrityHash(fullText),
+      normalizedTextHash: integrityHash(fullText),
+      totalChapters: chapters.length,
+      totalCharacters: fullText.length,
+      totalParagraphs: paragraphs.length,
+      documentSectionCount: chapters.length,
+    },
+    chapters,
+    paragraphPages: paragraphs.map((paragraph) => page(`${paragraph.chapterId}:page:0`, paragraph)),
+    expectedChapterCount: chapters.length,
+    expectedPageCount: paragraphs.length,
+    expectedParagraphCount: paragraphs.length,
+  };
+}
+
+function readingPositionEvent(input: {
+  id: string;
+  bookId: string;
+  chapterId: string;
+  contentRevisionId: string;
+  updatedAt: string;
+  documentSectionId?: string;
+}): SyncEvent {
+  return {
+    id: input.id,
+    type: 'reading_position_updated',
+    deviceId: 'remote-device',
+    novelId: input.bookId,
+    entityId: `reading_position_${input.bookId}`,
+    payload: {
+      position: {
+        id: `reading_position_${input.bookId}`,
+        novelId: input.bookId,
+        chapterId: input.chapterId,
+        paragraphIndex: 1,
+        offsetInParagraph: 0,
+        chapterProgress: 0.5,
+        scrollTop: 100,
+        deviceId: 'remote-device',
+        updatedAt: input.updatedAt,
+        ...(input.documentSectionId ? { documentSectionId: input.documentSectionId } : {}),
+        contentRevisionId: input.contentRevisionId,
+      },
+    },
+    createdAt: input.updatedAt,
+  };
+}
+
+function readingPositionResetEvent(input: {
+  id: string;
+  bookId: string;
+  contentRevisionId: string;
+  deletedAt: string;
+}): SyncEvent {
+  return {
+    id: input.id,
+    type: 'reading_position_deleted',
+    deviceId: 'remote-device',
+    novelId: input.bookId,
+    entityId: `reading_position_${input.bookId}`,
+    payload: {
+      id: `reading_position_${input.bookId}`,
+      deletedAt: input.deletedAt,
+      expectedContentRevisionId: input.contentRevisionId,
+    },
+    createdAt: input.deletedAt,
   };
 }
 
@@ -222,6 +346,211 @@ describe('remote sync snapshot hydration', () => {
       paragraphs: [{ id: second.id, text: 'second body' }],
     });
     expect(state).toMatchObject({ status: 'idle', lastRemoteCursor: 21, pendingCount: 0 });
+  });
+
+  it('preserves the server content revision token through a cached physical revision and reader outbox', async () => {
+    const bookId = 'remote-token-book';
+    const serverRevision = 'server-content-r2';
+    const chapterId = `${bookId}:chapter:1`;
+    const paragraph: Paragraph = {
+      id: `${chapterId}:paragraph:1`,
+      novelId: bookId,
+      chapterId,
+      index: 1,
+      text: 'remote token body',
+      startOffsetInChapter: 0,
+      endOffsetInChapter: 17,
+      textHash: integrityHash('remote token body'),
+    };
+    const manifest = {
+      book: {
+        id: bookId,
+        format: 'txt',
+        active_content_revision_id: serverRevision,
+        title: 'Remote token book',
+        source_file_name: 'remote-token.txt',
+        source_encoding: 'utf-8',
+        normalized_text_hash: integrityHash(paragraph.text),
+        created_at: NOW,
+        updated_at: NOW,
+        total_chapters: 1,
+        total_characters: paragraph.text.length,
+        total_paragraphs: 1,
+        cover_seed: 1,
+      },
+      readingPosition: null,
+    };
+    const transport = {
+      getBookManifest: async () => manifest,
+      listChapters: async () => ({
+        contentRevisionId: serverRevision,
+        chapters: [
+          {
+            id: chapterId,
+            book_id: bookId,
+            chapter_index: 1,
+            title: '1화',
+            text_hash: integrityHash(paragraph.text),
+            raw_start_offset: 0,
+            raw_end_offset: paragraph.text.length,
+            character_count: paragraph.text.length,
+            paragraph_count: 1,
+            created_at: NOW,
+            updated_at: NOW,
+          },
+        ],
+      }),
+      listPages: async () => ({
+        contentRevisionId: serverRevision,
+        pages: [
+          {
+            id: `${chapterId}:page:0`,
+            book_id: bookId,
+            chapter_id: chapterId,
+            page_index: 0,
+            start_paragraph_index: 1,
+            end_paragraph_index: 1,
+            paragraphs: [paragraph],
+            text_hash: integrityHash(JSON.stringify([paragraph.textHash])),
+          },
+        ],
+      }),
+    };
+
+    const snapshot = await getRemoteBookSnapshotStream(transport, bookId);
+    expect(snapshot?.sourceRevision).toBe(serverRevision);
+    await cacheRemoteBookSnapshotStream(snapshot!);
+
+    const cached = await getNovel(bookId);
+    expect(cached?.activeContentRevisionId).toBeTruthy();
+    expect(cached?.activeContentRevisionId).not.toBe(serverRevision);
+    expect(await contentRevisions(bookId)).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: cached?.activeContentRevisionId,
+          sourceRevision: serverRevision,
+          status: 'active',
+        }),
+      ]),
+    );
+
+    await saveReadingPosition({
+      novelId: bookId,
+      expectedContentRevisionId: cached?.activeContentRevisionId,
+      chapterId,
+      scrollTop: 24,
+      chapterProgress: 0.25,
+      paragraphId: paragraph.id,
+      paragraphIndex: 1,
+      offsetInParagraph: 0,
+    });
+
+    expect((await listSyncOutbox()).at(-1)?.event).toMatchObject({
+      type: 'reading_position_updated',
+      payload: {
+        position: {
+          novelId: bookId,
+          contentRevisionId: serverRevision,
+        },
+      },
+    });
+  });
+
+  it('keeps exact section reads independent and fences stale reader events across purge/re-add incarnations', async () => {
+    const bookId = 'remote-reader-incarnation';
+    const firstSnapshot = fixedDocumentSnapshot(bookId, 'r1');
+    await cacheRemoteBookSnapshot({ ...firstSnapshot, sourceRevision: 'server-r1' });
+    const firstPhysicalRevision = (await getNovel(bookId))?.activeContentRevisionId;
+    expect(firstPhysicalRevision).toBeTruthy();
+
+    await applyRemoteSyncEvents([
+      readingPositionEvent({
+        id: 'r1-section-2',
+        bookId,
+        chapterId: `${bookId}:chapter:2`,
+        documentSectionId: 'section:2',
+        contentRevisionId: 'server-r1',
+        updatedAt: '2026-07-04T00:10:00.000Z',
+      }),
+    ]);
+    expect((await revisionChapters(firstPhysicalRevision!)).find((row) => row.documentSectionId === 'section:2'))
+      .toMatchObject({ documentSectionReadAt: '2026-07-04T00:10:00.000Z' });
+
+    const secondSnapshot = fixedDocumentSnapshot(bookId, 'r2');
+    await cacheRemoteBookSnapshot({ ...secondSnapshot, sourceRevision: 'server-r2' });
+    const secondPhysicalRevision = (await getNovel(bookId))?.activeContentRevisionId;
+    expect(secondPhysicalRevision).toBeTruthy();
+    expect(secondPhysicalRevision).not.toBe(firstPhysicalRevision);
+
+    await applyRemoteSyncEvents([
+      readingPositionEvent({
+        id: 'r2-global-section-3',
+        bookId,
+        chapterId: `${bookId}:chapter:3`,
+        contentRevisionId: 'server-r2',
+        updatedAt: '2026-07-04T00:30:00.000Z',
+      }),
+      readingPositionEvent({
+        id: 'r2-exact-section-6',
+        bookId,
+        chapterId: `${bookId}:chapter:6`,
+        documentSectionId: 'section:6',
+        contentRevisionId: 'server-r2',
+        updatedAt: '2026-07-04T00:20:00.000Z',
+      }),
+    ]);
+
+    expect(await getReadingPosition(bookId)).toMatchObject({ chapterId: `${bookId}:chapter:3` });
+    expect(
+      (await getChapters(bookId)).map((chapter) => [chapter.documentSectionId, chapter.documentSectionReadAt]),
+    ).toEqual([
+      ['section:1', undefined],
+      ['section:2', undefined],
+      ['section:3', undefined],
+      ['section:4', undefined],
+      ['section:5', undefined],
+      ['section:6', '2026-07-04T00:20:00.000Z'],
+    ]);
+
+    await applyRemoteSyncEvents([
+      readingPositionEvent({
+        id: 'stale-r1-section-4',
+        bookId,
+        chapterId: `${bookId}:chapter:4`,
+        documentSectionId: 'section:4',
+        contentRevisionId: 'server-r1',
+        updatedAt: '2026-07-04T00:40:00.000Z',
+      }),
+      readingPositionResetEvent({
+        id: 'stale-r1-reset',
+        bookId,
+        contentRevisionId: 'server-r1',
+        deletedAt: '2026-07-04T00:41:00.000Z',
+      }),
+    ]);
+
+    expect(await getReadingPosition(bookId)).toMatchObject({ chapterId: `${bookId}:chapter:3` });
+    expect((await getChapters(bookId)).find((chapter) => chapter.documentSectionId === 'section:4'))
+      .not.toHaveProperty('documentSectionReadAt');
+    expect((await getChapters(bookId)).find((chapter) => chapter.documentSectionId === 'section:6'))
+      .toMatchObject({ documentSectionReadAt: '2026-07-04T00:20:00.000Z' });
+
+    await applyRemoteSyncEvents([
+      readingPositionResetEvent({
+        id: 'active-r2-reset',
+        bookId,
+        contentRevisionId: 'server-r2',
+        deletedAt: '2026-07-04T00:42:00.000Z',
+      }),
+    ]);
+
+    expect(await getReadingPosition(bookId)).toBeUndefined();
+    expect((await getChapters(bookId)).every((chapter) => !chapter.documentSectionReadAt)).toBe(true);
+    expect((await revisionChapters(secondPhysicalRevision!)).every((chapter) => !chapter.documentSectionReadAt)).toBe(
+      true,
+    );
+    expect((await revisionChapters(firstPhysicalRevision!)).find((row) => row.documentSectionId === 'section:2'))
+      .toMatchObject({ documentSectionReadAt: '2026-07-04T00:10:00.000Z' });
   });
 
   it('keeps active content, anchors, search, and outbox when a later remote page throws', async () => {

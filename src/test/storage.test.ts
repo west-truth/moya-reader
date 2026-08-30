@@ -58,7 +58,12 @@ import {
   saveReadingPosition,
   applyRemoteSyncEvents,
 } from '../storage/db';
-import { getTrashedNovels, purgeNovel, restoreNovelFromTrash } from '../storage/library-catalog-store';
+import {
+  getTrashedNovels,
+  listBookAssociationPurgeEvidence,
+  purgeNovel,
+  restoreNovelFromTrash,
+} from '../storage/library-catalog-store';
 import type { BookContentRevisionRecord } from '../storage/content-revisions';
 import type { SyncTombstone } from '../storage/sync-event-store';
 
@@ -1126,7 +1131,7 @@ describe('IndexedDB reader storage', () => {
       }),
     );
 
-    await restoreNovelFromTrash('novel-a', trashed?.metadataRevision);
+    await restoreNovelFromTrash('novel-a', { metadataRevision: trashed?.metadataRevision });
     expect((await getNovels()).map((novel) => novel.id).sort()).toEqual(['novel-a', 'novel-b']);
     const restored = await getNovel('novel-a');
     expect(restored?.deletedAt).toBeUndefined();
@@ -1134,7 +1139,7 @@ describe('IndexedDB reader storage', () => {
 
     await deleteNovel('novel-a');
     const trashedAgain = await getNovel('novel-a');
-    await purgeNovel('novel-a', trashedAgain?.metadataRevision);
+    await purgeNovel('novel-a', { metadataRevision: trashedAgain?.metadataRevision });
 
     expect(await getNovel('novel-a')).toBeUndefined();
     expect(await getChapters('novel-a')).toEqual([]);
@@ -1152,7 +1157,36 @@ describe('IndexedDB reader storage', () => {
         entityType: 'book',
         vaultBookId: 'novel-a',
         bookHash: 'novel-a:normalized',
+        purged: true,
       }),
     );
+    expect(await listBookAssociationPurgeEvidence()).toContainEqual({
+      bookId: 'novel-a',
+      activeContentRevisionId: trashedAgain?.activeContentRevisionId,
+    });
+  });
+
+  it('records the exact local content generation when a pulled purge removes a book', async () => {
+    await saveImportedNovel(parsedNovel('novel-remote-purge', 'remote purge'));
+    const before = await getNovel('novel-remote-purge');
+    expect(before?.activeContentRevisionId).toBeTruthy();
+
+    await applyRemoteSyncEvents([
+      {
+        id: 'remote-book-purge-1',
+        type: 'book_purged',
+        deviceId: 'remote-device',
+        novelId: 'novel-remote-purge',
+        entityId: 'novel-remote-purge',
+        payload: { bookId: 'novel-remote-purge', purgedAt: '2026-08-30T00:00:00.000Z' },
+        createdAt: '2026-08-30T00:00:00.000Z',
+      },
+    ]);
+
+    expect(await getNovel('novel-remote-purge')).toBeUndefined();
+    expect(await listBookAssociationPurgeEvidence()).toContainEqual({
+      bookId: 'novel-remote-purge',
+      activeContentRevisionId: before?.activeContentRevisionId,
+    });
   });
 });

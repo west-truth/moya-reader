@@ -48,7 +48,8 @@ describe('remote data safety repositories', () => {
     });
     const randomAccess = await repository.openSource('book_1');
     expect(new TextDecoder().decode(await randomAccess?.readRange(9, 15))).toBe('source');
-    expect(client.getBookSourceRange).toHaveBeenCalledWith('book_1', 9, 15, undefined);
+    expect(client.getBookSource).toHaveBeenCalledWith('book_1', 'revision_1');
+    expect(client.getBookSourceRange).toHaveBeenCalledWith('book_1', 9, 15, undefined, 'revision_1');
   });
 
   it('rejects a source range response that was downgraded to a full HTTP 200 body', async () => {
@@ -119,12 +120,51 @@ describe('remote data safety repositories', () => {
         fileName: 'book.txt',
         contentType: 'text/plain',
         blob,
+        expectedContentRevisionId: 'revision_1',
       }),
     ).resolves.toMatchObject({ id: 'object_1', bookId: 'book_1', provenance: 'original' });
     expect(client.reselectBookSource).toHaveBeenCalledWith('book_1', blob, {
       fileName: 'book.txt',
       contentType: 'text/plain',
+      expectedContentRevisionId: 'revision_1',
     });
+  });
+
+  it('fences a source export to the metadata incarnation resolved before downloading bytes', async () => {
+    const calls: string[] = [];
+    const client = {
+      getBookSourceMetadata: vi.fn(async () => {
+        calls.push('metadata');
+        return {
+          source: {
+            id: 'object_r1',
+            book_id: 'book_1',
+            content_revision_id: 'revision_r1',
+            file_name: 'book.txt',
+            content_type: 'text/plain',
+            size_bytes: 2,
+            raw_text_hash: 'sha256:r1',
+          },
+        };
+      }),
+      getBookSource: vi.fn(async (_bookId: string, revisionId?: string) => {
+        calls.push(`download:${revisionId}`);
+        return {
+          blob: new Blob(['r1']),
+          headers: new Headers({ 'x-content-revision-id': 'revision_r1' }),
+          status: 200,
+        };
+      }),
+    } as unknown as RemoteApiClient;
+
+    await expect(
+      new RemoteBookAssetRepository(client).exportSource('book_1', {
+        activeContentRevisionId: 'revision_r1',
+      }),
+    ).resolves.toMatchObject({ metadata: { contentRevisionId: 'revision_r1' } });
+    expect(client.getBookSourceMetadata).toHaveBeenCalledWith('book_1', 'revision_r1');
+    expect(client.getBookSource).toHaveBeenCalledWith('book_1', 'revision_r1');
+    expect(calls).toEqual(['metadata', 'download:revision_r1']);
   });
 
   it('stores a generated hosted cover without presenting it as user supplied', async () => {
@@ -194,6 +234,33 @@ describe('remote data safety repositories', () => {
     await expect(repository.getActiveCover('book_1')).resolves.toMatchObject({
       metadata: { id: 'cover_approved', provenance: 'approved_enrichment' },
     });
+  });
+
+  it('reads hosted cover provenance without downloading the cover body', async () => {
+    const getBookCoverMetadata = vi.fn(async () => ({
+      cover: {
+        id: 'cover_archive',
+        book_id: 'book_1',
+        provenance: 'archive_embedded',
+        status: 'active',
+        storage_key: 'user/book_1/covers/archive.jpg',
+        content_type: 'image/jpeg',
+        content_hash: 'sha256:archive',
+        created_at: '2026-08-30T00:00:00.000Z',
+      },
+    }));
+    const getBookCover = vi.fn();
+    const repository = new RemoteBookAssetRepository({
+      getBookCoverMetadata,
+      getBookCover,
+    } as unknown as RemoteApiClient);
+
+    await expect(repository.getActiveCoverMetadata('book_1')).resolves.toMatchObject({
+      id: 'cover_archive',
+      provenance: 'archive_embedded',
+    });
+    expect(getBookCoverMetadata).toHaveBeenCalledOnce();
+    expect(getBookCover).not.toHaveBeenCalled();
   });
 
   it.each(['archive_embedded', 'epub_embedded'] as const)(
@@ -271,6 +338,7 @@ describe('remote data safety repositories', () => {
       positionX: 50,
       positionY: 50,
       expectedMetadataRevision: 3,
+      expectedContentRevisionId: 'content-1',
     });
 
     expect(saved).toMatchObject({
@@ -281,12 +349,13 @@ describe('remote data safety repositories', () => {
     expect(client.saveApprovedEnrichmentBookCover).toHaveBeenCalledWith(
       'book_1',
       blob,
-      expect.objectContaining({ expectedMetadataRevision: 3 }),
+      expect.objectContaining({ expectedMetadataRevision: 3, expectedContentRevisionId: 'content-1' }),
     );
 
     await expect(
       repository.restoreApprovedEnrichmentCover?.('book_1', {
         expectedMetadataRevision: 4,
+        expectedContentRevisionId: 'content-1',
         expectedActiveAssetId: 'cover_approved',
         expectedActiveContentHash: 'sha256:approved',
         previousAssetId: 'cover_previous',
@@ -365,17 +434,17 @@ describe('remote data safety repositories', () => {
       })),
       restoreBook: vi.fn(async () => ({ ok: true as const, metadataRevision: 4 })),
       purgeBook: vi.fn(async () => ({ ok: true as const })),
-      emptyTrash: vi.fn(async () => ({ ok: true as const, purged: 2 })),
+      emptyTrash: vi.fn(async () => ({ ok: true as const, purged: 2, bookIds: ['book-1', 'book-2'] })),
     } as unknown as RemoteApiClient;
     const repository = new RemoteLibraryCatalogRepository(client);
 
     expect(await repository.listTrash()).toEqual([
       expect.objectContaining({ id: 'book_1', deletedAt: '2026-07-13T00:00:00.000Z', metadataRevision: 3 }),
     ]);
-    await repository.restore('book_1', 3);
-    await repository.purge('book_1', 4);
-    await expect(repository.emptyTrash()).resolves.toBe(2);
-    expect(client.restoreBook).toHaveBeenCalledWith('book_1', 3);
-    expect(client.purgeBook).toHaveBeenCalledWith('book_1', 4);
+    await repository.restore('book_1', { metadataRevision: 3 });
+    await repository.purge('book_1', { metadataRevision: 4 });
+    await expect(repository.emptyTrash()).resolves.toEqual({ purged: 2, bookIds: ['book-1', 'book-2'] });
+    expect(client.restoreBook).toHaveBeenCalledWith('book_1', { metadataRevision: 3 });
+    expect(client.purgeBook).toHaveBeenCalledWith('book_1', { metadataRevision: 4 });
   });
 });

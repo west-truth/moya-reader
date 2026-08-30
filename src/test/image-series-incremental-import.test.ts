@@ -109,6 +109,18 @@ describe('browser image-series incremental import', () => {
     const reader = new IndexedDbReaderRepository();
     const assets = new IndexedDbBookAssetRepository();
     const before = (await reader.getNovel(bookId))!;
+    const firstChapter = (await reader.listChapters(bookId))[0]!;
+    await reader.saveReadingPosition({
+      novelId: bookId,
+      expectedContentRevisionId: before.activeContentRevisionId,
+      chapterId: firstChapter.id,
+      documentSectionId: firstChapter.documentSectionId,
+      paragraphIndex: 1,
+      offsetInParagraph: 0,
+      chapterProgress: 1,
+      scrollTop: 0,
+    });
+    expect((await reader.listChapters(bookId))[0]?.documentSectionReadAt).toBeTruthy();
     const beforeCover = await assets.getActiveCover(bookId);
     expect(beforeCover).toBeDefined();
     const delta = await archive([await release('local_series_release_2', 2)]);
@@ -129,9 +141,12 @@ describe('browser image-series incremental import', () => {
       'local_series_release_1',
       'local_series_release_2',
     ]);
-    expect(new Set((await reader.listChapters(bookId)).map((chapter) => chapter.documentSectionId))).toEqual(
+    const appendedChapters = await reader.listChapters(bookId);
+    expect(new Set(appendedChapters.map((chapter) => chapter.documentSectionId))).toEqual(
       new Set(['local_series_release_1', 'local_series_release_2']),
     );
+    expect(appendedChapters.find((chapter) => chapter.documentSectionId === 'local_series_release_1')?.documentSectionReadAt).toBeTruthy();
+    expect(appendedChapters.find((chapter) => chapter.documentSectionId === 'local_series_release_2')?.documentSectionReadAt).toBeUndefined();
     expect(after.activeContentRevisionId).not.toBe(before.activeContentRevisionId);
     expect(after.sourceContentHash).not.toBe(before.sourceContentHash);
     expect(afterCover?.metadata.id).toBe(beforeCover?.metadata.id);

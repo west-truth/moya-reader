@@ -8,9 +8,10 @@ import type {
   ExternalSourceSelectionRecord,
 } from './contracts';
 import { createExternalSourceCredentialKey } from './device-credential-crypto';
+import { externalSerialBookId } from './serial-identity';
 
 const DB_NAME = 'noveldesk-external-sources';
-const DB_VERSION = 5;
+const DB_VERSION = 6;
 const MAX_CACHE_PAGES_PER_CONNECTION = 24;
 const CREDENTIAL_KEY_ID = 'external-source-credentials-v1';
 
@@ -68,6 +69,9 @@ function openExternalSourceDb(): Promise<IDBDatabase> {
         const store = db.createObjectStore('subscriptions', { keyPath: 'id' });
         store.createIndex('connectorId', 'connectorId');
         store.createIndex('accountConnectionId', 'accountConnectionId');
+      }
+      if (!db.objectStoreNames.contains('associationPurgeIntents')) {
+        db.createObjectStore('associationPurgeIntents', { keyPath: 'id' });
       }
     };
     request.onsuccess = () => resolve(request.result);
@@ -140,6 +144,200 @@ export interface ExternalSourceSubscriptionRecord {
   readonly schemaVersion: 1;
 }
 
+export interface ExternalSourceAssociationSnapshotEntry {
+  readonly id: string;
+  readonly localBookId: string;
+  readonly activeContentRevisionId?: string;
+  readonly version: string;
+}
+
+export interface ExternalSourceAssociationPurgeSnapshot {
+  readonly entries: readonly ExternalSourceAssociationSnapshotEntry[];
+  readonly subscriptions: readonly { readonly id: string; readonly version: string; readonly localBookId: string }[];
+}
+
+export interface ExternalSourceAssociationPurgeTarget {
+  readonly bookId: string;
+  readonly activeContentRevisionId?: string;
+}
+
+export interface ExternalSourceAssociationPurgeIntent {
+  readonly id: string;
+  readonly targets: readonly ExternalSourceAssociationPurgeTarget[];
+  readonly snapshot: ExternalSourceAssociationPurgeSnapshot;
+  readonly createdAt: string;
+  readonly updatedAt: string;
+  readonly schemaVersion: 1;
+}
+
+function externalSourceLinkVersion(link: ExternalSourceLink): string {
+  return JSON.stringify([
+    link.id,
+    link.source.connectorId,
+    link.source.accountConnectionId ?? '',
+    link.source.remoteId,
+    link.localBookId,
+    link.collectionRemoteId ?? '',
+    link.importedRemoteRevision ?? '',
+    link.importedSourceContentHash ?? '',
+    link.activeContentRevisionId ?? '',
+    link.linkedAt,
+    link.lastCheckedAt ?? '',
+    link.pendingImport?.operationId ?? '',
+    link.pendingImport?.stagedAt ?? '',
+    link.pendingImport?.hadExistingLink ?? false,
+    link.pendingImport?.expectedActiveSourceContentHash ?? '',
+    link.pendingImport?.previousActiveContentRevisionId ?? '',
+    link.pendingImport?.activatedContentRevisionId ?? '',
+    link.pendingImport?.sourceHashResolvedByImporter ?? false,
+    link.pendingImport?.collectionRemoteId ?? '',
+    link.pendingImport?.importedRemoteRevision ?? '',
+    link.pendingImport?.importedSourceContentHash ?? '',
+  ]);
+}
+
+function externalSourceSubscriptionVersion(subscription: ExternalSourceSubscriptionRecord): string {
+  return JSON.stringify([
+    subscription.id,
+    subscription.connectorId,
+    subscription.accountConnectionId ?? '',
+    subscription.collectionRemoteId,
+    subscription.navigationRef,
+    subscription.sourceNavigationRef ?? '',
+    subscription.title,
+    subscription.author ?? '',
+    subscription.description ?? '',
+    subscription.thumbnailUrl ?? '',
+    subscription.sourceLabel ?? '',
+    subscription.knownReleaseIds,
+    subscription.newReleaseIds,
+    subscription.availableReleaseCount,
+    subscription.lastCheckedAt,
+    subscription.createdAt,
+    subscription.updatedAt,
+  ]);
+}
+
+function sameContentRevision(left: string | undefined, right: string | undefined): boolean {
+  return (left ?? '') === (right ?? '');
+}
+
+function uniquePurgeTargets(
+  targets: readonly ExternalSourceAssociationPurgeTarget[],
+): ExternalSourceAssociationPurgeTarget[] {
+  const byBookId = new Map<string, ExternalSourceAssociationPurgeTarget>();
+  for (const target of targets) {
+    if (!target.bookId) continue;
+    const existing = byBookId.get(target.bookId);
+    if (existing && !sameContentRevision(existing.activeContentRevisionId, target.activeContentRevisionId)) {
+      throw new Error(`Book ${target.bookId} has multiple content incarnations in one purge intent`);
+    }
+    byBookId.set(target.bookId, target);
+  }
+  return [...byBookId.values()];
+}
+
+function associationPurgeIntentId(): string {
+  const bytes = crypto.getRandomValues(new Uint32Array(4));
+  return `external-association-purge::${[...bytes].map((value) => value.toString(16).padStart(8, '0')).join('')}`;
+}
+
+interface AssociationCleanupPlan {
+  readonly deleteLinkIds: readonly string[];
+  readonly deleteSubscriptionIds: readonly string[];
+  readonly unresolvedBookIds: ReadonlySet<string>;
+}
+
+function associationCleanupPlan(input: {
+  readonly targets: readonly ExternalSourceAssociationPurgeTarget[];
+  readonly snapshot: ExternalSourceAssociationPurgeSnapshot;
+  readonly links: readonly ExternalSourceLink[];
+  readonly subscriptions: readonly ExternalSourceSubscriptionRecord[];
+}): AssociationCleanupPlan {
+  const targetByBookId = new Map(input.targets.map((target) => [target.bookId, target]));
+  const expectedLinks = new Map(input.snapshot.entries.map((entry) => [entry.id, entry]));
+  const currentLinks = new Map(input.links.map((link) => [link.id, link]));
+  const unresolvedBookIds = new Set<string>();
+  const deleteLinkIds: string[] = [];
+
+  for (const expected of expectedLinks.values()) {
+    const target = targetByBookId.get(expected.localBookId);
+    if (!target) continue;
+    const current = currentLinks.get(expected.id);
+    if (!current) continue;
+    if (
+      current.localBookId !== target.bookId ||
+      !sameContentRevision(current.activeContentRevisionId, expected.activeContentRevisionId)
+    ) {
+      continue;
+    }
+    // A staged import can become the next content incarnation. Leave the
+    // intent pending until that operation finalizes or is rolled back.
+    if (current.pendingImport) {
+      unresolvedBookIds.add(target.bookId);
+      continue;
+    }
+    deleteLinkIds.push(current.id);
+  }
+
+  const deletedLinks = new Set(deleteLinkIds);
+  const remainingLinks = input.links.filter((link) => !deletedLinks.has(link.id));
+  const currentSubscriptions = new Map(input.subscriptions.map((subscription) => [subscription.id, subscription]));
+  const expectedSubscriptions = new Map(
+    input.snapshot.subscriptions.map((subscription) => [subscription.id, subscription]),
+  );
+  const materializedCollections = new Map<
+    string,
+    { readonly connectorId: string; readonly accountConnectionId?: string; readonly collectionRemoteId: string }
+  >();
+
+  for (const linkId of deleteLinkIds) {
+    const link = currentLinks.get(linkId);
+    if (!link?.collectionRemoteId) continue;
+    const subscriptionId = externalSourceSubscriptionId(
+      link.source.connectorId,
+      link.source.accountConnectionId,
+      link.collectionRemoteId,
+    );
+    materializedCollections.set(subscriptionId, {
+      connectorId: link.source.connectorId,
+      accountConnectionId: link.source.accountConnectionId,
+      collectionRemoteId: link.collectionRemoteId,
+    });
+  }
+  for (const expected of input.snapshot.subscriptions) {
+    if (!targetByBookId.has(expected.localBookId)) continue;
+    const current = currentSubscriptions.get(expected.id);
+    if (!current) continue;
+    materializedCollections.set(expected.id, {
+      connectorId: current.connectorId,
+      accountConnectionId: current.accountConnectionId,
+      collectionRemoteId: current.collectionRemoteId,
+    });
+  }
+
+  const deleteSubscriptionIds: string[] = [];
+  for (const [subscriptionId, collection] of materializedCollections) {
+    const current = currentSubscriptions.get(subscriptionId);
+    const expected = expectedSubscriptions.get(subscriptionId);
+    const stillMaterialized = remainingLinks.some(
+      (link) =>
+        link.collectionRemoteId === collection.collectionRemoteId &&
+        link.source.connectorId === collection.connectorId &&
+        link.source.accountConnectionId === collection.accountConnectionId,
+    );
+    if (
+      !stillMaterialized &&
+      current &&
+      (!expected || expected.version === externalSourceSubscriptionVersion(current))
+    ) {
+      deleteSubscriptionIds.push(subscriptionId);
+    }
+  }
+
+  return { deleteLinkIds, deleteSubscriptionIds, unresolvedBookIds };
+}
+
 export function externalSourceSubscriptionId(
   connectorId: string,
   accountConnectionId: string | undefined,
@@ -179,6 +377,28 @@ export interface ExternalSourceLocalState {
   listSubscriptions(connectorId?: string, accountConnectionId?: string): Promise<ExternalSourceSubscriptionRecord[]>;
   saveSubscription(subscription: ExternalSourceSubscriptionRecord): Promise<void>;
   deleteSubscription(id: string): Promise<void>;
+  captureBookAssociations?(): Promise<ExternalSourceAssociationPurgeSnapshot>;
+  /**
+   * Removes device-local bindings after the corresponding books have been
+   * permanently deleted. A subscription is removed only when it was
+   * materialized by one of those bindings and no binding for the same remote
+   * collection remains.
+   *
+   * Moving a book to trash must not call this method: bindings intentionally
+   * survive until the canonical book is purged.
+   */
+  purgeBookAssociations?(
+    bookIds: readonly string[],
+    snapshot: ExternalSourceAssociationPurgeSnapshot,
+  ): Promise<void>;
+  prepareBookAssociationPurge?(
+    targets: readonly ExternalSourceAssociationPurgeTarget[],
+  ): Promise<ExternalSourceAssociationPurgeIntent>;
+  completeBookAssociationPurge?(intentId: string, confirmedBookIds?: readonly string[]): Promise<number>;
+  reconcileBookAssociationPurges?(
+    currentBooks: readonly ExternalSourceAssociationPurgeTarget[],
+    purgeEvidence?: readonly ExternalSourceAssociationPurgeTarget[],
+  ): Promise<number>;
   listSelectedItems(connectorId: string, accountConnectionId: string): Promise<ExternalSourceSelectionRecord[]>;
   saveSelectedItem(record: ExternalSourceSelectionRecord): Promise<void>;
   deleteSelectedItem(id: string): Promise<void>;
@@ -452,6 +672,241 @@ export class ExternalSourceLocalStateStore implements ExternalSourceLocalState {
     const tx = db.transaction('subscriptions', 'readwrite');
     tx.objectStore('subscriptions').delete(id);
     await transactionDone(tx);
+  }
+
+  async captureBookAssociations(): Promise<ExternalSourceAssociationPurgeSnapshot> {
+    const db = await openExternalSourceDb();
+    const tx = db.transaction(['links', 'subscriptions'], 'readonly');
+    const [links, subscriptions] = await Promise.all([
+      requestToPromise<ExternalSourceLink[]>(tx.objectStore('links').getAll()),
+      requestToPromise<ExternalSourceSubscriptionRecord[]>(tx.objectStore('subscriptions').getAll()),
+    ]);
+    await transactionDone(tx);
+    return {
+      entries: links.map((link) => ({
+        id: link.id,
+        localBookId: link.localBookId,
+        activeContentRevisionId: link.activeContentRevisionId,
+        version: externalSourceLinkVersion(link),
+      })),
+      subscriptions: subscriptions.map((subscription) => ({
+        id: subscription.id,
+        version: externalSourceSubscriptionVersion(subscription),
+        localBookId: externalSerialBookId(subscription),
+      })),
+    };
+  }
+
+  async purgeBookAssociations(
+    bookIds: readonly string[],
+    snapshot: ExternalSourceAssociationPurgeSnapshot,
+  ): Promise<void> {
+    const targetBookIds = new Set(bookIds.filter(Boolean));
+    if (targetBookIds.size === 0) return;
+
+    const db = await openExternalSourceDb();
+    const tx = db.transaction(['links', 'subscriptions'], 'readwrite');
+    const done = transactionDone(tx);
+    const linksStore = tx.objectStore('links');
+    const subscriptionsStore = tx.objectStore('subscriptions');
+    const [links, subscriptions] = await Promise.all([
+      requestToPromise<ExternalSourceLink[]>(linksStore.getAll()),
+      requestToPromise<ExternalSourceSubscriptionRecord[]>(subscriptionsStore.getAll()),
+    ]);
+    const targetsByBookId = new Map(
+      snapshot.entries
+        .filter((entry) => targetBookIds.has(entry.localBookId))
+        .map((entry) => [
+          entry.localBookId,
+          { bookId: entry.localBookId, activeContentRevisionId: entry.activeContentRevisionId },
+        ]),
+    );
+    for (const subscription of snapshot.subscriptions) {
+      if (targetBookIds.has(subscription.localBookId) && !targetsByBookId.has(subscription.localBookId)) {
+        targetsByBookId.set(subscription.localBookId, {
+          bookId: subscription.localBookId,
+          activeContentRevisionId: undefined,
+        });
+      }
+    }
+    const plan = associationCleanupPlan({
+      targets: [...targetsByBookId.values()],
+      snapshot,
+      links,
+      subscriptions,
+    });
+    for (const id of plan.deleteLinkIds) linksStore.delete(id);
+    for (const id of plan.deleteSubscriptionIds) subscriptionsStore.delete(id);
+
+    await done;
+  }
+
+  async prepareBookAssociationPurge(
+    inputTargets: readonly ExternalSourceAssociationPurgeTarget[],
+  ): Promise<ExternalSourceAssociationPurgeIntent> {
+    const targets = uniquePurgeTargets(inputTargets);
+    if (targets.length === 0) throw new Error('A purge intent requires at least one book generation');
+    const targetByBookId = new Map(targets.map((target) => [target.bookId, target]));
+    const db = await openExternalSourceDb();
+    const tx = db.transaction(['links', 'subscriptions', 'associationPurgeIntents'], 'readwrite');
+    const done = transactionDone(tx);
+    const [links, subscriptions] = await Promise.all([
+      requestToPromise<ExternalSourceLink[]>(tx.objectStore('links').getAll()),
+      requestToPromise<ExternalSourceSubscriptionRecord[]>(tx.objectStore('subscriptions').getAll()),
+    ]);
+    const snapshot: ExternalSourceAssociationPurgeSnapshot = {
+      entries: links
+        .filter((link) => targetByBookId.has(link.localBookId))
+        .map((link) => ({
+          id: link.id,
+          localBookId: link.localBookId,
+          activeContentRevisionId: link.activeContentRevisionId,
+          version: externalSourceLinkVersion(link),
+        })),
+      subscriptions: subscriptions
+        .map((subscription) => ({
+          id: subscription.id,
+          version: externalSourceSubscriptionVersion(subscription),
+          localBookId: externalSerialBookId(subscription),
+        }))
+        .filter((subscription) => targetByBookId.has(subscription.localBookId)),
+    };
+    const now = new Date().toISOString();
+    const intent: ExternalSourceAssociationPurgeIntent = {
+      id: associationPurgeIntentId(),
+      targets,
+      snapshot,
+      createdAt: now,
+      updatedAt: now,
+      schemaVersion: 1,
+    };
+    tx.objectStore('associationPurgeIntents').put(intent);
+    await done;
+    return intent;
+  }
+
+  async completeBookAssociationPurge(intentId: string, confirmedBookIds?: readonly string[]): Promise<number> {
+    const db = await openExternalSourceDb();
+    const tx = db.transaction(['links', 'subscriptions', 'associationPurgeIntents'], 'readwrite');
+    const done = transactionDone(tx);
+    const intentStore = tx.objectStore('associationPurgeIntents');
+    const [intent, links, subscriptions] = await Promise.all([
+      requestToPromise<ExternalSourceAssociationPurgeIntent | undefined>(intentStore.get(intentId)),
+      requestToPromise<ExternalSourceLink[]>(tx.objectStore('links').getAll()),
+      requestToPromise<ExternalSourceSubscriptionRecord[]>(tx.objectStore('subscriptions').getAll()),
+    ]);
+    if (!intent) {
+      await done;
+      return 0;
+    }
+    const confirmed = new Set(confirmedBookIds ?? intent.targets.map((target) => target.bookId));
+    const targets = intent.targets.filter((target) => confirmed.has(target.bookId));
+    const plan = associationCleanupPlan({ targets, snapshot: intent.snapshot, links, subscriptions });
+    for (const id of plan.deleteLinkIds) tx.objectStore('links').delete(id);
+    for (const id of plan.deleteSubscriptionIds) tx.objectStore('subscriptions').delete(id);
+    const remainingTargets = intent.targets.filter(
+      (target) => !confirmed.has(target.bookId) || plan.unresolvedBookIds.has(target.bookId),
+    );
+    if (remainingTargets.length === 0) {
+      intentStore.delete(intent.id);
+    } else {
+      intentStore.put({ ...intent, targets: remainingTargets, updatedAt: new Date().toISOString() });
+    }
+    await done;
+    return plan.deleteLinkIds.length + plan.deleteSubscriptionIds.length;
+  }
+
+  async reconcileBookAssociationPurges(
+    inputCurrentBooks: readonly ExternalSourceAssociationPurgeTarget[],
+    inputPurgeEvidence: readonly ExternalSourceAssociationPurgeTarget[] = [],
+  ): Promise<number> {
+    const currentBooks = uniquePurgeTargets(inputCurrentBooks);
+    const purgeEvidence = uniquePurgeTargets(inputPurgeEvidence);
+    const currentBookById = new Map(currentBooks.map((book) => [book.bookId, book]));
+    const db = await openExternalSourceDb();
+    const tx = db.transaction(['links', 'subscriptions', 'associationPurgeIntents'], 'readwrite');
+    const done = transactionDone(tx);
+    const linksStore = tx.objectStore('links');
+    const subscriptionsStore = tx.objectStore('subscriptions');
+    const intentStore = tx.objectStore('associationPurgeIntents');
+    const [initialLinks, initialSubscriptions, intents] = await Promise.all([
+      requestToPromise<ExternalSourceLink[]>(linksStore.getAll()),
+      requestToPromise<ExternalSourceSubscriptionRecord[]>(subscriptionsStore.getAll()),
+      requestToPromise<ExternalSourceAssociationPurgeIntent[]>(intentStore.getAll()),
+    ]);
+    const links = new Map(initialLinks.map((link) => [link.id, link]));
+    const subscriptions = new Map(initialSubscriptions.map((subscription) => [subscription.id, subscription]));
+    let changed = 0;
+
+    const applyPlan = (plan: AssociationCleanupPlan) => {
+      for (const id of plan.deleteLinkIds) {
+        linksStore.delete(id);
+        links.delete(id);
+        changed += 1;
+      }
+      for (const id of plan.deleteSubscriptionIds) {
+        subscriptionsStore.delete(id);
+        subscriptions.delete(id);
+        changed += 1;
+      }
+    };
+
+    for (const intent of intents) {
+      const confirmedTargets = intent.targets.filter((target) => {
+        const current = currentBookById.get(target.bookId);
+        return !current || !sameContentRevision(current.activeContentRevisionId, target.activeContentRevisionId);
+      });
+      if (confirmedTargets.length === 0) continue;
+      const plan = associationCleanupPlan({
+        targets: confirmedTargets,
+        snapshot: intent.snapshot,
+        links: [...links.values()],
+        subscriptions: [...subscriptions.values()],
+      });
+      applyPlan(plan);
+      const confirmedIds = new Set(confirmedTargets.map((target) => target.bookId));
+      const remainingTargets = intent.targets.filter(
+        (target) => !confirmedIds.has(target.bookId) || plan.unresolvedBookIds.has(target.bookId),
+      );
+      if (remainingTargets.length === 0) intentStore.delete(intent.id);
+      else intentStore.put({ ...intent, targets: remainingTargets, updatedAt: new Date().toISOString() });
+    }
+
+    // Pulled book_purged events leave durable reader tombstones. They do not
+    // have a cross-database intent, so clean only finalized links that no
+    // longer name the currently projected generation. A subscription without
+    // such a link is ambiguous (it can be source-only) and is preserved.
+    for (const evidence of purgeEvidence) {
+      const liveGeneration = currentBookById.get(evidence.bookId);
+      const evidenceLinks = [...links.values()].filter(
+        (link) =>
+          !link.pendingImport &&
+          link.localBookId === evidence.bookId &&
+          (!liveGeneration ||
+            !sameContentRevision(link.activeContentRevisionId, liveGeneration.activeContentRevisionId)),
+      );
+      if (evidenceLinks.length === 0) continue;
+      const snapshot: ExternalSourceAssociationPurgeSnapshot = {
+        entries: evidenceLinks.map((link) => ({
+          id: link.id,
+          localBookId: link.localBookId,
+          activeContentRevisionId: link.activeContentRevisionId,
+          version: externalSourceLinkVersion(link),
+        })),
+        subscriptions: [],
+      };
+      applyPlan(
+        associationCleanupPlan({
+          targets: [evidence],
+          snapshot,
+          links: [...links.values()],
+          subscriptions: [...subscriptions.values()],
+        }),
+      );
+    }
+
+    await done;
+    return changed;
   }
 
   async listSelectedItems(connectorId: string, accountConnectionId: string): Promise<ExternalSourceSelectionRecord[]> {

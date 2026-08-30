@@ -1,6 +1,7 @@
 import { BlobReader, BlobWriter, ZipReader, type FileEntry } from '@zip.js/zip.js';
+import { persistentId128 } from '@noveldesk/text-core/hash';
 import type { Chapter, Novel } from '../../domain/types';
-import { sha256, stableId } from '../../domain/hash';
+import { sha256 } from '../../domain/hash';
 import {
   normalizeSerialWorkKey,
   parseSerialReleaseName,
@@ -227,7 +228,7 @@ export async function inspectLocalSeriesImport(
     const contentHash = await sha256(await file.arrayBuffer());
     const releaseKey = parsed.releaseKey ?? unknownReleaseKey(parsed);
     releases.push({
-      id: stableId('local_series_release', `${normalizeSerialWorkKey(commonTitle)}:${releaseKey}`, 20),
+      id: persistentId128('local_series_release', [normalizeSerialWorkKey(commonTitle), releaseKey]),
       file,
       originalName: file.name,
       parsed,
@@ -274,7 +275,12 @@ export async function planLocalSeriesImport(
   options: PlanLocalSeriesImportOptions = {},
 ): Promise<LocalSeriesImportPlan> {
   const incrementalAppend = Boolean(targetNovel && options.incrementalAppend);
-  const targetSource = targetNovel && !incrementalAppend ? await assets?.exportSource(targetNovel.id) : undefined;
+  const targetSource =
+    targetNovel && !incrementalAppend
+      ? await assets?.exportSource(targetNovel.id, {
+          activeContentRevisionId: targetNovel.activeContentRevisionId,
+        })
+      : undefined;
   if (targetNovel && !incrementalAppend && !targetSource) {
     throw new Error('기존 작품의 원본을 찾지 못해 회차를 안전하게 추가할 수 없습니다.');
   }
@@ -356,7 +362,7 @@ export async function buildLocalSeriesImportFile(
   const chapters: SeriesImageChapterInput[] = additions.map((release, index) => ({
     remoteId:
       plan.incrementalAppend && plan.targetNovel
-        ? stableId('local_series_release', `${plan.targetNovel.id}:${release.releaseKey}`, 20)
+        ? persistentId128('local_series_release', [plan.targetNovel.id, release.releaseKey])
         : release.id,
     release: {
       title: release.parsed.releaseTitle,
@@ -372,11 +378,10 @@ export async function buildLocalSeriesImportFile(
       ? (() => {
           const parsed = parseSerialReleaseName(plan.targetNovel!.sourceFileName, plan.targetNovel!.title);
           return {
-            remoteId: stableId(
-              'local_series_release',
-              `${workKey}:${parsed.releaseKey ?? `title:${normalizeSerialWorkKey(parsed.releaseTitle)}`}`,
-              20,
-            ),
+            remoteId: persistentId128('local_series_release', [
+              workKey,
+              parsed.releaseKey ?? `title:${normalizeSerialWorkKey(parsed.releaseTitle)}`,
+            ]),
             release: {
               title: parsed.releaseTitle,
               chapterNumber: parsed.chapterNumber,
@@ -389,7 +394,7 @@ export async function buildLocalSeriesImportFile(
       : undefined;
   return buildSeriesImageArchive({
     collection: {
-      remoteId: plan.existingManifest?.collection.remoteId ?? stableId('local_series', workKey, 20),
+      remoteId: plan.existingManifest?.collection.remoteId ?? persistentId128('local_series', [workKey]),
       title: plan.targetNovel?.title ?? plan.inspection.workTitle,
       author: plan.targetNovel?.author,
       description: plan.targetNovel?.description,

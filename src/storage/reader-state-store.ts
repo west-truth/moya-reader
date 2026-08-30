@@ -3,6 +3,12 @@ import { defaultSettings } from '../repositories/reader-defaults';
 import { bookProgressFromChapterProgress } from './content-revision-remote-state';
 import { storedNovel } from './content-revision-store';
 import { ContentRevisionConflictError } from './content-revisions';
+import { canonicalRemoteContentRevisionId } from './content-revision-identity';
+import { CONTENT_REVISION_STORES } from './content-revision-migration';
+import {
+  clearExactDocumentSectionReadState,
+  markExactDocumentSectionReadState,
+} from './exact-section-read-state';
 import {
   deleteByIndexInTransaction,
   getByIndex,
@@ -19,11 +25,19 @@ import {
   type NovelMetadataPatch,
   type SaveReadingPositionInput,
 } from '../repositories/reader-repository';
+import type { BookMutationExpectation } from '../repositories/library-catalog-repository';
 
-export async function patchNovelMetadata(novelId: string, patch: NovelMetadataPatch): Promise<void> {
+export async function patchNovelMetadata(
+  novelId: string,
+  patch: NovelMetadataPatch,
+  expectation?: BookMutationExpectation,
+): Promise<void> {
   if (patch.title === undefined && patch.favorite === undefined && patch.analysisStatus === undefined) return;
   const db = await openReaderDb();
-  const tx = db.transaction(['novels', 'devices', 'sync_outbox', 'sync_state'], 'readwrite');
+  const tx = db.transaction(
+    ['novels', CONTENT_REVISION_STORES.revisions, 'devices', 'sync_outbox', 'sync_state'],
+    'readwrite',
+  );
   const done = transactionDone(tx);
   const store = tx.objectStore('novels');
   const current = await requestToPromise<Novel | undefined>(store.get(novelId));
@@ -31,12 +45,30 @@ export async function patchNovelMetadata(novelId: string, patch: NovelMetadataPa
     await done;
     throw new RepositoryEntityNotFoundError('novel', novelId);
   }
+  const actualMetadataRevision = current.metadataRevision ?? 0;
+  if (
+    expectation?.metadataRevision !== undefined &&
+    expectation.metadataRevision !== actualMetadataRevision
+  ) {
+    tx.abort();
+    await done.catch(() => undefined);
+    throw new Error(`Book ${novelId} metadata revision changed before metadata mutation`);
+  }
+  if (
+    expectation?.activeContentRevisionId !== undefined &&
+    expectation.activeContentRevisionId !== current.activeContentRevisionId
+  ) {
+    tx.abort();
+    await done.catch(() => undefined);
+    throw new ContentRevisionConflictError('Content revision changed before metadata mutation');
+  }
+  const canonicalContentRevisionId = await canonicalRemoteContentRevisionId(tx, current);
   const next = storedNovel({
     ...current,
     ...(patch.title === undefined ? undefined : { title: patch.title }),
     ...(patch.favorite === undefined ? undefined : { favorite: patch.favorite }),
     ...(patch.analysisStatus === undefined ? undefined : { analysisStatus: patch.analysisStatus }),
-    metadataRevision: (current.metadataRevision ?? 0) + 1,
+    metadataRevision: actualMetadataRevision + 1,
     updatedAt: nowIso(),
   });
   store.put(next);
@@ -48,7 +80,10 @@ export async function patchNovelMetadata(novelId: string, patch: NovelMetadataPa
     metadataRevision: next.metadataRevision,
     updatedAt: next.updatedAt,
   };
-  await queueSyncEventInTransaction(tx, 'book_updated', jsonValue({ novel: syncedPatch }), {
+  await queueSyncEventInTransaction(tx, 'book_updated', jsonValue({
+    novel: syncedPatch,
+    contentRevisionId: canonicalContentRevisionId,
+  }), {
     novelId: next.id,
     entityId: next.id,
   });
@@ -70,10 +105,23 @@ export async function saveReadingPosition(input: SaveReadingPositionInput): Prom
     scrollTop: roundedScrollTop,
     deviceId: LOCAL_DEVICE_ID,
     updatedAt: nowIso(),
+    documentSectionId: input.documentSectionId,
   };
 
   const db = await openReaderDb();
-  const tx = db.transaction(['novels', 'reading_positions', 'devices', 'sync_outbox', 'sync_state'], 'readwrite');
+  const tx = db.transaction(
+    [
+      'novels',
+      'reading_positions',
+      CONTENT_REVISION_STORES.revisions,
+      CONTENT_REVISION_STORES.chapters,
+      'chapters',
+      'devices',
+      'sync_outbox',
+      'sync_state',
+    ],
+    'readwrite',
+  );
   const done = transactionDone(tx);
   const novelStore = tx.objectStore('novels');
   const novel = await requestToPromise<Novel | undefined>(novelStore.get(input.novelId));
@@ -89,6 +137,7 @@ export async function saveReadingPosition(input: SaveReadingPositionInput): Prom
     await done.catch(() => undefined);
     throw new ContentRevisionConflictError('Content revision changed before reader position was saved');
   }
+  const canonicalContentRevisionId = await canonicalRemoteContentRevisionId(tx, novel);
   novelStore.put(
     storedNovel({
       ...novel,
@@ -100,7 +149,12 @@ export async function saveReadingPosition(input: SaveReadingPositionInput): Prom
     }),
   );
   tx.objectStore('reading_positions').put(position);
-  await queueSyncEventInTransaction(tx, 'reading_position_updated', jsonValue({ position }), {
+  if (position.documentSectionId) {
+    await markExactDocumentSectionReadState(tx, novel, position.documentSectionId, position.updatedAt);
+  }
+  await queueSyncEventInTransaction(tx, 'reading_position_updated', jsonValue({
+    position: { ...position, contentRevisionId: canonicalContentRevisionId },
+  }), {
     novelId: input.novelId,
     entityId: position.id,
   });
@@ -111,12 +165,22 @@ export function getReadingPosition(novelId: string): Promise<ReadingPosition | u
   return getByIndex<ReadingPosition>('reading_positions', 'novelId', novelId);
 }
 
-export async function clearReadingPosition(novelId: string): Promise<void> {
+export async function clearReadingPosition(novelId: string, expectedContentRevisionId?: string): Promise<void> {
   const deletedAt = nowIso();
   const positionId = `reading_position_${novelId}`;
   const db = await openReaderDb();
   const tx = db.transaction(
-    ['novels', 'reading_positions', 'sync_tombstones', 'devices', 'sync_outbox', 'sync_state'],
+    [
+      'novels',
+      'reading_positions',
+      CONTENT_REVISION_STORES.revisions,
+      CONTENT_REVISION_STORES.chapters,
+      'chapters',
+      'sync_tombstones',
+      'devices',
+      'sync_outbox',
+      'sync_state',
+    ],
     'readwrite',
   );
   const done = transactionDone(tx);
@@ -126,6 +190,12 @@ export async function clearReadingPosition(novelId: string): Promise<void> {
     await done;
     return;
   }
+  if (expectedContentRevisionId !== undefined && novel.activeContentRevisionId !== expectedContentRevisionId) {
+    tx.abort();
+    await done.catch(() => undefined);
+    throw new ContentRevisionConflictError('Content revision changed before reader position was cleared');
+  }
+  const canonicalContentRevisionId = await canonicalRemoteContentRevisionId(tx, novel);
   novelStore.put(
     storedNovel({
       ...novel,
@@ -138,11 +208,14 @@ export async function clearReadingPosition(novelId: string): Promise<void> {
     }),
   );
   deleteByIndexInTransaction(tx, 'reading_positions', 'novelId', novelId);
+  await clearExactDocumentSectionReadState(tx, novel);
   tx.objectStore('sync_tombstones').put(tombstoneEntity('reading_position', positionId, deletedAt, novelId));
-  await queueSyncEventInTransaction(tx, 'reading_position_deleted', jsonValue({ id: positionId, deletedAt }), {
-    novelId,
-    entityId: positionId,
-  });
+  await queueSyncEventInTransaction(
+    tx,
+    'reading_position_deleted',
+    jsonValue({ id: positionId, deletedAt, expectedContentRevisionId: canonicalContentRevisionId }),
+    { novelId, entityId: positionId },
+  );
   await done;
 }
 

@@ -5,7 +5,7 @@ import type { Novel } from '../../domain/types';
 import type { BookAssetRepository } from '../../repositories/book-asset-repository';
 import type { ImportService } from '../../services/import/import-service';
 import { inspectDocumentSeriesSource, materializeDocumentSeriesArchive } from '@noveldesk/document-series-core';
-import { integrityHash } from '@noveldesk/text-core/hash';
+import { integrityHash, persistentId128 } from '@noveldesk/text-core/hash';
 import { stableId } from '../../domain/hash';
 import { readLocalSeriesManifest } from './local-series-import';
 import { useImportController, type ImportFeatureController } from './useImportController';
@@ -262,7 +262,7 @@ describe('useImportController local series analysis', () => {
       targetBookId: existing.id,
       chapters: [
         {
-          remoteId: stableId('local_series_release', `${existing.id}:c:2`, 20),
+          remoteId: persistentId128('local_series_release', [existing.id, 'c:2']),
           title: '2화',
         },
       ],

@@ -7,6 +7,18 @@ export interface CatalogMutationReceipt {
   readonly changedAt: string;
 }
 
+export interface TrashPurgeReceipt {
+  readonly purged: number;
+  readonly bookIds: readonly string[];
+}
+
+/** Identifies both the mutable catalog revision and the immutable book incarnation. */
+export interface BookMutationExpectation {
+  readonly metadataRevision?: number;
+  readonly activeContentRevisionId?: string;
+}
+export type BookLifecycleExpectation = BookMutationExpectation;
+
 export interface ShelfMutationReceipt {
   readonly shelf: Shelf;
   readonly operation: 'created' | 'updated' | 'deleted';
@@ -24,6 +36,7 @@ export type BatchLibraryCommand =
 export interface BatchLibraryTarget {
   readonly bookId: string;
   readonly expectedRevision?: number;
+  readonly expectedContentRevisionId?: string;
 }
 
 export interface BatchLibraryItemResult {
@@ -42,12 +55,16 @@ export interface BatchLibraryReceipt {
 }
 
 export interface LibraryCatalogRepository {
-  patchMetadata(bookId: string, patch: BookMetadataPatch, expectedRevision?: number): Promise<CatalogMutationReceipt>;
+  patchMetadata(
+    bookId: string,
+    patch: BookMetadataPatch,
+    expectation?: BookMutationExpectation,
+  ): Promise<CatalogMutationReceipt>;
   listTrash(): Promise<Novel[]>;
-  moveToTrash(bookId: string, expectedRevision?: number): Promise<CatalogMutationReceipt>;
-  restore(bookId: string, expectedRevision?: number): Promise<CatalogMutationReceipt>;
-  purge(bookId: string, expectedRevision?: number): Promise<void>;
-  emptyTrash(): Promise<number>;
+  moveToTrash(bookId: string, expectation?: BookLifecycleExpectation): Promise<CatalogMutationReceipt>;
+  restore(bookId: string, expectation?: BookLifecycleExpectation): Promise<CatalogMutationReceipt>;
+  purge(bookId: string, expectation?: BookLifecycleExpectation): Promise<void>;
+  emptyTrash(): Promise<TrashPurgeReceipt>;
   listShelves(): Promise<Shelf[]>;
   listShelfMemberships(): Promise<ShelfMembership[]>;
   createShelf(input: { readonly name: string; readonly color?: string }): Promise<ShelfMutationReceipt>;

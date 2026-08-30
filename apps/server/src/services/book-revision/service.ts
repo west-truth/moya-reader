@@ -52,6 +52,7 @@ export async function prepareBookReplacement(
   const toContentRevisionNumber = existing.contentRevisionNumber + 1;
   const toContentRevisionId = persistentId128('book_content_revision', [
     input.bookId,
+    existing.contentRevisionId,
     String(toContentRevisionNumber),
     input.sourceRawTextHash,
     input.normalizedTextHash,

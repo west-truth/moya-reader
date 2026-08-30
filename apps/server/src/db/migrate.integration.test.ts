@@ -385,6 +385,13 @@ describeWithPostgres('versioned PostgreSQL migrations', () => {
       const tables = await pool.query<{ tablename: string }>(
         'select tablename from pg_tables where schemaname = current_schema()',
       );
+      const coverRemovalColumn = await pool.query<{ data_type: string; is_nullable: string }>(
+        `select data_type, is_nullable
+           from information_schema.columns
+          where table_schema = current_schema()
+            and table_name = 'library_books'
+            and column_name = 'cover_removed_at'`,
+      );
 
       expect(result.applied.map((migration) => migration.fileName)).toEqual(
         expected.map((migration) => migration.fileName),
@@ -397,6 +404,49 @@ describeWithPostgres('versioned PostgreSQL migrations', () => {
         expect.arrayContaining(['users', 'provider_jobs', 'provider_job_attempts', 'provider_job_outbox']),
       );
       expect(messages).toHaveLength(expected.length);
+      expect(coverRemovalColumn.rows).toEqual([{ data_type: 'timestamp with time zone', is_nullable: 'YES' }]);
+
+      await pool.query(`
+        insert into users (id, email, display_name)
+        values ('incarnation-user', 'incarnation@example.test', 'Incarnation Reader');
+        insert into library_books (
+          id, user_id, title, source_file_name, normalized_text_hash,
+          total_chapters, total_characters, total_paragraphs
+        ) values ('reused-series-book', 'incarnation-user', 'Series', 'series.cbz', 'same-source', 1, 10, 1);
+      `);
+      const firstIncarnation = await pool.query<{ active_content_revision_id: string }>(
+        `select active_content_revision_id from library_books where id = 'reused-series-book'`,
+      );
+      await pool.query(`delete from library_books where id = 'reused-series-book'`);
+      const purgedGeneration = await pool.query<{ generation: string }>(
+        `select generation from book_id_generations
+          where user_id = 'incarnation-user' and book_id = 'reused-series-book'`,
+      );
+      await pool.query(`
+        insert into library_books (
+          id, user_id, title, source_file_name, normalized_text_hash,
+          total_chapters, total_characters, total_paragraphs
+        ) values ('reused-series-book', 'incarnation-user', 'Series', 'series.cbz', 'same-source', 1, 10, 1);
+      `);
+      const secondIncarnation = await pool.query<{ active_content_revision_id: string }>(
+        `select active_content_revision_id from library_books where id = 'reused-series-book'`,
+      );
+      const recreatedGeneration = await pool.query<{ generation: string }>(
+        `select generation from book_id_generations
+          where user_id = 'incarnation-user' and book_id = 'reused-series-book'`,
+      );
+      expect(firstIncarnation.rows[0]?.active_content_revision_id).toBeTruthy();
+      expect(secondIncarnation.rows[0]?.active_content_revision_id).toBeTruthy();
+      expect(secondIncarnation.rows[0]?.active_content_revision_id).not.toBe(
+        firstIncarnation.rows[0]?.active_content_revision_id,
+      );
+      expect(Number(purgedGeneration.rows[0]?.generation)).toBe(2);
+      expect(Number(recreatedGeneration.rows[0]?.generation)).toBe(3);
+      await pool.query(`delete from users where id = 'incarnation-user'`);
+      const deletedUserGeneration = await pool.query(
+        `select generation from book_id_generations where user_id = 'incarnation-user'`,
+      );
+      expect(deletedUserGeneration.rows).toEqual([]);
     });
   }, 30_000);
 

@@ -36,9 +36,9 @@ async function harness(input: {
     listShelfMemberships: vi.fn(async () => []),
     patchMetadata:
       input.patchMetadata ??
-      vi.fn(async (bookId: string, _patch: unknown, expectedRevision?: number) => ({
+      vi.fn(async (bookId: string, _patch: unknown, expectation?: { metadataRevision?: number }) => ({
         bookId,
-        metadataRevision: (expectedRevision ?? 0) + 1,
+        metadataRevision: (expectation?.metadataRevision ?? 0) + 1,
         changedAt: '2026-08-30T00:00:01.000Z',
       })),
   } as unknown as LibraryCatalogRepository;
@@ -79,7 +79,10 @@ describe('useLibraryManagementController metadata saves', () => {
     act(() => mounted.controller.openMetadata(base));
     await act(async () => mounted.controller.saveBookDetails(base, { title: '새 제목' }, { kind: 'keep' }));
 
-    expect(mounted.catalog.patchMetadata).toHaveBeenCalledWith('book-1', { title: '새 제목' }, 2);
+    expect(mounted.catalog.patchMetadata).toHaveBeenCalledWith('book-1', { title: '새 제목' }, {
+      metadataRevision: 2,
+      activeContentRevisionId: undefined,
+    });
     expect(mounted.controller.panel).toBeUndefined();
     await act(async () => mounted.renderer.unmount());
   });
@@ -103,11 +106,11 @@ describe('useLibraryManagementController metadata saves', () => {
     const pending = new Promise<void>((resolve) => {
       release = resolve;
     });
-    const patchMetadata = vi.fn(async (bookId: string, _patch: unknown, expectedRevision?: number) => {
+    const patchMetadata = vi.fn(async (bookId: string, _patch: unknown, expectation?: { metadataRevision?: number }) => {
       await pending;
       return {
         bookId,
-        metadataRevision: (expectedRevision ?? 0) + 1,
+        metadataRevision: (expectation?.metadataRevision ?? 0) + 1,
         changedAt: '2026-08-30T00:00:01.000Z',
       };
     });
@@ -133,7 +136,12 @@ describe('useLibraryManagementController metadata saves', () => {
   it('reuses its accepted revision when the same book is reopened before the catalog view catches up', async () => {
     let current = novel({ title: '첫 제목', metadataRevision: 1 });
     const staleCard = current;
-    const patchMetadata = vi.fn(async (bookId: string, patch: { title?: string }, expectedRevision?: number) => {
+    const patchMetadata = vi.fn(async (
+      bookId: string,
+      patch: { title?: string },
+      expectation?: { metadataRevision?: number },
+    ) => {
+      const expectedRevision = expectation?.metadataRevision;
       current = novel({
         ...current,
         title: patch.title ?? current.title,
@@ -156,8 +164,14 @@ describe('useLibraryManagementController metadata saves', () => {
     expect(reopened).toMatchObject({ title: '두 번째 제목', metadataRevision: 2 });
     await act(async () => mounted.controller.saveBookDetails(reopened!, { title: '세 번째 제목' }, { kind: 'keep' }));
 
-    expect(patchMetadata).toHaveBeenNthCalledWith(1, 'book-1', { title: '두 번째 제목' }, 1);
-    expect(patchMetadata).toHaveBeenNthCalledWith(2, 'book-1', { title: '세 번째 제목' }, 2);
+    expect(patchMetadata).toHaveBeenNthCalledWith(1, 'book-1', { title: '두 번째 제목' }, {
+      metadataRevision: 1,
+      activeContentRevisionId: undefined,
+    });
+    expect(patchMetadata).toHaveBeenNthCalledWith(2, 'book-1', { title: '세 번째 제목' }, {
+      metadataRevision: 2,
+      activeContentRevisionId: undefined,
+    });
     expect(mounted.notify).not.toHaveBeenCalledWith(expect.stringContaining('현재 입력은 보존'), 'danger');
     await act(async () => mounted.renderer.unmount());
   });
@@ -171,11 +185,11 @@ describe('useLibraryManagementController metadata saves', () => {
         current = novel({ ...current, favorite: true, metadataRevision: 2 });
         throw new Error('book metadata revision changed');
       })
-      .mockImplementationOnce(async (bookId, patch, expectedRevision) => {
+      .mockImplementationOnce(async (bookId, patch, expectation) => {
         current = novel({
           ...current,
           title: patch.title ?? current.title,
-          metadataRevision: (expectedRevision ?? 0) + 1,
+          metadataRevision: (expectation?.metadataRevision ?? 0) + 1,
         });
         return {
           bookId,
@@ -188,8 +202,14 @@ describe('useLibraryManagementController metadata saves', () => {
     act(() => mounted.controller.openMetadata(base));
     await act(async () => mounted.controller.saveBookDetails(base, { title: '새 제목' }, { kind: 'keep' }));
 
-    expect(patchMetadata).toHaveBeenNthCalledWith(1, 'book-1', { title: '새 제목' }, 1);
-    expect(patchMetadata).toHaveBeenNthCalledWith(2, 'book-1', { title: '새 제목' }, 2);
+    expect(patchMetadata).toHaveBeenNthCalledWith(1, 'book-1', { title: '새 제목' }, {
+      metadataRevision: 1,
+      activeContentRevisionId: undefined,
+    });
+    expect(patchMetadata).toHaveBeenNthCalledWith(2, 'book-1', { title: '새 제목' }, {
+      metadataRevision: 2,
+      activeContentRevisionId: undefined,
+    });
     expect(mounted.controller.panel).toBeUndefined();
     await act(async () => mounted.renderer.unmount());
   });
@@ -289,6 +309,34 @@ describe('useLibraryManagementController metadata saves', () => {
       book: { coverPositionY: 75, metadataRevision: 2 },
     });
     expect(mounted.notify).toHaveBeenCalledWith(expect.stringContaining('현재 입력은 보존'), 'danger');
+    await act(async () => mounted.renderer.unmount());
+  });
+
+  it('keeps an optimistic cover-removal marker when a stale card is reopened', async () => {
+    const base = novel({
+      coverAssetId: 'cover-1',
+      coverContentHash: 'sha256:cover-1',
+      metadataRevision: 1,
+    });
+    const removeCover = vi.fn(async () => undefined);
+    const mounted = await harness({
+      current: base,
+      assets: { removeCover } as unknown as BookAssetRepository,
+    });
+
+    act(() => mounted.controller.openMetadata(base));
+    await act(async () => mounted.controller.saveBookDetails(base, {}, { kind: 'remove' }));
+    act(() => mounted.controller.openMetadata(base));
+
+    expect(mounted.controller.panel).toMatchObject({
+      kind: 'metadata',
+      book: {
+        coverAssetId: undefined,
+        coverContentHash: undefined,
+        coverRemovedAt: expect.any(String),
+        metadataRevision: 2,
+      },
+    });
     await act(async () => mounted.renderer.unmount());
   });
 });

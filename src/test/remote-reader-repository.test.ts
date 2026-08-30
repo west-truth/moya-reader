@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { ParsedNovel } from '../domain/types';
 import { ResourceRevisionConflictError } from '../domain/resource-revisions';
 import {
@@ -10,6 +10,8 @@ import { defaultSettings } from '../repositories/reader-defaults';
 import { RemoteApiClient, RemoteApiError } from '../services/remote/remote-api-client';
 
 const now = '2026-07-05T00:00:00.000Z';
+
+afterEach(() => vi.restoreAllMocks());
 
 function parsedNovel(text: string): ParsedNovel {
   return {
@@ -125,6 +127,7 @@ function hostedClient() {
       books: [
         {
           id: 'book_1',
+          active_content_revision_id: 'revision_1',
           title: 'Hosted Novel',
           source_file_name: 'hosted.txt',
           source_encoding: 'utf-8',
@@ -136,6 +139,7 @@ function hostedClient() {
           total_paragraphs: 40,
           document_section_count: 1,
           cover_seed: 7,
+          cover_removed_at: '2026-07-05T00:03:00.000Z',
           favorite: true,
           last_read_chapter_id: 'chapter_1',
           last_read_chapter_index: 1,
@@ -148,6 +152,7 @@ function hostedClient() {
     getBookManifest: vi.fn(async () => ({
       book: {
         id: 'book_1',
+        active_content_revision_id: 'revision_1',
         title: 'Hosted Novel',
         source_file_name: 'hosted.txt',
         source_encoding: 'utf-8',
@@ -159,6 +164,7 @@ function hostedClient() {
         total_paragraphs: 40,
         document_section_count: 1,
         cover_seed: 7,
+        cover_removed_at: '2026-07-05T00:03:00.000Z',
         favorite: true,
       },
       readingPosition: {
@@ -174,6 +180,7 @@ function hostedClient() {
       },
     })),
     listChapters: vi.fn(async () => ({
+      contentRevisionId: 'revision_1',
       chapters: [
         {
           id: 'chapter_1',
@@ -196,6 +203,7 @@ function hostedClient() {
       ],
     })),
     listPages: vi.fn(async (_chapterId: string, from = 0, count = 5) => ({
+      contentRevisionId: 'revision_1',
       pages: from === 0 && count >= 1 ? [page] : [],
     })),
     listBookmarks: vi.fn(async () => ({
@@ -345,6 +353,9 @@ describe('RemoteReaderRepository', () => {
     const [highlight] = await repository.listHighlights('book_1');
     const [note] = await repository.listNotes('book_1');
 
+    expect(client.listChapters).toHaveBeenCalledWith('book_1', 'revision_1');
+    expect(client.listPages).toHaveBeenCalledWith('chapter_1', 0, 1, 'revision_1', undefined);
+
     expect(listedNovel).toMatchObject({
       id: 'book_1',
       title: 'Hosted Novel',
@@ -356,6 +367,7 @@ describe('RemoteReaderRepository', () => {
       lastReadOffset: 240,
       lastReadProgress: 0.45,
       documentSectionCount: 1,
+      coverRemovedAt: '2026-07-05T00:03:00.000Z',
     });
     expect(manifestNovel).toMatchObject({
       id: 'book_1',
@@ -365,6 +377,7 @@ describe('RemoteReaderRepository', () => {
       lastReadProgress: 0.45,
       updatedAt: '2026-07-05T00:05:00.000Z',
       documentSectionCount: 1,
+      coverRemovedAt: '2026-07-05T00:03:00.000Z',
     });
     expect(chapter).toMatchObject({
       id: 'chapter_1',
@@ -396,6 +409,54 @@ describe('RemoteReaderRepository', () => {
     expect(note).toMatchObject({ id: 'note_1', novelId: 'book_1', paragraphId: 'paragraph_9', body: 'Remote note' });
   });
 
+  it('forgets cached chapter targets when the same book id receives a new content revision', async () => {
+    let revision = 'revision_1';
+    const book = () => ({
+      id: 'book_1',
+      active_content_revision_id: revision,
+      title: 'Hosted Novel',
+      source_file_name: 'hosted.cbz',
+      source_encoding: 'binary',
+      normalized_text_hash: 'book-hash',
+      created_at: now,
+      updated_at: now,
+      total_chapters: 1,
+      total_characters: 0,
+      total_paragraphs: 0,
+      cover_seed: 7,
+      favorite: false,
+    });
+    const chapter = () => ({
+      id: 'chapter_1',
+      book_id: 'book_1',
+      chapter_index: 1,
+      title: '1화',
+      text_hash: 'chapter-hash',
+      raw_start_offset: 0,
+      raw_end_offset: 0,
+      character_count: 0,
+      paragraph_count: 0,
+      created_at: now,
+      updated_at: now,
+    });
+    const getChapter = vi.fn(async () => ({ contentRevisionId: revision, chapter: chapter() }));
+    const client = {
+      getBookManifest: vi.fn(async () => ({ book: book(), readingPosition: null })),
+      listChapters: vi.fn(async () => ({ contentRevisionId: revision, chapters: [chapter()] })),
+      getChapter,
+    } as unknown as RemoteApiClient;
+    const repository = new RemoteReaderRepository(client);
+
+    await repository.getNovel('book_1');
+    await repository.listChapters('book_1');
+    revision = 'revision_2';
+    await repository.getNovel('book_1');
+    await repository.getChapter('chapter_1');
+
+    expect(getChapter).toHaveBeenNthCalledWith(1, 'chapter_1');
+    expect(getChapter).toHaveBeenNthCalledWith(2, 'chapter_1', 'revision_2');
+  });
+
   it('patches only the requested hosted book metadata fields', async () => {
     const client = hostedClient();
     const repository = new RemoteReaderRepository(client);
@@ -419,6 +480,7 @@ describe('RemoteReaderRepository', () => {
 
     await repository.saveReadingPosition({
       novelId: 'book_1',
+      expectedContentRevisionId: 'content-1',
       chapterId: 'chapter_1',
       documentSectionId: 'chapter:11',
       scrollTop: 123.7,
@@ -432,6 +494,7 @@ describe('RemoteReaderRepository', () => {
       'book_1',
       expect.objectContaining({
         chapterId: 'chapter_1',
+        expectedContentRevisionId: 'content-1',
         documentSectionId: 'chapter:11',
         paragraphId: 'paragraph_9',
         paragraphIndex: 9,
@@ -447,6 +510,34 @@ describe('RemoteReaderRepository', () => {
         updatedAt: expect.any(String),
       }),
     );
+  });
+
+  it('uses strictly increasing reader-state timestamps for rapid hosted writes', async () => {
+    vi.spyOn(Date, 'now').mockReturnValue(Date.parse('2026-07-05T00:00:00.000Z'));
+    const client = hostedClient();
+    const repository = new RemoteReaderRepository(client, 'device_browser_a');
+
+    await Promise.all([
+      repository.saveReadingPosition({
+        novelId: 'book_1',
+        chapterId: 'chapter_1',
+        scrollTop: 1,
+        chapterProgress: 0.1,
+        paragraphIndex: 0,
+      }),
+      repository.saveReadingPosition({
+        novelId: 'book_1',
+        chapterId: 'chapter_1',
+        scrollTop: 2,
+        chapterProgress: 0.2,
+        paragraphIndex: 0,
+      }),
+    ]);
+
+    const timestamps = vi
+      .mocked(client.saveReadingPosition)
+      .mock.calls.map(([, position]) => Date.parse(position.updatedAt));
+    expect(timestamps).toEqual([Date.parse('2026-07-05T00:00:00.000Z'), Date.parse('2026-07-05T00:00:00.001Z')]);
   });
 
   it('clears hosted reading positions through the remote repository boundary', async () => {

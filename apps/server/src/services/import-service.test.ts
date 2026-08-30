@@ -19,6 +19,7 @@ import { getObjectBuffer, putRawBookObject } from './object-storage.js';
 
 import {
   arrayBufferFromBuffer,
+  assertImageSeriesAppendRebase,
   buildParagraphPages,
   iterateImportParagraphPageBatches,
   iterateImportParagraphPageBatchesAsync,
@@ -29,6 +30,43 @@ import {
   rekeyParsedNovelImport,
   replaceParsedBookContent,
 } from './import-service.js';
+
+describe('image-series append generation fencing', () => {
+  it('allows a stale add-only delta only when its base still belongs to the current incarnation', async () => {
+    const sameIncarnation = {
+      query: vi.fn(async () => ({ rows: [{ id: 'revision-1' }], rowCount: 1 })),
+    };
+    await expect(
+      assertImageSeriesAppendRebase(sameIncarnation, {
+        userId: 'user-1',
+        bookId: 'book-1',
+        requestedBaseContentRevisionId: 'revision-1',
+        activeContentRevisionId: 'revision-2',
+        replacesExistingSection: false,
+      }),
+    ).resolves.toBeUndefined();
+    expect(sameIncarnation.query).toHaveBeenCalledWith(expect.stringContaining('book_content_revisions'), [
+      'revision-1',
+      'user-1',
+      'book-1',
+    ]);
+  });
+
+  it('rejects an add-only R1 delta after purge and same-id R2 creation', async () => {
+    const recreatedBook = {
+      query: vi.fn(async () => ({ rows: [], rowCount: 0 })),
+    };
+    await expect(
+      assertImageSeriesAppendRebase(recreatedBook, {
+        userId: 'user-1',
+        bookId: 'book-1',
+        requestedBaseContentRevisionId: 'revision-r1',
+        activeContentRevisionId: 'revision-r2',
+        replacesExistingSection: false,
+      }),
+    ).rejects.toThrow('image_series_append_base_changed');
+  });
+});
 
 function parsedNovel(): ParsedNovel {
   const now = '2026-07-05T00:00:00.000Z';
@@ -280,6 +318,67 @@ async function seriesComicArchive(
 }
 
 describe('server import service', () => {
+  it('rejects a stale replacement generation before reading upload chunks or writing objects', async () => {
+    vi.mocked(putRawBookObject).mockClear();
+    const poolQueries: string[] = [];
+    const lockClient = {
+      query: vi.fn(async (sql: string) => {
+        if (sql.includes('pg_advisory_lock') || sql.includes('pg_advisory_unlock')) {
+          return { rows: [{ locked: true }], rowCount: 1 };
+        }
+        if (sql.includes('from book_id_generations')) return { rows: [{ generation: '3' }], rowCount: 1 };
+        if (sql.includes('from library_books')) {
+          return {
+            rows: [{ active_content_revision_id: 'revision-r2', deleted_at: null }],
+            rowCount: 1,
+          };
+        }
+        throw new Error(`unexpected lifecycle query: ${sql}`);
+      }),
+      release: vi.fn(),
+    };
+    const pool = {
+      query: vi.fn(async (sql: string) => {
+        poolQueries.push(sql);
+        if (sql.includes('select * from upload_sessions')) {
+          return {
+            rows: [
+              {
+                id: 'upload-stale-r1',
+                user_id: 'user_test',
+                file_name: 'stale.cbz',
+                size_bytes: '10',
+                content_type: 'application/vnd.comicbook+zip',
+                encoding: 'auto',
+                total_chunks: 1,
+                client_book_id: 'book-reused',
+                import_mode: 'replace_book',
+                target_book_generation: '1',
+                target_active_content_revision_id: 'revision-r1',
+              },
+            ],
+            rowCount: 1,
+          };
+        }
+        return { rows: [], rowCount: 1 };
+      }),
+      connect: vi.fn(async () => lockClient),
+    };
+
+    await expect(
+      processImportJob(
+        pool as unknown as Parameters<typeof processImportJob>[0],
+        testConfig(),
+        'job-stale-r1',
+        'upload-stale-r1',
+      ),
+    ).rejects.toThrow('book_generation_changed:generation_changed');
+
+    expect(poolQueries.some((sql) => sql.includes('from upload_chunks'))).toBe(false);
+    expect(putRawBookObject).not.toHaveBeenCalled();
+    expect(lockClient.release).toHaveBeenCalledTimes(1);
+  });
+
   it('normalizes visual cover seeds before writing PostgreSQL integer columns', () => {
     expect(normalizeCoverSeedForPersistence(0xffff_ffff)).toBe(2_147_483_647);
     expect(normalizeCoverSeedForPersistence(0x8000_0000)).toBe(0);
@@ -673,6 +772,10 @@ describe('server import service', () => {
     expect(chapterInsertParams).toHaveLength(30);
     expect(chapterInsertParams?.slice(9, 13)).toEqual(['chapter:101', '1화', 1, 1]);
     expect(chapterInsertParams?.slice(24, 28)).toEqual(['chapter:102', '2화', 2, 1]);
+    expect(client.query).toHaveBeenCalledWith(
+      'delete from fixed_document_section_read_states where book_id = $1 and user_id = $2',
+      [String(libraryBookParams?.[0]), 'user_test'],
+    );
   });
 
   it('finishes a repeated image-series delta as a no-op without rewriting the aggregate or cover', async () => {
@@ -919,6 +1022,9 @@ describe('server import service', () => {
             rowCount: 1,
           };
         }
+        if (sql.includes('from book_content_revisions revision')) {
+          return { rows: [{ id: 'content_revision_6' }], rowCount: 1 };
+        }
         if (sql.includes('normalized_text_hash, active_content_revision_id')) {
           return {
             rows: [
@@ -1051,6 +1157,16 @@ describe('server import service', () => {
     expect(insertedAssetKinds).toEqual(['document_page', 'document_page']);
     expect(queries.some(({ sql }) => sql.includes("kind = 'cover' and status = 'active'"))).toBe(false);
     expect(queries.some(({ sql }) => sql.includes('set cover_asset_id = $1'))).toBe(false);
+    expect(
+      queries.some(
+        ({ sql, params }) =>
+          sql.includes('delete from fixed_document_section_read_states') &&
+          params?.[0] === 'book_series_1' &&
+          params?.[1] === 'user_test' &&
+          Array.isArray(params?.[2]) &&
+          params[2].join(',') === 'chapter:101,chapter:102',
+      ),
+    ).toBe(true);
     expect(queries.some(({ sql }) => sql.includes('insert into reading_positions'))).toBe(true);
     expect(queries.some(({ sql }) => sql.includes("set status = 'superseded', superseded_at = now()"))).toBe(true);
     expect(queries.some(({ sql }) => sql.includes("set status = 'active', activated_at = now()"))).toBe(true);
@@ -1094,6 +1210,9 @@ describe('server import service', () => {
         queries.push({ sql, params });
         if (sql.includes('select pg_advisory_lock') || sql.includes('select pg_advisory_unlock')) {
           return { rows: [{ locked: true }], rowCount: 1 };
+        }
+        if (sql.includes('from book_content_revisions revision')) {
+          return { rows: [{ id: 'content_revision_6' }], rowCount: 1 };
         }
         if (sql.includes('join book_objects object')) {
           return {

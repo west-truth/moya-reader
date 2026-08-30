@@ -451,7 +451,10 @@ export class BookEnrichmentService {
     const effectiveIntent = stagedCandidate.approvalIntent ?? intent;
     let mutation: Awaited<ReturnType<LibraryCatalogRepository['patchMetadata']>>;
     try {
-      mutation = await this.dependencies.catalog.patchMetadata(candidate.bookId, patch, candidate.baseMetadataRevision);
+      mutation = await this.dependencies.catalog.patchMetadata(candidate.bookId, patch, {
+        metadataRevision: candidate.baseMetadataRevision,
+        activeContentRevisionId: candidate.baseContentRevisionId,
+      });
     } catch (error) {
       const recovered = await this.recoverApprovalReceiptAfterMutationError(stagedCandidate);
       if (recovered) return recovered;
@@ -469,7 +472,10 @@ export class BookEnrichmentService {
       );
     } catch (error) {
       try {
-        await this.dependencies.catalog.patchMetadata(candidate.bookId, before.values, mutation.metadataRevision);
+        await this.dependencies.catalog.patchMetadata(candidate.bookId, before.values, {
+          metadataRevision: mutation.metadataRevision,
+          activeContentRevisionId: candidate.baseContentRevisionId,
+        });
       } catch (rollbackError) {
         throw Object.assign(new Error('작품 정보는 적용됐지만 승인 기록과 자동 복구를 완료하지 못했습니다.'), {
           cause: rollbackError,
@@ -498,6 +504,7 @@ export class BookEnrichmentService {
       ...candidate.cover,
       ...(layout ?? {}),
       expectedMetadataRevision: candidate.baseMetadataRevision,
+      expectedContentRevisionId: candidate.baseContentRevisionId,
     };
     const activeCover = await this.dependencies.assets.getActiveCover(candidate.bookId);
     const before = coverMutationSnapshot(current, activeCover?.metadata);
@@ -542,6 +549,7 @@ export class BookEnrichmentService {
       try {
         await restoreApprovedEnrichmentCover.call(this.dependencies.assets, candidate.bookId, {
           expectedMetadataRevision: mutation.metadataRevision,
+          expectedContentRevisionId: candidate.baseContentRevisionId,
           expectedActiveAssetId: mutation.current.id,
           expectedActiveContentHash: mutation.current.contentHash,
           previousAssetId: before.cover.assetId,
@@ -599,7 +607,10 @@ export class BookEnrichmentService {
         const mutation = await this.dependencies.catalog.patchMetadata(
           approval.bookId,
           approval.before.values,
-          current.metadataRevision ?? 0,
+          {
+            metadataRevision: current.metadataRevision ?? 0,
+            activeContentRevisionId: current.activeContentRevisionId,
+          },
         );
         const updated = await this.dependencies.books.getNovel(approval.bookId);
         if (!updated) throw new BookEnrichmentUndoConflictError(receiptId);
@@ -622,6 +633,7 @@ export class BookEnrichmentService {
         }
         const mutation = await this.dependencies.assets.restoreApprovedEnrichmentCover(approval.bookId, {
           expectedMetadataRevision: current.metadataRevision ?? 0,
+          expectedContentRevisionId: current.activeContentRevisionId,
           expectedActiveAssetId: approval.after.cover.assetId,
           expectedActiveContentHash: approval.after.cover.contentHash,
           previousAssetId: approval.before.cover.assetId,

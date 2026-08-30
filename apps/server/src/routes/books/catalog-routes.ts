@@ -6,11 +6,20 @@ import { integrityHash, persistentId128 } from '@noveldesk/text-core/hash';
 import { mapBookCatalogRows } from './row-mappers.js';
 import { validateBookPatchBody, type BookPatchBody } from './request-contracts.js';
 import { createServerRevision, insertServerSyncEvent } from './sync-event-repository.js';
+import { lockImageSeriesBookLifecycle } from '../../services/book-operation-lock.js';
+import { purgeHostedBook } from '../../services/hosted-book-purge.js';
 import { enqueueObjectDeletions } from '../../services/object-delete-outbox.js';
 
 interface LifecycleBody {
   expectedRevision?: number;
+  expectedContentRevisionId?: string;
   deviceId?: string;
+}
+
+interface SourceHeaders {
+  'x-source-file-name'?: string;
+  'x-source-content-type'?: string;
+  'x-expected-content-revision-id'?: string;
 }
 
 const catalogBookProgress = `
@@ -30,6 +39,7 @@ const catalogBookProgress = `
 const catalogSelect = `
   select b.id, b.active_content_revision_id, b.format, b.title, b.author, b.series_title, b.series_index, b.tags,
          b.description, b.language, b.cover_asset_id, b.cover_fit, b.cover_position_x, b.cover_position_y,
+         b.cover_removed_at,
          b.source_file_name, b.source_encoding,
          b.normalized_text_hash, b.total_chapters, b.total_characters, b.total_paragraphs,
          b.document_section_count, b.cover_seed,
@@ -60,7 +70,13 @@ function expectedRevision(request: FastifyRequest, body?: LifecycleBody): number
 }
 
 function lifecycleRevisionConflict(reply: { code(statusCode: number): { send(payload: unknown): unknown } }) {
-  return reply.code(409).send({ error: 'book metadata revision changed' });
+  return reply.code(409).send({ error: 'book lifecycle revision changed' });
+}
+
+function expectedContentRevision(body?: LifecycleBody): string | undefined {
+  return typeof body?.expectedContentRevisionId === 'string' && body.expectedContentRevisionId.trim()
+    ? body.expectedContentRevisionId.trim()
+    : undefined;
 }
 
 function singleHeader(value: string | string[] | undefined): string | undefined {
@@ -82,6 +98,24 @@ function normalizedSha256(value: string): string | undefined {
   if (/^sha256:[0-9a-f]{64}$/i.test(value)) return value.toLowerCase();
   if (/^[0-9a-f]{64}$/i.test(value)) return `sha256:${value.toLowerCase()}`;
   return undefined;
+}
+
+function sourceContentRevisionConflict(
+  row: { active_content_revision_id?: unknown; has_prior_purge?: unknown },
+  expectedContentRevisionId: string | undefined,
+): 'content_revision_required' | 'content_revision_changed' | undefined {
+  if (!expectedContentRevisionId) return row.has_prior_purge ? 'content_revision_required' : undefined;
+  return row.active_content_revision_id === expectedContentRevisionId ? undefined : 'content_revision_changed';
+}
+
+function sourceContentRevisionError(
+  reply: { code(statusCode: number): { send(payload: unknown): unknown } },
+  conflict: ReturnType<typeof sourceContentRevisionConflict>,
+) {
+  return reply.code(409).send({
+    error:
+      conflict === 'content_revision_required' ? 'book content revision is required' : 'book content revision changed',
+  });
 }
 
 function downloadContentDisposition(fileName: string): string {
@@ -200,9 +234,16 @@ export async function registerBookCatalogRoutes(
     return { books: mapBookCatalogRows(result.rows) };
   });
 
-  app.get<{ Params: { bookId: string } }>('/api/books/:bookId/source/metadata', async (request, reply) => {
-    const result = await pool.query(
-      `
+  app.get<{ Params: { bookId: string }; Headers: SourceHeaders }>(
+    '/api/books/:bookId/source/metadata',
+    async (request, reply) => {
+      const rawExpectedContentRevisionId = singleHeader(request.headers['x-expected-content-revision-id']);
+      const expectedContentRevisionId = rawExpectedContentRevisionId?.trim() || undefined;
+      if (rawExpectedContentRevisionId !== undefined && !expectedContentRevisionId) {
+        return reply.code(400).send({ error: 'expected content revision id is invalid' });
+      }
+      const result = await pool.query(
+        `
         select o.id, b.id as book_id, b.active_content_revision_id as content_revision_id,
                o.file_name, o.content_type, o.size_bytes, o.raw_text_hash,
                b.source_encoding, o.created_at
@@ -210,56 +251,73 @@ export async function registerBookCatalogRoutes(
         join book_objects o on o.id = b.object_id
         where b.id = $1 and b.user_id = $2 and b.deleted_at is null
       `,
-      [request.params.bookId, config.defaultUserId],
-    );
-    if (!result.rows[0]) return reply.code(404).send({ error: 'source not found' });
-    return { source: result.rows[0] };
-  });
+        [request.params.bookId, config.defaultUserId],
+      );
+      if (!result.rows[0]) return reply.code(404).send({ error: 'source not found' });
+      if (expectedContentRevisionId !== undefined && result.rows[0].content_revision_id !== expectedContentRevisionId) {
+        return reply.code(409).send({ error: 'book content revision changed' });
+      }
+      return { source: result.rows[0] };
+    },
+  );
 
-  app.get<{ Params: { bookId: string } }>('/api/books/:bookId/source', async (request, reply) => {
-    const result = await pool.query(
-      `
-        select o.storage_key, o.file_name, o.content_type, o.size_bytes, o.raw_text_hash
+  app.get<{ Params: { bookId: string }; Headers: SourceHeaders }>(
+    '/api/books/:bookId/source',
+    async (request, reply) => {
+      const rawExpectedContentRevisionId = singleHeader(request.headers['x-expected-content-revision-id']);
+      const expectedContentRevisionId = rawExpectedContentRevisionId?.trim() || undefined;
+      if (rawExpectedContentRevisionId !== undefined && !expectedContentRevisionId) {
+        return reply.code(400).send({ error: 'expected content revision id is invalid' });
+      }
+      const result = await pool.query(
+        `
+        select b.active_content_revision_id as content_revision_id,
+               o.storage_key, o.file_name, o.content_type, o.size_bytes, o.raw_text_hash
         from library_books b
         join book_objects o on o.id = b.object_id
         where b.id = $1 and b.user_id = $2 and b.deleted_at is null
       `,
-      [request.params.bookId, config.defaultUserId],
-    );
-    const source = result.rows[0];
-    if (!source) return reply.code(404).send({ error: 'source not found' });
-    const byteLength = Number(source.size_bytes);
-    const etag = `"${String(source.raw_text_hash)}"`;
-    const rangeHeader = singleHeader(request.headers.range);
-    const ifRange = singleHeader(request.headers['if-range']);
-    const requestedRange =
-      rangeHeader && (!ifRange || ifRange === etag) ? parseSingleByteRange(rangeHeader, byteLength) : undefined;
-    if (rangeHeader && (!ifRange || ifRange === etag) && !requestedRange) {
-      return reply.header('Content-Range', `bytes */${byteLength}`).code(416).send();
-    }
-    const stored = await getObjectStream(
-      createS3Client(config),
-      config,
-      String(source.storage_key),
-      requestedRange ? { startInclusive: requestedRange.start, endInclusive: requestedRange.end } : undefined,
-    );
-    const fileName = String(source.file_name);
-    const responseByteLength = requestedRange ? requestedRange.end - requestedRange.start + 1 : byteLength;
-    const response = reply
-      .header('Content-Type', String(source.content_type || stored.contentType || 'application/octet-stream'))
-      .header('Content-Length', String(responseByteLength))
-      .header('Accept-Ranges', 'bytes')
-      .header('ETag', etag)
-      .header('Content-Disposition', downloadContentDisposition(fileName))
-      .header('X-Source-File-Name', encodeURIComponent(fileName))
-      .header('X-Source-Content-Hash', String(source.raw_text_hash));
-    if (requestedRange) {
-      response.header('Content-Range', `bytes ${requestedRange.start}-${requestedRange.end}/${byteLength}`).code(206);
-    }
-    return response.send(stored.body);
-  });
+        [request.params.bookId, config.defaultUserId],
+      );
+      const source = result.rows[0];
+      if (!source) return reply.code(404).send({ error: 'source not found' });
+      if (expectedContentRevisionId !== undefined && source.content_revision_id !== expectedContentRevisionId) {
+        return reply.code(409).send({ error: 'book content revision changed' });
+      }
+      const byteLength = Number(source.size_bytes);
+      const etag = `"${String(source.raw_text_hash)}"`;
+      const rangeHeader = singleHeader(request.headers.range);
+      const ifRange = singleHeader(request.headers['if-range']);
+      const requestedRange =
+        rangeHeader && (!ifRange || ifRange === etag) ? parseSingleByteRange(rangeHeader, byteLength) : undefined;
+      if (rangeHeader && (!ifRange || ifRange === etag) && !requestedRange) {
+        return reply.header('Content-Range', `bytes */${byteLength}`).code(416).send();
+      }
+      const stored = await getObjectStream(
+        createS3Client(config),
+        config,
+        String(source.storage_key),
+        requestedRange ? { startInclusive: requestedRange.start, endInclusive: requestedRange.end } : undefined,
+      );
+      const fileName = String(source.file_name);
+      const responseByteLength = requestedRange ? requestedRange.end - requestedRange.start + 1 : byteLength;
+      const response = reply
+        .header('Content-Type', String(source.content_type || stored.contentType || 'application/octet-stream'))
+        .header('Content-Length', String(responseByteLength))
+        .header('Accept-Ranges', 'bytes')
+        .header('ETag', etag)
+        .header('Content-Disposition', downloadContentDisposition(fileName))
+        .header('X-Source-File-Name', encodeURIComponent(fileName))
+        .header('X-Source-Content-Hash', String(source.raw_text_hash))
+        .header('X-Content-Revision-Id', String(source.content_revision_id ?? ''));
+      if (requestedRange) {
+        response.header('Content-Range', `bytes ${requestedRange.start}-${requestedRange.end}/${byteLength}`).code(206);
+      }
+      return response.send(stored.body);
+    },
+  );
 
-  app.put<{ Params: { bookId: string }; Body: Buffer }>(
+  app.put<{ Params: { bookId: string }; Headers: SourceHeaders; Body: Buffer }>(
     '/api/books/:bookId/source',
     { bodyLimit: config.maxUploadBytes },
     async (request, reply) => {
@@ -267,17 +325,29 @@ export async function registerBookCatalogRoutes(
         return reply.code(400).send({ error: 'source body is missing' });
       }
       const encodedFileName = singleHeader(request.headers['x-source-file-name']);
-      const fileName = encodedFileName ? decodeURIComponent(encodedFileName) : 'source.txt';
+      let fileName: string;
+      try {
+        fileName = encodedFileName ? decodeURIComponent(encodedFileName) : 'source.txt';
+      } catch {
+        return reply.code(400).send({ error: 'source file name is invalid' });
+      }
       const contentType = singleHeader(request.headers['x-source-content-type']) || 'text/plain';
+      const rawExpectedContentRevisionId = singleHeader(request.headers['x-expected-content-revision-id']);
+      const expectedContentRevisionId = rawExpectedContentRevisionId?.trim() || undefined;
+      if (rawExpectedContentRevisionId !== undefined && !expectedContentRevisionId) {
+        return reply.code(400).send({ error: 'expected content revision id is invalid' });
+      }
       const client = await pool.connect();
       const s3 = createS3Client(config);
       let uploadedKey: string | undefined;
-      let orphanedKey: string | undefined;
       try {
         await client.query('begin');
+        await lockImageSeriesBookLifecycle(client, request.params.bookId);
         const current = await client.query(
           `select b.id, b.object_id, b.active_content_revision_id, b.source_encoding,
-                  coalesce(r.source_raw_text_hash, o.raw_text_hash) as source_raw_text_hash
+                  coalesce(r.source_raw_text_hash, o.raw_text_hash) as source_raw_text_hash,
+                  exists(select 1 from book_id_generations identity
+                         where identity.user_id = $2 and identity.book_id = $1 and identity.generation > 1) as has_prior_purge
            from library_books b
            left join book_content_revisions r on r.id = b.active_content_revision_id and r.book_id = b.id
            left join book_objects o on o.id = b.object_id
@@ -290,6 +360,13 @@ export async function registerBookCatalogRoutes(
           await client.query('rollback');
           return reply.code(404).send({ error: 'book not found' });
         }
+        const contentConflict = sourceContentRevisionConflict(book, expectedContentRevisionId);
+        if (contentConflict) {
+          await client.query('rollback');
+          return sourceContentRevisionError(reply, contentConflict);
+        }
+        const activeContentRevisionId =
+          typeof book.active_content_revision_id === 'string' ? book.active_content_revision_id : undefined;
         const expectedHash = normalizedSha256(String(book.source_raw_text_hash || ''));
         const contentHash = integrityHash(request.body);
         if (!expectedHash || expectedHash !== contentHash) {
@@ -315,28 +392,43 @@ export async function registerBookCatalogRoutes(
             [objectId, contentHash, uploadedKey, fileName, contentType, request.body.byteLength],
           );
         }
-        await client.query(
+        const attached = await client.query(
           `update library_books
            set object_id = $1, source_file_name = $2, metadata_revision = metadata_revision + 1, updated_at = now()
-           where id = $3 and user_id = $4`,
-          [objectId, fileName, request.params.bookId, config.defaultUserId],
+           where id = $3 and user_id = $4 and active_content_revision_id is not distinct from $5
+           returning metadata_revision, updated_at`,
+          [objectId, fileName, request.params.bookId, config.defaultUserId, activeContentRevisionId ?? null],
         );
-        if (book.active_content_revision_id) {
-          await client.query(
+        if (attached.rowCount !== 1) {
+          await client.query('rollback');
+          if (uploadedKey) await deleteObject(s3, config, uploadedKey).catch(() => undefined);
+          return reply.code(409).send({ error: 'book content revision changed' });
+        }
+        if (activeContentRevisionId) {
+          const revisionAttached = await client.query(
             `update book_content_revisions
              set source_object_id = $1, source_file_name = $2, source_raw_text_hash = $3
              where id = $4 and book_id = $5`,
-            [objectId, fileName, contentHash, book.active_content_revision_id, request.params.bookId],
+            [objectId, fileName, contentHash, activeContentRevisionId, request.params.bookId],
           );
+          if (revisionAttached.rowCount !== 1) {
+            await client.query('rollback');
+            if (uploadedKey) await deleteObject(s3, config, uploadedKey).catch(() => undefined);
+            return reply.code(409).send({ error: 'book content revision changed' });
+          }
         }
         if (book.object_id && String(book.object_id) !== objectId) {
           const orphan = await client.query(
             `delete from book_objects o
-             where o.id = $1 and not exists (select 1 from library_books b where b.object_id = o.id)
+             where o.id = $1
+               and not exists (select 1 from library_books b where b.object_id = o.id)
+               and not exists (select 1 from book_content_revisions r where r.source_object_id = o.id)
              returning storage_key`,
             [book.object_id],
           );
-          if (orphan.rows[0]) orphanedKey = String(orphan.rows[0].storage_key);
+          if (orphan.rows[0]) {
+            await enqueueObjectDeletions(client, [String(orphan.rows[0].storage_key)], 'reselected_source_object');
+          }
         }
         const source = await client.query(
           `select o.id, b.id as book_id, b.active_content_revision_id as content_revision_id,
@@ -346,9 +438,34 @@ export async function registerBookCatalogRoutes(
            where b.id = $1 and b.user_id = $2`,
           [request.params.bookId, config.defaultUserId],
         );
+        const sourceRow = source.rows[0];
+        const changedAt = new Date(attached.rows[0].updated_at).toISOString();
+        const payload = {
+          novel: {
+            id: request.params.bookId,
+            metadataRevision: Number(attached.rows[0].metadata_revision),
+            updatedAt: changedAt,
+          },
+          contentRevisionId: activeContentRevisionId,
+        };
+        const revision = createServerRevision({
+          entityType: 'book',
+          entityId: request.params.bookId,
+          novelId: request.params.bookId,
+          updatedAt: changedAt,
+          payload,
+        });
+        await insertServerSyncEvent(client, config.defaultUserId, {
+          seed: `book_source:${request.params.bookId}:${changedAt}:${revision.payloadHash}`,
+          type: 'book_updated',
+          bookId: request.params.bookId,
+          entityId: request.params.bookId,
+          payload,
+          revision,
+          createdAt: changedAt,
+        });
         await client.query('commit');
-        if (orphanedKey) await deleteObject(s3, config, orphanedKey).catch(() => undefined);
-        return { source: source.rows[0] };
+        return { source: sourceRow };
       } catch (error) {
         await client.query('rollback').catch(() => undefined);
         if (uploadedKey) await deleteObject(s3, config, uploadedKey).catch(() => undefined);
@@ -366,6 +483,7 @@ export async function registerBookCatalogRoutes(
     const client = await pool.connect();
     try {
       await client.query('begin');
+      await lockImageSeriesBookLifecycle(client, request.params.bookId);
       const updated = await client.query(
         `update library_books
          set title = coalesce($1, title),
@@ -384,9 +502,19 @@ export async function registerBookCatalogRoutes(
              updated_at = now()
          where id = $19 and user_id = $20 and deleted_at is null
            and ($21::bigint is null or metadata_revision = $21)
+           and (
+             ($22::text is not null and active_content_revision_id = $22)
+             or (
+               $22::text is null
+               and not exists (
+                 select 1 from book_id_generations identity
+                  where identity.user_id = $20 and identity.book_id = $19 and identity.generation > 1
+               )
+             )
+           )
          returning title, author, series_title, series_index, tags, description, language,
-                   cover_asset_id, cover_fit, cover_position_x, cover_position_y, favorite,
-                   analysis_status, metadata_revision, updated_at`,
+                   cover_asset_id, cover_fit, cover_position_x, cover_position_y, cover_removed_at, favorite,
+                   analysis_status, metadata_revision, active_content_revision_id, updated_at`,
         [
           value.title ?? null,
           value.author !== undefined,
@@ -409,17 +537,16 @@ export async function registerBookCatalogRoutes(
           request.params.bookId,
           config.defaultUserId,
           value.expectedRevision ?? null,
+          value.expectedContentRevisionId ?? null,
         ],
       );
       if (!updated.rows[0]) {
         const existing = await client.query(
-          'select metadata_revision from library_books where id = $1 and user_id = $2 and deleted_at is null',
+          'select metadata_revision, active_content_revision_id from library_books where id = $1 and user_id = $2 and deleted_at is null',
           [request.params.bookId, config.defaultUserId],
         );
         await client.query('rollback');
-        return existing.rows[0] && value.expectedRevision !== undefined
-          ? lifecycleRevisionConflict(reply)
-          : reply.code(404).send({ error: 'book not found' });
+        return existing.rows[0] ? lifecycleRevisionConflict(reply) : reply.code(404).send({ error: 'book not found' });
       }
       const row = updated.rows[0];
       const updatedAt = new Date(row.updated_at).toISOString();
@@ -436,25 +563,28 @@ export async function registerBookCatalogRoutes(
         coverFit: row.cover_fit,
         coverPositionX: Number(row.cover_position_x),
         coverPositionY: Number(row.cover_position_y),
+        coverRemovedAt: row.cover_removed_at ? new Date(row.cover_removed_at).toISOString() : undefined,
         favorite: Boolean(row.favorite),
         analysisStatus: String(row.analysis_status),
         metadataRevision: Number(row.metadata_revision),
         updatedAt,
       };
-      const payload = { novel };
+      const contentRevisionId = String(row.active_content_revision_id);
+      const payload = { novel, contentRevisionId };
+      const revision = createServerRevision({
+        entityType: 'book',
+        entityId: request.params.bookId,
+        novelId: request.params.bookId,
+        updatedAt,
+        payload,
+      });
       await insertServerSyncEvent(client, config.defaultUserId, {
-        seed: `book_updated:${request.params.bookId}:${updatedAt}`,
+        seed: `book_updated:${request.params.bookId}:${updatedAt}:${revision.payloadHash}`,
         type: 'book_updated',
         bookId: request.params.bookId,
         entityId: request.params.bookId,
         payload,
-        revision: createServerRevision({
-          entityType: 'book',
-          entityId: request.params.bookId,
-          novelId: request.params.bookId,
-          updatedAt,
-          payload,
-        }),
+        revision,
         createdAt: updatedAt,
       });
       await client.query('commit');
@@ -471,7 +601,9 @@ export async function registerBookCatalogRoutes(
     const client = await pool.connect();
     try {
       await client.query('begin');
+      await lockImageSeriesBookLifecycle(client, request.params.bookId);
       const expected = expectedRevision(request, request.body);
+      const expectedContent = expectedContentRevision(request.body);
       const result = await client.query(
         `
           update library_books
@@ -481,9 +613,24 @@ export async function registerBookCatalogRoutes(
               updated_at = now()
           where id = $1 and user_id = $2 and deleted_at is null
             and ($4::bigint is null or metadata_revision = $4)
-          returning id, deleted_at, metadata_revision
+            and (
+              ($5::text is not null and active_content_revision_id = $5)
+              or (
+                $5::text is null and not exists (
+                  select 1 from book_id_generations identity
+                   where identity.user_id = $2 and identity.book_id = $1 and identity.generation > 1
+                )
+              )
+            )
+          returning id, deleted_at, metadata_revision, active_content_revision_id
         `,
-        [request.params.bookId, config.defaultUserId, request.body?.deviceId ?? 'server', expected ?? null],
+        [
+          request.params.bookId,
+          config.defaultUserId,
+          request.body?.deviceId ?? 'server',
+          expected ?? null,
+          expectedContent ?? null,
+        ],
       );
       if (!result.rows[0]) {
         const exists = await client.query(
@@ -491,9 +638,7 @@ export async function registerBookCatalogRoutes(
           [request.params.bookId, config.defaultUserId],
         );
         await client.query('rollback');
-        return exists.rows[0] && expected !== undefined
-          ? lifecycleRevisionConflict(reply)
-          : reply.code(404).send({ error: 'book not found' });
+        return exists.rows[0] ? lifecycleRevisionConflict(reply) : reply.code(404).send({ error: 'book not found' });
       }
       const deletedAt = new Date(result.rows[0].deleted_at).toISOString();
       const metadataRevision = Number(result.rows[0].metadata_revision);
@@ -502,6 +647,7 @@ export async function registerBookCatalogRoutes(
         deletedAt,
         deletedByDeviceId: request.body?.deviceId ?? 'server',
         metadataRevision,
+        contentRevisionId: String(result.rows[0].active_content_revision_id),
       };
       await emitLifecycleEvent(client, config.defaultUserId, {
         type: 'book_trashed',
@@ -525,7 +671,9 @@ export async function registerBookCatalogRoutes(
       const client = await pool.connect();
       try {
         await client.query('begin');
+        await lockImageSeriesBookLifecycle(client, request.params.bookId);
         const expected = expectedRevision(request, request.body);
+        const expectedContent = expectedContentRevision(request.body);
         const result = await client.query(
           `
             update library_books
@@ -535,15 +683,26 @@ export async function registerBookCatalogRoutes(
                 updated_at = now()
             where id = $1 and user_id = $2 and deleted_at is not null
               and ($3::bigint is null or metadata_revision = $3)
-            returning id, updated_at, metadata_revision
+              and (
+                ($4::text is not null and active_content_revision_id = $4)
+                or (
+                  $4::text is null and not exists (
+                    select 1 from book_id_generations identity
+                     where identity.user_id = $2 and identity.book_id = $1 and identity.generation > 1
+                  )
+                )
+              )
+            returning id, updated_at, metadata_revision, active_content_revision_id
           `,
-          [request.params.bookId, config.defaultUserId, expected ?? null],
+          [request.params.bookId, config.defaultUserId, expected ?? null, expectedContent ?? null],
         );
         if (!result.rows[0]) {
           await client.query('rollback');
-          return expected !== undefined
-            ? lifecycleRevisionConflict(reply)
-            : reply.code(404).send({ error: 'book not found' });
+          const exists = await client.query('select 1 from library_books where id = $1 and user_id = $2', [
+            request.params.bookId,
+            config.defaultUserId,
+          ]);
+          return exists.rows[0] ? lifecycleRevisionConflict(reply) : reply.code(404).send({ error: 'book not found' });
         }
         const restoredAt = new Date(result.rows[0].updated_at).toISOString();
         const metadataRevision = Number(result.rows[0].metadata_revision);
@@ -551,7 +710,12 @@ export async function registerBookCatalogRoutes(
           type: 'book_restored',
           bookId: request.params.bookId,
           changedAt: restoredAt,
-          payload: { bookId: request.params.bookId, restoredAt, metadataRevision },
+          payload: {
+            bookId: request.params.bookId,
+            restoredAt,
+            metadataRevision,
+            contentRevisionId: String(result.rows[0].active_content_revision_id),
+          },
         });
         await client.query('commit');
         return { ok: true, metadataRevision };
@@ -568,56 +732,34 @@ export async function registerBookCatalogRoutes(
     '/api/trash/books/:bookId',
     async (request, reply) => {
       const client = await pool.connect();
-      const storageKeys: string[] = [];
       try {
         await client.query('begin');
         const expected = expectedRevision(request, request.body);
-        const assets = await client.query<{ storage_key: string }>(
-          `select storage_key from book_assets
-            where book_id = $1 and user_id = $2
-              and exists (
-                select 1 from library_books
-                 where id = $1 and user_id = $2 and deleted_at is not null
-                   and ($3::bigint is null or metadata_revision = $3)
-              )`,
-          [request.params.bookId, config.defaultUserId, expected ?? null],
-        );
-        storageKeys.push(...assets.rows.map((row) => String(row.storage_key)));
-        const result = await client.query(
-          `
-            delete from library_books
-            where id = $1 and user_id = $2 and deleted_at is not null
-              and ($3::bigint is null or metadata_revision = $3)
-            returning id, object_id, metadata_revision
-          `,
-          [request.params.bookId, config.defaultUserId, expected ?? null],
-        );
-        if (!result.rows[0]) {
+        const expectedContent = expectedContentRevision(request.body);
+        const result = await purgeHostedBook(client, config.defaultUserId, request.params.bookId, {
+          metadataRevision: expected,
+          contentRevisionId: expectedContent,
+          requireTrashed: true,
+          rejectTokenlessReusedId: true,
+        });
+        if (result.status !== 'purged') {
           await client.query('rollback');
-          return expected !== undefined
-            ? lifecycleRevisionConflict(reply)
-            : reply.code(404).send({ error: 'book not found' });
+          return result.status === 'missing'
+            ? reply.code(404).send({ error: 'book not found' })
+            : lifecycleRevisionConflict(reply);
         }
         const purgedAt = new Date().toISOString();
-        const metadataRevision = Number(result.rows[0].metadata_revision) + 1;
         await emitLifecycleEvent(client, config.defaultUserId, {
           type: 'book_purged',
           bookId: request.params.bookId,
           changedAt: purgedAt,
-          payload: { bookId: request.params.bookId, purgedAt, metadataRevision },
+          payload: {
+            bookId: request.params.bookId,
+            purgedAt,
+            metadataRevision: result.metadataRevision + 1,
+            contentRevisionId: result.contentRevisionId,
+          },
         });
-        if (result.rows[0].object_id) {
-          const object = await client.query(
-            `
-              delete from book_objects o
-              where o.id = $1 and not exists (select 1 from library_books b where b.object_id = o.id)
-              returning o.storage_key
-            `,
-            [result.rows[0].object_id],
-          );
-          if (object.rows[0]) storageKeys.push(String(object.rows[0].storage_key));
-        }
-        await enqueueObjectDeletions(client, storageKeys, 'purged_book');
         await client.query('commit');
       } catch (error) {
         await client.query('rollback');
@@ -631,51 +773,39 @@ export async function registerBookCatalogRoutes(
 
   app.delete('/api/trash/books', async () => {
     const client = await pool.connect();
-    const storageKeys: string[] = [];
     let purged: number | undefined;
+    let purgedBookIds: string[] = [];
     try {
       await client.query('begin');
-      const assets = await client.query<{ storage_key: string }>(
-        `select asset.storage_key
-           from book_assets asset
-           join library_books book on book.id = asset.book_id
-          where book.user_id = $1 and book.deleted_at is not null`,
+      const trashCandidates = await client.query<{ id: string; active_content_revision_id: string }>(
+        `select id, active_content_revision_id from library_books
+          where user_id = $1 and deleted_at is not null order by id asc`,
         [config.defaultUserId],
       );
-      storageKeys.push(...assets.rows.map((row) => String(row.storage_key)));
-      const result = await client.query(
-        `
-          delete from library_books
-          where user_id = $1 and deleted_at is not null
-          returning id, object_id, metadata_revision
-        `,
-        [config.defaultUserId],
-      );
-      purged = result.rows.length;
+      const candidateBookIds = trashCandidates.rows.map((row) => String(row.id));
+      for (const bookId of candidateBookIds) await lockImageSeriesBookLifecycle(client, bookId);
       const purgedAt = new Date().toISOString();
-      for (const row of result.rows) {
-        const bookId = String(row.id);
+      for (const candidate of trashCandidates.rows) {
+        const bookId = String(candidate.id);
+        const result = await purgeHostedBook(client, config.defaultUserId, bookId, {
+          contentRevisionId: String(candidate.active_content_revision_id),
+          requireTrashed: true,
+        });
+        if (result.status !== 'purged') continue;
+        purgedBookIds.push(bookId);
         await emitLifecycleEvent(client, config.defaultUserId, {
           type: 'book_purged',
           bookId,
           changedAt: purgedAt,
-          payload: { bookId, purgedAt, metadataRevision: Number(row.metadata_revision) + 1 },
+          payload: {
+            bookId,
+            purgedAt,
+            metadataRevision: result.metadataRevision + 1,
+            contentRevisionId: result.contentRevisionId,
+          },
         });
       }
-      const objectIds = result.rows.map((row) => row.object_id).filter(Boolean);
-      if (objectIds.length > 0) {
-        const objects = await client.query(
-          `
-            delete from book_objects o
-            where o.id = any($1::text[])
-              and not exists (select 1 from library_books b where b.object_id = o.id)
-            returning o.storage_key
-          `,
-          [objectIds],
-        );
-        storageKeys.push(...objects.rows.map((row) => String(row.storage_key)));
-      }
-      await enqueueObjectDeletions(client, storageKeys, 'purged_books');
+      purged = purgedBookIds.length;
       await client.query('commit');
     } catch (error) {
       await client.query('rollback');
@@ -683,6 +813,6 @@ export async function registerBookCatalogRoutes(
     } finally {
       client.release();
     }
-    return { ok: true, purged: purged ?? 0 };
+    return { ok: true, purged: purged ?? 0, bookIds: purgedBookIds };
   });
 }

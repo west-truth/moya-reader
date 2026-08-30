@@ -73,6 +73,11 @@ import {
 } from './content-revision-remote-state';
 import { buildCachedBookChildIdIndex, prepareContentActivationReaderPlan } from './content-activation-reader-plan';
 import { CONTENT_REVISION_STORES } from './content-revision-migration';
+import { canonicalRemoteContentRevisionId } from './content-revision-identity';
+import {
+  clearExactDocumentSectionReadState,
+  markExactDocumentSectionReadState,
+} from './exact-section-read-state';
 import { deleteByIndexInTransaction, requestToPromise, transactionDone } from './indexeddb-transaction';
 import type { SaveImportedNovelOptions, SaveImportedNovelProgress } from './import-progress';
 import { throwIfImportCancelled, withImportProgressHeartbeat } from './import-progress';
@@ -132,8 +137,10 @@ import {
   stageOriginalSourceAsset,
 } from './book-asset-store';
 import { BOOK_ASSET_STORES } from './book-asset-schema';
-import { moveNovelToTrash } from './library-catalog-store';
+import { bookVaultTombstone, moveNovelToTrash } from './library-catalog-store';
 import { LIBRARY_MANAGEMENT_STORES } from './library-management-schema';
+import { BOOK_ENRICHMENT_STORES } from './book-enrichment-schema';
+import { deleteBookEnrichmentDataInTransaction } from './book-enrichment-store';
 import { DOCUMENT_LISTENING_STORES } from './document-listening-schema';
 import {
   clearListeningPosition,
@@ -357,6 +364,36 @@ async function planAppendDeltaImport(
   };
 }
 
+function normalizedSectionSourceHash(value: string | undefined): string | undefined {
+  const normalized = value?.replace(/^sha256:/i, '').trim().toLocaleLowerCase();
+  return normalized || undefined;
+}
+
+function exactSectionIdentity(chapter: Chapter): string | undefined {
+  const hash = normalizedSectionSourceHash(chapter.documentSectionSourceContentHash);
+  return chapter.documentSectionId && hash ? `${chapter.documentSectionId}\u0000${hash}` : undefined;
+}
+
+async function inheritExactSectionReadMarkers(novelId: string, chapters: readonly Chapter[]): Promise<Chapter[]> {
+  const currentNovel = await getNovel(novelId);
+  if (!currentNovel?.activeContentRevisionId) return [...chapters];
+  const currentChapters = await getChapters(novelId);
+  const readAtByIdentity = new Map<string, string>();
+  for (const chapter of currentChapters) {
+    const identity = exactSectionIdentity(chapter);
+    const readAt = chapter.documentSectionReadAt;
+    const existing = identity ? readAtByIdentity.get(identity) : undefined;
+    if (identity && readAt && (!existing || readAt > existing)) readAtByIdentity.set(identity, readAt);
+  }
+  if (readAtByIdentity.size === 0) return [...chapters];
+  return chapters.map((chapter) => {
+    const identity = exactSectionIdentity(chapter);
+    const inherited = identity ? readAtByIdentity.get(identity) : undefined;
+    if (!inherited || (chapter.documentSectionReadAt && chapter.documentSectionReadAt >= inherited)) return chapter;
+    return { ...chapter, documentSectionReadAt: inherited };
+  });
+}
+
 async function* selectChapterParagraphs(
   source: ParsedNovelImportChapterSource,
   chapterIds: ReadonlySet<string>,
@@ -513,6 +550,8 @@ function remoteReadingPosition(event: SyncEvent): ReadingPosition | undefined {
     scrollTop: Math.max(0, Math.round(numberField(position.scrollTop))),
     deviceId: stringField(position.deviceId, event.deviceId),
     updatedAt: stringField(position.updatedAt, event.createdAt),
+    documentSectionId: stringField(position.documentSectionId) || undefined,
+    contentRevisionId: stringField(position.contentRevisionId) || undefined,
   };
 }
 
@@ -1129,7 +1168,24 @@ async function applyRemoteSyncEvent(tx: IDBTransaction, event: SyncEvent): Promi
       requestToPromise<Chapter | undefined>(chapterStore.get(position.chapterId)),
       requestToPromise<SyncTombstone | undefined>(tombstoneStore.get(tombstoneId('reading_position', position.id))),
     ]);
+    if (!existingNovel) return;
+    const canonicalContentRevisionId = await canonicalRemoteContentRevisionId(tx, existingNovel);
+    if (
+      position.contentRevisionId
+        ? position.contentRevisionId !== canonicalContentRevisionId
+        : Boolean(canonicalContentRevisionId)
+    ) {
+      return;
+    }
     if (tombstone && !isRemoteNewer(position.updatedAt, tombstone.deletedAt)) return;
+    if (position.documentSectionId) {
+      await markExactDocumentSectionReadState(
+        tx,
+        existingNovel,
+        position.documentSectionId,
+        position.updatedAt,
+      );
+    }
     if (existingPosition && !isRemoteNewer(position.updatedAt, existingPosition.updatedAt)) return;
     tombstoneStore.delete(tombstoneId('reading_position', position.id));
     positionStore.put(position);
@@ -1185,10 +1241,21 @@ async function applyRemoteSyncEvent(tx: IDBTransaction, event: SyncEvent): Promi
       requestToPromise<Novel | undefined>(tx.objectStore('novels').get(event.novelId)),
       requestToPromise<SyncTombstone | undefined>(tombstoneStore.get(tombstoneId('reading_position', id))),
     ]);
+    if (!existingNovel) return;
+    const expectedContentRevisionId = stringField(payload.expectedContentRevisionId);
+    const canonicalContentRevisionId = await canonicalRemoteContentRevisionId(tx, existingNovel);
+    if (
+      expectedContentRevisionId
+        ? expectedContentRevisionId !== canonicalContentRevisionId
+        : Boolean(canonicalContentRevisionId)
+    ) {
+      return;
+    }
     if (tombstone && !isRemoteNewer(deletedAt, tombstone.deletedAt)) return;
     if (existingPosition && !isRemoteNewer(deletedAt, existingPosition.updatedAt)) return;
     positionStore.delete(id);
     tombstoneStore.put(tombstoneEntity('reading_position', id, deletedAt, event.novelId));
+    await clearExactDocumentSectionReadState(tx, existingNovel);
     if (existingNovel) {
       tx.objectStore('novels').put(
         storedNovel({
@@ -1299,6 +1366,9 @@ async function applyRemoteSyncEvent(tx: IDBTransaction, event: SyncEvent): Promi
     const current = await requestToPromise<Novel | undefined>(store.get(event.novelId));
     if (!current) return;
     const payload = recordValue(event.payload);
+    const contentRevisionId = stringField(payload.contentRevisionId);
+    const canonicalContentRevisionId = await canonicalRemoteContentRevisionId(tx, current);
+    if (contentRevisionId ? contentRevisionId !== canonicalContentRevisionId : Boolean(canonicalContentRevisionId)) return;
     const incomingRevision = numberField(payload.metadataRevision);
     if (incomingRevision < (current.metadataRevision ?? 0)) return;
     if (event.type === 'book_trashed') {
@@ -1323,16 +1393,41 @@ async function applyRemoteSyncEvent(tx: IDBTransaction, event: SyncEvent): Promi
   }
 
   if (event.type === 'book_purged' && event.novelId) {
+    const current = await requestToPromise<Novel | undefined>(tx.objectStore('novels').get(event.novelId));
+    if (!current) return;
+    const contentRevisionId = stringField(recordValue(event.payload).contentRevisionId);
+    const canonicalContentRevisionId = await canonicalRemoteContentRevisionId(tx, current);
+    if (contentRevisionId ? contentRevisionId !== canonicalContentRevisionId : Boolean(canonicalContentRevisionId)) return;
     tx.objectStore('novels').delete(event.novelId);
-    deleteBookDataInTransaction(tx, event.novelId);
+    deleteBookDataInTransaction(tx, event.novelId, { preserveSyncTombstones: true });
     deleteBookAssetsInTransaction(tx, event.novelId);
+    deleteBookEnrichmentDataInTransaction(tx, event.novelId);
+    tx.objectStore('sync_tombstones').put(
+      bookVaultTombstone(current, deleteEventTimestamp(event), {
+        purged: true,
+        contentRevisionId: current.activeContentRevisionId,
+      }),
+    );
     return;
   }
 
   if (event.type === 'book_deleted' && event.novelId) {
     const novelId = event.novelId;
+    const current = await requestToPromise<Novel | undefined>(tx.objectStore('novels').get(novelId));
+    if (!current) return;
+    const contentRevisionId = stringField(recordValue(event.payload).contentRevisionId);
+    const canonicalContentRevisionId = await canonicalRemoteContentRevisionId(tx, current);
+    if (contentRevisionId ? contentRevisionId !== canonicalContentRevisionId : Boolean(canonicalContentRevisionId)) return;
     tx.objectStore('novels').delete(novelId);
-    deleteBookDataInTransaction(tx, novelId);
+    deleteBookDataInTransaction(tx, novelId, { preserveSyncTombstones: true });
+    deleteBookAssetsInTransaction(tx, novelId);
+    deleteBookEnrichmentDataInTransaction(tx, novelId);
+    tx.objectStore('sync_tombstones').put(
+      bookVaultTombstone(current, deleteEventTimestamp(event), {
+        purged: true,
+        contentRevisionId: current.activeContentRevisionId,
+      }),
+    );
     return;
   }
 
@@ -1610,6 +1705,7 @@ export async function applyRemoteSyncEvents(events: SyncEvent[]): Promise<void> 
       ...BOOK_DATA_STORES,
       BOOK_ASSET_STORES.assets,
       BOOK_ASSET_STORES.blobs,
+      ...Object.values(BOOK_ENRICHMENT_STORES),
       LIBRARY_MANAGEMENT_STORES.shelves,
       'settings',
     ],
@@ -1739,7 +1835,12 @@ async function stageAndActivateImportedNovel(input: {
   embeddedAssetStream?: AsyncIterable<ParsedNovelImportAsset>;
   options: SaveImportedNovelOptions;
 }): Promise<void> {
-  const allChapters = [...input.chapters].sort((a, b) => a.index - b.index).map(storedChapter);
+  const allChapters = (
+    await inheritExactSectionReadMarkers(
+      input.novel.id,
+      [...input.chapters].sort((a, b) => a.index - b.index),
+    )
+  ).map(storedChapter);
   const appendDelta = await planAppendDeltaImport(input.novel, allChapters, input.options);
   const chapters = appendDelta?.chapters ?? allChapters;
   const paragraphCount = chapters.reduce((total, chapter) => total + chapter.paragraphCount, 0);
@@ -1882,6 +1983,9 @@ export async function saveParsedNovelImport(
   });
 }
 
-export async function deleteNovel(novelId: string, expectedRevision?: number): Promise<void> {
-  await moveNovelToTrash(novelId, expectedRevision);
+export async function deleteNovel(
+  novelId: string,
+  expectation?: import('../repositories/library-catalog-repository').BookLifecycleExpectation,
+): Promise<void> {
+  await moveNovelToTrash(novelId, expectation);
 }

@@ -11,6 +11,7 @@ import {
   parseDocumentTextOrderOverridePayload,
   parseVoiceProfilesPayload,
   parseVoiceCastingUpdatedPayload,
+  numberValue,
   record,
   stringValue,
 } from './event-contracts.js';
@@ -58,9 +59,38 @@ async function shouldAcceptReaderContentRevision(
 ): Promise<boolean> {
   const updatedAt = readerArtifactUpdatedAt(event);
   if (!updatedAt || !event.novelId) return true;
+  if (event.type === 'reading_position_updated' || event.type === 'reading_position_deleted') {
+    const payload = record(event.payload);
+    const position = event.type === 'reading_position_updated' ? record(payload.position) : payload;
+    const expectedContentRevisionId =
+      stringValue(position.expectedContentRevisionId) ?? stringValue(position.contentRevisionId);
+    const result = await client.query<{ should_accept: boolean }>(
+      `
+        select case
+          when $3::text is not null then book.active_content_revision_id = $3
+          when exists(
+            select 1 from book_id_generations identity
+             where identity.user_id = $2 and identity.book_id = $1 and identity.generation > 1
+          ) then false
+          else book.content_revision_number <= 1
+        end as should_accept
+        from library_books book
+        join book_content_revisions revision on revision.id = book.active_content_revision_id
+        where book.id = $1 and book.user_id = $2
+        for share of book
+      `,
+      [event.novelId, userId, expectedContentRevisionId ?? null],
+    );
+    return result.rows[0]?.should_accept ?? false;
+  }
   const result = await client.query<{ should_accept: boolean }>(
     `
       select case
+        when exists(
+          select 1 from sync_events purge
+           where purge.user_id = $2 and purge.book_id = $1 and purge.type = 'book_purged'
+             and purge.created_at >= $3::timestamptz
+        ) then false
         when book.content_revision_number <= 1 then true
         when revision.activated_at is null then false
         else revision.activated_at < $3::timestamptz
@@ -68,8 +98,53 @@ async function shouldAcceptReaderContentRevision(
       from library_books book
       join book_content_revisions revision on revision.id = book.active_content_revision_id
       where book.id = $1 and book.user_id = $2
+      for share of book
     `,
     [event.novelId, userId, updatedAt],
+  );
+  return result.rows[0]?.should_accept ?? false;
+}
+
+async function shouldAcceptBookLifecycleIncarnation(
+  client: pg.PoolClient,
+  userId: string,
+  event: SyncEvent,
+): Promise<boolean> {
+  if (
+    event.type !== 'book_updated' &&
+    event.type !== 'book_trashed' &&
+    event.type !== 'book_restored' &&
+    event.type !== 'book_purged' &&
+    event.type !== 'book_deleted'
+  ) {
+    return true;
+  }
+  if (!event.novelId) return false;
+  const payload = record(event.payload);
+  const novel = record(payload.novel);
+  const contentRevisionId = stringValue(payload.contentRevisionId) ?? stringValue(payload.expectedContentRevisionId);
+  const rawMetadataRevision =
+    event.type === 'book_updated' ? (novel.metadataRevision ?? payload.metadataRevision) : payload.metadataRevision;
+  const metadataRevision =
+    typeof rawMetadataRevision === 'number' && Number.isSafeInteger(rawMetadataRevision) && rawMetadataRevision >= 0
+      ? numberValue(rawMetadataRevision)
+      : undefined;
+  const result = await client.query<{ should_accept: boolean }>(
+    `select case
+       when $3::text is not null and book.active_content_revision_id <> $3 then false
+       when $3::text is null and exists (
+         select 1 from book_id_generations identity
+          where identity.user_id = $2 and identity.book_id = $1 and identity.generation > 1
+       ) then false
+       when $5::bigint is not null and $5 <> book.metadata_revision + 1 then false
+       when $4 = 'book_trashed' and book.deleted_at is not null then false
+       when $4 in ('book_restored', 'book_purged') and book.deleted_at is null then false
+       else true
+     end as should_accept
+     from library_books book
+     where book.id = $1 and book.user_id = $2
+     for share of book`,
+    [event.novelId, userId, contentRevisionId ?? null, event.type, metadataRevision ?? null],
   );
   return result.rows[0]?.should_accept ?? false;
 }
@@ -84,28 +159,87 @@ async function shouldAcceptReadingPositionEvent(
   }
   if (!event.novelId) return false;
 
+  const updatedAt = readingPositionUpdatedAt(event);
+  const position = event.type === 'reading_position_updated' ? record(record(event.payload).position) : undefined;
+  let hasExactDocumentSection = false;
+  if (event.type === 'reading_position_updated' && position) {
+    const chapterId = stringValue(position.chapterId);
+    if (chapterId) {
+      const section = await client.query<{ has_section: boolean }>(
+        `select exists(
+           select 1 from chapters
+            where id = $1 and book_id = $2 and document_section_id is not null
+         ) as has_section`,
+        [chapterId, event.novelId],
+      );
+      hasExactDocumentSection = section.rows[0]?.has_section ?? false;
+    }
+  }
+  if (event.type === 'reading_position_updated' && hasExactDocumentSection) {
+    // Exact document-section markers and the global continuation position are
+    // independent LWW registers. A section event may arrive after a newer
+    // global position, but it must never cross an equal or newer reset.
+    const result = await client.query<{ should_accept: boolean }>(
+      `
+        select not exists(
+          select 1
+          from sync_events
+          where user_id = $2
+            and book_id = $1
+            and type = 'reading_position_deleted'
+            and created_at >= $3::timestamptz
+            and created_at > coalesce(
+              (select max(purge.created_at) from sync_events purge
+                where purge.user_id = $2 and purge.book_id = $1 and purge.type = 'book_purged'),
+              '-infinity'::timestamptz
+            )
+        ) as should_accept
+      `,
+      [event.novelId, userId, updatedAt],
+    );
+    return result.rows[0]?.should_accept ?? true;
+  }
+
   const result = await client.query<{ should_accept: boolean }>(
     `
-      select coalesce(
-        (
-          select max(entity_updated_at) <= $3::timestamptz
-          from (
-            select updated_at as entity_updated_at
-            from reading_positions
-            where book_id = $1 and user_id = $2
-            union all
-            select created_at as entity_updated_at
-            from sync_events
-            where user_id = $2
-              and book_id = $1
-              and type = 'reading_position_deleted'
-              and entity_id = $4
-          ) versions
-        ),
-        true
-      ) as should_accept
+      select case
+        when $4::boolean and exists(
+          select 1 from sync_events tombstone
+           where tombstone.user_id = $2
+             and tombstone.book_id = $1
+             and tombstone.type = 'reading_position_deleted'
+             and tombstone.created_at >= $3::timestamptz
+             and tombstone.created_at > coalesce(
+               (select max(purge.created_at) from sync_events purge
+                 where purge.user_id = $2 and purge.book_id = $1 and purge.type = 'book_purged'),
+               '-infinity'::timestamptz
+             )
+        ) then false
+        else coalesce(
+          (
+            select max(entity_updated_at) <= $3::timestamptz
+            from (
+              select updated_at as entity_updated_at
+              from reading_positions
+              where book_id = $1 and user_id = $2
+              union all
+              select created_at as entity_updated_at
+              from sync_events
+              where user_id = $2
+                and book_id = $1
+                and type = 'reading_position_deleted'
+                and created_at > coalesce(
+                  (select max(purge.created_at) from sync_events purge
+                    where purge.user_id = $2 and purge.book_id = $1 and purge.type = 'book_purged'),
+                  '-infinity'::timestamptz
+                )
+            ) versions
+          ),
+          true
+        )
+      end as should_accept
     `,
-    [event.novelId, userId, readingPositionUpdatedAt(event), event.entityId ?? `reading_position_${event.novelId}`],
+    [event.novelId, userId, updatedAt, event.type === 'reading_position_updated'],
   );
   return result.rows[0]?.should_accept ?? true;
 }
@@ -143,9 +277,7 @@ async function shouldAcceptListeningPositionEvent(
   return result.rows[0]?.should_accept ?? true;
 }
 
-function userEntityUpdatedAt(
-  event: SyncEvent,
-):
+function userEntityUpdatedAt(event: SyncEvent):
   | {
       table: 'bookmarks' | 'highlights' | 'notes' | 'document_annotations' | 'document_text_order_overrides';
       id: string;
@@ -218,15 +350,11 @@ function userEntityUpdatedAt(
   }
   if (event.type === 'document_annotation_updated') {
     const parsed = parseDocumentAnnotationPayload(event);
-    return parsed.ok
-      ? { table: 'document_annotations', id: parsed.id, updatedAt: parsed.updatedAt }
-      : undefined;
+    return parsed.ok ? { table: 'document_annotations', id: parsed.id, updatedAt: parsed.updatedAt } : undefined;
   }
   if (event.type === 'document_annotation_deleted') {
     const parsed = parseDocumentAnnotationDeletedPayload(event);
-    return parsed.ok
-      ? { table: 'document_annotations', id: parsed.id, updatedAt: parsed.deletedAt }
-      : undefined;
+    return parsed.ok ? { table: 'document_annotations', id: parsed.id, updatedAt: parsed.deletedAt } : undefined;
   }
   if (event.type === 'document_text_order_override_updated') {
     const parsed = parseDocumentTextOrderOverridePayload(event);
@@ -507,6 +635,7 @@ export async function hasExistingBookForEvent(
 
 export async function shouldAcceptSyncEvent(client: pg.PoolClient, userId: string, event: SyncEvent): Promise<boolean> {
   return (
+    (await shouldAcceptBookLifecycleIncarnation(client, userId, event)) &&
     (await shouldAcceptReaderContentRevision(client, userId, event)) &&
     (await shouldAcceptReadingPositionEvent(client, userId, event)) &&
     (await shouldAcceptListeningPositionEvent(client, userId, event)) &&

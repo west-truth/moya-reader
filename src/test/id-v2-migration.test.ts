@@ -967,7 +967,12 @@ describe('IndexedDB v13 ID/hash migration through the current schema', () => {
       fixture.normalizedHash,
     );
     expect(resolved).toBe(fixture.canonicalNovelId);
-    await saveImportedNovel(canonicalParsedFixture(fixture));
+    const migrated = (await getNovel(fixture.canonicalNovelId))!;
+    const favoriteWrite = db.transaction('novels', 'readwrite');
+    favoriteWrite.objectStore('novels').put({ ...migrated, favorite: true });
+    await transactionDone(favoriteWrite);
+    const parsed = canonicalParsedFixture(fixture);
+    await saveImportedNovel({ ...parsed, novel: { ...parsed.novel, favorite: false } });
     expect(await getNovels()).toHaveLength(1);
     expect(await getNovel(fixture.canonicalNovelId)).toMatchObject({ favorite: true });
     expect(await getParagraphs(fixture.canonicalChapterId)).toHaveLength(fixture.paragraphs.length);

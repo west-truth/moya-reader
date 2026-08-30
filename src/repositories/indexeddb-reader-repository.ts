@@ -115,12 +115,12 @@ export class IndexedDbReaderRepository
     return getNovel(id);
   }
 
-  patchNovelMetadata(novelId: string, patch: NovelMetadataPatch): Promise<void> {
-    return patchNovelMetadata(novelId, patch);
+  patchNovelMetadata(...args: Parameters<ReaderRepository['patchNovelMetadata']>): Promise<void> {
+    return patchNovelMetadata(...args);
   }
 
-  deleteNovel(novelId: string, expectedRevision?: number): Promise<void> {
-    return deleteNovel(novelId, expectedRevision);
+  deleteNovel(...args: Parameters<ReaderRepository['deleteNovel']>): Promise<void> {
+    return deleteNovel(...args);
   }
 
   saveImportedNovel(parsed: ParsedNovel): Promise<void> {
@@ -135,8 +135,8 @@ export class IndexedDbReaderRepository
     return getReadingPosition(novelId);
   }
 
-  clearReadingPosition(novelId: string): Promise<void> {
-    return clearReadingPosition(novelId);
+  clearReadingPosition(novelId: string, expectedContentRevisionId?: string): Promise<void> {
+    return clearReadingPosition(novelId, expectedContentRevisionId);
   }
 
   addNovelReadingTime(novelId: string, seconds: number, readAt?: string): Promise<void> {

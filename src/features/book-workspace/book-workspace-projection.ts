@@ -163,7 +163,10 @@ export function buildBookWorkspaceLibraryProjection(state: BookWorkspaceLibraryS
 export type BookWorkspaceChapterProjection = Pick<BookWorkspaceProjection, 'chapterList' | 'filteredOutlineChapters'>;
 
 export function buildBookWorkspaceChapterProjection(
-  state: Pick<BookWorkspaceState, 'chapterQuery' | 'chapterReadFilter' | 'chapterSort' | 'chapters' | 'outlineQuery'>,
+  state: Pick<
+    BookWorkspaceState,
+    'chapterQuery' | 'chapterReadFilter' | 'chapterSort' | 'chapters' | 'outlineQuery' | 'selectedNovel'
+  >,
   annotationCounts: ReadonlyMap<string, ChapterAnnotationCounts>,
   reading: BookWorkspaceReadingProjection,
 ): BookWorkspaceChapterProjection {
@@ -175,6 +178,10 @@ export function buildBookWorkspaceChapterProjection(
       readFilter: state.chapterReadFilter,
       sort: state.chapterSort,
       currentChapter: reading.readChapter,
+      readPolicy:
+        state.selectedNovel?.format === 'image_archive' && state.chapters.some((chapter) => chapter.documentSectionId)
+          ? 'document_section'
+          : 'sequential',
       annotationCounts,
     }),
     filteredOutlineChapters: outlineQuery

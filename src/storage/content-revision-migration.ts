@@ -1,3 +1,5 @@
+import { EXACT_SECTION_READ_INDEXES } from './exact-section-read-schema';
+
 export const CONTENT_REVISION_STORES = {
   revisions: 'book_content_revisions',
   chapters: 'book_content_chapters',
@@ -39,6 +41,12 @@ export function upgradeContentRevisionStores(db: IDBDatabase, transaction: IDBTr
     store.createIndex('domainId', 'id');
     store.createIndex('contentRevisionId_domainId', ['contentRevisionId', 'id'], { unique: true });
     store.createIndex('contentRevisionId_index', ['contentRevisionId', 'index'], { unique: true });
+    store.createIndex(EXACT_SECTION_READ_INDEXES.revisionSection, ['novelId', 'documentSectionId']);
+    store.createIndex(EXACT_SECTION_READ_INDEXES.revisionReadAt, ['novelId', 'documentSectionReadAt']);
+  } else {
+    const store = transaction.objectStore(CONTENT_REVISION_STORES.chapters);
+    ensureIndex(store, EXACT_SECTION_READ_INDEXES.revisionSection, ['novelId', 'documentSectionId']);
+    ensureIndex(store, EXACT_SECTION_READ_INDEXES.revisionReadAt, ['novelId', 'documentSectionReadAt']);
   }
   if (!db.objectStoreNames.contains(CONTENT_REVISION_STORES.paragraphs)) {
     const store = createRevisionScopedStore(db, CONTENT_REVISION_STORES.paragraphs);

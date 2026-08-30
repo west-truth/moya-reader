@@ -86,8 +86,15 @@ describe('BookWorkspaceController commands', () => {
   it('deletes before refreshing and clears an active selection only after persistence succeeds', async () => {
     const novel = testNovel();
     const harness = createBookWorkspaceTestHarness({ novel });
+    const completeBookAssociationPurge = vi.fn(async () => {
+      harness.calls.push('associationLifecycle.completeBookAssociationPurge');
+    });
+    const prepareBookAssociationPurge = vi.fn(async () => ({ id: 'purge-intent-1' }));
     const controller = new BookWorkspaceController(
-      harness.ports,
+      {
+        ...harness.ports,
+        associationLifecycle: { prepareBookAssociationPurge, completeBookAssociationPurge },
+      },
       testWorkspaceState({ selectedNovel: novel, novels: [novel], view: 'chapters' }),
     );
 
@@ -99,7 +106,96 @@ describe('BookWorkspaceController commands', () => {
       'adjacent.refreshAfterLocalMutation',
       'environment.notify:info',
     ]);
+    expect(completeBookAssociationPurge).not.toHaveBeenCalled();
     expect(controller.getSnapshot()).toMatchObject({ view: 'library', selectedNovel: undefined });
+  });
+
+  it('removes external-source bindings only after a permanent purge succeeds', async () => {
+    const novel = testNovel({ deletedAt: '2026-08-29T00:00:00.000Z' });
+    const harness = createBookWorkspaceTestHarness({ novel });
+    const completeBookAssociationPurge = vi.fn(async (_intentId: string, bookIds?: readonly string[]) => {
+      harness.calls.push(`associationLifecycle.completeBookAssociationPurge:${bookIds?.join(',')}`);
+    });
+    const prepareBookAssociationPurge = vi.fn(async () => {
+      harness.calls.push('associationLifecycle.prepareBookAssociationPurge');
+      return { id: 'purge-intent-1' };
+    });
+    const controller = new BookWorkspaceController(
+      {
+        ...harness.ports,
+        catalog: {
+          listTrash: async () => [novel],
+          restore: async () => undefined,
+          purge: async () => {
+            harness.calls.push('catalog.purge');
+          },
+          emptyTrash: async () => ({ purged: 0, bookIds: [] }),
+        },
+        associationLifecycle: { prepareBookAssociationPurge, completeBookAssociationPurge },
+      },
+      testWorkspaceState({ novels: [novel] }),
+    );
+
+    await controller.purgeNovel(novel);
+
+    expect(harness.calls).toEqual([
+      'associationLifecycle.prepareBookAssociationPurge',
+      'catalog.purge',
+      'associationLifecycle.completeBookAssociationPurge:book-1',
+      'adjacent.refreshNovels',
+      'adjacent.refreshAfterLocalMutation',
+      'environment.notify:info',
+    ]);
+    expect(prepareBookAssociationPurge).toHaveBeenCalledWith([
+      { bookId: 'book-1', activeContentRevisionId: novel.activeContentRevisionId },
+    ]);
+    expect(completeBookAssociationPurge).toHaveBeenCalledWith('purge-intent-1', ['book-1']);
+  });
+
+  it('removes bindings only for the exact book ids acknowledged by empty-trash', async () => {
+    const first = testNovel({ id: 'trash-1', deletedAt: '2026-08-29T00:00:00.000Z' });
+    const second = testNovel({ id: 'trash-2', deletedAt: '2026-08-29T00:01:00.000Z' });
+    const harness = createBookWorkspaceTestHarness();
+    const completeBookAssociationPurge = vi.fn(async (_intentId: string, bookIds?: readonly string[]) => {
+      harness.calls.push(`associationLifecycle.completeBookAssociationPurge:${bookIds?.join(',')}`);
+    });
+    const prepareBookAssociationPurge = vi.fn(async () => {
+      harness.calls.push('associationLifecycle.prepareBookAssociationPurge');
+      return { id: 'purge-intent-1' };
+    });
+    const controller = new BookWorkspaceController({
+      ...harness.ports,
+      catalog: {
+        listTrash: async () => {
+          harness.calls.push('catalog.listTrash');
+          return [first, second];
+        },
+        restore: async () => undefined,
+        purge: async () => undefined,
+        emptyTrash: async () => {
+          harness.calls.push('catalog.emptyTrash');
+          return { purged: 2, bookIds: ['trash-1', 'trash-2'] };
+        },
+      },
+      associationLifecycle: { prepareBookAssociationPurge, completeBookAssociationPurge },
+    });
+
+    await controller.emptyTrash();
+
+    expect(harness.calls).toEqual([
+      'catalog.listTrash',
+      'associationLifecycle.prepareBookAssociationPurge',
+      'catalog.emptyTrash',
+      'associationLifecycle.completeBookAssociationPurge:trash-1,trash-2',
+      'adjacent.refreshNovels',
+      'adjacent.refreshAfterLocalMutation',
+      'environment.notify:info',
+    ]);
+    expect(prepareBookAssociationPurge).toHaveBeenCalledWith([
+      { bookId: 'trash-1', activeContentRevisionId: first.activeContentRevisionId },
+      { bookId: 'trash-2', activeContentRevisionId: second.activeContentRevisionId },
+    ]);
+    expect(completeBookAssociationPurge).toHaveBeenCalledWith('purge-intent-1', ['trash-1', 'trash-2']);
   });
 
   it('routes reset conflicts to sync refresh without projecting a cleared position', async () => {
@@ -176,12 +272,12 @@ describe('BookWorkspaceController commands', () => {
     expect(controller.getSnapshot()).toMatchObject({ selectedNovel: freshNovel, localReadingPosition: position });
   });
 
-  it('projects a saved fixed-document page locally and schedules only the progress mutation refresh', async () => {
+  it('projects a saved fixed-document page and its exact section marker before the background refresh', async () => {
     const novel = testNovel({ format: 'image_archive', activeContentRevisionId: 'revision-1' });
     const chapters = [
       testChapter(1, { documentSectionId: 'chapter:1' }),
       testChapter(2, { documentSectionId: 'chapter:2' }),
-      testChapter(3, { documentSectionId: 'chapter:3' }),
+      testChapter(3, { documentSectionId: 'chapter:2' }),
     ];
     const harness = createBookWorkspaceTestHarness({ novel, chapters });
     const refreshAfterLocalMutation = vi.fn(async (_kind?: 'progress' | 'statistics') => {
@@ -216,7 +312,8 @@ describe('BookWorkspaceController commands', () => {
         offsetInParagraph: 0,
       },
     ]);
-    expect(controller.getSnapshot()).toMatchObject({
+    const snapshot = controller.getSnapshot();
+    expect(snapshot).toMatchObject({
       currentChapter: chapters[1],
       localReadingPosition: {
         chapterId: chapters[1]!.id,
@@ -238,10 +335,59 @@ describe('BookWorkspaceController commands', () => {
         },
       ],
     });
+    const exactSectionReadAt = snapshot.chapters[1]?.documentSectionReadAt;
+    expect(exactSectionReadAt).toBeDefined();
+    expect(snapshot.currentChapter?.documentSectionReadAt).toBe(exactSectionReadAt);
+    expect(snapshot.chapters[0]?.documentSectionReadAt).toBeUndefined();
+    expect(snapshot.chapters[2]?.documentSectionReadAt).toBe(exactSectionReadAt);
     expect(refreshAfterLocalMutation).toHaveBeenCalledOnce();
     expect(refreshAfterLocalMutation).toHaveBeenCalledWith('progress');
     expect(refreshNovels).not.toHaveBeenCalled();
     expect(harness.calls).toEqual(['repository.saveReadingPosition', 'adjacent.refreshAfterLocalMutation']);
+  });
+
+  it('does not let a delayed fixed-document write restore the previously open book', async () => {
+    const firstNovel = testNovel({ id: 'book-1', format: 'image_archive', activeContentRevisionId: 'revision-1' });
+    const secondNovel = testNovel({ id: 'book-2', format: 'image_archive', activeContentRevisionId: 'revision-2' });
+    const firstChapters = [testChapter(1, { novelId: firstNovel.id, documentSectionId: 'first:1' })];
+    const secondChapters = [testChapter(1, { novelId: secondNovel.id, documentSectionId: 'second:1' })];
+    let releaseSave!: () => void;
+    const saveGate = new Promise<void>((resolve) => {
+      releaseSave = resolve;
+    });
+    const harness = createBookWorkspaceTestHarness({ novel: firstNovel, chapters: firstChapters });
+    const controller = new BookWorkspaceController(
+      {
+        ...harness.ports,
+        repository: {
+          ...harness.ports.repository,
+          saveReadingPosition: async (input) => {
+            harness.progressUpdates.push(input);
+            await saveGate;
+          },
+        },
+      },
+      testWorkspaceState({ selectedNovel: firstNovel, novels: [firstNovel, secondNovel], chapters: firstChapters }),
+    );
+
+    const pendingSave = controller.saveFixedDocumentPage(0);
+    controller.replaceSelection({
+      selectedNovel: secondNovel,
+      chapters: secondChapters,
+      currentChapter: secondChapters[0],
+    });
+    releaseSave();
+    await pendingSave;
+
+    expect(harness.progressUpdates[0]).toMatchObject({
+      novelId: firstNovel.id,
+      expectedContentRevisionId: firstNovel.activeContentRevisionId,
+      chapterId: firstChapters[0]!.id,
+    });
+    expect(controller.getSnapshot()).toMatchObject({
+      selectedNovel: { id: secondNovel.id },
+      currentChapter: { id: secondChapters[0]!.id },
+    });
   });
 
   it('projects committed location and session time before scheduling adjacent refreshes', () => {

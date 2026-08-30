@@ -10,6 +10,7 @@ import {
   record,
   stringValue,
 } from './event-contracts.js';
+import { purgeHostedBook } from '../../services/hosted-book-purge.js';
 
 export async function persistReaderSyncEvent(
   client: pg.PoolClient,
@@ -23,34 +24,21 @@ export async function persistReaderSyncEvent(
     if (position.chapterId && event.novelId) {
       await client.query(
         `
-          with applied_position as (
-            insert into reading_positions (
-              book_id, user_id, chapter_id, paragraph_id, paragraph_index, offset_in_paragraph,
-              chapter_progress, scroll_top, device_id, updated_at
-            )
-            values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
-            on conflict (book_id, user_id) do update
-              set chapter_id = excluded.chapter_id,
-                  paragraph_id = excluded.paragraph_id,
-                  paragraph_index = excluded.paragraph_index,
-                  offset_in_paragraph = excluded.offset_in_paragraph,
-                  chapter_progress = excluded.chapter_progress,
-                  scroll_top = excluded.scroll_top,
-                  device_id = excluded.device_id,
-                  updated_at = excluded.updated_at
-              where reading_positions.updated_at <= excluded.updated_at
-            returning book_id, user_id, chapter_id, updated_at
+          insert into reading_positions (
+            book_id, user_id, chapter_id, paragraph_id, paragraph_index, offset_in_paragraph,
+            chapter_progress, scroll_top, device_id, updated_at
           )
-          insert into fixed_document_section_read_states (
-            book_id, user_id, document_section_id, last_read_at
-          )
-          select applied.book_id, applied.user_id, chapter.document_section_id, applied.updated_at
-            from applied_position applied
-            join chapters chapter on chapter.id = applied.chapter_id and chapter.book_id = applied.book_id
-           where chapter.document_section_id is not null
-          on conflict (book_id, user_id, document_section_id) do update
-            set last_read_at = excluded.last_read_at
-            where fixed_document_section_read_states.last_read_at <= excluded.last_read_at
+          values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+          on conflict (book_id, user_id) do update
+            set chapter_id = excluded.chapter_id,
+                paragraph_id = excluded.paragraph_id,
+                paragraph_index = excluded.paragraph_index,
+                offset_in_paragraph = excluded.offset_in_paragraph,
+                chapter_progress = excluded.chapter_progress,
+                scroll_top = excluded.scroll_top,
+                device_id = excluded.device_id,
+                updated_at = excluded.updated_at
+            where reading_positions.updated_at <= excluded.updated_at
         `,
         [
           event.novelId,
@@ -62,6 +50,27 @@ export async function persistReaderSyncEvent(
           numberValue(position.chapterProgress),
           numberValue(position.scrollTop),
           event.deviceId,
+          String(position.updatedAt ?? event.createdAt),
+        ],
+      );
+      await client.query(
+        `
+          insert into fixed_document_section_read_states (
+            book_id, user_id, document_section_id, last_read_at
+          )
+          select $1, $2, chapter.document_section_id, $4::timestamptz
+            from chapters chapter
+           where chapter.id = $3
+             and chapter.book_id = $1
+             and chapter.document_section_id is not null
+          on conflict (book_id, user_id, document_section_id) do update
+            set last_read_at = excluded.last_read_at
+            where fixed_document_section_read_states.last_read_at <= excluded.last_read_at
+        `,
+        [
+          event.novelId,
+          userId,
+          String(position.chapterId),
           String(position.updatedAt ?? event.createdAt),
         ],
       );
@@ -145,7 +154,8 @@ export async function persistReaderSyncEvent(
   if (event.type === 'book_updated' && event.novelId) {
     const novel = record(payload.novel);
     const provided = (key: string) => Object.prototype.hasOwnProperty.call(novel, key);
-    await client.query(
+    const contentRevisionId = stringValue(payload.contentRevisionId);
+    const updated = await client.query(
       `
         update library_books
         set title = coalesce($1, title),
@@ -160,9 +170,11 @@ export async function persistReaderSyncEvent(
             cover_fit = coalesce($20, cover_fit),
             cover_position_x = coalesce($21, cover_position_x),
             cover_position_y = coalesce($22, cover_position_y),
+            cover_removed_at = case when $23 then $24::timestamptz else cover_removed_at end,
             metadata_revision = greatest(metadata_revision, $7),
             updated_at = $4
         where id = $5 and user_id = $6
+          and ($25::text is null or active_content_revision_id = $25)
       `,
       [
         stringValue(novel.title) ?? stringValue(payload.title) ?? null,
@@ -191,8 +203,12 @@ export async function persistReaderSyncEvent(
         novel.coverFit === 'crop' || novel.coverFit === 'contain' ? novel.coverFit : null,
         novel.coverPositionX === undefined ? null : numberValue(novel.coverPositionX),
         novel.coverPositionY === undefined ? null : numberValue(novel.coverPositionY),
+        provided('coverRemovedAt'),
+        stringValue(novel.coverRemovedAt) ?? null,
+        contentRevisionId ?? null,
       ],
     );
+    if (updated.rowCount === 0) throw new Error('accepted book_updated event did not mutate its fenced book');
     return true;
   }
 
@@ -258,7 +274,8 @@ export async function persistReaderSyncEvent(
 
   if (event.type === 'book_trashed' && event.novelId) {
     const metadataRevision = numberValue(payload.metadataRevision);
-    await client.query(
+    const contentRevisionId = stringValue(payload.contentRevisionId);
+    const updated = await client.query(
       `
         update library_books
         set deleted_at = $3,
@@ -266,6 +283,7 @@ export async function persistReaderSyncEvent(
             metadata_revision = greatest(metadata_revision, $5),
             updated_at = $3
         where id = $1 and user_id = $2 and metadata_revision <= $5
+          and ($6::text is null or active_content_revision_id = $6)
       `,
       [
         event.novelId,
@@ -273,14 +291,17 @@ export async function persistReaderSyncEvent(
         String(payload.deletedAt ?? event.createdAt),
         stringValue(payload.deletedByDeviceId) ?? event.deviceId,
         metadataRevision,
+        contentRevisionId ?? null,
       ],
     );
+    if (updated.rowCount === 0) throw new Error('accepted book_trashed event did not mutate its fenced book');
     return true;
   }
 
   if (event.type === 'book_restored' && event.novelId) {
     const metadataRevision = numberValue(payload.metadataRevision);
-    await client.query(
+    const contentRevisionId = stringValue(payload.contentRevisionId);
+    const updated = await client.query(
       `
         update library_books
         set deleted_at = null,
@@ -288,22 +309,34 @@ export async function persistReaderSyncEvent(
             metadata_revision = greatest(metadata_revision, $4),
             updated_at = $3
         where id = $1 and user_id = $2 and metadata_revision <= $4
+          and ($5::text is null or active_content_revision_id = $5)
       `,
-      [event.novelId, userId, String(payload.restoredAt ?? event.createdAt), metadataRevision],
+      [event.novelId, userId, String(payload.restoredAt ?? event.createdAt), metadataRevision, contentRevisionId ?? null],
     );
+    if (updated.rowCount === 0) throw new Error('accepted book_restored event did not mutate its fenced book');
     return true;
   }
 
   if (event.type === 'book_purged' && event.novelId) {
-    await client.query('delete from library_books where id = $1 and user_id = $2 and deleted_at is not null', [
-      event.novelId,
-      userId,
-    ]);
+    const incomingMetadataRevision = payload.metadataRevision;
+    const result = await purgeHostedBook(client, userId, event.novelId, {
+      metadataRevision:
+        typeof incomingMetadataRevision === 'number' && Number.isSafeInteger(incomingMetadataRevision)
+          ? Math.max(0, incomingMetadataRevision - 1)
+          : undefined,
+      contentRevisionId: stringValue(payload.contentRevisionId),
+      requireTrashed: true,
+    });
+    if (result.status !== 'purged') throw new Error(`accepted book_purged event failed canonical purge: ${result.status}`);
     return true;
   }
 
   if (event.type === 'book_deleted' && event.novelId) {
-    await client.query('delete from library_books where id = $1 and user_id = $2', [event.novelId, userId]);
+    const result = await purgeHostedBook(client, userId, event.novelId, {
+      contentRevisionId: stringValue(payload.contentRevisionId),
+      requireTrashed: false,
+    });
+    if (result.status !== 'purged') throw new Error(`accepted book_deleted event failed canonical purge: ${result.status}`);
     return true;
   }
 

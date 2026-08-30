@@ -11,10 +11,12 @@ import { normalizeBookMetadataPatch, type NormalizedBookMetadataPatch } from '@n
 export interface BookPatchBody extends NormalizedBookMetadataPatch {
   analysisStatus?: AnalysisStatus;
   expectedRevision?: number;
+  expectedContentRevisionId?: string;
 }
 
 export interface ReadingPositionBody {
   chapterId?: string;
+  expectedContentRevisionId?: string;
   documentSectionId?: string;
   paragraphId?: string;
   paragraphIndex?: number;
@@ -31,7 +33,7 @@ export type ValidReadingPositionBody = Required<Pick<ReadingPositionBody, 'chapt
   ReadingPositionBody;
 
 export type ValidReadingPositionDeleteBody = Required<Pick<ReadingPositionBody, 'updatedAt'>> &
-  Pick<ReadingPositionBody, 'deviceId'>;
+  Pick<ReadingPositionBody, 'deviceId' | 'expectedContentRevisionId'>;
 
 export type ValidBookmarkBody = Record<string, unknown> & {
   id: string;
@@ -249,6 +251,12 @@ export function validateBookPatchBody(value: unknown): ValidationResult<BookPatc
   ) {
     return { ok: false, error: 'expectedRevision must be a non-negative integer' };
   }
+  if (
+    body.expectedContentRevisionId !== undefined &&
+    (typeof body.expectedContentRevisionId !== 'string' || !body.expectedContentRevisionId.trim())
+  ) {
+    return { ok: false, error: 'expectedContentRevisionId must be a non-empty string' };
+  }
   if (body.analysisStatus !== undefined && !analysisStatuses.includes(String(body.analysisStatus) as AnalysisStatus)) {
     return { ok: false, error: 'analysisStatus is invalid' };
   }
@@ -260,6 +268,7 @@ export function validateBookPatchBody(value: unknown): ValidationResult<BookPatc
         ...metadata,
         analysisStatus: body.analysisStatus as AnalysisStatus | undefined,
         expectedRevision: body.expectedRevision as number | undefined,
+        expectedContentRevisionId: body.expectedContentRevisionId as string | undefined,
       },
     };
   } catch (error) {
@@ -294,6 +303,7 @@ export function validateReadingPositionBody(value: unknown): ValidationResult<Va
     ok: true,
     value: {
       chapterId,
+      expectedContentRevisionId: optionalStringField(body, 'expectedContentRevisionId'),
       documentSectionId: optionalStringField(body, 'documentSectionId'),
       paragraphId: optionalStringField(body, 'paragraphId'),
       paragraphIndex,
@@ -315,6 +325,7 @@ export function validateReadingPositionDeleteBody(value: unknown): ValidationRes
     ok: true,
     value: {
       deviceId: optionalStringField(body, 'deviceId'),
+      expectedContentRevisionId: optionalStringField(body, 'expectedContentRevisionId'),
       updatedAt,
     },
   };

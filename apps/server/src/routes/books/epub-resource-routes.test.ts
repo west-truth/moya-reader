@@ -35,6 +35,8 @@ function resourcePool(kind: 'epub_resource' | 'document_page') {
               content_hash: 'sha256:resource',
               kind,
               page_index: kind === 'document_page' ? 0 : null,
+              active_content_revision_id: 'revision-r2',
+              has_prior_purge: true,
             },
           ],
         };
@@ -57,7 +59,10 @@ describe('hosted embedded document resources', () => {
       });
       const app = await appWithBooks(resourcePool(kind));
 
-      const response = await app.inject({ method: 'GET', url: '/api/books/book_1/resources/asset_1' });
+      const response = await app.inject({
+        method: 'GET',
+        url: '/api/books/book_1/resources/asset_1?contentRevisionId=revision-r2',
+      });
 
       expect(response.statusCode).toBe(200);
       expect(response.rawPayload).toEqual(resourceBytes);
@@ -66,6 +71,7 @@ describe('hosted embedded document resources', () => {
       expect(response.headers.etag).toBe('sha256:resource');
       expect(response.headers['cache-control']).toBe('private, max-age=31536000, immutable');
       expect(response.headers['x-asset-id']).toBe('asset_1');
+      expect(response.headers['x-content-revision-id']).toBe('revision-r2');
       expect(response.headers['x-asset-kind']).toBe(kind);
       expect(response.headers['x-page-index']).toBe(kind === 'document_page' ? '0' : '');
       expect(response.headers['x-asset-file-name']).toBe(encodeURIComponent('001 페이지.png'));
@@ -77,4 +83,28 @@ describe('hosted embedded document resources', () => {
       await app.close();
     },
   );
+
+  it('rejects a stale R1 resource and does not read object storage', async () => {
+    const app = await appWithBooks(resourcePool('epub_resource'));
+    const response = await app.inject({
+      method: 'GET',
+      url: '/api/books/book_1/resources/asset_1?contentRevisionId=revision-r1',
+    });
+    expect(response.statusCode).toBe(409);
+    expect(response.json()).toMatchObject({ actualContentRevisionId: 'revision-r2' });
+    expect(storage.getObjectStream).not.toHaveBeenCalled();
+    await app.close();
+  });
+
+  it('does not serve an EPUB resource whose book is deleted or missing', async () => {
+    const pool = { query: vi.fn(async () => ({ rows: [] })) } as unknown as pg.Pool;
+    const app = await appWithBooks(pool);
+    const response = await app.inject({
+      method: 'GET',
+      url: '/api/books/book_1/resources/asset_1?contentRevisionId=revision-r2',
+    });
+    expect(response.statusCode).toBe(404);
+    expect(storage.getObjectStream).not.toHaveBeenCalled();
+    await app.close();
+  });
 });
