@@ -113,11 +113,11 @@ export function BookDetailHero({ model, actions }: ChaptersScreenProps) {
               <button
                 type="button"
                 className="detail-add-chapter-button"
-                title="로컬 회차 추가"
-                aria-label="로컬 회차 추가"
+                title="회차 추가"
+                aria-label="회차 추가"
                 onClick={actions.navigation.openChapterAppend}
               >
-                <Plus size={17} />
+                <Plus size={17} /> 회차 추가
               </button>
             )}
             <button

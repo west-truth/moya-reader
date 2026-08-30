@@ -189,8 +189,8 @@ export function BookManagementDisclosure({ model, actions }: ChaptersScreenProps
           >
             <RotateCcw size={17} /> 읽은 위치 초기화
           </button>
-          <button type="button" onClick={actions.navigation.openImport}>
-            <Plus size={17} /> 다른 책 추가
+          <button type="button" aria-label="작품 관리에서 회차 추가" onClick={actions.navigation.openChapterAppend}>
+            <Plus size={17} /> 회차 추가
           </button>
         </div>
       </div>

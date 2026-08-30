@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   continuousComicPageEstimatedHeight,
   continuousComicPageIndexes,
+  continuousComicPageWidth,
   continuousComicSectionIndex,
   continuousPageNearestViewportCenter,
   representativeContinuousImageDimensions,
@@ -26,6 +27,7 @@ describe('continuous comic scroll stability', () => {
     expect(shouldAnchorContinuousPageResize(800, 800)).toBe(true);
     expect(shouldAnchorContinuousPageResize(801, 800)).toBe(false);
     expect(shouldAnchorContinuousPageResize(1_400, 800)).toBe(false);
+    expect(shouldAnchorContinuousPageResize(799, 800, true)).toBe(false);
   });
 
   it('matches the reader fit constraints before an image is mounted', () => {
@@ -53,9 +55,19 @@ describe('continuous comic scroll stability', () => {
     ).toBe(672);
   });
 
-  it('always fits borderless continuous pages to the viewport width on desktop and mobile', () => {
+  it('fills the mobile viewport but prevents borderless pages from over-expanding on desktop', () => {
     const portrait = { width: 690, height: 1_600 };
 
+    expect(
+      continuousComicPageWidth({
+        fit: 'page',
+        viewportWidth: 1_440,
+        viewportHeight: 900,
+        zoom: 1,
+        seamless: true,
+        dimensions: { width: 1_200, height: 2_400 },
+      }),
+    ).toBe(900);
     expect(
       continuousComicPageEstimatedHeight({
         fit: 'page',
@@ -65,7 +77,7 @@ describe('continuous comic scroll stability', () => {
         seamless: true,
         dimensions: portrait,
       }),
-    ).toBeCloseTo((809 * 1_600) / 690, 4);
+    ).toBe(1_600);
     expect(
       continuousComicPageEstimatedHeight({
         fit: 'page',
@@ -86,6 +98,16 @@ describe('continuous comic scroll stability', () => {
         dimensions: portrait,
       }),
     ).toBeCloseTo((390 * 1_600) / 690, 4);
+    expect(
+      continuousComicPageWidth({
+        fit: 'page',
+        viewportWidth: 1_440,
+        viewportHeight: 900,
+        zoom: 2,
+        seamless: true,
+        dimensions: portrait,
+      }),
+    ).toBe(1_380);
   });
 
   it('uses a viewport-height placeholder until a borderless page ratio is known', () => {

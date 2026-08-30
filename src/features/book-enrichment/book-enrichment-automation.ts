@@ -73,12 +73,9 @@ export function selectMissingMetadataFields(
   return fields;
 }
 
-export async function applyEligibleMissingEnrichment(
-  runner: BookEnrichmentAutomationRunner,
-  book: Novel,
+function eligibleAutomaticCandidateGroup(
   candidates: readonly BookEnrichmentCandidate[],
-  signal?: AbortSignal,
-): Promise<BookEnrichmentAutomaticApplyResult> {
+): readonly BookEnrichmentCandidate[] | undefined {
   const eligible = candidates.filter((candidate) => {
     const hint = candidate.provenance.automation;
     return (
@@ -92,18 +89,27 @@ export async function applyEligibleMissingEnrichment(
     );
   });
   const groupIds = new Set(eligible.map((candidate) => candidate.proposalGroupId).filter(Boolean));
-  if (groupIds.size !== 1 || eligible.some((candidate) => !candidate.proposalGroupId)) {
-    return { appliedCount: 0, errors: [] };
-  }
+  if (groupIds.size !== 1 || eligible.some((candidate) => !candidate.proposalGroupId)) return undefined;
   const [groupId] = groupIds;
-  const group = eligible.filter((candidate) => candidate.proposalGroupId === groupId);
+  return eligible.filter((candidate) => candidate.proposalGroupId === groupId);
+}
+
+export async function applyEligibleMissingEnrichment(
+  runner: BookEnrichmentAutomationRunner,
+  book: Novel,
+  candidates: readonly BookEnrichmentCandidate[],
+  signal?: AbortSignal,
+): Promise<BookEnrichmentAutomaticApplyResult> {
+  const group = eligibleAutomaticCandidateGroup(candidates);
+  if (!group) return { appliedCount: 0, errors: [] };
   const metadata = group.find(
     (candidate): candidate is Extract<BookEnrichmentCandidate, { kind: 'metadata' }> => candidate.kind === 'metadata',
   );
-  const cover = group.find(
+  let cover = group.find(
     (candidate): candidate is Extract<BookEnrichmentCandidate, { kind: 'cover' }> => candidate.kind === 'cover',
   );
   let appliedCount = 0;
+  let metadataApplied = false;
   const errors: string[] = [];
   if (metadata) {
     const fields = selectMissingMetadataFields(book, metadata);
@@ -112,6 +118,7 @@ export async function applyEligibleMissingEnrichment(
       try {
         await runner.applyMetadata(metadata.id, fields);
         appliedCount += 1;
+        metadataApplied = true;
       } catch (error) {
         errors.push(error instanceof Error ? error.message : '작품 정보를 자동 적용하지 못했습니다.');
       }
@@ -119,6 +126,21 @@ export async function applyEligibleMissingEnrichment(
   }
   if (cover && !book.coverAssetId && !cover.baseCover.present) {
     if (signal?.aborted) throw new DOMException('The operation was aborted.', 'AbortError');
+    if (metadataApplied) {
+      try {
+        const refreshed = await runner.propose(book.id, cover.provenance.contributionId, signal);
+        cover = eligibleAutomaticCandidateGroup(refreshed)?.find(
+          (candidate): candidate is Extract<BookEnrichmentCandidate, { kind: 'cover' }> => candidate.kind === 'cover',
+        );
+        if (!cover || cover.baseCover.present) {
+          errors.push('작품 정보는 적용했지만 최신 표지 후보를 확인하지 못했습니다.');
+          return { appliedCount, errors };
+        }
+      } catch (error) {
+        errors.push(error instanceof Error ? error.message : '최신 표지 후보를 다시 확인하지 못했습니다.');
+        return { appliedCount, errors };
+      }
+    }
     try {
       await runner.applyCover(cover.id);
       appliedCount += 1;

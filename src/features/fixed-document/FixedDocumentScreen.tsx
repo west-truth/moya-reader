@@ -102,7 +102,6 @@ import {
   comicViewModeToProfileMode,
   DEFAULT_COMIC_READING_PROFILE,
   isContinuousComicViewMode,
-  nextComicViewMode,
   type ComicViewMode,
   type ComicPageLayoutHint,
 } from './comic-layout';
@@ -116,6 +115,7 @@ import {
 import {
   continuousComicPageEstimatedHeight,
   continuousComicPageIndexes,
+  continuousComicPageWidth,
   continuousComicSectionIndex,
   continuousPageNearestViewportCenter,
   representativeContinuousImageDimensions,
@@ -948,6 +948,18 @@ export default function FixedDocumentScreen({
       zoom,
     ],
   );
+  const seamlessContinuousPageWidth = useCallback(
+    (index: number) =>
+      continuousComicPageWidth({
+        fit,
+        viewportWidth: viewportSize.width,
+        viewportHeight: viewportSize.height,
+        zoom,
+        seamless: true,
+        dimensions: imageDimensions.get(index) ?? archiveEstimateDimensions,
+      }),
+    [archiveEstimateDimensions, fit, imageDimensions, viewportSize.height, viewportSize.width, zoom],
+  );
   const continuousVirtualizer = useVirtualizer({
     count: continuousView ? continuousPageIndexes.length : 0,
     getScrollElement: () => viewportRef.current,
@@ -956,7 +968,7 @@ export default function FixedDocumentScreen({
     overscan: 2,
   });
   continuousVirtualizer.shouldAdjustScrollPositionOnItemSizeChange = (item, _delta, instance) =>
-    shouldAnchorContinuousPageResize(item.end, instance.scrollOffset ?? 0);
+    shouldAnchorContinuousPageResize(item.end, instance.scrollOffset ?? 0, Boolean(pendingFocalAnchorRef.current));
   const sidebarVirtualizer = useVirtualizer({
     count: sidebarOpen ? totalPages : 0,
     getScrollElement: () => sidebarRef.current,
@@ -1749,7 +1761,7 @@ export default function FixedDocumentScreen({
     return () => observer.disconnect();
   }, [captureFocalAnchor]);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     continuousVirtualizer.measure();
   }, [
     archiveEstimateDimensions?.height,
@@ -2246,6 +2258,7 @@ export default function FixedDocumentScreen({
     if (!previous) return;
     activePointersRef.current.set(event.pointerId, { x: event.clientX, y: event.clientY });
     if (activePointersRef.current.size >= 2) {
+      event.preventDefault();
       const [first, second] = [...activePointersRef.current.values()];
       const distance = Math.hypot(second.x - first.x, second.y - first.y);
       const pinch = pinchRef.current;
@@ -2404,28 +2417,19 @@ export default function FixedDocumentScreen({
           >
             {sidebarOpen ? <PanelLeftClose size={17} /> : <PanelLeftOpen size={17} />}
           </button>
-          <button
-            type="button"
-            className={novel.format === 'image_archive' ? 'fixed-doc-mobile-top-action' : undefined}
-            onClick={() => {
-              if (novel.format === 'image_archive') {
-                const next = nextComicViewMode(viewMode);
-                preserveFocalPoint(() => {
-                  setViewMode(next);
-                  if (next === 'continuous-seamless') setZoom(1);
-                });
-                updateComicProfile({
-                  mode: comicViewModeToProfileMode(next),
-                  seamlessVertical: next === 'continuous-seamless',
-                });
-              } else preserveFocalPoint(() => setViewMode((mode) => (mode === 'single' ? 'continuous' : 'single')));
-            }}
-            aria-pressed={viewMode !== 'single'}
-            aria-label={novel.format === 'image_archive' ? '단면·양면·세로·경계 없는 세로 보기 전환' : '연속 보기'}
-            title={novel.format === 'image_archive' ? '단면·양면·세로·경계 없는 세로 보기 전환' : '연속 보기'}
-          >
-            <Columns3 size={17} />
-          </button>
+          {novel.format !== 'image_archive' && (
+            <button
+              type="button"
+              onClick={() =>
+                preserveFocalPoint(() => setViewMode((mode) => (mode === 'single' ? 'continuous' : 'single')))
+              }
+              aria-pressed={viewMode !== 'single'}
+              aria-label="연속 보기"
+              title="연속 보기"
+            >
+              <Columns3 size={17} />
+            </button>
+          )}
           {novel.format === 'image_archive' && (
             <button
               type="button"
@@ -2795,13 +2799,18 @@ export default function FixedDocumentScreen({
                   className={`${index === pageIndex ? 'is-current' : ''}${effectiveViewMode === 'spread' ? ' is-spread-page' : ''}${effectiveViewMode === 'spread' && comicSpreads[comicSpreadForPage(comicSpreads, pageIndex)]?.widePage === index ? ' is-double-page' : ''}`}
                   style={
                     continuousView
-                      ? {
+                      ? ({
                           transform: `translateY(${
                             continuousItems.find((item) => item.index === continuousVirtualIndexByPage.get(index))
                               ?.start ?? 0
                           }px)`,
-                          ...(seamlessContinuousView ? { height: estimateContinuousPageSize(index) } : {}),
-                        }
+                          ...(seamlessContinuousView
+                            ? {
+                                height: estimateContinuousPageSize(index),
+                                '--fixed-doc-seamless-page-width': `${seamlessContinuousPageWidth(index)}px`,
+                              }
+                            : {}),
+                        } as CSSProperties)
                       : undefined
                   }
                   aria-label={`${index + 1}페이지`}

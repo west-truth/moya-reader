@@ -147,6 +147,18 @@ describe('ChaptersScreen', () => {
     expect(markup).toContain('누적 독서 시간');
     expect(markup).toContain('60%');
     expect(markup).toContain('회차 추가');
+    expect(markup).not.toContain('다른 책 추가');
+  });
+
+  it('opens chapter append from both detail entry points', () => {
+    const actions = createActions();
+    const root = renderScreen(createModel([chapter(1), chapter(2)]), actions);
+
+    buttonByLabel(root, '회차 추가').props.onClick();
+    buttonByLabel(root, '작품 관리에서 회차 추가').props.onClick();
+
+    expect(actions.navigation.openChapterAppend).toHaveBeenCalledTimes(2);
+    expect(actions.navigation.openImport).not.toHaveBeenCalled();
   });
 
   it('uses the whole-book projection for detail percentages and keeps chapter progress on the current row', () => {
