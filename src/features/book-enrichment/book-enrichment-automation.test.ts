@@ -139,7 +139,9 @@ describe('book enrichment automation', () => {
   });
 
   it('fills still-missing fields after another metadata edit while preserving existing values', async () => {
+    const refreshedCover = { ...coverCandidate(), id: 'cover-2', baseMetadataRevision: 3 };
     const runner = {
+      propose: vi.fn(async () => [refreshedCover]),
       applyMetadata: vi.fn(async () => undefined),
       applyCover: vi.fn(async () => undefined),
     } as unknown as BookEnrichmentAutomationRunner;
@@ -151,11 +153,13 @@ describe('book enrichment automation', () => {
       ),
     ).resolves.toEqual({ appliedCount: 2, errors: [] });
     expect(runner.applyMetadata).toHaveBeenCalledWith('metadata-1', ['tags', 'description', 'language']);
-    expect(runner.applyCover).toHaveBeenCalledWith('cover-1');
+    expect(runner.propose).toHaveBeenCalledWith('book-1', 'moya.webnovel-metadata.enrichment', undefined);
+    expect(runner.applyCover).toHaveBeenCalledWith('cover-2');
   });
 
   it('preserves a partial metadata apply when the cover step fails', async () => {
     const runner = {
+      propose: vi.fn(async () => [coverCandidate()]),
       applyMetadata: vi.fn(async () => undefined),
       applyCover: vi.fn(async () => {
         throw new Error('cover failed');
@@ -208,7 +212,7 @@ describe('book enrichment automation', () => {
       propose: vi
         .fn()
         .mockRejectedValueOnce(new Error('network'))
-        .mockResolvedValueOnce([metadataCandidate(), coverCandidate()]),
+        .mockResolvedValue([metadataCandidate(), coverCandidate()]),
       applyMetadata: vi.fn(async () => undefined),
       applyCover: vi.fn(async () => undefined),
     };
@@ -244,8 +248,9 @@ describe('book enrichment automation', () => {
     });
 
     expect(result).toMatchObject({ total: 1, completed: 1, skipped: 1, matched: 1, applied: 1 });
-    expect(runner.propose).toHaveBeenCalledTimes(1);
-    expect(runner.propose).toHaveBeenCalledWith('incomplete', 'moya.webnovel-metadata.enrichment', undefined);
+    expect(runner.propose).toHaveBeenCalledTimes(2);
+    expect(runner.propose).toHaveBeenNthCalledWith(1, 'incomplete', 'moya.webnovel-metadata.enrichment', undefined);
+    expect(runner.propose).toHaveBeenNthCalledWith(2, 'incomplete', 'moya.webnovel-metadata.enrichment', undefined);
   });
 
   it('never searches works that are still in the trash', async () => {
@@ -263,7 +268,8 @@ describe('book enrichment automation', () => {
     });
 
     expect(result).toMatchObject({ total: 1, completed: 1, skipped: 1, matched: 1, applied: 1 });
-    expect(runner.propose).toHaveBeenCalledTimes(1);
-    expect(runner.propose).toHaveBeenCalledWith('active', 'moya.webnovel-metadata.enrichment', undefined);
+    expect(runner.propose).toHaveBeenCalledTimes(2);
+    expect(runner.propose).toHaveBeenNthCalledWith(1, 'active', 'moya.webnovel-metadata.enrichment', undefined);
+    expect(runner.propose).toHaveBeenNthCalledWith(2, 'active', 'moya.webnovel-metadata.enrichment', undefined);
   });
 });

@@ -465,6 +465,18 @@ describe('SourceHubScreen', () => {
       setDraft: vi.fn(),
       save: vi.fn(),
     };
+    const localLibrary = {
+      ...library,
+      model: {
+        ...library.model,
+        collection: {
+          ...library.model.collection,
+          booksByNovelId: new Map([
+            [localNovel.id, { novel: localNovel, readingStatusLabel: '읽는 중', isUnread: false }],
+          ]),
+        },
+      },
+    } as unknown as LibraryScreenProps;
     const markup = renderToStaticMarkup(
       <SourceHubScreen
         controller={controller({
@@ -500,7 +512,7 @@ describe('SourceHubScreen', () => {
             },
           ],
         })}
-        library={library}
+        library={localLibrary}
         openSourceSettings={vi.fn()}
         openLocalSeriesImport={vi.fn()}
         localSeriesNovel={localNovel}
@@ -509,6 +521,7 @@ describe('SourceHubScreen', () => {
     );
 
     expect(markup).toContain('로컬 웹툰');
+    expect(markup).toContain('<span class="detail-status">읽는 중</span>');
     expect(markup).not.toContain('로컬 회차만 표시');
     expect(markup).toContain('01화');
     expect(markup).toContain('02화');

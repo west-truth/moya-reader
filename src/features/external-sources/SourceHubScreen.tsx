@@ -511,6 +511,17 @@ export default function SourceHubScreen({
     .filter((value): value is string => Boolean(value))
     .join(' · ');
   const workSourceLabel = controller.detail?.sourceLabel ?? activeSource?.title ?? '로컬 라이브러리';
+  const seriesLibraryBook = seriesNovel ? library.model.collection.booksByNovelId?.get(seriesNovel.id) : undefined;
+  const seriesReadingStatus =
+    seriesLibraryBook?.readingStatusLabel ??
+    (seriesNovel
+      ? seriesNovel.lastReadAt || seriesNovel.lastReadProgress > 0
+        ? seriesNovel.lastReadProgress >= 1
+          ? '완독'
+          : '읽는 중'
+        : '미독'
+      : undefined);
+  const seriesCanContinue = seriesLibraryBook ? !seriesLibraryBook.isUnread : seriesReadingStatus !== '미독';
   const localArchiveFormat = seriesNovel ? sourceFileExtension(seriesNovel.sourceFileName) : undefined;
   const sourceSubscriptions = activeSource
     ? controller.subscriptions.filter(
@@ -643,7 +654,7 @@ export default function SourceHubScreen({
                     )}
                   </div>
                   <div className="detail-hero-copy">
-                    <span className="detail-status">{workSourceLabel}</span>
+                    <span className="detail-status">{seriesReadingStatus ?? workSourceLabel}</span>
                     {seriesNovel && localSeriesTitleEditor?.editing ? (
                       <form
                         id="book-title-editor"
@@ -702,7 +713,7 @@ export default function SourceHubScreen({
                           onClick={() => void library.actions.books.continueReading(seriesNovel)}
                         >
                           <Play size={16} fill="currentColor" />
-                          {seriesNovel.lastReadProgress > 0 ? '이어 보기' : '첫 회차 보기'}
+                          {seriesCanContinue ? '이어 보기' : '첫 회차 보기'}
                         </button>
                       )}
                       {controller.canSubscribeCurrentWork && !controller.activeSubscription && (
