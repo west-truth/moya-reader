@@ -114,7 +114,11 @@ describe('external source link import reconciliation', () => {
     expect(activated[0]?.pendingImport?.activatedContentRevisionId).toBe('content-new');
     expect(compareAndSwapPendingLinks).toHaveBeenCalledWith(
       [{ id: 'link-1', operationId: 'operation-1' }],
-      [expect.objectContaining({ pendingImport: expect.objectContaining({ activatedContentRevisionId: 'content-new' }) })],
+      [
+        expect.objectContaining({
+          pendingImport: expect.objectContaining({ activatedContentRevisionId: 'content-new' }),
+        }),
+      ],
       [],
     );
   });

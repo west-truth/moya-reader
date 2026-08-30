@@ -1,8 +1,5 @@
 import type { Novel } from '../domain/types';
-import type {
-  BookLifecycleExpectation,
-  CatalogMutationReceipt,
-} from '../repositories/library-catalog-repository';
+import type { BookLifecycleExpectation, CatalogMutationReceipt } from '../repositories/library-catalog-repository';
 import { BOOK_DATA_STORES, deleteBookDataInTransaction } from './book-data-cleanup';
 import { deleteBookAssetsInTransaction } from './book-asset-store';
 import { BOOK_ASSET_STORES } from './book-asset-schema';

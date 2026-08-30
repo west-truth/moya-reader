@@ -387,10 +387,7 @@ export interface ExternalSourceLocalState {
    * Moving a book to trash must not call this method: bindings intentionally
    * survive until the canonical book is purged.
    */
-  purgeBookAssociations?(
-    bookIds: readonly string[],
-    snapshot: ExternalSourceAssociationPurgeSnapshot,
-  ): Promise<void>;
+  purgeBookAssociations?(bookIds: readonly string[], snapshot: ExternalSourceAssociationPurgeSnapshot): Promise<void>;
   prepareBookAssociationPurge?(
     targets: readonly ExternalSourceAssociationPurgeTarget[],
   ): Promise<ExternalSourceAssociationPurgeIntent>;

@@ -74,10 +74,7 @@ import {
 import { buildCachedBookChildIdIndex, prepareContentActivationReaderPlan } from './content-activation-reader-plan';
 import { CONTENT_REVISION_STORES } from './content-revision-migration';
 import { canonicalRemoteContentRevisionId } from './content-revision-identity';
-import {
-  clearExactDocumentSectionReadState,
-  markExactDocumentSectionReadState,
-} from './exact-section-read-state';
+import { clearExactDocumentSectionReadState, markExactDocumentSectionReadState } from './exact-section-read-state';
 import { deleteByIndexInTransaction, requestToPromise, transactionDone } from './indexeddb-transaction';
 import type { SaveImportedNovelOptions, SaveImportedNovelProgress } from './import-progress';
 import { throwIfImportCancelled, withImportProgressHeartbeat } from './import-progress';
@@ -365,7 +362,10 @@ async function planAppendDeltaImport(
 }
 
 function normalizedSectionSourceHash(value: string | undefined): string | undefined {
-  const normalized = value?.replace(/^sha256:/i, '').trim().toLocaleLowerCase();
+  const normalized = value
+    ?.replace(/^sha256:/i, '')
+    .trim()
+    .toLocaleLowerCase();
   return normalized || undefined;
 }
 
@@ -1179,12 +1179,7 @@ async function applyRemoteSyncEvent(tx: IDBTransaction, event: SyncEvent): Promi
     }
     if (tombstone && !isRemoteNewer(position.updatedAt, tombstone.deletedAt)) return;
     if (position.documentSectionId) {
-      await markExactDocumentSectionReadState(
-        tx,
-        existingNovel,
-        position.documentSectionId,
-        position.updatedAt,
-      );
+      await markExactDocumentSectionReadState(tx, existingNovel, position.documentSectionId, position.updatedAt);
     }
     if (existingPosition && !isRemoteNewer(position.updatedAt, existingPosition.updatedAt)) return;
     tombstoneStore.delete(tombstoneId('reading_position', position.id));
@@ -1368,7 +1363,8 @@ async function applyRemoteSyncEvent(tx: IDBTransaction, event: SyncEvent): Promi
     const payload = recordValue(event.payload);
     const contentRevisionId = stringField(payload.contentRevisionId);
     const canonicalContentRevisionId = await canonicalRemoteContentRevisionId(tx, current);
-    if (contentRevisionId ? contentRevisionId !== canonicalContentRevisionId : Boolean(canonicalContentRevisionId)) return;
+    if (contentRevisionId ? contentRevisionId !== canonicalContentRevisionId : Boolean(canonicalContentRevisionId))
+      return;
     const incomingRevision = numberField(payload.metadataRevision);
     if (incomingRevision < (current.metadataRevision ?? 0)) return;
     if (event.type === 'book_trashed') {
@@ -1397,7 +1393,8 @@ async function applyRemoteSyncEvent(tx: IDBTransaction, event: SyncEvent): Promi
     if (!current) return;
     const contentRevisionId = stringField(recordValue(event.payload).contentRevisionId);
     const canonicalContentRevisionId = await canonicalRemoteContentRevisionId(tx, current);
-    if (contentRevisionId ? contentRevisionId !== canonicalContentRevisionId : Boolean(canonicalContentRevisionId)) return;
+    if (contentRevisionId ? contentRevisionId !== canonicalContentRevisionId : Boolean(canonicalContentRevisionId))
+      return;
     tx.objectStore('novels').delete(event.novelId);
     deleteBookDataInTransaction(tx, event.novelId, { preserveSyncTombstones: true });
     deleteBookAssetsInTransaction(tx, event.novelId);
@@ -1417,7 +1414,8 @@ async function applyRemoteSyncEvent(tx: IDBTransaction, event: SyncEvent): Promi
     if (!current) return;
     const contentRevisionId = stringField(recordValue(event.payload).contentRevisionId);
     const canonicalContentRevisionId = await canonicalRemoteContentRevisionId(tx, current);
-    if (contentRevisionId ? contentRevisionId !== canonicalContentRevisionId : Boolean(canonicalContentRevisionId)) return;
+    if (contentRevisionId ? contentRevisionId !== canonicalContentRevisionId : Boolean(canonicalContentRevisionId))
+      return;
     tx.objectStore('novels').delete(novelId);
     deleteBookDataInTransaction(tx, novelId, { preserveSyncTombstones: true });
     deleteBookAssetsInTransaction(tx, novelId);

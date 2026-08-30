@@ -79,10 +79,7 @@ export async function patchLibraryBookMetadata(
     await done.catch(() => undefined);
     throw new CatalogRevisionConflictError(bookId, expectedRevision, actualRevision);
   }
-  if (
-    expectedContentRevisionId !== undefined &&
-    expectedContentRevisionId !== current.activeContentRevisionId
-  ) {
+  if (expectedContentRevisionId !== undefined && expectedContentRevisionId !== current.activeContentRevisionId) {
     tx.abort();
     await done.catch(() => undefined);
     throw new Error(`Book ${bookId} content revision changed before metadata mutation`);
@@ -101,13 +98,18 @@ export async function patchLibraryBookMetadata(
     updatedAt: changedAt,
   };
   store.put(next);
-  await queueSyncEventInTransaction(tx, 'book_updated', jsonValue({
-    novel: metadataSnapshot(next),
-    contentRevisionId: canonicalContentRevisionId,
-  }), {
-    novelId: bookId,
-    entityId: bookId,
-  });
+  await queueSyncEventInTransaction(
+    tx,
+    'book_updated',
+    jsonValue({
+      novel: metadataSnapshot(next),
+      contentRevisionId: canonicalContentRevisionId,
+    }),
+    {
+      novelId: bookId,
+      entityId: bookId,
+    },
+  );
   await done;
   return { bookId, metadataRevision: next.metadataRevision!, changedAt };
 }

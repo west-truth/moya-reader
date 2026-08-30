@@ -115,11 +115,7 @@ export function assertRemoteContentRevision(
   response: SnapshotJsonRecord,
   context: string,
 ): void {
-  assertSnapshotPin(
-    { sourceRevision: expectedContentRevisionId, fingerprint: '' },
-    response,
-    context,
-  );
+  assertSnapshotPin({ sourceRevision: expectedContentRevisionId, fingerprint: '' }, response, context);
 }
 
 export function snapshotQueryPath(path: string, sourceRevision?: string): string {

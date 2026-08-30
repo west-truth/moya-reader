@@ -9,10 +9,7 @@ export interface BookOperationLockQuery {
  * A completed purge therefore wins over an already running append, while an
  * append that starts later observes that the canonical book no longer exists.
  */
-export async function lockImageSeriesBookLifecycle(
-  queryable: BookOperationLockQuery,
-  bookId: string,
-): Promise<void> {
+export async function lockImageSeriesBookLifecycle(queryable: BookOperationLockQuery, bookId: string): Promise<void> {
   await queryable.query('select pg_advisory_xact_lock(hashtextextended($1, $2))', [
     bookId,
     IMAGE_SERIES_BOOK_LOCK_NAMESPACE,

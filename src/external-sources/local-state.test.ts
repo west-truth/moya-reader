@@ -286,10 +286,7 @@ describe('ExternalSourceLocalStateStore', () => {
     expect(await store.listLinks()).toEqual([secondLink]);
     expect(await store.listSubscriptions()).toEqual([sharedSubscription, unrelatedSubscription]);
 
-    await store.purgeBookAssociations(
-      ['book-2', 'book-does-not-exist'],
-      await store.captureBookAssociations(),
-    );
+    await store.purgeBookAssociations(['book-2', 'book-does-not-exist'], await store.captureBookAssociations());
 
     expect(await store.listLinks()).toEqual([]);
     expect(await store.listSubscriptions()).toEqual([unrelatedSubscription]);

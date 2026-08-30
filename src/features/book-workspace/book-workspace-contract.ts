@@ -11,10 +11,7 @@ import type {
 import type { ReadingPosition } from '../../sync/types';
 import type { NovelMetadataPatch, SaveReadingPositionInput } from '../../repositories/reader-repository';
 import type { TrashPurgeReceipt } from '../../repositories/library-catalog-repository';
-import type {
-  BookLifecycleExpectation,
-  BookMutationExpectation,
-} from '../../repositories/library-catalog-repository';
+import type { BookLifecycleExpectation, BookMutationExpectation } from '../../repositories/library-catalog-repository';
 import type { ChapterReadFilter, ChapterSort } from '../chapters/chapters-screen-model';
 import type { LibraryFilter, LibrarySort, LibraryViewMode } from '../library/library-screen-model';
 import type { ReaderLocationSnapshot, ReaderMode } from '../reader/reader-screen-contract';
@@ -97,7 +94,9 @@ export interface BookWorkspaceAssociationPurgeTarget {
 }
 
 export interface BookWorkspaceAssociationLifecyclePort {
-  prepareBookAssociationPurge(targets: readonly BookWorkspaceAssociationPurgeTarget[]): Promise<{ readonly id: string }>;
+  prepareBookAssociationPurge(
+    targets: readonly BookWorkspaceAssociationPurgeTarget[],
+  ): Promise<{ readonly id: string }>;
   completeBookAssociationPurge(intentId: string, confirmedBookIds?: readonly string[]): Promise<unknown>;
 }
 

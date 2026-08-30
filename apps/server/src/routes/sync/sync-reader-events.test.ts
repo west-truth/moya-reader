@@ -287,14 +287,7 @@ describe('sync reader event routes', () => {
     await persistReaderSyncEvent(client, 'user_test', restored);
 
     expect(queries[0].sql).toContain('set deleted_at = $3');
-    expect(queries[0].params).toEqual([
-      'book_1',
-      'user_test',
-      '2026-07-13T00:00:00.000Z',
-      'device_a',
-      3,
-      null,
-    ]);
+    expect(queries[0].params).toEqual(['book_1', 'user_test', '2026-07-13T00:00:00.000Z', 'device_a', 3, null]);
     expect(queries[1].sql).toContain('set deleted_at = null');
     expect(queries[1].params).toEqual(['book_1', 'user_test', '2026-07-13T00:01:00.000Z', 4, null]);
   });
@@ -855,12 +848,7 @@ describe('sync reader event routes', () => {
     };
     const pool = { connect: vi.fn(async () => client) } as unknown as pg.Pool;
     const app = await appWithSync(pool);
-    const positionEvent = (
-      id: string,
-      chapterId: string,
-      contentRevisionId: string,
-      updatedAt: string,
-    ): SyncEvent =>
+    const positionEvent = (id: string, chapterId: string, contentRevisionId: string, updatedAt: string): SyncEvent =>
       canonicalV2Event({
         id,
         type: 'reading_position_updated',
@@ -957,11 +945,7 @@ describe('sync reader event routes', () => {
     expect(activeResetResponse.json()).toMatchObject({ accepted: 1, acceptedIds: [activeReset.id] });
     expect(globalPosition).toBeUndefined();
     expect(sectionReadAt.size).toBe(0);
-    expect(loggedTypes).toEqual([
-      'reading_position_updated',
-      'reading_position_updated',
-      'reading_position_deleted',
-    ]);
+    expect(loggedTypes).toEqual(['reading_position_updated', 'reading_position_updated', 'reading_position_deleted']);
 
     await app.close();
   });

@@ -62,6 +62,8 @@ export class RemoteBookTransport {
     contentRevisionId?: string,
     signal?: AbortSignal,
   ): Promise<{ paragraph: Paragraph; contentRevisionId?: string }> {
-    return this.request(snapshotQueryPath(`/paragraphs/${encodeURIComponent(paragraphId)}`, contentRevisionId), { signal });
+    return this.request(snapshotQueryPath(`/paragraphs/${encodeURIComponent(paragraphId)}`, contentRevisionId), {
+      signal,
+    });
   }
 }

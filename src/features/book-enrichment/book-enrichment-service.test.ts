@@ -315,9 +315,13 @@ describe('BookEnrichmentService', () => {
     const [candidate] = await service.propose(parsed.novel.id, LIBRARY_BOOK_ENRICHMENT_PROVIDER_ID);
     if (!candidate || candidate.kind !== 'metadata') throw new Error('metadata candidate missing');
     const approval = await service.applyMetadata(candidate.id, ['author']);
-    await catalog.patchMetadata(parsed.novel.id, { author: '직접 수정한 작가' }, {
-      metadataRevision: approval.appliedMetadataRevision,
-    });
+    await catalog.patchMetadata(
+      parsed.novel.id,
+      { author: '직접 수정한 작가' },
+      {
+        metadataRevision: approval.appliedMetadataRevision,
+      },
+    );
 
     await expect(service.undo(approval.id)).rejects.toBeInstanceOf(BookEnrichmentUndoConflictError);
 

@@ -26,9 +26,7 @@ export function sendContentReadRevisionConflict(
 ) {
   return reply.code(409).send({
     error:
-      conflict === 'content_revision_required'
-        ? 'book content revision is required'
-        : 'book content revision changed',
+      conflict === 'content_revision_required' ? 'book content revision is required' : 'book content revision changed',
     actualContentRevisionId:
       typeof row.active_content_revision_id === 'string' ? row.active_content_revision_id : undefined,
   });

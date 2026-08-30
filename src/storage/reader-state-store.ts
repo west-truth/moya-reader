@@ -5,10 +5,7 @@ import { storedNovel } from './content-revision-store';
 import { ContentRevisionConflictError } from './content-revisions';
 import { canonicalRemoteContentRevisionId } from './content-revision-identity';
 import { CONTENT_REVISION_STORES } from './content-revision-migration';
-import {
-  clearExactDocumentSectionReadState,
-  markExactDocumentSectionReadState,
-} from './exact-section-read-state';
+import { clearExactDocumentSectionReadState, markExactDocumentSectionReadState } from './exact-section-read-state';
 import {
   deleteByIndexInTransaction,
   getByIndex,
@@ -46,10 +43,7 @@ export async function patchNovelMetadata(
     throw new RepositoryEntityNotFoundError('novel', novelId);
   }
   const actualMetadataRevision = current.metadataRevision ?? 0;
-  if (
-    expectation?.metadataRevision !== undefined &&
-    expectation.metadataRevision !== actualMetadataRevision
-  ) {
+  if (expectation?.metadataRevision !== undefined && expectation.metadataRevision !== actualMetadataRevision) {
     tx.abort();
     await done.catch(() => undefined);
     throw new Error(`Book ${novelId} metadata revision changed before metadata mutation`);
@@ -80,13 +74,18 @@ export async function patchNovelMetadata(
     metadataRevision: next.metadataRevision,
     updatedAt: next.updatedAt,
   };
-  await queueSyncEventInTransaction(tx, 'book_updated', jsonValue({
-    novel: syncedPatch,
-    contentRevisionId: canonicalContentRevisionId,
-  }), {
-    novelId: next.id,
-    entityId: next.id,
-  });
+  await queueSyncEventInTransaction(
+    tx,
+    'book_updated',
+    jsonValue({
+      novel: syncedPatch,
+      contentRevisionId: canonicalContentRevisionId,
+    }),
+    {
+      novelId: next.id,
+      entityId: next.id,
+    },
+  );
   await done;
 }
 
@@ -152,12 +151,17 @@ export async function saveReadingPosition(input: SaveReadingPositionInput): Prom
   if (position.documentSectionId) {
     await markExactDocumentSectionReadState(tx, novel, position.documentSectionId, position.updatedAt);
   }
-  await queueSyncEventInTransaction(tx, 'reading_position_updated', jsonValue({
-    position: { ...position, contentRevisionId: canonicalContentRevisionId },
-  }), {
-    novelId: input.novelId,
-    entityId: position.id,
-  });
+  await queueSyncEventInTransaction(
+    tx,
+    'reading_position_updated',
+    jsonValue({
+      position: { ...position, contentRevisionId: canonicalContentRevisionId },
+    }),
+    {
+      novelId: input.novelId,
+      entityId: position.id,
+    },
+  );
   await done;
 }
 

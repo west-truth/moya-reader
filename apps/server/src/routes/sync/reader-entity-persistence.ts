@@ -67,12 +67,7 @@ export async function persistReaderSyncEvent(
             set last_read_at = excluded.last_read_at
             where fixed_document_section_read_states.last_read_at <= excluded.last_read_at
         `,
-        [
-          event.novelId,
-          userId,
-          String(position.chapterId),
-          String(position.updatedAt ?? event.createdAt),
-        ],
+        [event.novelId, userId, String(position.chapterId), String(position.updatedAt ?? event.createdAt)],
       );
     }
     return true;
@@ -311,7 +306,13 @@ export async function persistReaderSyncEvent(
         where id = $1 and user_id = $2 and metadata_revision <= $4
           and ($5::text is null or active_content_revision_id = $5)
       `,
-      [event.novelId, userId, String(payload.restoredAt ?? event.createdAt), metadataRevision, contentRevisionId ?? null],
+      [
+        event.novelId,
+        userId,
+        String(payload.restoredAt ?? event.createdAt),
+        metadataRevision,
+        contentRevisionId ?? null,
+      ],
     );
     if (updated.rowCount === 0) throw new Error('accepted book_restored event did not mutate its fenced book');
     return true;
@@ -327,7 +328,8 @@ export async function persistReaderSyncEvent(
       contentRevisionId: stringValue(payload.contentRevisionId),
       requireTrashed: true,
     });
-    if (result.status !== 'purged') throw new Error(`accepted book_purged event failed canonical purge: ${result.status}`);
+    if (result.status !== 'purged')
+      throw new Error(`accepted book_purged event failed canonical purge: ${result.status}`);
     return true;
   }
 
@@ -336,7 +338,8 @@ export async function persistReaderSyncEvent(
       contentRevisionId: stringValue(payload.contentRevisionId),
       requireTrashed: false,
     });
-    if (result.status !== 'purged') throw new Error(`accepted book_deleted event failed canonical purge: ${result.status}`);
+    if (result.status !== 'purged')
+      throw new Error(`accepted book_deleted event failed canonical purge: ${result.status}`);
     return true;
   }
 

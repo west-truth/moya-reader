@@ -604,14 +604,10 @@ export class BookEnrichmentService {
         if (snapshotHash(currentSnapshot) !== approval.afterHash) {
           throw new BookEnrichmentUndoConflictError(receiptId);
         }
-        const mutation = await this.dependencies.catalog.patchMetadata(
-          approval.bookId,
-          approval.before.values,
-          {
-            metadataRevision: current.metadataRevision ?? 0,
-            activeContentRevisionId: current.activeContentRevisionId,
-          },
-        );
+        const mutation = await this.dependencies.catalog.patchMetadata(approval.bookId, approval.before.values, {
+          metadataRevision: current.metadataRevision ?? 0,
+          activeContentRevisionId: current.activeContentRevisionId,
+        });
         const updated = await this.dependencies.books.getNovel(approval.bookId);
         if (!updated) throw new BookEnrichmentUndoConflictError(receiptId);
         appliedMetadataRevision = mutation.metadataRevision;

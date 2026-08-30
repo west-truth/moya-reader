@@ -145,8 +145,12 @@ describe('browser image-series incremental import', () => {
     expect(new Set(appendedChapters.map((chapter) => chapter.documentSectionId))).toEqual(
       new Set(['local_series_release_1', 'local_series_release_2']),
     );
-    expect(appendedChapters.find((chapter) => chapter.documentSectionId === 'local_series_release_1')?.documentSectionReadAt).toBeTruthy();
-    expect(appendedChapters.find((chapter) => chapter.documentSectionId === 'local_series_release_2')?.documentSectionReadAt).toBeUndefined();
+    expect(
+      appendedChapters.find((chapter) => chapter.documentSectionId === 'local_series_release_1')?.documentSectionReadAt,
+    ).toBeTruthy();
+    expect(
+      appendedChapters.find((chapter) => chapter.documentSectionId === 'local_series_release_2')?.documentSectionReadAt,
+    ).toBeUndefined();
     expect(after.activeContentRevisionId).not.toBe(before.activeContentRevisionId);
     expect(after.sourceContentHash).not.toBe(before.sourceContentHash);
     expect(afterCover?.metadata.id).toBe(beforeCover?.metadata.id);

@@ -267,9 +267,9 @@ export class LocalOutboxSyncService {
       : undefined;
   }
 
-  private coverMutationExpectation(event: SyncEvent):
-    | { metadataRevision?: number; activeContentRevisionId?: string }
-    | undefined {
+  private coverMutationExpectation(
+    event: SyncEvent,
+  ): { metadataRevision?: number; activeContentRevisionId?: string } | undefined {
     const payload = objectValue(event.payload);
     const novel = objectValue(payload?.novel);
     const metadataRevision = novel?.metadataRevision;

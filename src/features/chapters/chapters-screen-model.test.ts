@@ -76,8 +76,7 @@ describe('chapters screen model', () => {
     const chapters = Array.from({ length: 6 }, (_, index) => ({
       ...chapter(index + 1),
       documentSectionId: `chapter:${index + 1}`,
-      documentSectionReadAt:
-        index < 3 || index === 5 ? `2026-08-30T01:0${index + 1}:00.000Z` : undefined,
+      documentSectionReadAt: index < 3 || index === 5 ? `2026-08-30T01:0${index + 1}:00.000Z` : undefined,
     }));
 
     const model = buildChapterListModel({

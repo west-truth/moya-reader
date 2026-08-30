@@ -20,12 +20,7 @@ import {
 export class IndexedDbLibraryCatalogRepository implements LibraryCatalogRepository {
   patchMetadata(...args: Parameters<LibraryCatalogRepository['patchMetadata']>) {
     const [bookId, patch, expectation] = args;
-    return patchLibraryBookMetadata(
-      bookId,
-      patch,
-      expectation?.metadataRevision,
-      expectation?.activeContentRevisionId,
-    );
+    return patchLibraryBookMetadata(bookId, patch, expectation?.metadataRevision, expectation?.activeContentRevisionId);
   }
 
   listTrash() {

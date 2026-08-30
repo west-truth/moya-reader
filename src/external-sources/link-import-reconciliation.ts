@@ -127,8 +127,8 @@ export async function recordExternalSourceActivation(
 function matchesActivatedContentRevision(link: ExternalSourceLink, novel: Novel): boolean {
   return Boolean(
     novel.activeContentRevisionId &&
-      link.pendingImport?.activatedContentRevisionId &&
-      link.pendingImport.activatedContentRevisionId === novel.activeContentRevisionId,
+    link.pendingImport?.activatedContentRevisionId &&
+    link.pendingImport.activatedContentRevisionId === novel.activeContentRevisionId,
   );
 }
 
@@ -217,9 +217,7 @@ export async function reconcilePendingExternalSourceLinks(
   for (const staged of groups.values()) {
     const novel = novelById.get(staged[0]!.localBookId);
     const importerResolvedSource = staged.every((link) => link.pendingImport?.sourceHashResolvedByImporter);
-    const activationMatches = Boolean(
-      novel && staged.every((link) => matchesActivatedContentRevision(link, novel)),
-    );
+    const activationMatches = Boolean(novel && staged.every((link) => matchesActivatedContentRevision(link, novel)));
     if (importerResolvedSource && novel && !novel.deletedAt && activationMatches && options.resolveImporterApplied) {
       const importerApplied = await options.resolveImporterApplied(staged, novel).catch(() => undefined);
       if (importerApplied === true) {

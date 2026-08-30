@@ -473,8 +473,9 @@ describe('remote sync snapshot hydration', () => {
         updatedAt: '2026-07-04T00:10:00.000Z',
       }),
     ]);
-    expect((await revisionChapters(firstPhysicalRevision!)).find((row) => row.documentSectionId === 'section:2'))
-      .toMatchObject({ documentSectionReadAt: '2026-07-04T00:10:00.000Z' });
+    expect(
+      (await revisionChapters(firstPhysicalRevision!)).find((row) => row.documentSectionId === 'section:2'),
+    ).toMatchObject({ documentSectionReadAt: '2026-07-04T00:10:00.000Z' });
 
     const secondSnapshot = fixedDocumentSnapshot(bookId, 'r2');
     await cacheRemoteBookSnapshot({ ...secondSnapshot, sourceRevision: 'server-r2' });
@@ -530,10 +531,12 @@ describe('remote sync snapshot hydration', () => {
     ]);
 
     expect(await getReadingPosition(bookId)).toMatchObject({ chapterId: `${bookId}:chapter:3` });
-    expect((await getChapters(bookId)).find((chapter) => chapter.documentSectionId === 'section:4'))
-      .not.toHaveProperty('documentSectionReadAt');
-    expect((await getChapters(bookId)).find((chapter) => chapter.documentSectionId === 'section:6'))
-      .toMatchObject({ documentSectionReadAt: '2026-07-04T00:20:00.000Z' });
+    expect((await getChapters(bookId)).find((chapter) => chapter.documentSectionId === 'section:4')).not.toHaveProperty(
+      'documentSectionReadAt',
+    );
+    expect((await getChapters(bookId)).find((chapter) => chapter.documentSectionId === 'section:6')).toMatchObject({
+      documentSectionReadAt: '2026-07-04T00:20:00.000Z',
+    });
 
     await applyRemoteSyncEvents([
       readingPositionResetEvent({
@@ -549,8 +552,9 @@ describe('remote sync snapshot hydration', () => {
     expect((await revisionChapters(secondPhysicalRevision!)).every((chapter) => !chapter.documentSectionReadAt)).toBe(
       true,
     );
-    expect((await revisionChapters(firstPhysicalRevision!)).find((row) => row.documentSectionId === 'section:2'))
-      .toMatchObject({ documentSectionReadAt: '2026-07-04T00:10:00.000Z' });
+    expect(
+      (await revisionChapters(firstPhysicalRevision!)).find((row) => row.documentSectionId === 'section:2'),
+    ).toMatchObject({ documentSectionReadAt: '2026-07-04T00:10:00.000Z' });
   });
 
   it('keeps active content, anchors, search, and outbox when a later remote page throws', async () => {

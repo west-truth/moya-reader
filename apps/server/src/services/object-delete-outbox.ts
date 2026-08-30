@@ -127,10 +127,11 @@ export async function drainObjectDeleteOutbox(
         [row.storage_key],
       );
       if (referenced.rows.length > 0) {
-        await pool.query(
-          'delete from object_delete_outbox where id = $1 and status = $2 and generation = $3',
-          [row.id, 'processing', row.generation],
-        );
+        await pool.query('delete from object_delete_outbox where id = $1 and status = $2 and generation = $3', [
+          row.id,
+          'processing',
+          row.generation,
+        ]);
         continue;
       }
       const stillClaimed = await pool.query(
@@ -140,10 +141,11 @@ export async function drainObjectDeleteOutbox(
       );
       if (!stillClaimed.rows[0]) continue;
       await remove(row.storage_key);
-      await pool.query(
-        'delete from object_delete_outbox where id = $1 and status = $2 and generation = $3',
-        [row.id, 'processing', row.generation],
-      );
+      await pool.query('delete from object_delete_outbox where id = $1 and status = $2 and generation = $3', [
+        row.id,
+        'processing',
+        row.generation,
+      ]);
       deleted += 1;
     } catch (error) {
       const retrySeconds = Math.min(3_600, 2 ** Math.min(10, Math.max(1, Number(row.attempts))));
