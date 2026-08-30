@@ -2,6 +2,7 @@ import type { Chapter, ChapterSplitMode, Paragraph } from '@noveldesk/contracts'
 import { integrityHash, persistentId128 } from './id-hash-contract';
 import { assembleChapterRanges } from './parser/chapter-range-assembler';
 import { iterateParagraphsInRange } from './parser/paragraph-builder';
+import { parseChapterHeading } from './parser/heading-detector';
 
 export type ChapterStructureCommand =
   | { kind: 'rename'; chapterId: string; title: string }
@@ -23,6 +24,9 @@ export interface ChapterSplitCandidate {
   readonly paragraphIndex: number;
   readonly label: string;
   readonly sourceOffset: number;
+  readonly headingFamily?: string;
+  readonly headingNumber?: number;
+  readonly headingTitle?: string;
 }
 
 export interface ChapterStructureChapterView {
@@ -338,12 +342,18 @@ export function chapterStructureViews(snapshot: ChapterStructureSnapshot): Chapt
       paragraphCount: chapter.paragraphCount,
       characterCount: chapter.characterCount,
       sourcePreview: snapshot.sourceText.slice(chapter.rawStartOffset, chapter.rawEndOffset).trim().slice(0, 320),
-      splitCandidates: located.slice(1).map((item) => ({
-        paragraphId: item.paragraph.id,
-        paragraphIndex: item.paragraph.index,
-        label: item.paragraph.text.slice(0, 80),
-        sourceOffset: item.absoluteStart,
-      })),
+      splitCandidates: located.slice(1).map((item) => {
+        const heading = parseChapterHeading(item.paragraph.text);
+        return {
+          paragraphId: item.paragraph.id,
+          paragraphIndex: item.paragraph.index,
+          label: item.paragraph.text.slice(0, 120),
+          sourceOffset: item.absoluteStart,
+          headingFamily: heading?.family,
+          headingNumber: heading?.number,
+          headingTitle: heading?.title,
+        };
+      }),
     };
   });
 }

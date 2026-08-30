@@ -27,6 +27,38 @@ export function safeOversizedSentenceEnd(text: string, startOffset: number, meas
   return bounded;
 }
 
+/**
+ * Finds the furthest source offset that fits in the remaining page space.
+ *
+ * The measured limit is preferred over sentence-atomic pagination because a
+ * complete sentence followed by part of a long sentence can otherwise leave
+ * several usable lines blank. The returned offset is moved back to a safe
+ * whitespace boundary, keeping the source text and anchors lossless. Returning
+ * `startOffset` means that even a single source character cannot fit and the
+ * caller should start a new page.
+ */
+export function bestFittingTextEnd(
+  text: string,
+  startOffset: number,
+  fitsThrough: (endOffset: number) => boolean,
+): number {
+  if (startOffset >= text.length || !fitsThrough(startOffset + 1)) return startOffset;
+
+  let low = startOffset + 1;
+  let high = text.length;
+  let measuredFit = low;
+  while (low <= high) {
+    const middle = Math.floor((low + high) / 2);
+    if (fitsThrough(middle)) {
+      measuredFit = middle;
+      low = middle + 1;
+    } else {
+      high = middle - 1;
+    }
+  }
+  return measuredFit >= text.length ? text.length : safeOversizedSentenceEnd(text, startOffset, measuredFit);
+}
+
 export function compareReaderAnchors(left: ReaderAnchor, right: ReaderAnchor): number {
   const block = (left.blockIndex ?? 0) - (right.blockIndex ?? 0);
   return block || left.offset - right.offset;

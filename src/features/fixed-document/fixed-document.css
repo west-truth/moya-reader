@@ -244,6 +244,11 @@
   background-color: var(--fixed-doc-stage);
   background-image: radial-gradient(circle at 50% 20%, rgba(255, 255, 255, 0.035), transparent 52%);
 }
+.fixed-doc-viewport:is(.is-continuous, .is-continuous-seamless) {
+  /* Let the browser own touch panning so mobile keeps its native momentum. */
+  touch-action: pan-y;
+  -webkit-overflow-scrolling: touch;
+}
 .fixed-doc-viewport.is-bg-black {
   --fixed-doc-stage: #050607;
 }
@@ -489,17 +494,15 @@
   opacity: 1;
 }
 .fixed-doc-viewport.is-continuous-seamless .fixed-doc-pages img {
+  width: calc(100% * var(--fixed-doc-zoom));
+  height: auto;
+  max-width: none;
+  max-height: none;
   box-shadow: none;
 }
-.fixed-doc-viewport.is-page.is-continuous-seamless .fixed-doc-pages img {
-  max-width: calc(var(--fixed-doc-viewport-width) * var(--fixed-doc-zoom));
-  max-height: calc(var(--fixed-doc-viewport-height) * var(--fixed-doc-zoom));
-}
-.fixed-doc-viewport.is-width.is-continuous-seamless .fixed-doc-pages img {
-  width: calc(100% * var(--fixed-doc-zoom));
-}
-.fixed-doc-viewport.is-height.is-continuous-seamless .fixed-doc-pages img {
-  max-height: calc(var(--fixed-doc-viewport-height) * var(--fixed-doc-zoom));
+.fixed-doc-viewport.is-continuous-seamless .fixed-doc-page-loading {
+  width: 100%;
+  max-width: none;
 }
 
 .fixed-doc-section-footer {
@@ -1404,6 +1407,12 @@
   }
   .fixed-doc-viewport.is-width .fixed-doc-pages img {
     width: calc((100% - 16px) * var(--fixed-doc-zoom));
+  }
+  .fixed-doc-viewport.is-continuous-seamless .fixed-doc-pages img {
+    width: calc(100% * var(--fixed-doc-zoom));
+    height: auto;
+    max-width: none;
+    max-height: none;
   }
   .fixed-doc-turn {
     display: none;

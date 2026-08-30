@@ -2,6 +2,7 @@ import { act, create, type ReactTestRenderer } from 'react-test-renderer';
 import { describe, expect, it, vi } from 'vitest';
 import { BlobWriter, Uint8ArrayReader, ZipWriter } from '@zip.js/zip.js';
 import type { ExtensionContributionId } from '@noveldesk/extension-contracts';
+import { integrityHash } from '@noveldesk/text-core/hash';
 import { sha256 } from '../../domain/hash';
 import type { BookAssetMetadata, Chapter, Novel } from '../../domain/types';
 import type { ExternalSourceBrowseState, ExternalSourceLink } from '../../external-sources/contracts';
@@ -753,6 +754,7 @@ describe('useExternalSourceController remote updates', () => {
         expect.any(String),
         expect.objectContaining({
           contentType: 'image/png',
+          contentHash: integrityHash(coverBytes),
           expectedMetadataRevision: 0,
           fit: 'crop',
         }),

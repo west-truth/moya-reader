@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { Paragraph, ReaderAnchor, ReaderPageBoundary } from '../../domain/types';
 import {
+  bestFittingTextEnd,
   fragmentText,
   LruMap,
   pageIndexForAnchor,
@@ -47,6 +48,44 @@ describe('reader sentence pagination model', () => {
   it('prefers whitespace and never splits a surrogate pair for an oversized sentence', () => {
     expect(safeOversizedSentenceEnd('아주 긴 문장입니다', 0, 5)).toBe(5);
     expect(safeOversizedSentenceEnd('가😀나다', 0, 2)).toBe(1);
+  });
+
+  it('fills remaining page lines when the next complete sentence is too tall', () => {
+    const text = '첫 문장은 이미 앞 블록 뒤에 이어집니다. 다음 문장도 페이지의 남은 줄을 활용해야 합니다.';
+    const end = bestFittingTextEnd(text, 0, (candidate) => candidate <= 18);
+    expect(end).toBeGreaterThan(0);
+    expect(end).toBeLessThan(text.indexOf('.') + 1);
+    expect(text.slice(0, end) + text.slice(end)).toBe(text);
+    expect(/\s$/u.test(text.slice(0, end))).toBe(true);
+  });
+
+  it('continues past one complete sentence when part of the next sentence fits', () => {
+    const text = '짧은 문장입니다. 다음 문장은 꽤 길어서 전부 들어가지는 않지만 남은 줄만큼 이어져야 합니다.';
+    const firstSentenceEnd = text.indexOf('.') + 1;
+    const end = bestFittingTextEnd(text, 0, (candidate) => candidate <= firstSentenceEnd + 18);
+    expect(end).toBeGreaterThan(firstSentenceEnd);
+    expect(end).toBeLessThan(text.length);
+    expect(text.slice(0, end) + text.slice(end)).toBe(text);
+  });
+
+  it('keeps paragraph newline content lossless while choosing a usable break', () => {
+    const text = '첫 줄입니다.\n두 번째 줄은 한 문장 안에서도 페이지를 채워야 합니다.';
+    const end = bestFittingTextEnd(text, 0, (candidate) => candidate <= 18);
+    expect(text.slice(0, end) + text.slice(end)).toBe(text);
+    expect(end).toBeGreaterThan(text.indexOf('\n'));
+  });
+
+  it('uses additional responsive page height without changing source order', () => {
+    const text = '긴 문장이 화면 높이에 맞춰 더 많은 단어를 자연스럽게 담아야 합니다. 다음 문장도 있습니다.';
+    const compactEnd = bestFittingTextEnd(text, 0, (candidate) => candidate <= 18);
+    const tallEnd = bestFittingTextEnd(text, 0, (candidate) => candidate <= 42);
+    expect(tallEnd).toBeGreaterThan(compactEnd);
+    expect(text.slice(0, compactEnd) + text.slice(compactEnd)).toBe(text);
+    expect(text.slice(0, tallEnd) + text.slice(tallEnd)).toBe(text);
+  });
+
+  it('asks the caller for a new page when no source character fits', () => {
+    expect(bestFittingTextEnd('다음 문장', 0, () => false)).toBe(0);
   });
 
   it('clips EPUB inline marks and ruby semantics to the source fragment offsets', () => {

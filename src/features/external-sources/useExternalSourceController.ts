@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { ExtensionContributionId, ExternalSourceContributionDescriptor } from '@noveldesk/extension-contracts';
-import { persistentId128 } from '@noveldesk/text-core/hash';
+import { integrityHash, persistentId128 } from '@noveldesk/text-core/hash';
 import { sha256 } from '../../domain/hash';
 import type { Chapter, Novel } from '../../domain/types';
 import type {
@@ -286,7 +286,10 @@ async function persistSourceCover(
   const pixelHeight = bitmap.height;
   bitmap.close();
   if (pixelWidth < 1 || pixelHeight < 1) throw new Error('원격 표지 크기를 확인하지 못했습니다.');
-  const contentHash = await sha256(await blob.arrayBuffer());
+  // Hosted cover uploads require the current tagged integrity-hash contract.
+  // External-source link hashes intentionally stay on the legacy bare SHA-256
+  // helper until their persisted compatibility contract is migrated.
+  const contentHash = integrityHash(await blob.arrayBuffer());
   const extension = contentType === 'image/png' ? 'png' : contentType === 'image/webp' ? 'webp' : 'jpg';
   await assets.saveApprovedEnrichmentCover(novel.id, {
     blob,
