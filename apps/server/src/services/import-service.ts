@@ -888,7 +888,9 @@ export async function processImportJob(
           where book.id = $1 and book.user_id = $2`,
         [parsed.novel.id, session.user_id],
       );
-      const preserveUserCover = activeCover.rows[0]?.provenance === 'user_supplied';
+      const preserveExistingCover =
+        activeCover.rows[0]?.provenance === 'user_supplied' ||
+        activeCover.rows[0]?.provenance === 'approved_enrichment';
       const removedAssets = await client.query<{ storage_key: string }>(
         `delete from book_assets
           where book_id = $1 and user_id = $2 and kind in ('epub_resource', 'document_page') and status = 'active'
@@ -917,7 +919,7 @@ export async function processImportJob(
           .filter((row) => nextStorageById.get(row.id) !== row.storage_key)
           .map((row) => row.storage_key),
       ];
-      if (!preserveUserCover) {
+      if (!preserveExistingCover) {
         const removedCovers = await client.query<{ storage_key: string }>(
           `delete from book_assets
             where book_id = $1 and user_id = $2 and kind = 'cover' and status = 'active'
@@ -927,14 +929,17 @@ export async function processImportJob(
         obsoleteAssetKeys.push(...removedCovers.rows.map((row) => row.storage_key));
       }
       const staleAssets = await client.query<{ storage_key: string }>(
-        `delete from book_assets where book_id = $1 and user_id = $2 and status = 'superseded'
+        `delete from book_assets
+          where book_id = $1 and user_id = $2 and status = 'superseded' and kind <> 'cover'
           returning storage_key`,
         [parsed.novel.id, session.user_id],
       );
       obsoleteAssetKeys.push(...staleAssets.rows.map((row) => row.storage_key));
-      const assetsToActivate = storedAssets.filter((asset) => !(asset.kind === 'cover' && preserveUserCover));
+      const assetsToActivate = storedAssets.filter((asset) => !(asset.kind === 'cover' && preserveExistingCover));
       obsoleteAssetKeys.push(
-        ...storedAssets.filter((asset) => asset.kind === 'cover' && preserveUserCover).map((asset) => asset.storageKey),
+        ...storedAssets
+          .filter((asset) => asset.kind === 'cover' && preserveExistingCover)
+          .map((asset) => asset.storageKey),
       );
       for (const asset of assetsToActivate) {
         await client.query(
@@ -964,7 +969,7 @@ export async function processImportJob(
         );
       }
       const cover = assetsToActivate.find((asset) => asset.kind === 'cover');
-      if (cover && !preserveUserCover) {
+      if (cover && !preserveExistingCover) {
         await client.query(
           `update library_books set cover_asset_id = $1, cover_fit = 'contain', cover_position_x = 50,
              cover_position_y = 50 where id = $2 and user_id = $3`,

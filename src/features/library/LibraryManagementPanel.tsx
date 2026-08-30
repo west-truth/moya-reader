@@ -1,19 +1,15 @@
 import { ArrowDown, ArrowUp, Check, Folder, ImagePlus, Plus, Save, Trash2, X } from 'lucide-react';
-import { useEffect, useMemo, useState } from 'react';
-import type { BookMetadataPatch } from '@noveldesk/text-core/library-metadata';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { normalizeCoverImage } from '../../services/cover-image';
 import { Dialog } from '../../shared/ui/Dialog';
 import { BookCover } from './BookCover';
 import type { CoverDraftAction, LibraryManagementController } from './useLibraryManagementController';
 import { BookEnrichmentInbox } from '../book-enrichment/BookEnrichmentInbox';
 import type { BookEnrichmentController } from '../book-enrichment/useBookEnrichmentController';
+import { buildMetadataPatch, normalizeMetadataTags } from './metadata-editor-draft';
 
 function sameIds(left: ReadonlySet<string>, right: ReadonlySet<string>): boolean {
   return left.size === right.size && [...left].every((value) => right.has(value));
-}
-
-export function normalizeMetadataTags(tags: readonly string[]): string[] {
-  return [...new Set(tags.map((tag) => tag.trim()).filter(Boolean))];
 }
 
 export function mayCloseMetadataEditor(dirty: boolean, confirmDiscard?: (message: string) => boolean): boolean {
@@ -49,24 +45,48 @@ function MetadataEditor({
   const [selectedShelfIds, setSelectedShelfIds] = useState<Set<string>>(
     () => new Set(controller.memberships.filter((item) => item.bookId === book?.id).map((item) => item.shelfId)),
   );
+  const baseBookRef = useRef(book);
+  useEffect(() => {
+    const previous = baseBookRef.current;
+    if (!book || !previous || book.id !== previous.id) {
+      baseBookRef.current = book;
+      return;
+    }
+    if ((book.metadataRevision ?? 0) === (previous.metadataRevision ?? 0)) return;
+    setTitle((current) => (current === previous.title ? book.title : current));
+    setAuthor((current) => (current === (previous.author ?? '') ? (book.author ?? '') : current));
+    setSeriesTitle((current) => (current === (previous.seriesTitle ?? '') ? (book.seriesTitle ?? '') : current));
+    setSeriesIndex((current) =>
+      current === (previous.seriesIndex?.toString() ?? '') ? (book.seriesIndex?.toString() ?? '') : current,
+    );
+    setTags((current) =>
+      JSON.stringify(normalizeMetadataTags(current)) === JSON.stringify(normalizeMetadataTags(previous.tags ?? []))
+        ? normalizeMetadataTags(book.tags ?? [])
+        : current,
+    );
+    setDescription((current) => (current === (previous.description ?? '') ? (book.description ?? '') : current));
+    setLanguage((current) => (current === (previous.language ?? '') ? (book.language ?? '') : current));
+    if (cover.kind === 'keep') {
+      setFit((current) => (current === (previous.coverFit ?? 'crop') ? (book.coverFit ?? 'crop') : current));
+      setPositionX((current) => (current === (previous.coverPositionX ?? 50) ? (book.coverPositionX ?? 50) : current));
+      setPositionY((current) => (current === (previous.coverPositionY ?? 50) ? (book.coverPositionY ?? 50) : current));
+    }
+    baseBookRef.current = book;
+  }, [book, cover.kind]);
   const initialShelfIds = useMemo(
     () => new Set(controller.memberships.filter((item) => item.bookId === book?.id).map((item) => item.shelfId)),
     [book?.id, controller.memberships],
   );
+  const metadataPatch = book
+    ? buildMetadataPatch(
+        book,
+        { title, author, seriesTitle, seriesIndex, tags, description, language, fit, positionX, positionY },
+        cover.kind,
+      )
+    : {};
   const dirty = Boolean(
     book &&
-    (title !== book.title ||
-      author !== (book.author ?? '') ||
-      seriesTitle !== (book.seriesTitle ?? '') ||
-      seriesIndex !== (book.seriesIndex?.toString() ?? '') ||
-      tags.join('\u0000') !== normalizeMetadataTags(book.tags ?? []).join('\u0000') ||
-      description !== (book.description ?? '') ||
-      language !== (book.language ?? '') ||
-      fit !== (book.coverFit ?? 'crop') ||
-      positionX !== (book.coverPositionX ?? 50) ||
-      positionY !== (book.coverPositionY ?? 50) ||
-      cover.kind !== 'keep' ||
-      !sameIds(initialShelfIds, selectedShelfIds)),
+    (Object.keys(metadataPatch).length > 0 || cover.kind !== 'keep' || !sameIds(initialShelfIds, selectedShelfIds)),
   );
 
   useEffect(() => onDirtyChange(dirty), [dirty, onDirtyChange]);
@@ -105,19 +125,6 @@ function MetadataEditor({
   };
 
   const save = async () => {
-    const numericSeriesIndex = seriesIndex.trim() ? Number(seriesIndex) : null;
-    const patch: BookMetadataPatch = {
-      title,
-      author: author || null,
-      seriesTitle: seriesTitle || null,
-      seriesIndex: numericSeriesIndex,
-      tags,
-      description: description || null,
-      language: language || null,
-      coverFit: fit,
-      coverPositionX: positionX,
-      coverPositionY: positionY,
-    };
     const previous = new Set(
       controller.memberships
         .filter((membership) => membership.bookId === book.id)
@@ -127,7 +134,7 @@ function MetadataEditor({
       const included = selectedShelfIds.has(shelf.id);
       if (included !== previous.has(shelf.id)) await controller.setMembership(shelf.id, book.id, included);
     }
-    await controller.saveBookDetails(book, patch, cover);
+    await controller.saveBookDetails(book, metadataPatch, cover);
   };
 
   const addTag = () => {
@@ -219,7 +226,7 @@ function MetadataEditor({
           book={book}
           controller={bookEnrichment}
           manualDraftDirty={dirty}
-          onApplied={controller.closePanel}
+          onApplied={() => void controller.refreshOpenMetadata()}
         />
         <section className="metadata-section metadata-basic-section">
           <div className="metadata-section-heading">
@@ -340,7 +347,7 @@ function MetadataEditor({
         <button
           className="primary-btn"
           type="button"
-          disabled={controller.busy || coverBusy || !title.trim()}
+          disabled={controller.busy || coverBusy || !title.trim() || !dirty}
           onClick={() => void save()}
         >
           <Save size={16} /> 변경 사항 저장
@@ -442,7 +449,8 @@ export default function LibraryManagementPanel({
   bookEnrichment: BookEnrichmentController;
 }) {
   const [metadataDirty, setMetadataDirty] = useState(false);
-  useEffect(() => setMetadataDirty(false), [controller.panel]);
+  const metadataBookId = controller.panel?.kind === 'metadata' ? controller.panel.book.id : undefined;
+  useEffect(() => setMetadataDirty(false), [controller.panel?.kind, metadataBookId]);
   if (!controller.panel) return null;
   const requestClose = () => {
     if (controller.panel?.kind === 'metadata' && !mayCloseMetadataEditor(metadataDirty, controller.confirmDiscard))

@@ -811,6 +811,7 @@ end $$;
 create index if not exists idx_library_books_user_updated on library_books(user_id, updated_at desc);
 create index if not exists idx_chapters_book_index on chapters(book_id, chapter_index);
 create index if not exists idx_paragraph_pages_chapter_page on paragraph_pages(chapter_id, page_index);
+create index if not exists idx_paragraph_pages_book_chapter_page on paragraph_pages(book_id, chapter_id, page_index);
 create index if not exists idx_paragraph_search_paragraph_id on paragraph_search(paragraph_id);
 create index if not exists idx_paragraph_search_book_order on paragraph_search(book_id, chapter_id, paragraph_index);
 create index if not exists idx_paragraph_search_chapter_order on paragraph_search(chapter_id, paragraph_index);
@@ -819,6 +820,8 @@ create index if not exists idx_bookmarks_active_book_created on bookmarks(book_i
 create index if not exists idx_highlights_active_book_updated on highlights(book_id, user_id, updated_at desc) where deleted_at is null;
 create index if not exists idx_notes_active_book_updated on notes(book_id, user_id, updated_at desc) where deleted_at is null;
 create index if not exists idx_sync_events_user_sequence on sync_events(user_id, sequence);
+create index if not exists idx_sync_events_conflict_lookup
+  on sync_events(user_id, book_id, type, entity_id, sequence desc);
 create index if not exists idx_import_jobs_user_created on import_jobs(user_id, created_at desc);
 create index if not exists idx_characters_book on characters(book_id, canonical_name);
 create index if not exists idx_character_aliases_book_alias on character_aliases(book_id, alias);

@@ -258,7 +258,10 @@ async function persistSourceCover(
   novel: Novel,
   thumbnailUrl: string | undefined,
 ): Promise<boolean> {
-  if (!assets?.saveApprovedEnrichmentCover || !thumbnailUrl) return false;
+  if (!thumbnailUrl) return false;
+  if (!assets?.saveApprovedEnrichmentCover) {
+    throw new Error('원격 표지를 저장할 기능을 찾지 못했습니다. Moya Web과 서버를 함께 업데이트해 주세요.');
+  }
   const active = await assets.getActiveCover(novel.id);
   if (
     active &&
@@ -1020,6 +1023,20 @@ export function useExternalSourceController(options: UseExternalSourceController
       const collectionKeys = new Set(importable.map(serialCollectionKey));
       if (collectionKeys.size !== 1) return false;
       const collection = importable[0]!.collection;
+      const accountConnectionId = importable[0]!.key.accountConnectionId;
+      const currentSubscription =
+        subscriptions.find(
+          (record) =>
+            record.connectorId === sourceId &&
+            (record.accountConnectionId ?? '') === (accountConnectionId ?? '') &&
+            record.collectionRemoteId === collection.remoteId,
+        ) ??
+        (
+          await optionsRef.current.state
+            .listSubscriptions(sourceId, accountConnectionId)
+            .catch(() => [] as readonly ExternalSourceSubscriptionRecord[])
+        ).find((record) => record.collectionRemoteId === collection.remoteId);
+      const sourceThumbnailUrl = detail?.thumbnailUrl ?? currentSubscription?.thumbnailUrl;
       const selectedUpdateCount = importable.filter((item) => item.importState === 'update_available').length;
       if (
         selectedUpdateCount > 0 &&
@@ -1291,17 +1308,24 @@ export function useExternalSourceController(options: UseExternalSourceController
           [...checked.values()].map(({ item }) => item.key.remoteId),
         );
 
-        if (downloadedChapters.length > 0) {
-          await persistSourceCover(optionsRef.current.assets, importedNovel, detail?.thumbnailUrl).catch(() => false);
+        let coverWarning: string | undefined;
+        if (downloadedChapters.length > 0 && sourceThumbnailUrl) {
+          try {
+            await persistSourceCover(optionsRef.current.assets, importedNovel, sourceThumbnailUrl);
+          } catch (error) {
+            coverWarning = error instanceof Error ? error.message : '원격 표지를 저장하지 못했습니다.';
+          }
         }
         await optionsRef.current.onLibraryChanged();
         await refreshLocalProjection(sourceId);
         setSelectedKeys(new Set());
-        optionsRef.current.notify(
+        const importedMessage =
           downloadedChapters.length > 0
             ? `${collection.title}에 ${downloadedChapters.length}개 회차를 추가하거나 갱신했습니다.${revisionChecked > 0 ? ` ${revisionChecked}개 회차는 원문이 같아 연결 revision만 갱신했습니다.` : ''}`
-            : `${revisionChecked}개 회차는 원문이 같아 연결 revision만 갱신했습니다.`,
-          'success',
+            : `${revisionChecked}개 회차는 원문이 같아 연결 revision만 갱신했습니다.`;
+        optionsRef.current.notify(
+          coverWarning ? `${importedMessage} 표지는 저장하지 못했습니다. ${coverWarning}` : importedMessage,
+          coverWarning ? 'warning' : 'success',
         );
       } catch (error) {
         importRef.current = undefined;
@@ -1330,7 +1354,7 @@ export function useExternalSourceController(options: UseExternalSourceController
       }
       return true;
     },
-    [acknowledgeImportedReleaseIds, detail?.thumbnailUrl, rawItems, refreshLocalProjection],
+    [acknowledgeImportedReleaseIds, detail?.thumbnailUrl, rawItems, refreshLocalProjection, subscriptions],
   );
 
   const importItems = useCallback(

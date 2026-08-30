@@ -79,7 +79,12 @@ export function useBookEnrichmentAutomation(
         if (mountedRef.current) setResult(next);
         if (next.applied > 0 && mountedRef.current) await latest.current.refreshLibrary();
         if (!announce && mountedRef.current) {
-          if (next.applied > 0) {
+          if (next.applied > 0 && next.failed > 0) {
+            latest.current.notify(
+              `${next.applied}권은 자동 적용했고 ${next.failed}권은 완료하지 못했습니다.`,
+              'warning',
+            );
+          } else if (next.applied > 0) {
             latest.current.notify(`${next.applied}권의 빈 작품 정보와 표지를 자동으로 채웠습니다.`, 'success');
           } else if (next.matched > 0) {
             latest.current.notify(`${next.matched}권의 작품 정보 후보를 준비했습니다.`, 'info');

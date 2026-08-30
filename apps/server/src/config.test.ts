@@ -20,6 +20,28 @@ describe('server security config', () => {
     expect(() => assertSecureServerConfig(config)).not.toThrow();
   });
 
+  it('builds a safe PostgreSQL URL from Compose fields with reserved password characters', () => {
+    const config = loadConfig({
+      DATABASE_URL: '',
+      PGHOST: 'postgres',
+      PGPORT: '5432',
+      PGUSER: 'noveldesk',
+      PGPASSWORD: 'p@ss/#?word',
+      PGDATABASE: 'noveldesk',
+    });
+
+    expect(config.databaseUrl).toBe('postgres://noveldesk:p%40ss%2F%23%3Fword@postgres:5432/noveldesk');
+  });
+
+  it('keeps an explicit external DATABASE_URL authoritative', () => {
+    expect(
+      loadConfig({
+        DATABASE_URL: 'postgres://external:secret@db.example:5433/library',
+        PGHOST: 'postgres',
+      }).databaseUrl,
+    ).toBe('postgres://external:secret@db.example:5433/library');
+  });
+
   it('requires authentication for wildcard/external listeners', () => {
     const config = loadConfig({ HOST: '0.0.0.0' });
 

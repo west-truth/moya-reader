@@ -1,0 +1,33 @@
+# Optional Nginx Proxy Manager ingress for a personal self-host.
+# NPM must join this pre-created external network and proxy to MOYA_PROXY_HOSTNAME:80.
+services:
+  web:
+    networks:
+      default:
+      npm-proxy:
+        aliases:
+          - ${MOYA_PROXY_HOSTNAME:-moya-web}
+
+  # Keep this overlay fail-closed even if compose.public.yaml is accidentally omitted.
+  api:
+    environment:
+      SERVER_EXPOSURE: external
+      READER_AUTH_TOKEN: ${READER_AUTH_TOKEN:?Set the one-time account setup and recovery token before NPM deployment}
+      DATABASE_URL: ${DATABASE_URL:-}
+      PGPASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD before NPM deployment}
+      S3_ACCESS_KEY_ID: ${S3_ACCESS_KEY_ID:-${MINIO_ROOT_USER:?Set MINIO_ROOT_USER before NPM deployment}}
+      S3_SECRET_ACCESS_KEY: ${S3_SECRET_ACCESS_KEY:-${MINIO_ROOT_PASSWORD:?Set MINIO_ROOT_PASSWORD before NPM deployment}}
+
+  postgres:
+    environment:
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD before NPM deployment}
+
+  minio:
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:?Set MINIO_ROOT_USER before NPM deployment}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:?Set MINIO_ROOT_PASSWORD before NPM deployment}
+
+networks:
+  npm-proxy:
+    name: ${NPM_DOCKER_NETWORK:-npm_proxy}
+    external: true

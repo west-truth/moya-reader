@@ -85,6 +85,14 @@ def test_distribution_title_extraction_keeps_catalog_queries_conservative() -> N
     assert title_match_score("바바리안 퀘스트 1-315 完", "바바리안 퀘스트") == 1.0
 
 
+def test_distribution_title_extraction_removes_only_a_trailing_file_copy_suffix() -> None:
+    assert search_title("아기는 악당을 키운다 완 (1).txt") == "아기는 악당을 키운다"
+    assert search_title("[텍본] 바바리안 퀘스트 1-315 完 (2).txt.zip") == "바바리안 퀘스트"
+    assert normalize_title("아기는 악당을 키운다 완 (1)") == "아기는악당을키운다완1"
+    assert search_title("작품 (1) 2화.txt") == "작품 (1)"
+    assert search_title("작품 (01)") == "작품 (01)"
+
+
 def test_munpia_search_and_detail_parsing() -> None:
     extractor = MunpiaExtractor()
     search_html = """

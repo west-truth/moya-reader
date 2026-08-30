@@ -40,6 +40,7 @@ export function useBookEnrichmentController(input: UseBookEnrichmentControllerIn
   const [error, setError] = useState<string>();
   const activeBookId = useRef<string>();
   const proposalAbort = useRef<AbortController>();
+  const busyRef = useRef(false);
 
   useEffect(() => () => proposalAbort.current?.abort(), []);
 
@@ -72,7 +73,8 @@ export function useBookEnrichmentController(input: UseBookEnrichmentControllerIn
 
   const run = useCallback(
     async (operation: () => Promise<void>): Promise<boolean> => {
-      if (busy) return false;
+      if (busyRef.current) return false;
+      busyRef.current = true;
       setBusy(true);
       setError(undefined);
       try {
@@ -84,10 +86,11 @@ export function useBookEnrichmentController(input: UseBookEnrichmentControllerIn
         input.notify(message, 'danger');
         return false;
       } finally {
+        busyRef.current = false;
         setBusy(false);
       }
     },
-    [busy, input],
+    [input],
   );
 
   return useMemo<BookEnrichmentController>(
@@ -100,7 +103,7 @@ export function useBookEnrichmentController(input: UseBookEnrichmentControllerIn
       error,
       load,
       propose: async (bookId, providerId) => {
-        if (!input.service) return;
+        if (!input.service || busyRef.current) return;
         proposalAbort.current?.abort();
         const controller = new AbortController();
         proposalAbort.current = controller;

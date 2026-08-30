@@ -1,4 +1,6 @@
+import { createHash } from 'node:crypto';
 import process from 'node:process';
+import { BlobWriter, TextReader, Uint8ArrayReader, ZipWriter } from '@zip.js/zip.js';
 
 const args = process.argv.slice(2);
 
@@ -42,6 +44,15 @@ const sampleText = [
   'This paragraph should be readable through the hosted page API.',
 ].join('\n');
 const sampleBytes = new TextEncoder().encode(sampleText);
+const sampleCoverBytes = Buffer.from(
+  'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Y9WlS8AAAAASUVORK5CYII=',
+  'base64',
+);
+const sampleCoverHash = `sha256:${createHash('sha256').update(sampleCoverBytes).digest('hex')}`;
+const sampleDocumentPageBytes = Buffer.from(
+  'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Wl2ZQAAAABJRU5ErkJggg==',
+  'base64',
+);
 const minimumUploadChunks = 3;
 const requestedChunkBytes = Number(argValue('--chunk-bytes', process.env.HOSTED_SMOKE_CHUNK_BYTES ?? '48'));
 const safeRequestedChunkBytes =
@@ -54,11 +65,13 @@ const totalChunks = Math.max(1, Math.ceil(sampleBytes.byteLength / uploadChunkBy
 const syncPageLimit = 500;
 const maxSyncPages = 1000;
 let negotiatedSyncContract;
+let sessionCookie = '';
 
 function authHeaders(extra = {}) {
   return {
     ...(browserOrigin ? { Origin: browserOrigin } : {}),
     ...(authToken ? { Authorization: `Bearer ${authToken}` } : {}),
+    ...(sessionCookie ? { Cookie: sessionCookie } : {}),
     ...extra,
   };
 }
@@ -175,7 +188,6 @@ async function negotiateAuthenticatedSyncContract() {
 }
 
 async function verifyProtectedApiBoundary() {
-  if (!authToken) return;
   const publicReady = await fetch(joinUrl(webBaseUrl, '/ready'), {
     headers: browserOrigin ? { Origin: browserOrigin } : undefined,
   });
@@ -202,7 +214,7 @@ async function verifyProtectedApiBoundary() {
         username: 'moya-ci-owner',
         displayName: 'Moya CI Owner',
         password: 'moya-ci-owner-password',
-        setupCode: authToken,
+        ...(authToken ? { setupCode: authToken } : {}),
       }),
     });
     const registrationText = await registration.text();
@@ -210,10 +222,10 @@ async function verifyProtectedApiBoundary() {
       registration.status === 201,
       `owner account registration returned ${registration.status}: ${registrationText}`,
     );
-    const cookie = registration.headers.get('set-cookie')?.split(';', 1)[0];
-    assert(cookie, 'owner account registration did not issue a session cookie');
+    sessionCookie = registration.headers.get('set-cookie')?.split(';', 1)[0] ?? '';
+    assert(sessionCookie, 'owner account registration did not issue a session cookie');
     const session = await fetch(joinUrl(apiBaseUrl, '/auth/session'), {
-      headers: { ...publicHeaders, Cookie: cookie },
+      headers: { ...publicHeaders, Cookie: sessionCookie },
     });
     assert(session.ok, `owner session cookie probe returned ${session.status}`);
     unauthenticated = await fetch(endpoint, { headers: publicHeaders });
@@ -221,11 +233,17 @@ async function verifyProtectedApiBoundary() {
   }
 
   assert(unauthenticated.status === 401, `protected API without a session returned ${unauthenticated.status}`);
-  const wrongToken = await fetch(endpoint, {
-    headers: authHeaders({ Authorization: `Bearer ${authToken}-wrong` }),
-  });
-  assert(wrongToken.status === 401, `protected API with a wrong token returned ${wrongToken.status}, expected 401`);
-  console.log('ok readiness is public and protected API rejects missing sessions and incorrect recovery tokens');
+  if (authToken) {
+    const wrongToken = await fetch(endpoint, {
+      headers: { ...publicHeaders, Authorization: `Bearer ${authToken}-wrong` },
+    });
+    assert(wrongToken.status === 401, `protected API with a wrong token returned ${wrongToken.status}, expected 401`);
+  }
+  console.log(
+    authToken
+      ? 'ok readiness is public and protected API rejects missing sessions and incorrect recovery tokens'
+      : 'ok readiness is public and protected API rejects missing sessions',
+  );
 }
 
 function syncPullPath(since) {
@@ -280,6 +298,43 @@ async function waitForImport(jobId) {
   throw new Error(`Import job timed out after ${timeoutMs}ms: ${JSON.stringify(lastJob)}`);
 }
 
+async function singlePageComicArchive(title) {
+  const writer = new ZipWriter(new BlobWriter('application/vnd.comicbook+zip'));
+  await writer.add(
+    'ComicInfo.xml',
+    new TextReader(
+      `<?xml version="1.0" encoding="utf-8"?><ComicInfo><Title>${title}</Title><PageCount>1</PageCount></ComicInfo>`,
+    ),
+  );
+  await writer.add('001.png', new Uint8ArrayReader(sampleDocumentPageBytes));
+  return new Uint8Array(await (await writer.close()).arrayBuffer());
+}
+
+async function uploadSingleChunkBook({ bookId, fileName, contentType, bytes }) {
+  const upload = await request('/uploads/init', {
+    method: 'POST',
+    ...jsonBody({
+      fileName,
+      sizeBytes: bytes.byteLength,
+      contentType,
+      encoding: 'auto',
+      chapterSplitMode: 'auto',
+      totalChunks: 1,
+      clientBookId: bookId,
+    }),
+  });
+  assert(typeof upload.uploadId === 'string', 'fixed-document upload init did not return uploadId');
+  await request(`/uploads/${encodeURIComponent(upload.uploadId)}/chunks/0`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/octet-stream' },
+    body: bytes,
+  });
+  const complete = await request(`/uploads/${encodeURIComponent(upload.uploadId)}/complete`, { method: 'POST' });
+  assert(typeof complete.jobId === 'string', 'fixed-document upload complete did not return jobId');
+  const job = await waitForImport(complete.jobId);
+  assert((job.book_id ?? bookId) === bookId, 'fixed-document import returned a different book id');
+}
+
 async function run() {
   console.log(`Hosted smoke target: web=${webBaseUrl} api=${apiBaseUrl} origin=${browserOrigin}`);
   if (dryRun) {
@@ -310,6 +365,7 @@ async function run() {
   const syncCursor = await syncCursorAtEnd();
 
   let importedBookId;
+  let fixedDocumentBookId;
   try {
     const upload = await request('/uploads/init', {
       method: 'POST',
@@ -384,6 +440,179 @@ async function run() {
     );
     const firstParagraph = pages.pages[0].paragraphs[0];
     console.log('ok opened imported manifest, chapters, and first page');
+
+    const coverEndpoint = joinUrl(apiBaseUrl, `/books/${encodeURIComponent(importedBookId)}/cover/metadata`);
+    const beforeCoverResponse = await fetch(coverEndpoint, { headers: authHeaders() });
+    assert(
+      beforeCoverResponse.status === 200 || beforeCoverResponse.status === 404,
+      `cover metadata preflight returned ${beforeCoverResponse.status}`,
+    );
+    const beforeCover = beforeCoverResponse.status === 200 ? (await beforeCoverResponse.json()).cover : undefined;
+    const beforeMetadataRevision = Number(manifest.book.metadata_revision ?? manifest.book.metadataRevision ?? 0);
+    const approvedCover = await request(`/books/${encodeURIComponent(importedBookId)}/cover/approved-enrichment`, {
+      method: 'PUT',
+      headers: {
+        'Content-Type': 'application/octet-stream',
+        'X-Cover-File-Name': encodeURIComponent(`${smokeId}.png`),
+        'X-Cover-Content-Type': 'image/png',
+        'X-Cover-Content-Hash': sampleCoverHash,
+        'X-Cover-Width': '1',
+        'X-Cover-Height': '1',
+        'X-Cover-Fit': 'contain',
+        'X-Cover-Position-X': '50',
+        'X-Cover-Position-Y': '50',
+        'X-Expected-Metadata-Revision': String(beforeMetadataRevision),
+      },
+      body: sampleCoverBytes,
+    });
+    assert(approvedCover.cover?.provenance === 'approved_enrichment', 'approved cover provenance was not retained');
+    assert(approvedCover.cover?.content_hash === sampleCoverHash, 'approved cover hash was not retained');
+    assert(
+      Number(approvedCover.metadataRevision) === beforeMetadataRevision + 1,
+      'approved cover did not increment metadata revision exactly once',
+    );
+    if (beforeCover) {
+      assert(
+        approvedCover.previousCover?.id === beforeCover.id && approvedCover.previousCover?.status === 'superseded',
+        'previous cover was not retained for safe restore',
+      );
+    } else {
+      assert(approvedCover.previousCover === null, 'no-cover approval unexpectedly returned a previous cover');
+    }
+    const restoredCover = await request(
+      `/books/${encodeURIComponent(importedBookId)}/cover/approved-enrichment/restore`,
+      {
+        method: 'POST',
+        ...jsonBody({
+          expectedMetadataRevision: approvedCover.metadataRevision,
+          expectedActiveAssetId: approvedCover.cover.id,
+          expectedActiveContentHash: approvedCover.cover.content_hash,
+          previousAssetId: beforeCover?.id,
+          previousContentHash: beforeCover?.content_hash,
+          previousFit: manifest.book.cover_fit ?? manifest.book.coverFit ?? 'crop',
+          previousPositionX: Number(manifest.book.cover_position_x ?? manifest.book.coverPositionX ?? 50),
+          previousPositionY: Number(manifest.book.cover_position_y ?? manifest.book.coverPositionY ?? 50),
+        }),
+      },
+    );
+    assert(
+      Number(restoredCover.metadataRevision) === Number(approvedCover.metadataRevision) + 1,
+      'approved cover restore did not increment metadata revision exactly once',
+    );
+    if (beforeCover) {
+      assert(
+        restoredCover.cover?.id === beforeCover.id,
+        'approved cover restore did not reactivate the previous cover',
+      );
+    } else {
+      assert(restoredCover.cover === null, 'approved cover restore did not return to an empty cover');
+    }
+    console.log('ok applied and safely restored a hosted approved enrichment cover');
+
+    fixedDocumentBookId = `${smokeId}_comic`;
+    const comicBytes = await singlePageComicArchive('Hosted fixed document smoke');
+    await uploadSingleChunkBook({
+      bookId: fixedDocumentBookId,
+      fileName: `${fixedDocumentBookId}.cbz`,
+      contentType: 'application/vnd.comicbook+zip',
+      bytes: comicBytes,
+    });
+    const comicManifest = await request(`/books/${encodeURIComponent(fixedDocumentBookId)}/manifest`);
+    const comicChapters = await request(`/books/${encodeURIComponent(fixedDocumentBookId)}/chapters`);
+    const comicChapter = comicChapters.chapters?.[0];
+    assert(comicManifest.book?.format === 'image_archive', 'comic smoke import was not materialized as image_archive');
+    assert(comicChapter?.id, 'comic smoke import returned no page chapter');
+    const comicPages = await request(`/chapters/${encodeURIComponent(comicChapter.id)}/pages?from=0&count=1`);
+    const comicAssetId = comicPages.pages?.[0]?.paragraphs?.[0]?.assetId;
+    assert(comicAssetId, 'comic smoke page did not expose its document asset id');
+    const comicResourceResponse = await fetch(
+      joinUrl(
+        apiBaseUrl,
+        `/books/${encodeURIComponent(fixedDocumentBookId)}/resources/${encodeURIComponent(comicAssetId)}`,
+      ),
+      { headers: authHeaders() },
+    );
+    const comicResourceBytes = Buffer.from(await comicResourceResponse.arrayBuffer());
+    assert(comicResourceResponse.ok, `comic resource returned ${comicResourceResponse.status}`);
+    assert(
+      comicResourceBytes.equals(sampleDocumentPageBytes),
+      'comic resource response did not preserve the exact stored page bytes',
+    );
+    assert(
+      comicResourceResponse.headers.get('cache-control')?.includes('immutable'),
+      'content-addressed comic resource was not marked immutable',
+    );
+    console.log('ok opened exact hosted image-archive page bytes');
+
+    const comicCoverBefore = await request(`/books/${encodeURIComponent(fixedDocumentBookId)}/cover/metadata`);
+    const comicCoverResponse = await fetch(
+      joinUrl(apiBaseUrl, `/books/${encodeURIComponent(fixedDocumentBookId)}/cover`),
+      { headers: authHeaders() },
+    );
+    assert(comicCoverResponse.ok, `comic cover returned ${comicCoverResponse.status}`);
+    assert(
+      comicCoverResponse.headers.get('x-asset-id') === comicCoverBefore.cover.id &&
+        comicCoverResponse.headers.get('x-asset-provenance') === 'archive_embedded' &&
+        comicCoverResponse.headers.get('x-asset-content-hash') === comicCoverBefore.cover.content_hash,
+      'comic cover download did not expose complete inline metadata',
+    );
+    const comicRevisionBefore = Number(
+      comicManifest.book.metadata_revision ?? comicManifest.book.metadataRevision ?? 0,
+    );
+    const sourceCover = await request(`/books/${encodeURIComponent(fixedDocumentBookId)}/cover/approved-enrichment`, {
+      method: 'PUT',
+      headers: {
+        'Content-Type': 'application/octet-stream',
+        'X-Cover-File-Name': encodeURIComponent(`${fixedDocumentBookId}-source.png`),
+        'X-Cover-Content-Type': 'image/png',
+        'X-Cover-Content-Hash': sampleCoverHash,
+        'X-Cover-Width': '1',
+        'X-Cover-Height': '1',
+        'X-Cover-Fit': 'crop',
+        'X-Cover-Position-X': '50',
+        'X-Cover-Position-Y': '50',
+        'X-Expected-Metadata-Revision': String(comicRevisionBefore),
+      },
+      body: sampleCoverBytes,
+    });
+    assert(sourceCover.cover?.content_hash === sampleCoverHash, 'source cover was not applied to comic smoke book');
+    await uploadSingleChunkBook({
+      bookId: fixedDocumentBookId,
+      fileName: `${fixedDocumentBookId}.cbz`,
+      contentType: 'application/vnd.comicbook+zip',
+      bytes: comicBytes,
+    });
+    const comicCoverAfterUpdate = await request(`/books/${encodeURIComponent(fixedDocumentBookId)}/cover/metadata`);
+    assert(
+      comicCoverAfterUpdate.cover?.id === sourceCover.cover.id &&
+        comicCoverAfterUpdate.cover?.content_hash === sampleCoverHash &&
+        comicCoverAfterUpdate.cover?.provenance === 'approved_enrichment',
+      'comic content update replaced the approved source cover',
+    );
+    const comicManifestAfterUpdate = await request(`/books/${encodeURIComponent(fixedDocumentBookId)}/manifest`);
+    const restoredComicCover = await request(
+      `/books/${encodeURIComponent(fixedDocumentBookId)}/cover/approved-enrichment/restore`,
+      {
+        method: 'POST',
+        ...jsonBody({
+          expectedMetadataRevision: Number(
+            comicManifestAfterUpdate.book.metadata_revision ?? comicManifestAfterUpdate.book.metadataRevision,
+          ),
+          expectedActiveAssetId: sourceCover.cover.id,
+          expectedActiveContentHash: sampleCoverHash,
+          previousAssetId: comicCoverBefore.cover.id,
+          previousContentHash: comicCoverBefore.cover.content_hash,
+          previousFit: comicManifest.book.cover_fit ?? comicManifest.book.coverFit ?? 'contain',
+          previousPositionX: Number(comicManifest.book.cover_position_x ?? comicManifest.book.coverPositionX ?? 50),
+          previousPositionY: Number(comicManifest.book.cover_position_y ?? comicManifest.book.coverPositionY ?? 50),
+        }),
+      },
+    );
+    assert(
+      restoredComicCover.cover?.id === comicCoverBefore.cover.id,
+      'comic content update removed the safely restorable previous cover',
+    );
+    console.log('ok preserved source cover and cover undo history across a hosted comic update');
 
     const paragraphLookup = await request(`/paragraphs/${encodeURIComponent(firstParagraph.id)}`);
     assert(
@@ -579,6 +808,10 @@ async function run() {
     );
     console.log('ok sync pull exposed import, reading-position, annotation, and tombstone events');
   } finally {
+    if (fixedDocumentBookId && !keepBook) {
+      await request(`/books/${encodeURIComponent(fixedDocumentBookId)}`, { method: 'DELETE' });
+      console.log('ok cleaned up fixed-document smoke book');
+    }
     if (importedBookId && !keepBook) {
       await request(`/books/${encodeURIComponent(importedBookId)}`, { method: 'DELETE' });
       console.log('ok cleaned up smoke book');

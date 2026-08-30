@@ -1,4 +1,4 @@
-import type { BookAssetMetadata, EncodingMode } from '../domain/types';
+import type { BookAssetMetadata, BookAssetProvenance, EncodingMode } from '../domain/types';
 import type { RemoteApiClient } from '../services/remote/remote-api-client';
 import { RemoteApiError } from '../services/remote/remote-api-contracts';
 import type { BookAssetRepository } from './book-asset-repository';
@@ -7,6 +7,20 @@ type JsonRecord = Record<string, unknown>;
 
 function text(row: JsonRecord, key: string): string {
   return typeof row[key] === 'string' ? row[key] : '';
+}
+
+const bookAssetProvenances = new Set<BookAssetProvenance>([
+  'original',
+  'canonical_reconstruction',
+  'user_supplied',
+  'approved_enrichment',
+  'epub_embedded',
+  'archive_embedded',
+  'generated_preview',
+]);
+
+function coverProvenance(value: string): BookAssetProvenance {
+  return bookAssetProvenances.has(value as BookAssetProvenance) ? (value as BookAssetProvenance) : 'user_supplied';
 }
 
 function sourceMetadata(row: JsonRecord): BookAssetMetadata {
@@ -29,13 +43,13 @@ function sourceMetadata(row: JsonRecord): BookAssetMetadata {
 
 function coverMetadata(row: JsonRecord): BookAssetMetadata {
   const provenance = text(row, 'provenance');
+  const status = text(row, 'status');
   return {
     id: text(row, 'id'),
     bookId: text(row, 'book_id'),
     kind: 'cover',
-    provenance:
-      provenance === 'approved_enrichment' || provenance === 'generated_preview' ? provenance : 'user_supplied',
-    status: 'active',
+    provenance: coverProvenance(provenance),
+    status: status === 'superseded' || status === 'staged' ? status : 'active',
     storageKey: text(row, 'storage_key') || text(row, 'id'),
     fileName: text(row, 'file_name') || undefined,
     contentType: text(row, 'content_type') || 'image/jpeg',
@@ -46,6 +60,27 @@ function coverMetadata(row: JsonRecord): BookAssetMetadata {
     createdAt: text(row, 'created_at') || new Date(0).toISOString(),
     activatedAt: text(row, 'activated_at') || undefined,
   };
+}
+
+function assertApprovedCoverRow(
+  row: JsonRecord,
+  expected: {
+    readonly bookId: string;
+    readonly contentHash?: string;
+    readonly assetId?: string;
+    readonly status: string;
+  },
+): void {
+  if (
+    !text(row, 'id') ||
+    text(row, 'book_id') !== expected.bookId ||
+    text(row, 'provenance') !== 'approved_enrichment' ||
+    text(row, 'status') !== expected.status ||
+    (expected.contentHash !== undefined && text(row, 'content_hash') !== expected.contentHash) ||
+    (expected.assetId !== undefined && text(row, 'id') !== expected.assetId)
+  ) {
+    throw new Error('서버가 추천 표지 적용 결과를 완전하게 반환하지 않았습니다.');
+  }
 }
 
 export class RemoteSourceRangeResponseError extends Error {
@@ -135,11 +170,9 @@ export class RemoteBookAssetRepository implements BookAssetRepository {
 
   async getActiveCover(bookId: string) {
     try {
-      const [metadata, download] = await Promise.all([
-        this.client.getBookCoverMetadata(bookId),
-        this.client.getBookCover(bookId),
-      ]);
-      return { metadata: coverMetadata(metadata.cover), blob: download.blob };
+      const download = await this.client.getBookCover(bookId);
+      const metadata = download.metadata ?? (await this.client.getBookCoverMetadata(bookId)).cover;
+      return { metadata: coverMetadata(metadata), blob: download.blob };
     } catch (error) {
       if (typeof error === 'object' && error !== null && 'status' in error && Number(error.status) === 404) {
         return undefined;
@@ -151,6 +184,80 @@ export class RemoteBookAssetRepository implements BookAssetRepository {
   async saveCover(bookId: string, input: Parameters<BookAssetRepository['saveCover']>[1]) {
     const result = await this.client.saveBookCover(bookId, input.blob, input);
     return coverMetadata(result.cover);
+  }
+
+  async saveApprovedEnrichmentCover(
+    bookId: string,
+    input: Parameters<NonNullable<BookAssetRepository['saveApprovedEnrichmentCover']>>[1],
+  ) {
+    if (input.expectedMetadataRevision === undefined) {
+      throw new Error('추천 표지 적용에는 최신 작품 정보가 필요합니다.');
+    }
+    let result: Awaited<ReturnType<RemoteApiClient['saveApprovedEnrichmentBookCover']>>;
+    try {
+      result = await this.client.saveApprovedEnrichmentBookCover(bookId, input.blob, {
+        ...input,
+        expectedMetadataRevision: input.expectedMetadataRevision,
+      });
+    } catch (error) {
+      if (error instanceof RemoteApiError && error.status === 404) {
+        throw Object.assign(
+          new Error('추천 표지를 적용할 서버 기능을 찾지 못했습니다. Moya Web과 서버를 함께 업데이트해 주세요.'),
+          { cause: error },
+        );
+      }
+      throw error;
+    }
+    if (result.metadataRevision !== input.expectedMetadataRevision + 1) {
+      throw new Error('서버가 추천 표지 적용 결과를 완전하게 반환하지 않았습니다.');
+    }
+    assertApprovedCoverRow(result.cover, {
+      bookId,
+      contentHash: input.contentHash,
+      status: 'active',
+    });
+    if (result.previousCover !== null) {
+      if (!text(result.previousCover, 'id') || text(result.previousCover, 'book_id') !== bookId) {
+        throw new Error('서버가 이전 표지 보존 결과를 완전하게 반환하지 않았습니다.');
+      }
+      if (text(result.previousCover, 'status') !== 'superseded') {
+        throw new Error('서버가 이전 표지를 안전하게 보존하지 않았습니다.');
+      }
+    }
+    return {
+      current: coverMetadata(result.cover),
+      previous: result.previousCover === null ? undefined : coverMetadata(result.previousCover),
+      metadataRevision: Number(result.metadataRevision),
+    };
+  }
+
+  async restoreApprovedEnrichmentCover(
+    bookId: string,
+    input: Parameters<NonNullable<BookAssetRepository['restoreApprovedEnrichmentCover']>>[1],
+  ) {
+    const result = await this.client.restoreApprovedEnrichmentBookCover(bookId, input);
+    if (result.metadataRevision !== input.expectedMetadataRevision + 1) {
+      throw new Error('서버가 추천 표지 복원 결과를 완전하게 반환하지 않았습니다.');
+    }
+    if (input.previousAssetId && input.previousContentHash) {
+      if (!result.cover) throw new Error('서버가 복원한 이전 표지를 반환하지 않았습니다.');
+      const restored = result.cover;
+      if (
+        !text(restored, 'id') ||
+        text(restored, 'id') !== input.previousAssetId ||
+        text(restored, 'book_id') !== bookId ||
+        text(restored, 'status') !== 'active' ||
+        text(restored, 'content_hash') !== input.previousContentHash
+      ) {
+        throw new Error('서버가 추천 표지 복원 결과를 완전하게 반환하지 않았습니다.');
+      }
+    } else if (result.cover !== null) {
+      throw new Error('서버가 표지 제거 복원 결과를 완전하게 반환하지 않았습니다.');
+    }
+    return {
+      current: result.cover ? coverMetadata(result.cover) : undefined,
+      metadataRevision: result.metadataRevision,
+    };
   }
 
   async saveGeneratedCover(

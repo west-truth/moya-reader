@@ -1,7 +1,7 @@
 # Docker Compose deployment
 
 Status: current
-Last verified: 2026-08-29
+Last verified: 2026-08-30
 
 This is the operational reference for the self-host web/API/worker stack. The default deployment is intentionally
 loopback-only. Public exposure requires the fail-closed override and a separate TLS-terminating reverse proxy.
@@ -68,7 +68,8 @@ volumes while the previous volumes remain under the old project prefix.
 Leave `DATABASE_URL` empty to derive it from `POSTGRES_USER`, `POSTGRES_PASSWORD`, and `POSTGRES_DB`. Leave
 `S3_ACCESS_KEY_ID`/`S3_SECRET_ACCESS_KEY` empty to derive them from `MINIO_ROOT_USER`/`MINIO_ROOT_PASSWORD`. This keeps
 the application and its bundled storage services on one credential source. Set the direct URL or S3 values only when
-using external infrastructure.
+using external infrastructure. Compose passes the bundled database settings as separate `PG*` fields, and the server
+URL-encodes reserved password characters before creating the PostgreSQL connection string.
 
 `POSTGRES_*` initialization values apply only when the PostgreSQL data directory is empty. After a durable volume has
 been initialized, rotate the database role password inside PostgreSQL first, then change `.env` to the same value and
@@ -199,6 +200,10 @@ MINIO_ROOT_PASSWORD=<long-random-storage-password>
 Then run `docker compose -f compose.yaml -f compose.public.yaml config --quiet` followed by
 `docker compose -f compose.yaml -f compose.public.yaml up -d --build`.
 
+When Nginx Proxy Manager itself runs in Docker, append `-f compose.npm.yaml` so only Web joins the external NPM
+network. Append `-f compose.suwayomi.yaml` only when the optional compatibility runtime is needed. Suwayomi joins only
+the NPM network, not the Moya database/queue/storage network.
+
 The public override sets `SERVER_EXPOSURE=external` and uses required-variable interpolation, so Compose fails before
 startup when the one-time owner setup/recovery token, PostgreSQL password or MinIO credentials are absent. The API derives its internal
 database and object-storage credentials from those same required values unless explicit external infrastructure values
@@ -247,12 +252,22 @@ and hosted TTS audio cache. A recoverable server backup therefore needs a tested
 3. `server-data`, especially its provider encryption key
 4. `.env` or separately managed deployment secrets
 
+Take the PostgreSQL/MinIO/server-data backup before applying an update. Database migrations are forward-only at
+runtime: after a newer migration is recorded, checking out only older application code can intentionally fail startup.
+Rollback therefore means restoring the matching pre-update data snapshot as well, or applying a forward fix on the
+new schema.
+
 Redis AOF is useful for short outages but is not a substitute for PostgreSQL/MinIO backup. The local model cache can
 be downloaded again and is optional in disaster recovery.
 
 Normal API requests remain limited to 32 MiB, while `/api/backups/*` accepts the server archive limit of 512 MiB and
 disables nginx request buffering. Backup restore is not yet a streaming parser and can temporarily use substantial API
 memory; the default API limit is 2 GiB. Test a representative restore before relying on the backup.
+
+Hosted import still assembles the uploaded source for the parser, so `MAX_UPLOAD_BYTES=500 MiB` is a protocol ceiling,
+not a promise that every compressed 500 MiB archive fits in the default 3 GiB worker. Fixed-document page reads are
+streamed from object storage, but archive parsing and backup restore remain memory-sensitive. Do not raise the upload
+limit without a representative large-file gate and worker memory observation.
 
 ## Verification and known limits
 

@@ -2,7 +2,7 @@ import Fastify from 'fastify';
 import { describe, expect, it } from 'vitest';
 import { registerAuthHook } from './auth.js';
 import type { ServerConfig } from './config.js';
-import { buildServer, registerCorsPolicy } from './server.js';
+import { buildServer, registerCorsPolicy, registerSafeErrorHandler } from './server.js';
 
 function testConfig(): ServerConfig {
   return {
@@ -122,6 +122,8 @@ describe('server CORS policy', () => {
     const exposed = response.headers['access-control-expose-headers'] ?? '';
 
     expect(exposed).toContain('X-Asset-Kind');
+    expect(exposed).toContain('X-Asset-Provenance');
+    expect(exposed).toContain('X-Asset-Content-Hash');
     expect(exposed).toContain('X-Page-Index');
     expect(exposed).toContain('X-Source-File-Name');
     expect(exposed).toContain('X-Source-Content-Hash');
@@ -191,6 +193,41 @@ describe('server startup security', () => {
     expect(missingAuth.statusCode).toBe(401);
     expect(deniedOrigin.statusCode).toBe(403);
     expect(allowed.statusCode).toBe(200);
+    await app.close();
+  });
+});
+
+describe('server error boundary', () => {
+  it('does not expose internal 500 details to a self-host client', async () => {
+    const app = Fastify({ logger: false });
+    registerSafeErrorHandler(app);
+    app.get('/explode', async () => {
+      throw new Error('database password and object internals must not escape');
+    });
+
+    const response = await app.inject({ method: 'GET', url: '/explode' });
+
+    expect(response.statusCode).toBe(500);
+    expect(response.json()).toEqual({
+      error: '서버 요청을 처리하지 못했습니다.',
+      code: 'internal_server_error',
+    });
+    expect(response.body).not.toContain('database password');
+    await app.close();
+  });
+
+  it('keeps actionable client errors readable', async () => {
+    const app = Fastify({ logger: false });
+    registerSafeErrorHandler(app);
+    app.get('/invalid', async () => {
+      const error = Object.assign(new Error('invalid request value'), { statusCode: 400, code: 'bad_input' });
+      throw error;
+    });
+
+    const response = await app.inject({ method: 'GET', url: '/invalid' });
+
+    expect(response.statusCode).toBe(400);
+    expect(response.json()).toEqual({ error: 'invalid request value', code: 'bad_input' });
     await app.close();
   });
 });

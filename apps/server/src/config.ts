@@ -169,6 +169,21 @@ function corsOriginsFromEnv(env: NodeJS.ProcessEnv): readonly string[] {
   return [...new Set(origins)];
 }
 
+function databaseUrlFromEnv(env: NodeJS.ProcessEnv): string {
+  const explicit = env.DATABASE_URL?.trim();
+  if (explicit) return explicit;
+  const hasPgFields = ['PGHOST', 'PGPORT', 'PGUSER', 'PGPASSWORD', 'PGDATABASE'].some((key) => env[key] !== undefined);
+  if (!hasPgFields) return 'postgres://noveldesk:noveldesk@127.0.0.1:5432/noveldesk';
+  const port = positiveIntegerFromEnv(env, 'PGPORT', 5432, 65_535);
+  const url = new URL('postgres://localhost');
+  url.hostname = env.PGHOST?.trim() || '127.0.0.1';
+  url.port = String(port);
+  url.username = env.PGUSER ?? 'noveldesk';
+  url.password = env.PGPASSWORD ?? 'noveldesk';
+  url.pathname = `/${encodeURIComponent(env.PGDATABASE ?? 'noveldesk')}`;
+  return url.toString();
+}
+
 export function serverExposure(config: ServerConfig): ServerExposure {
   return config.exposure ?? (isLoopbackHost(config.host) ? 'loopback' : 'external');
 }
@@ -194,7 +209,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): ServerConfig {
   return {
     host,
     port: positiveIntegerFromEnv(env, 'PORT', 8787, 65_535),
-    databaseUrl: env.DATABASE_URL ?? 'postgres://noveldesk:noveldesk@127.0.0.1:5432/noveldesk',
+    databaseUrl: databaseUrlFromEnv(env),
     redisUrl: env.REDIS_URL ?? 'redis://127.0.0.1:6379',
     dataDir: path.resolve(env.SERVER_DATA_DIR ?? '.server-data'),
     maxChunkBytes: positiveIntegerFromEnv(env, 'MAX_CHUNK_BYTES', 16 * 1024 * 1024),

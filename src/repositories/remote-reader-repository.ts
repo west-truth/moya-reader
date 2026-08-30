@@ -81,6 +81,10 @@ function ensureApplied(result: RemoteMutationResult, operation: string): void {
 }
 
 function remoteActualRevision(error: RemoteApiError): string {
+  if (typeof error.payload === 'object' && error.payload !== null) {
+    const actualRevision = (error.payload as { actualRevision?: unknown }).actualRevision;
+    if (typeof actualRevision === 'string' && actualRevision) return actualRevision;
+  }
   try {
     const payload = JSON.parse(error.message) as { actualRevision?: unknown };
     if (typeof payload.actualRevision === 'string' && payload.actualRevision) return payload.actualRevision;

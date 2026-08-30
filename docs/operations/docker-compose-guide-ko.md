@@ -1,7 +1,7 @@
 # 모야 Docker Compose 배포 가이드
 
 Status: current
-Last verified: 2026-08-29
+Last verified: 2026-08-30
 
 ## 권장 서버 환경
 
@@ -26,6 +26,8 @@ Ubuntu x86-64이다. Docker를 사용하면 호스트 운영체제와 컨테이�
 | 19세 작품 인증 검색         | 위 구성 + `compose.metadata-collector-auth.yaml`   | 서버 전용 로그인 브라우저가 필요할 때    |
 | 서버와 로컬 한국어 TTS 사용 | `compose.yaml` + `compose.local-tts.yaml`          | 외부 TTS 비용 없이 CPU 음성 합성을 쓸 때 |
 | WireGuard/LAN/인터넷 접속   | `compose.yaml` + `compose.public.yaml`             | 개인 서버, 동일 호스트의 HTTPS 프록시 뒤 |
+| Docker NPM에서 Moya 접속    | 위 구성 + `compose.npm.yaml`                       | NPM도 Docker 컨테이너일 때               |
+| Mihon 호환 소스 사용        | 위 구성 + `compose.suwayomi.yaml`                  | Suwayomi를 선택적으로 함께 쓸 때         |
 | 외부 접속과 로컬 TTS 사용   | 위 세 파일 모두                                    | 개인 서버와 CPU TTS를 함께 운영할 때     |
 
 처음에는 기본 구성으로 정상 실행을 확인한 다음 TTS나 외부 공개를 추가하는 편이 가장 쉽다.
@@ -121,11 +123,12 @@ S3_ACCESS_KEY_ID=
 S3_SECRET_ACCESS_KEY=
 ```
 
-`DATABASE_URL`이 비어 있으면 Compose가 `POSTGRES_*` 값으로 내부 접속 주소를 만든다. `S3_ACCESS_KEY_ID`와
+`DATABASE_URL`이 비어 있으면 서버가 Compose의 `PG*`/`POSTGRES_*` 값으로 안전하게 내부 접속 주소를 만든다. 비밀번호의
+`/`, `#`, `?`, `@` 같은 URL 예약 문자는 자동 인코딩되므로 내부 PostgreSQL 비밀번호를 영문·숫자로만 제한할 필요가 없다.
+`S3_ACCESS_KEY_ID`와
 `S3_SECRET_ACCESS_KEY`가 비어 있으면 각각 `MINIO_ROOT_USER`, `MINIO_ROOT_PASSWORD`를 그대로 사용한다.
 따라서 같은 비밀번호를 두 군데에 중복 입력해 서로 어긋나게 만들 필요가 없다. 외부 PostgreSQL이나 S3를
-사용할 때만 `DATABASE_URL` 또는 `S3_*`를 직접 채운다. URL 인코딩 문제를 피하려면 내부 PostgreSQL
-비밀번호에는 긴 영문과 숫자 조합을 쓰는 것이 간단하다.
+사용할 때만 `DATABASE_URL` 또는 `S3_*`를 직접 채운다.
 
 PostgreSQL volume이 이미 초기화된 뒤에는 `.env`의 `POSTGRES_USER`, `POSTGRES_PASSWORD`, `POSTGRES_DB`만
 바꾸면 안 된다. PostgreSQL 컨테이너의 초기화 변수는 빈 data directory에만 적용되므로, 기존 DB 계정은
@@ -470,7 +473,7 @@ TTS override로 시작했다면 `docker compose` 뒤에 매번 다음 옵션을 
 
 ### 코드 업데이트
 
-먼저 백업한 후 코드를 받고 이미지를 다시 만든다.
+먼저 PostgreSQL·MinIO와 `server-data`를 같은 시점으로 백업한 후 코드를 받고 이미지를 다시 만든다.
 
 ```bash
 git pull --ff-only
@@ -479,8 +482,10 @@ docker compose up -d --build --remove-orphans
 docker compose ps
 ```
 
-TTS/public override를 사용 중이라면 업데이트 명령에도 같은 `-f` 조합을 넣는다. API가 시작될 때 필요한
-데이터베이스 migration을 실행한다. 업데이트 직후에는 `api`와 `worker` 로그를 확인한다.
+TTS/public/NPM/Suwayomi override를 사용 중이라면 업데이트 명령에도 같은 `-f` 조합을 넣는다. API가 시작될 때
+필요한 데이터베이스 migration을 실행한다. 새 migration이 적용된 뒤 예전 코드만 checkout하면 서버가 시작을
+거부할 수 있다. 이 경우 데이터도 업데이트 전 snapshot으로 함께 복원하거나 최신 코드에서 forward-fix한다.
+업데이트 직후에는 `api`와 `worker` 로그를 확인한다.
 
 ## 7. 백업에서 꼭 보존할 것
 

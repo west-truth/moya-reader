@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { BookMetadataPatch } from '@noveldesk/text-core/library-metadata';
 import type { Novel, Shelf, ShelfMembership } from '../../domain/types';
 import type { BookAssetRepository, BookCoverAssetInput } from '../../repositories/book-asset-repository';
@@ -11,6 +11,46 @@ import { downloadLibraryMetadata } from './library-metadata-export';
 
 export type LibraryManagementPanel = { kind: 'shelves' } | { kind: 'metadata'; book: Novel };
 export type CoverDraftAction = { kind: 'keep' } | { kind: 'remove' } | { kind: 'replace'; input: BookCoverAssetInput };
+
+export class LibraryMetadataEditConflictError extends Error {
+  constructor() {
+    super(
+      '같은 항목이 다른 기기나 자동 적용으로 변경되어 저장하지 않았습니다. 현재 입력은 보존했습니다. 현재 입력을 우선하려면 저장을 한 번 더 누르세요.',
+    );
+    this.name = 'LibraryMetadataEditConflictError';
+  }
+}
+
+function comparableMetadataValue(book: Novel, field: keyof BookMetadataPatch): unknown {
+  if (field === 'tags') return [...(book.tags ?? [])];
+  if (field === 'coverFit') return book.coverFit ?? 'crop';
+  if (field === 'coverPositionX') return book.coverPositionX ?? 50;
+  if (field === 'coverPositionY') return book.coverPositionY ?? 50;
+  if (field === 'favorite') return book.favorite ?? false;
+  return book[field] ?? null;
+}
+
+function sameMetadataValue(left: unknown, right: unknown): boolean {
+  return JSON.stringify(left) === JSON.stringify(right);
+}
+
+export function metadataEditCanRebase(base: Novel, current: Novel, patch: BookMetadataPatch): boolean {
+  return (Object.keys(patch) as Array<keyof BookMetadataPatch>).every((field) =>
+    sameMetadataValue(comparableMetadataValue(base, field), comparableMetadataValue(current, field)),
+  );
+}
+
+function coverIdentityChanged(base: Novel, current: Novel): boolean {
+  return base.coverAssetId !== current.coverAssetId || base.coverContentHash !== current.coverContentHash;
+}
+
+function libraryManagementError(cause: unknown): string {
+  if (cause instanceof LibraryMetadataEditConflictError) return cause.message;
+  if (cause instanceof Error && /metadata revision changed|metadata_revision_changed/iu.test(cause.message)) {
+    return '다른 변경이 먼저 저장되었습니다. 최신 작품 정보를 불러온 뒤 다시 시도해 주세요.';
+  }
+  return cause instanceof Error ? cause.message : '서재 작업을 완료하지 못했습니다.';
+}
 
 export interface LibraryManagementController {
   readonly available: boolean;
@@ -29,6 +69,7 @@ export interface LibraryManagementController {
   openMetadata(book: Novel): void;
   confirmDiscard?(message: string): boolean;
   closePanel(): void;
+  refreshOpenMetadata(): Promise<void>;
   startSelection(): void;
   toggleSelected(bookId: string): void;
   selectBooks(bookIds: readonly string[]): void;
@@ -45,6 +86,7 @@ export interface LibraryManagementController {
 export interface UseLibraryManagementControllerInput {
   readonly catalog?: LibraryCatalogRepository;
   readonly assets?: BookAssetRepository;
+  getNovel(bookId: string): Promise<Novel | undefined>;
   refreshNovels(): Promise<unknown>;
   refreshAfterMutation(): Promise<unknown>;
   notify(message: string, tone?: 'info' | 'success' | 'warning' | 'danger'): void;
@@ -63,6 +105,7 @@ export function useLibraryManagementController(
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string>();
   const [lastBatchReceipt, setLastBatchReceipt] = useState<BatchLibraryReceipt>();
+  const busyRef = useRef(false);
 
   const refresh = useCallback(async () => {
     if (!input.catalog) return;
@@ -88,21 +131,23 @@ export function useLibraryManagementController(
 
   const run = useCallback(
     async (operation: () => Promise<void>, success?: string) => {
-      if (busy) return;
+      if (busyRef.current) return;
+      busyRef.current = true;
       setBusy(true);
       setError(undefined);
       try {
         await operation();
         if (success) input.notify(success, 'success');
       } catch (cause) {
-        const message = cause instanceof Error ? cause.message : '서재 작업을 완료하지 못했습니다.';
+        const message = libraryManagementError(cause);
         setError(message);
         input.notify(message, 'danger');
       } finally {
+        busyRef.current = false;
         setBusy(false);
       }
     },
-    [busy, input],
+    [input],
   );
 
   return useMemo<LibraryManagementController>(
@@ -123,6 +168,20 @@ export function useLibraryManagementController(
       openMetadata: (book) => setPanel({ kind: 'metadata', book }),
       confirmDiscard: input.confirm,
       closePanel: () => setPanel(undefined),
+      refreshOpenMetadata: async () => {
+        if (panel?.kind !== 'metadata') return;
+        try {
+          const fresh = await input.getNovel(panel.book.id);
+          if (!fresh) return;
+          setPanel((current) =>
+            current?.kind === 'metadata' && current.book.id === fresh.id ? { kind: 'metadata', book: fresh } : current,
+          );
+        } catch {
+          const message = '적용된 작품 정보를 화면에 다시 불러오지 못했습니다. 편집창을 다시 열어 주세요.';
+          setError(message);
+          input.notify(message, 'warning');
+        }
+      },
       startSelection: () => setSelectionMode(true),
       toggleSelected: (bookId) => {
         setSelectedBookIds((current) => {
@@ -172,11 +231,26 @@ export function useLibraryManagementController(
       saveBookDetails: async (book, patch, cover) => {
         if (!input.catalog || !input.assets) return;
         await run(async () => {
-          let expectedRevision = book.metadataRevision ?? 0;
+          if (Object.keys(patch).length === 0 && cover.kind === 'keep') {
+            setPanel(undefined);
+            return;
+          }
+          const current = await input.getNovel(book.id);
+          if (!current) throw new Error('작품을 다시 불러오지 못했습니다.');
+          const coverWasEdited =
+            cover.kind !== 'keep' ||
+            patch.coverFit !== undefined ||
+            patch.coverPositionX !== undefined ||
+            patch.coverPositionY !== undefined;
+          if (!metadataEditCanRebase(book, current, patch) || (coverWasEdited && coverIdentityChanged(book, current))) {
+            setPanel({ kind: 'metadata', book: current });
+            throw new LibraryMetadataEditConflictError();
+          }
+          let expectedRevision = current.metadataRevision ?? 0;
           if (cover.kind === 'replace') {
             await input.assets!.saveCover(book.id, { ...cover.input, expectedMetadataRevision: expectedRevision });
             expectedRevision += 1;
-          } else if (cover.kind === 'remove' && book.coverAssetId) {
+          } else if (cover.kind === 'remove' && current.coverAssetId) {
             await input.assets!.removeCover(book.id, expectedRevision);
             expectedRevision += 1;
           }

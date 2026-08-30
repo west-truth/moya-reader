@@ -8,7 +8,7 @@ import {
   saveSyncState,
   updateSyncOutboxItems,
 } from '../storage/db';
-import type { BookAssetMetadata } from '../domain/types';
+import type { BookAssetMetadata, BookAssetProvenance } from '../domain/types';
 import { cacheRemoteBookCover, clearCachedRemoteBookCover, getActiveBookCover } from '../storage/book-asset-store';
 import {
   claimSyncOutboxBatchInDatabase,
@@ -41,7 +41,11 @@ export interface SyncEventSource {
   getBookSnapshotStream?(bookId: string): Promise<RemoteBookSnapshotStream | undefined>;
   getBookSnapshot?(bookId: string): Promise<RemoteBookSnapshot | undefined>;
   getBookCoverMetadata?(bookId: string): Promise<{ cover: Record<string, unknown> }>;
-  getBookCover?(bookId: string): Promise<{ blob: Blob; headers: Headers }>;
+  getBookCover?(bookId: string): Promise<{
+    blob: Blob;
+    headers: Headers;
+    metadata?: Record<string, unknown>;
+  }>;
   saveBookCover?(
     bookId: string,
     cover: Blob,
@@ -85,6 +89,22 @@ function fieldText(row: Record<string, unknown>, camel: string, snake = camel): 
   return typeof value === 'string' && value ? value : undefined;
 }
 
+const bookAssetProvenances = new Set<BookAssetProvenance>([
+  'original',
+  'canonical_reconstruction',
+  'user_supplied',
+  'approved_enrichment',
+  'epub_embedded',
+  'archive_embedded',
+  'generated_preview',
+]);
+
+function remoteCoverProvenance(value: string | undefined): BookAssetProvenance {
+  return value && bookAssetProvenances.has(value as BookAssetProvenance)
+    ? (value as BookAssetProvenance)
+    : 'user_supplied';
+}
+
 function remoteCoverMetadata(bookId: string, row: Record<string, unknown>): BookAssetMetadata {
   const id = fieldText(row, 'id');
   const contentHash = fieldText(row, 'contentHash', 'content_hash');
@@ -94,10 +114,7 @@ function remoteCoverMetadata(bookId: string, row: Record<string, unknown>): Book
     id,
     bookId,
     kind: 'cover',
-    provenance:
-      remoteProvenance === 'approved_enrichment' || remoteProvenance === 'generated_preview'
-        ? remoteProvenance
-        : 'user_supplied',
+    provenance: remoteCoverProvenance(remoteProvenance),
     status: 'active',
     storageKey: fieldText(row, 'storageKey', 'storage_key') ?? id,
     fileName: fieldText(row, 'fileName', 'file_name'),
@@ -127,6 +144,40 @@ const terminalRejectionReasons = new Set<RejectedSyncEvent['reason']>([
 ]);
 const preAttachBookMissingMessage = 'server book does not exist yet';
 const DEFAULT_LEASE_DURATION_MS = 2 * 60 * 1000;
+const REMOTE_SYNC_PAGE_SIZE = 500;
+const SYNC_PUSH_BATCH_SIZE = 100;
+
+function compoundOperationId(item: SyncOutboxItem): string | undefined {
+  const value = objectValue(item.event.payload)?.compoundOperationId;
+  return typeof value === 'string' && value.trim() ? value.trim() : undefined;
+}
+
+function boundedSyncPushBatch(items: SyncOutboxItem[]): SyncOutboxItem[] {
+  const units: SyncOutboxItem[][] = [];
+  const compoundUnits = new Map<string, SyncOutboxItem[]>();
+  for (const item of items) {
+    const operationId = compoundOperationId(item);
+    if (!operationId) {
+      units.push([item]);
+      continue;
+    }
+    let unit = compoundUnits.get(operationId);
+    if (!unit) {
+      unit = [];
+      compoundUnits.set(operationId, unit);
+      units.push(unit);
+    }
+    unit.push(item);
+  }
+
+  const batch: SyncOutboxItem[] = [];
+  for (const unit of units) {
+    if (batch.length > 0 && batch.length + unit.length > SYNC_PUSH_BATCH_SIZE) break;
+    batch.push(...unit);
+    if (batch.length >= SYNC_PUSH_BATCH_SIZE) break;
+  }
+  return batch;
+}
 
 function defaultLeaseToken(): string {
   if (typeof globalThis.crypto?.randomUUID === 'function') return `sync-lease-${globalThis.crypto.randomUUID()}`;
@@ -251,7 +302,7 @@ export class LocalOutboxSyncService {
   }
 
   private async cachePulledCoverAssets(events: SyncEvent[]): Promise<void> {
-    if (!this.client.getBookCover || !this.client.getBookCoverMetadata) return;
+    if (!this.client.getBookCover) return;
     const latestByBook = new Map<string, { coverAssetId: string | null }>();
     for (const event of events) {
       if (event.type !== 'book_updated') continue;
@@ -269,11 +320,21 @@ export class LocalOutboxSyncService {
         await clearCachedRemoteBookCover(bookId);
         continue;
       }
-      const [metadata, download] = await Promise.all([
-        this.client.getBookCoverMetadata(bookId),
-        this.client.getBookCover(bookId),
-      ]);
-      await cacheRemoteBookCover(remoteCoverMetadata(bookId, metadata.cover), download.blob);
+      try {
+        const download = await this.client.getBookCover(bookId);
+        const metadata =
+          download.metadata ??
+          (this.client.getBookCoverMetadata ? (await this.client.getBookCoverMetadata(bookId)).cover : undefined);
+        if (!metadata) throw new Error(`remote cover metadata is unavailable for ${bookId}`);
+        await cacheRemoteBookCover(remoteCoverMetadata(bookId, metadata), download.blob);
+      } catch (error) {
+        const status =
+          typeof error === 'object' && error !== null && 'status' in error
+            ? Number((error as { status?: unknown }).status)
+            : undefined;
+        if (status !== 404) throw error;
+        await clearCachedRemoteBookCover(bookId);
+      }
     }
   }
 
@@ -332,6 +393,7 @@ export class LocalOutboxSyncService {
         ? (item.event.payload as Record<string, JsonValue>)
         : undefined;
     if (typeof payload?.compoundOperationId === 'string') return undefined;
+    if (payload?.coverMutation === 'replace' || payload?.coverMutation === 'remove') return undefined;
     const revision = item.event.revision;
     if (!revision || !compactableEventTypes.has(item.event.type)) return undefined;
     return `${item.event.type}:${revision.entityType}:${revision.novelId ?? ''}:${revision.entityId}`;
@@ -395,24 +457,32 @@ export class LocalOutboxSyncService {
     };
   }
 
-  private async pullRemoteUpdates(negotiation: NegotiatedSyncContract): Promise<PullSyncResult> {
+  private async pullRemoteUpdates(negotiation: NegotiatedSyncContract): Promise<{ cursor: number }> {
     const current = await getSyncState();
-    const pulled = await this.client.pullSync(current.lastRemoteCursor ?? 0, negotiation.descriptor);
-    const events =
-      negotiation.descriptor.contractVersion === 1
-        ? await translateLocalPulledEventsToV2(pulled.events)
-        : pulled.events;
-    await this.cacheImportedBooks(events);
-    await this.cachePulledCoverAssets(events);
-    await applyRemoteSyncEvents(events);
-    await applyRemoteVoiceCastingSyncEvents(events);
-    await saveSyncState({
-      mode: 'connected',
-      status: 'syncing',
-      lastRemoteCursor: pulled.cursor,
-      lastError: undefined,
-    });
-    return { ...pulled, events };
+    let cursor = current.lastRemoteCursor ?? 0;
+    while (true) {
+      const pulled = await this.client.pullSync(cursor, negotiation.descriptor);
+      if (pulled.cursor < cursor || (pulled.events.length > 0 && pulled.cursor <= cursor)) {
+        throw new Error('The server returned a non-advancing sync cursor.');
+      }
+      const events =
+        negotiation.descriptor.contractVersion === 1
+          ? await translateLocalPulledEventsToV2(pulled.events)
+          : pulled.events;
+      await this.cacheImportedBooks(events);
+      await this.cachePulledCoverAssets(events);
+      await applyRemoteSyncEvents(events);
+      await applyRemoteVoiceCastingSyncEvents(events);
+      cursor = pulled.cursor;
+      await saveSyncState({
+        mode: 'connected',
+        status: 'syncing',
+        lastRemoteCursor: cursor,
+        lastError: undefined,
+      });
+      if (pulled.events.length < REMOTE_SYNC_PAGE_SIZE) break;
+    }
+    return { cursor };
   }
 
   private async runFlushPending(): Promise<SyncState> {
@@ -431,14 +501,15 @@ export class LocalOutboxSyncService {
 
       if (!items.length && (await listSyncOutbox('sending')).length) return getSyncState();
 
-      if (items.length) {
+      while (items.length) {
         const leaseToken = this.createLeaseToken();
         const leaseWindow = this.currentLeaseWindow();
+        const batch = boundedSyncPushBatch(items);
         const claimedItems = await claimSyncOutboxBatchInDatabase(await openReaderDb(), {
           leaseToken,
           now: leaseWindow.now,
           leaseExpiresAt: leaseWindow.leaseExpiresAt,
-          candidateIds: items.map((item) => item.id),
+          candidateIds: batch.map((item) => item.id),
         });
         if (!claimedItems.length) return getSyncState();
 
@@ -452,6 +523,7 @@ export class LocalOutboxSyncService {
         activeClaim = undefined;
         if (application.ownershipLost) return getSyncState();
         if (application.conflictState) return application.conflictState;
+        items = await this.queuedItems();
       }
 
       const pulled = await this.pullRemoteUpdates(negotiation);
@@ -492,16 +564,7 @@ export class LocalOutboxSyncService {
       await saveSyncState({ mode: 'connected', status: 'syncing', lastError: undefined });
       const negotiation = await this.negotiatedContract();
       const queued = (await listSyncOutbox()).filter((item) => item.status !== 'sent');
-      const current = await getSyncState();
-      const pulled = await this.client.pullSync(current.lastRemoteCursor ?? 0, negotiation.descriptor);
-      const events =
-        negotiation.descriptor.contractVersion === 1
-          ? await translateLocalPulledEventsToV2(pulled.events)
-          : pulled.events;
-      await this.cacheImportedBooks(events);
-      await this.cachePulledCoverAssets(events);
-      await applyRemoteSyncEvents(events);
-      await applyRemoteVoiceCastingSyncEvents(events);
+      const pulled = await this.pullRemoteUpdates(negotiation);
       await updateSyncOutboxItems(
         queued.map((item) => item.id),
         'sent',

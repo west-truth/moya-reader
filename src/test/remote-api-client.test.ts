@@ -7,6 +7,7 @@ import {
   RemoteApiClient,
   RemoteApiRequestTimeoutError,
 } from '../services/remote/remote-api-client';
+import { RemoteApiError } from '../services/remote/remote-api-contracts';
 
 function jsonResponse(body: unknown): Response {
   return new Response(JSON.stringify(body), {
@@ -30,6 +31,28 @@ describe('RemoteApiClient auth headers', () => {
 
     await expect(client.listBooks()).rejects.toMatchObject({ status: 401 });
     expect(unauthorized).toHaveBeenCalledOnce();
+  });
+
+  it('exposes a server JSON error as a readable message while preserving its payload', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(
+        async () =>
+          new Response(JSON.stringify({ error: 'book metadata revision changed', actualRevision: 'revision-3' }), {
+            status: 409,
+          }),
+      ),
+    );
+    const client = new RemoteApiClient('/api');
+
+    const failure = await client.listBooks().catch((error: unknown) => error);
+
+    expect(failure).toBeInstanceOf(RemoteApiError);
+    expect(failure).toMatchObject({
+      status: 409,
+      message: 'book metadata revision changed',
+      payload: { error: 'book metadata revision changed', actualRevision: 'revision-3' },
+    });
   });
 
   it('adds a bearer token from the auth token provider', async () => {
@@ -67,6 +90,62 @@ describe('RemoteApiClient auth headers', () => {
 
     const init = fetchMock.mock.calls[0]?.[1] ?? {};
     expect(init.headers).not.toHaveProperty('Authorization');
+  });
+
+  it('reads hosted cover metadata from the cover response headers', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(
+        async () =>
+          new Response(new Blob(['jpeg'], { type: 'image/jpeg' }), {
+            status: 200,
+            headers: {
+              'Content-Type': 'image/jpeg',
+              'Content-Length': '4',
+              'X-Asset-Id': 'cover_archive',
+              'X-Asset-Provenance': 'archive_embedded',
+              'X-Asset-Status': 'active',
+              'X-Asset-File-Name': 'cover%20page.jpg',
+              'X-Asset-Content-Hash': 'sha256:archive',
+              'X-Asset-Pixel-Width': '800',
+              'X-Asset-Pixel-Height': '1200',
+              'X-Asset-Created-At': '2026-08-30T00:00:00.000Z',
+            },
+          }),
+      ),
+    );
+    const client = new RemoteApiClient('/api');
+
+    await expect(client.getBookCover('book-1')).resolves.toMatchObject({
+      metadata: {
+        id: 'cover_archive',
+        book_id: 'book-1',
+        provenance: 'archive_embedded',
+        file_name: 'cover page.jpg',
+        content_hash: 'sha256:archive',
+        pixel_width: 800,
+        pixel_height: 1200,
+      },
+    });
+  });
+
+  it('continues through every hosted library page and rejects a repeated cursor', async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(jsonResponse({ books: [{ id: 'book-1' }], nextCursor: '1000' }))
+      .mockResolvedValueOnce(jsonResponse({ books: [{ id: 'book-2' }] }));
+    vi.stubGlobal('fetch', fetchMock);
+    const client = new RemoteApiClient('/api');
+
+    await expect(client.listBooks()).resolves.toEqual({ books: [{ id: 'book-1' }, { id: 'book-2' }] });
+    expect(fetchMock).toHaveBeenNthCalledWith(1, '/api/books', expect.any(Object));
+    expect(fetchMock).toHaveBeenNthCalledWith(2, '/api/books?limit=1000&cursor=1000', expect.any(Object));
+
+    fetchMock
+      .mockReset()
+      .mockResolvedValueOnce(jsonResponse({ books: [], nextCursor: '1000' }))
+      .mockResolvedValueOnce(jsonResponse({ books: [], nextCursor: '1000' }));
+    await expect(client.listBooks()).rejects.toThrow('repeated a library cursor');
   });
 
   it('does not set a JSON content type on the bodyless upload completion request', async () => {
@@ -114,6 +193,40 @@ describe('RemoteApiClient auth headers', () => {
         contentType: 'text/plain',
         encoding: 'utf-8',
         totalChunks: 1,
+      }),
+    );
+  });
+
+  it('uses a dedicated non-fallback endpoint for approved enrichment covers', async () => {
+    const fetchMock = vi.fn(async () =>
+      jsonResponse({
+        cover: { id: 'approved-cover' },
+        previousCover: null,
+        metadataRevision: 4,
+      }),
+    );
+    vi.stubGlobal('fetch', fetchMock);
+    const client = new RemoteApiClient('/api');
+    const blob = new Blob(['png'], { type: 'image/png' });
+
+    await client.saveApprovedEnrichmentBookCover('book-1', blob, {
+      fileName: 'cover.png',
+      contentType: 'image/png',
+      contentHash: 'sha256:cover',
+      pixelWidth: 1,
+      pixelHeight: 1,
+      fit: 'contain',
+      positionX: 50,
+      positionY: 50,
+      expectedMetadataRevision: 3,
+    });
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      '/api/books/book-1/cover/approved-enrichment',
+      expect.objectContaining({
+        method: 'PUT',
+        body: blob,
+        headers: expect.objectContaining({ 'X-Expected-Metadata-Revision': '3' }),
       }),
     );
   });

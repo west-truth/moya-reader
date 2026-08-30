@@ -1,4 +1,4 @@
-import Fastify, { FastifyInstance } from 'fastify';
+import Fastify, { FastifyInstance, type FastifyError } from 'fastify';
 import { assertSecureServerConfig, corsAllowedOrigins, type ServerConfig } from './config.js';
 import { createPool, seedDefaultUser } from './db/pool.js';
 import { runMigrations } from './db/migrate.js';
@@ -112,12 +112,30 @@ export function registerCorsPolicy(app: FastifyInstance, config: ServerConfig): 
     );
     reply.header(
       'Access-Control-Expose-Headers',
-      'X-Request-Id,X-Correlation-Id,X-Asset-Id,X-Asset-Kind,X-Asset-File-Name,X-Page-Index,X-Source-File-Name,X-Source-Content-Hash,Accept-Ranges,Content-Range,Content-Length,Content-Disposition,ETag',
+      'X-Request-Id,X-Correlation-Id,X-Asset-Id,X-Asset-Kind,X-Asset-Provenance,X-Asset-Status,X-Asset-File-Name,X-Asset-Content-Hash,X-Asset-Pixel-Width,X-Asset-Pixel-Height,X-Asset-Created-At,X-Asset-Activated-At,X-Page-Index,X-Source-File-Name,X-Source-Content-Hash,Accept-Ranges,Content-Range,Content-Length,Content-Disposition,ETag',
     );
     reply.header('Access-Control-Max-Age', '600');
   });
 
   app.options('/*', async (_request, reply) => reply.code(204).send());
+}
+
+export function registerSafeErrorHandler(app: FastifyInstance): void {
+  app.setErrorHandler((error: FastifyError, _request, reply) => {
+    const statusCode = Number.isInteger(error.statusCode) ? Number(error.statusCode) : 500;
+    if (statusCode < 500) {
+      return reply.code(statusCode).send({
+        error: error.message,
+        ...(typeof error.code === 'string' ? { code: error.code } : undefined),
+      });
+    }
+    const requestId = reply.getHeader('x-request-id');
+    return reply.code(500).send({
+      error: '서버 요청을 처리하지 못했습니다.',
+      code: 'internal_server_error',
+      ...(typeof requestId === 'string' && requestId ? { requestId } : undefined),
+    });
+  });
 }
 
 export async function buildServer(config: ServerConfig): Promise<FastifyInstance> {
@@ -144,6 +162,7 @@ export async function buildServer(config: ServerConfig): Promise<FastifyInstance
   });
 
   registerRequestObservability(app, logger);
+  registerSafeErrorHandler(app);
 
   app.addContentTypeParser('application/octet-stream', { parseAs: 'buffer' }, (_request, body, done) => {
     done(null, body);

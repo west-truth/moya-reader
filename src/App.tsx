@@ -1133,7 +1133,7 @@ export default function App() {
   });
   const refreshAfterLocalMutation = useCallback(
     async (kind: CloudVaultMutationKind = 'library') => {
-      const result = await refreshConnectedAfterLocalMutation();
+      const result = await refreshConnectedAfterLocalMutation(kind);
       setCloudVaultMutationRevisions((current) => ({ ...current, [kind]: current[kind] + 1 }));
       return result;
     },
@@ -1194,6 +1194,7 @@ export default function App() {
   const libraryManagement = useLibraryManagementController({
     catalog: libraryCatalogRepository,
     assets: bookAssetRepository,
+    getNovel: (bookId) => readerRepository.getNovel(bookId),
     refreshNovels,
     refreshAfterMutation: refreshAfterLocalMutation,
     notify: showToast,

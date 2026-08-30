@@ -1,7 +1,7 @@
 import type { FastifyInstance } from 'fastify';
 import pg from 'pg';
 import type { ServerConfig } from '../../config.js';
-import { createS3Client, getObjectBuffer } from '../../services/object-storage.js';
+import { createS3Client, getObjectStream } from '../../services/object-storage.js';
 
 interface ResourceRow {
   id: string;
@@ -20,6 +20,7 @@ export async function registerEpubResourceRoutes(
   pool: pg.Pool,
   config: ServerConfig,
 ): Promise<void> {
+  const objectStorage = createS3Client(config);
   app.get<{ Params: { bookId: string; assetId: string } }>(
     '/api/books/:bookId/resources/:assetId',
     async (request, reply) => {
@@ -34,16 +35,17 @@ export async function registerEpubResourceRoutes(
       );
       const resource = result.rows[0];
       if (!resource) return reply.code(404).send({ error: 'Document resource not found' });
-      const stored = await getObjectBuffer(createS3Client(config), config, resource.storage_key);
+      const stored = await getObjectStream(objectStorage, config, resource.storage_key);
       return reply
         .header('Content-Type', resource.content_type)
         .header('Content-Length', String(resource.byte_length))
         .header('ETag', resource.content_hash)
+        .header('Cache-Control', 'private, max-age=31536000, immutable')
         .header('X-Asset-Id', resource.id)
         .header('X-Asset-Kind', resource.kind)
         .header('X-Page-Index', resource.page_index === null ? '' : String(resource.page_index))
         .header('X-Asset-File-Name', encodeURIComponent(resource.file_name ?? 'resource'))
-        .send(stored);
+        .send(stored.body);
     },
   );
 }

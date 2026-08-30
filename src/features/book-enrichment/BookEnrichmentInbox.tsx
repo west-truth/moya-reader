@@ -192,11 +192,13 @@ function ApprovalHistory({
   controller,
   manualDraftDirty,
   approvals,
+  onApplied,
 }: {
   book: Novel;
   controller: BookEnrichmentController;
   manualDraftDirty: boolean;
   approvals: readonly BookEnrichmentApprovalReceipt[];
+  onApplied(): void;
 }) {
   if (approvals.length === 0) return null;
   return (
@@ -226,7 +228,11 @@ function ApprovalHistory({
                   className="ghost-btn"
                   type="button"
                   disabled={!canUndo}
-                  onClick={() => void controller.undo(receipt.id)}
+                  onClick={() =>
+                    void controller.undo(receipt.id).then((undone) => {
+                      if (undone) onApplied();
+                    })
+                  }
                 >
                   <RotateCcw size={15} /> {state === 'available' ? '되돌리기' : approvalStateLabels[state]}
                 </button>
@@ -535,6 +541,7 @@ export function BookEnrichmentInbox({
           controller={controller}
           manualDraftDirty={manualDraftDirty}
           approvals={approvals}
+          onApplied={onApplied}
         />
       </div>
     </section>

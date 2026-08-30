@@ -6,6 +6,8 @@ AGENTS.md
 
 # Internal planning, review packets, and local artifacts are not image inputs
 artifacts/
+.codex-remote-attachments/
+.tmp/
 docs/
 handoff/
 .noveldesk-lab/
