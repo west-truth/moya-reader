@@ -9,13 +9,7 @@ import { applySyncEvent } from './event-application.js';
 import { pushSyncContract, type PushEventsBody } from './request-contracts.js';
 import { mapPushSyncResponse } from './response-mappers.js';
 import { insertSyncEvent } from './sync-event-persistence.js';
-import {
-  canonicalizeIncomingSyncEvent,
-  SyncIdentityTranslationError,
-  type CanonicalIncomingSyncEvent,
-} from './sync-contract-translation.js';
-import { isReadingPositionEvent, lockReaderState } from '../../services/reader-state-lock.js';
-import { isBookLifecycleEvent, lockImageSeriesBookLifecycle } from '../../services/book-operation-lock.js';
+import { canonicalizeIncomingSyncEvent, SyncIdentityTranslationError } from './sync-contract-translation.js';
 
 type SourceEvent = SyncEvent;
 
@@ -23,36 +17,6 @@ interface SourceEventResult {
   readonly sourceEventId: string;
   readonly inserted: boolean;
   readonly rejection?: RejectedSyncEvent;
-}
-
-interface PreparedSourceEvent {
-  readonly sourceEventId: string;
-  readonly translated?: CanonicalIncomingSyncEvent;
-  readonly rejection?: RejectedSyncEvent;
-}
-
-/**
- * Acquire only the cross-route locks needed by this push envelope.
- *
- * Lifecycle locks share the namespace used by append/purge/cover mutations,
- * while reader locks share the namespace used by direct reading-position
- * writes.  Each class is sorted independently and every push acquires the
- * classes in the same lifecycle-then-reader order to avoid lock-order cycles.
- */
-export async function lockSyncPushBooks(
-  client: pg.PoolClient,
-  userId: string,
-  events: readonly SyncEvent[],
-): Promise<void> {
-  const lifecycleBookIds = [
-    ...new Set(events.flatMap((event) => (event.novelId && isBookLifecycleEvent(event.type) ? [event.novelId] : []))),
-  ].sort();
-  const readingBookIds = [
-    ...new Set(events.flatMap((event) => (event.novelId && isReadingPositionEvent(event.type) ? [event.novelId] : []))),
-  ].sort();
-
-  for (const bookId of lifecycleBookIds) await lockImageSeriesBookLifecycle(client, bookId);
-  for (const bookId of readingBookIds) await lockReaderState(client, userId, bookId);
 }
 
 function compoundOperationId(event: SourceEvent): string | undefined {
@@ -82,13 +46,14 @@ function eventGroups(events: SourceEvent[]): SourceEvent[][] {
   return units;
 }
 
-async function prepareSourceEvent(
+async function processSourceEvent(
   client: pg.PoolClient,
-  userId: string,
+  config: ServerConfig,
   envelopeContract: ResolvedSyncContract,
   sourceEvent: SourceEvent,
-): Promise<PreparedSourceEvent> {
+): Promise<SourceEventResult> {
   const sourceEventId = typeof sourceEvent?.id === 'string' ? sourceEvent.id : '';
+  let translated;
   try {
     const eventContract = resolveSyncContract(sourceEvent);
     if (eventContract.contractVersion > envelopeContract.contractVersion) {
@@ -97,13 +62,11 @@ async function prepareSourceEvent(
         'An event contract cannot exceed the push envelope contract.',
       );
     }
-    return {
-      sourceEventId,
-      translated: await canonicalizeIncomingSyncEvent(client, userId, sourceEvent),
-    };
+    translated = await canonicalizeIncomingSyncEvent(client, config.defaultUserId, sourceEvent);
   } catch (error) {
     return {
       sourceEventId,
+      inserted: false,
       rejection: {
         id: sourceEventId,
         reason: 'invalid',
@@ -111,32 +74,7 @@ async function prepareSourceEvent(
       },
     };
   }
-}
-
-async function processSourceEvent(
-  client: pg.PoolClient,
-  config: ServerConfig,
-  prepared: PreparedSourceEvent,
-): Promise<SourceEventResult> {
-  if (!prepared.translated) {
-    return {
-      sourceEventId: prepared.sourceEventId,
-      inserted: false,
-      rejection: prepared.rejection,
-    };
-  }
-  const translated = prepared.translated;
-  const sourceEventId = prepared.sourceEventId;
   const event = translated.event;
-  if (isBookLifecycleEvent(event.type)) {
-    const duplicate = await client.query(
-      `select 1 from sync_events
-        where user_id = $1 and (id = $2 or source_event_id = $3)
-        limit 1`,
-      [config.defaultUserId, event.id, sourceEventId],
-    );
-    if (duplicate.rows[0]) return { sourceEventId, inserted: false };
-  }
   if (!(await hasExistingBookForEvent(client, config.defaultUserId, event))) {
     return {
       sourceEventId,
@@ -190,25 +128,13 @@ export function registerSyncPushRoute(app: FastifyInstance, pool: pg.Pool, confi
     const rejected: RejectedSyncEvent[] = [];
     try {
       await client.query('begin');
-      const preparedBySource = new Map<SourceEvent, PreparedSourceEvent>();
-      for (const sourceEvent of events) {
-        preparedBySource.set(
-          sourceEvent,
-          await prepareSourceEvent(client, config.defaultUserId, envelopeContract, sourceEvent),
-        );
-      }
-      await lockSyncPushBooks(
-        client,
-        config.defaultUserId,
-        [...preparedBySource.values()].flatMap((prepared) => (prepared.translated ? [prepared.translated.event] : [])),
-      );
       for (const group of eventGroups(events)) {
         const operationId = compoundOperationId(group[0]);
         if (operationId) await client.query('savepoint sync_compound_operation');
         const groupResults: SourceEventResult[] = [];
         try {
           for (const sourceEvent of group) {
-            const result = await processSourceEvent(client, config, preparedBySource.get(sourceEvent)!);
+            const result = await processSourceEvent(client, config, envelopeContract, sourceEvent);
             groupResults.push(result);
             if (result.rejection) break;
           }

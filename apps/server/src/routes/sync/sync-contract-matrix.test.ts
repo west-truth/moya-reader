@@ -217,26 +217,6 @@ function matrixClient(events: SyncEvent[], omitAlias?: { entityType: string; can
       if (sql.includes('from paragraph_search') && sql.includes('paragraph_id = any')) {
         return { rowCount: 1, rows: [{ paragraph_id: 'paragraph_1', text: 'Hello' }] };
       }
-      if (sql.includes('select object_id, metadata_revision, active_content_revision_id, deleted_at')) {
-        return {
-          rowCount: 1,
-          rows: [
-            {
-              object_id: null,
-              metadata_revision: 0,
-              active_content_revision_id: 'content_revision_1',
-              deleted_at: null,
-            },
-          ],
-        };
-      }
-      if (sql.includes('delete from library_books') && sql.includes('returning object_id')) {
-        return {
-          rowCount: 1,
-          rows: [{ object_id: null, metadata_revision: 0, active_content_revision_id: 'content_revision_1' }],
-        };
-      }
-      if (sql.includes('should_accept')) return { rowCount: 1, rows: [{ should_accept: true }] };
       if (sql.includes('from library_books') && sql.includes('for share')) {
         return { rowCount: 1, rows: [{ exists: true }] };
       }
@@ -244,6 +224,7 @@ function matrixClient(events: SyncEvent[], omitAlias?: { entityType: string; can
       if (sql.includes('select exists(select 1 from paragraph_search')) {
         return { rowCount: 1, rows: [{ exists: true }] };
       }
+      if (sql.includes('should_accept')) return { rowCount: 1, rows: [{ should_accept: true }] };
       if (sql.includes('insert into sync_events')) {
         insertedIds.push(String(params?.[0]));
         return { rowCount: 1, rows: [{ id: params?.[0] }] };
@@ -289,7 +270,7 @@ describe('versioned sync event matrix', () => {
       payload: version === 'v2' ? v2PushEnvelope(sourceEvents) : { events: sourceEvents },
     });
 
-    expect(response.statusCode, response.body).toBe(200);
+    expect(response.statusCode).toBe(200);
     expect(response.json()).toEqual({
       ...SYNC_CONTRACT_V2,
       accepted: canonicalEvents.length,

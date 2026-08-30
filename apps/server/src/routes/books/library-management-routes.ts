@@ -46,17 +46,7 @@ function batchTargets(value: unknown): BatchLibraryTarget[] | undefined {
     ) {
       return undefined;
     }
-    if (
-      row.expectedContentRevisionId !== undefined &&
-      (typeof row.expectedContentRevisionId !== 'string' || !row.expectedContentRevisionId.trim())
-    ) {
-      return undefined;
-    }
-    targets.push({
-      bookId: row.bookId,
-      expectedRevision: row.expectedRevision as number | undefined,
-      expectedContentRevisionId: row.expectedContentRevisionId as string | undefined,
-    });
+    targets.push({ bookId: row.bookId, expectedRevision: row.expectedRevision as number | undefined });
   }
   return targets;
 }

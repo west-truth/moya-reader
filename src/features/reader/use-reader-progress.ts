@@ -27,7 +27,6 @@ export interface ReaderProgressController {
   readonly handleScroll: () => void;
   readonly readLocation: () => ReaderLocationSnapshot | undefined;
   readonly flush: () => Promise<void>;
-  readonly flushImmediately: () => Promise<void>;
 }
 
 interface PendingReaderPosition {
@@ -52,7 +51,6 @@ interface ReaderPositionPersistenceOptions extends Omit<
 interface ReaderPositionPersistenceController {
   readonly schedule: (location: ReaderLocationSnapshot, offsetInParagraph?: number) => void;
   readonly flush: () => Promise<void>;
-  readonly flushImmediately: () => Promise<void>;
 }
 
 export function useReaderPositionPersistence(
@@ -112,23 +110,22 @@ export function useReaderPositionPersistence(
   }, []);
 
   const flush = useCallback(() => persistenceRef.current!.flush(), []);
-  const flushImmediately = useCallback(() => persistenceRef.current!.flushImmediately(), []);
 
   useEffect(
     () => () => {
       generationRef.current += 1;
-      void persistenceRef.current?.flushImmediately();
+      void persistenceRef.current?.flush();
     },
     [options.chapter.id, options.novel.id],
   );
 
-  return { schedule, flush, flushImmediately };
+  return { schedule, flush };
 }
 
 export function useReaderProgress(options: ReaderProgressOptions): ReaderProgressController {
   const optionsRef = useRef(options);
   optionsRef.current = options;
-  const { schedule: schedulePosition, flush, flushImmediately } = useReaderPositionPersistence(options);
+  const { schedule: schedulePosition, flush } = useReaderPositionPersistence(options);
   const publisherRef = useRef<RafProgressPublisher<ReaderLocationSnapshot>>();
   if (!publisherRef.current) {
     publisherRef.current = new RafProgressPublisher(
@@ -175,5 +172,5 @@ export function useReaderProgress(options: ReaderProgressOptions): ReaderProgres
     };
   }, [options.chapter.id, options.novel.id]);
 
-  return { handleScroll, readLocation, flush, flushImmediately };
+  return { handleScroll, readLocation, flush };
 }

@@ -220,38 +220,7 @@ describe('LocalOutboxSyncService', () => {
       expectedMetadataRevision: 0,
     });
     await patchNovelMetadata('novel-approved-cover', { title: 'Updated after cover selection' });
-    const coverEvent = (await listSyncOutbox('pending')).find(
-      (item) =>
-        item.event.type === 'book_updated' &&
-        (item.event.payload as Record<string, unknown>).coverMutation === 'replace',
-    );
-    const coverPayload = coverEvent?.event.payload as Record<string, unknown> | undefined;
-    const coverNovel = coverPayload?.novel as Record<string, unknown> | undefined;
-    const metadataRevision = coverNovel?.metadataRevision;
-    if (typeof metadataRevision !== 'number') throw new Error('cover event metadata revision is missing');
-    await discardSyncOutboxItems((await listSyncOutbox('pending')).map((item) => item.id));
-    await enqueueSyncEvent(
-      'book_updated',
-      {
-        novel: {
-          id: 'novel-approved-cover',
-          metadataRevision,
-          coverFit: 'contain',
-          coverPositionX: 50,
-          coverPositionY: 50,
-        },
-        coverMutation: 'replace',
-        contentRevisionId: 'canonical-content-revision',
-      },
-      { novelId: 'novel-approved-cover', entityId: 'novel-approved-cover' },
-    );
-    let uploadedMetadata:
-      | {
-          provenance?: 'user_supplied' | 'approved_enrichment' | 'generated_preview';
-          expectedMetadataRevision?: number;
-          expectedContentRevisionId?: string;
-        }
-      | undefined;
+    let uploadedProvenance: string | undefined;
     const source: SyncEventSource = {
       async pushSync(events) {
         return { accepted: events.length };
@@ -260,60 +229,13 @@ describe('LocalOutboxSyncService', () => {
         return { cursor: 0, events: [] };
       },
       async saveBookCover(_bookId, _cover, metadata) {
-        uploadedMetadata = metadata;
+        uploadedProvenance = metadata.provenance;
       },
     };
 
     await new LocalOutboxSyncService(source).flushPending();
 
-    expect(uploadedMetadata).toMatchObject({
-      provenance: 'approved_enrichment',
-      expectedMetadataRevision: metadataRevision,
-      expectedContentRevisionId: 'canonical-content-revision',
-    });
-  });
-
-  it('uses canonical cover removal expectations while preserving legacy events without revisions', async () => {
-    await enqueueSyncEvent(
-      'book_updated',
-      {
-        novel: { id: 'novel-cover-remove', metadataRevision: 7 },
-        coverMutation: 'remove',
-        contentRevisionId: 'content-revision-7',
-      },
-      { novelId: 'novel-cover-remove', entityId: 'novel-cover-remove' },
-    );
-    await enqueueSyncEvent(
-      'book_updated',
-      {
-        novel: { id: 'novel-cover-remove-legacy' },
-        coverMutation: 'remove',
-      },
-      { novelId: 'novel-cover-remove-legacy', entityId: 'novel-cover-remove-legacy' },
-    );
-    const removals: Array<{
-      bookId: string;
-      expectation?: { metadataRevision?: number; activeContentRevisionId?: string };
-    }> = [];
-    const source: SyncEventSource = {
-      async pushSync(events) {
-        return { accepted: events.length };
-      },
-      async pullSync() {
-        return { cursor: 0, events: [] };
-      },
-      async removeBookCover(bookId, expectation) {
-        removals.push({ bookId, expectation });
-      },
-    };
-
-    await new LocalOutboxSyncService(source).flushPending();
-
-    expect(removals.find((item) => item.bookId === 'novel-cover-remove')?.expectation).toEqual({
-      metadataRevision: 7,
-      activeContentRevisionId: 'content-revision-7',
-    });
-    expect(removals.find((item) => item.bookId === 'novel-cover-remove-legacy')?.expectation).toBeUndefined();
+    expect(uploadedProvenance).toBe('approved_enrichment');
   });
 
   it('marks outbox events as failed when the server push fails', async () => {

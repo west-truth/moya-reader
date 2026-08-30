@@ -197,89 +197,6 @@ describe('RemoteApiClient auth headers', () => {
     );
   });
 
-  it('keeps hosted reader-state writes alive across a page lifecycle boundary', async () => {
-    const fetchMock = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) =>
-      jsonResponse({ ok: true, applied: true }),
-    );
-    vi.stubGlobal('fetch', fetchMock);
-    const client = new RemoteApiClient('/api');
-
-    await client.saveReadingPosition('book-1', {
-      chapterId: 'chapter-6',
-      expectedContentRevisionId: 'content-1',
-      documentSectionId: 'section-6',
-      paragraphIndex: 0,
-      offsetInParagraph: 0,
-      chapterProgress: 1,
-      scrollTop: 5,
-      deviceId: 'browser-a',
-      updatedAt: '2026-07-05T00:00:00.000Z',
-    });
-
-    expect(fetchMock).toHaveBeenCalledWith(
-      '/api/books/book-1/reading-position',
-      expect.objectContaining({ method: 'PATCH', keepalive: true }),
-    );
-    expect(JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body))).toMatchObject({
-      expectedContentRevisionId: 'content-1',
-      documentSectionId: 'section-6',
-    });
-  });
-
-  it('sends the canonical content revision on source reads and source attachment', async () => {
-    const fetchMock = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
-      if (init?.method === 'PUT') return jsonResponse({ source: { id: 'source-1' } });
-      return new Response(new Blob(['source']), { status: 200 });
-    });
-    vi.stubGlobal('fetch', fetchMock);
-    const client = new RemoteApiClient('/api');
-
-    await client.getBookSource('book-1', 'content-r2');
-    await client.getBookSourceRange('book-1', 2, 5, undefined, 'content-r2');
-    await client.reselectBookSource('book-1', new Blob(['source']), {
-      fileName: 'book.txt',
-      contentType: 'text/plain',
-      expectedContentRevisionId: 'content-r2',
-    });
-
-    expect(fetchMock).toHaveBeenNthCalledWith(
-      1,
-      '/api/books/book-1/source',
-      expect.objectContaining({ headers: { 'X-Expected-Content-Revision-Id': 'content-r2' } }),
-    );
-    expect(fetchMock).toHaveBeenNthCalledWith(
-      2,
-      '/api/books/book-1/source',
-      expect.objectContaining({
-        headers: {
-          Range: 'bytes=2-4',
-          'X-Expected-Content-Revision-Id': 'content-r2',
-        },
-      }),
-    );
-    expect(fetchMock).toHaveBeenNthCalledWith(
-      3,
-      '/api/books/book-1/source',
-      expect.objectContaining({
-        method: 'PUT',
-        headers: expect.objectContaining({ 'X-Expected-Content-Revision-Id': 'content-r2' }),
-      }),
-    );
-  });
-
-  it('fences source metadata lookup to the caller content incarnation', async () => {
-    const fetchMock = vi.fn(async () => jsonResponse({ source: { id: 'source-1' } }));
-    vi.stubGlobal('fetch', fetchMock);
-    const client = new RemoteApiClient('/api');
-
-    await client.getBookSourceMetadata('book-1', 'content-r2');
-
-    expect(fetchMock).toHaveBeenCalledWith(
-      '/api/books/book-1/source/metadata',
-      expect.objectContaining({ headers: { 'X-Expected-Content-Revision-Id': 'content-r2' } }),
-    );
-  });
-
   it('uses a dedicated non-fallback endpoint for approved enrichment covers', async () => {
     const fetchMock = vi.fn(async () =>
       jsonResponse({
@@ -302,7 +219,6 @@ describe('RemoteApiClient auth headers', () => {
       positionX: 50,
       positionY: 50,
       expectedMetadataRevision: 3,
-      expectedContentRevisionId: 'content-1',
     });
 
     expect(fetchMock).toHaveBeenCalledWith(
@@ -310,29 +226,7 @@ describe('RemoteApiClient auth headers', () => {
       expect.objectContaining({
         method: 'PUT',
         body: blob,
-        headers: expect.objectContaining({
-          'X-Expected-Metadata-Revision': '3',
-          'X-Expected-Content-Revision-Id': 'content-1',
-        }),
-      }),
-    );
-  });
-
-  it('sends both metadata and content expectations when removing a hosted cover', async () => {
-    const fetchMock = vi.fn(async () => jsonResponse({ ok: true }));
-    vi.stubGlobal('fetch', fetchMock);
-    const client = new RemoteApiClient('/api');
-
-    await client.removeBookCover('book-1', {
-      metadataRevision: 4,
-      activeContentRevisionId: 'content-2',
-    });
-
-    expect(fetchMock).toHaveBeenCalledWith(
-      '/api/books/book-1/cover',
-      expect.objectContaining({
-        method: 'DELETE',
-        body: JSON.stringify({ expectedRevision: 4, expectedContentRevisionId: 'content-2' }),
+        headers: expect.objectContaining({ 'X-Expected-Metadata-Revision': '3' }),
       }),
     );
   });

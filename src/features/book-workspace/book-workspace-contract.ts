@@ -10,8 +10,6 @@ import type {
 } from '../../domain/types';
 import type { ReadingPosition } from '../../sync/types';
 import type { NovelMetadataPatch, SaveReadingPositionInput } from '../../repositories/reader-repository';
-import type { TrashPurgeReceipt } from '../../repositories/library-catalog-repository';
-import type { BookLifecycleExpectation, BookMutationExpectation } from '../../repositories/library-catalog-repository';
 import type { ChapterReadFilter, ChapterSort } from '../chapters/chapters-screen-model';
 import type { LibraryFilter, LibrarySort, LibraryViewMode } from '../library/library-screen-model';
 import type { ReaderLocationSnapshot, ReaderMode } from '../reader/reader-screen-contract';
@@ -19,14 +17,6 @@ import type { ReaderLocationSnapshot, ReaderMode } from '../reader/reader-screen
 export type BookWorkspaceView = 'library' | 'chapters' | 'reader' | 'document';
 export type BookWorkspaceUpdate<Value> = Value | ((previous: Value) => Value);
 export type BookWorkspaceNoticeTone = 'info' | 'success' | 'warning' | 'danger';
-export interface FixedDocumentPageTarget {
-  readonly novelId: string;
-  readonly contentRevisionId?: string;
-  readonly chapterId: string;
-  readonly documentSectionId?: string;
-  readonly chapterIndex: number;
-  readonly totalPages: number;
-}
 export interface BookWorkspaceNoticeAction {
   readonly label: string;
   onSelect(): void | Promise<void>;
@@ -72,32 +62,19 @@ export interface BookWorkspaceReaderArtifacts {
 }
 
 export interface BookWorkspaceRepositoryPort {
-  listChapters(novelId: string, expectedContentRevisionId?: string): Promise<Chapter[]>;
+  listChapters(novelId: string): Promise<Chapter[]>;
   getNovel(novelId: string): Promise<Novel | undefined>;
   getReadingPosition(novelId: string): Promise<ReadingPosition | undefined>;
-  patchNovelMetadata(novelId: string, patch: NovelMetadataPatch, expectation?: BookMutationExpectation): Promise<void>;
-  deleteNovel(novelId: string, expectation?: BookLifecycleExpectation): Promise<void>;
-  clearReadingPosition(novelId: string, expectedContentRevisionId?: string): Promise<void>;
+  patchNovelMetadata(novelId: string, patch: NovelMetadataPatch): Promise<void>;
+  deleteNovel(novelId: string, expectedRevision?: number): Promise<void>;
+  clearReadingPosition(novelId: string): Promise<void>;
   saveReadingPosition(input: SaveReadingPositionInput): Promise<void>;
 }
 
 export interface BookWorkspaceCatalogPort {
-  listTrash(): Promise<Novel[]>;
-  restore(bookId: string, expectation?: BookLifecycleExpectation): Promise<unknown>;
-  purge(bookId: string, expectation?: BookLifecycleExpectation): Promise<void>;
-  emptyTrash(): Promise<TrashPurgeReceipt>;
-}
-
-export interface BookWorkspaceAssociationPurgeTarget {
-  readonly bookId: string;
-  readonly activeContentRevisionId?: string;
-}
-
-export interface BookWorkspaceAssociationLifecyclePort {
-  prepareBookAssociationPurge(
-    targets: readonly BookWorkspaceAssociationPurgeTarget[],
-  ): Promise<{ readonly id: string }>;
-  completeBookAssociationPurge(intentId: string, confirmedBookIds?: readonly string[]): Promise<unknown>;
+  restore(bookId: string, expectedRevision?: number): Promise<unknown>;
+  purge(bookId: string, expectedRevision?: number): Promise<void>;
+  emptyTrash(): Promise<number>;
 }
 
 export interface BookWorkspaceReaderOpenOptions {
@@ -151,7 +128,6 @@ export interface BookWorkspaceEnvironmentPort {
 export interface BookWorkspacePorts {
   readonly repository: BookWorkspaceRepositoryPort;
   readonly catalog?: BookWorkspaceCatalogPort;
-  readonly associationLifecycle?: BookWorkspaceAssociationLifecyclePort;
   readonly transition: BookWorkspaceTransitionPort;
   readonly adjacent: BookWorkspaceAdjacentFeaturePort;
   readonly environment: BookWorkspaceEnvironmentPort;

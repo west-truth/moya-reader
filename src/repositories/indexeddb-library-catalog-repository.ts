@@ -19,24 +19,23 @@ import {
 
 export class IndexedDbLibraryCatalogRepository implements LibraryCatalogRepository {
   patchMetadata(...args: Parameters<LibraryCatalogRepository['patchMetadata']>) {
-    const [bookId, patch, expectation] = args;
-    return patchLibraryBookMetadata(bookId, patch, expectation?.metadataRevision, expectation?.activeContentRevisionId);
+    return patchLibraryBookMetadata(...args);
   }
 
   listTrash() {
     return getTrashedNovels();
   }
 
-  moveToTrash(...args: Parameters<LibraryCatalogRepository['moveToTrash']>) {
-    return moveNovelToTrash(...args);
+  moveToTrash(bookId: string, expectedRevision?: number) {
+    return moveNovelToTrash(bookId, expectedRevision);
   }
 
-  restore(...args: Parameters<LibraryCatalogRepository['restore']>) {
-    return restoreNovelFromTrash(...args);
+  restore(bookId: string, expectedRevision?: number) {
+    return restoreNovelFromTrash(bookId, expectedRevision);
   }
 
-  purge(...args: Parameters<LibraryCatalogRepository['purge']>) {
-    return purgeNovel(...args);
+  purge(bookId: string, expectedRevision?: number) {
+    return purgeNovel(bookId, expectedRevision);
   }
 
   emptyTrash() {

@@ -129,39 +129,17 @@ function assertValidRangeResponse(
 export class RemoteBookAssetRepository implements BookAssetRepository {
   constructor(private readonly client: RemoteApiClient) {}
 
-  async getActiveSource(bookId: string, expectation?: Parameters<BookAssetRepository['getActiveSource']>[1]) {
-    const metadata = sourceMetadata(
-      (await this.client.getBookSourceMetadata(bookId, expectation?.activeContentRevisionId)).source,
-    );
-    if (
-      expectation?.activeContentRevisionId !== undefined &&
-      metadata.contentRevisionId !== expectation.activeContentRevisionId
-    ) {
-      throw new Error(`Book ${bookId} content revision changed before source read`);
-    }
-    return metadata;
+  async getActiveSource(bookId: string) {
+    return sourceMetadata((await this.client.getBookSourceMetadata(bookId)).source);
   }
 
-  async exportSource(bookId: string, expectation?: Parameters<BookAssetRepository['exportSource']>[1]) {
-    // Resolve the canonical incarnation first. Downloading in parallel could
-    // combine R1 metadata with R2 bytes when a hard purge/reimport reuses the ID.
-    const metadata = await this.getActiveSource(bookId, expectation);
-    const expectedContentRevisionId = expectation?.activeContentRevisionId ?? metadata.contentRevisionId;
-    const download = await this.client.getBookSource(bookId, expectedContentRevisionId);
-    const downloadedContentRevisionId = download.headers.get('x-content-revision-id');
-    if (
-      downloadedContentRevisionId &&
-      expectedContentRevisionId &&
-      downloadedContentRevisionId !== expectedContentRevisionId
-    ) {
-      throw new Error(`Book ${bookId} content revision changed during source read`);
-    }
+  async exportSource(bookId: string) {
+    const [metadata, download] = await Promise.all([this.getActiveSource(bookId), this.client.getBookSource(bookId)]);
     return { metadata, blob: download.blob };
   }
 
-  async openSource(bookId: string, expectation?: Parameters<BookAssetRepository['openSource']>[1]) {
-    const metadata = await this.getActiveSource(bookId, expectation);
-    const expectedContentRevisionId = expectation?.activeContentRevisionId ?? metadata.contentRevisionId;
+  async openSource(bookId: string) {
+    const metadata = await this.getActiveSource(bookId);
     let closed = false;
     return {
       byteLength: metadata.byteLength,
@@ -172,7 +150,7 @@ export class RemoteBookAssetRepository implements BookAssetRepository {
         const start = Math.max(0, Math.floor(startInclusive));
         const end = Math.min(metadata.byteLength, Math.max(start, Math.floor(endExclusive)));
         if (end <= start) return new Uint8Array();
-        const response = await this.client.getBookSourceRange(bookId, start, end, signal, expectedContentRevisionId);
+        const response = await this.client.getBookSourceRange(bookId, start, end, signal);
         assertValidRangeResponse(response, start, end, metadata.byteLength);
         return new Uint8Array(await response.blob.arrayBuffer());
       },
@@ -186,7 +164,6 @@ export class RemoteBookAssetRepository implements BookAssetRepository {
     const result = await this.client.reselectBookSource(bookId, input.blob, {
       fileName: input.fileName,
       contentType: input.contentType,
-      expectedContentRevisionId: input.expectedContentRevisionId,
     });
     return sourceMetadata(result.source);
   }
@@ -196,17 +173,6 @@ export class RemoteBookAssetRepository implements BookAssetRepository {
       const download = await this.client.getBookCover(bookId);
       const metadata = download.metadata ?? (await this.client.getBookCoverMetadata(bookId)).cover;
       return { metadata: coverMetadata(metadata), blob: download.blob };
-    } catch (error) {
-      if (typeof error === 'object' && error !== null && 'status' in error && Number(error.status) === 404) {
-        return undefined;
-      }
-      throw error;
-    }
-  }
-
-  async getActiveCoverMetadata(bookId: string) {
-    try {
-      return coverMetadata((await this.client.getBookCoverMetadata(bookId)).cover);
     } catch (error) {
       if (typeof error === 'object' && error !== null && 'status' in error && Number(error.status) === 404) {
         return undefined;
@@ -316,17 +282,13 @@ export class RemoteBookAssetRepository implements BookAssetRepository {
     }
   }
 
-  removeCover(bookId: string, expectation?: Parameters<BookAssetRepository['removeCover']>[1]) {
-    return this.client.removeBookCover(bookId, expectation).then(() => undefined);
+  removeCover(bookId: string, expectedMetadataRevision?: number) {
+    return this.client.removeBookCover(bookId, expectedMetadataRevision).then(() => undefined);
   }
 
-  async getEmbeddedResource(
-    bookId: string,
-    assetId: string,
-    expectation?: Parameters<BookAssetRepository['getEmbeddedResource']>[2],
-  ) {
+  async getEmbeddedResource(bookId: string, assetId: string) {
     try {
-      const result = await this.client.getBookResource(bookId, assetId, expectation?.activeContentRevisionId);
+      const result = await this.client.getBookResource(bookId, assetId);
       const pageIndexHeader = result.headers.get('x-page-index');
       return {
         metadata: {

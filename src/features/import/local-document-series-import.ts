@@ -5,7 +5,8 @@ import type {
   DocumentSeriesSourcePreview,
 } from '@noveldesk/document-series-core';
 import type { Chapter, ChapterSplitMode, EncodingMode, Novel } from '../../domain/types';
-import { integrityHash, isIntegrityHash, persistentId128, tagLegacySha256Hash } from '@noveldesk/text-core/hash';
+import { integrityHash, isIntegrityHash, tagLegacySha256Hash } from '@noveldesk/text-core/hash';
+import { stableId } from '../../domain/hash';
 import {
   normalizeSerialWorkKey,
   parseSerialReleaseName,
@@ -186,7 +187,7 @@ export async function inspectLocalDocumentSeriesImport(
     });
     const sourceTitle = parsedName.releaseKey ? parsedName.releaseTitle : preview.title;
     sources.push({
-      id: persistentId128('local_document_source', [contentHash, file.name.normalize('NFKC')]),
+      id: stableId('local_document_source', `${contentHash}:${file.name.normalize('NFKC')}`, 20),
       file,
       contentHash,
       parsedName,
@@ -198,7 +199,7 @@ export async function inspectLocalDocumentSeriesImport(
   }
   const chapters = sources.flatMap((source) =>
     source.preview.chapters.map((chapter, index) => ({
-      id: persistentId128('local_document_chapter', [source.id, String(chapter.index), chapter.textHash]),
+      id: stableId('local_document_chapter', `${source.id}:${chapter.index}:${chapter.textHash}`, 20),
       sourceId: source.id,
       sourceTitle: source.sourceTitle,
       sourceFileName: source.file.name,
@@ -251,11 +252,7 @@ export async function planLocalDocumentSeriesImport(
   targetChapters: readonly Chapter[],
   assets: BookAssetRepository | undefined,
 ): Promise<LocalDocumentSeriesPlan> {
-  const targetSource = targetNovel
-    ? await assets?.exportSource(targetNovel.id, {
-        activeContentRevisionId: targetNovel.activeContentRevisionId,
-      })
-    : undefined;
+  const targetSource = targetNovel ? await assets?.exportSource(targetNovel.id) : undefined;
   if (targetNovel && !targetSource) throw new Error('기존 작품의 원본을 찾지 못해 회차를 안전하게 추가할 수 없습니다.');
   const existingArchive = targetSource
     ? await import('@noveldesk/document-series-core').then(({ readDocumentSeriesArchive }) =>
@@ -332,7 +329,7 @@ export async function buildLocalDocumentSeriesImportFile(
     const fileName = plan.targetSource.metadata.fileName ?? plan.targetNovel.sourceFileName;
     const parsed = parseSerialReleaseName(documentReleaseName(fileName), plan.targetNovel.title);
     sources.push({
-      id: persistentId128('local_document_source', [plan.targetSource.metadata.contentHash]),
+      id: stableId('local_document_source', plan.targetSource.metadata.contentHash, 20),
       title:
         plan.targetChapters.length === 1
           ? plan.targetChapters[0]!.title
@@ -381,7 +378,7 @@ export async function buildLocalDocumentSeriesImportFile(
     collection: {
       id:
         plan.existingArchive?.manifest.collection.id ??
-        persistentId128('local_document_series', [plan.inspection.normalizedWorkKey]),
+        stableId('local_document_series', plan.inspection.normalizedWorkKey, 20),
       title: target?.title ?? plan.inspection.workTitle,
       format: target?.format === 'epub' ? 'epub' : target?.format === 'markdown' ? 'markdown' : plan.inspection.format,
       author: target?.author ?? plan.inspection.sources[0]?.preview.author,

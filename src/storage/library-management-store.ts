@@ -15,8 +15,6 @@ import { openReaderDb } from './reader-database';
 import { getNovel } from './reader-query-store';
 import { jsonValue, queueSyncEventInTransaction } from './sync-event-store';
 import { CatalogRevisionConflictError, moveNovelToTrash, restoreNovelFromTrash } from './library-catalog-store';
-import { canonicalRemoteContentRevisionId } from './content-revision-identity';
-import { CONTENT_REVISION_STORES } from './content-revision-migration';
 
 function shelfName(value: string): string {
   const name = value.trim().replace(/\s+/g, ' ');
@@ -57,15 +55,11 @@ export async function patchLibraryBookMetadata(
   bookId: string,
   input: BookMetadataPatch,
   expectedRevision?: number,
-  expectedContentRevisionId?: string,
 ): Promise<CatalogMutationReceipt> {
   const patch = normalizeBookMetadataPatch(input);
   if (Object.keys(patch).length === 0) throw new Error('변경할 책 정보가 없습니다.');
   const db = await openReaderDb();
-  const tx = db.transaction(
-    ['novels', CONTENT_REVISION_STORES.revisions, 'devices', 'sync_outbox', 'sync_state'],
-    'readwrite',
-  );
+  const tx = db.transaction(['novels', 'devices', 'sync_outbox', 'sync_state'], 'readwrite');
   const done = transactionDone(tx);
   const store = tx.objectStore('novels');
   const current = await requestToPromise<Novel | undefined>(store.get(bookId));
@@ -79,12 +73,6 @@ export async function patchLibraryBookMetadata(
     await done.catch(() => undefined);
     throw new CatalogRevisionConflictError(bookId, expectedRevision, actualRevision);
   }
-  if (expectedContentRevisionId !== undefined && expectedContentRevisionId !== current.activeContentRevisionId) {
-    tx.abort();
-    await done.catch(() => undefined);
-    throw new Error(`Book ${bookId} content revision changed before metadata mutation`);
-  }
-  const canonicalContentRevisionId = await canonicalRemoteContentRevisionId(tx, current);
   const changedAt = new Date().toISOString();
   const next: Novel = {
     ...current,
@@ -98,18 +86,10 @@ export async function patchLibraryBookMetadata(
     updatedAt: changedAt,
   };
   store.put(next);
-  await queueSyncEventInTransaction(
-    tx,
-    'book_updated',
-    jsonValue({
-      novel: metadataSnapshot(next),
-      contentRevisionId: canonicalContentRevisionId,
-    }),
-    {
-      novelId: bookId,
-      entityId: bookId,
-    },
-  );
+  await queueSyncEventInTransaction(tx, 'book_updated', jsonValue({ novel: metadataSnapshot(next) }), {
+    novelId: bookId,
+    entityId: bookId,
+  });
   await done;
   return { bookId, metadataRevision: next.metadataRevision!, changedAt };
 }
@@ -305,12 +285,7 @@ async function applyBatchTarget(
       if (JSON.stringify(nextTags) === JSON.stringify(tags)) {
         return { bookId: target.bookId, status: 'skipped', metadataRevision: novel.metadataRevision ?? 0 };
       }
-      const receipt = await patchLibraryBookMetadata(
-        target.bookId,
-        { tags: nextTags },
-        target.expectedRevision,
-        target.expectedContentRevisionId,
-      );
+      const receipt = await patchLibraryBookMetadata(target.bookId, { tags: nextTags }, target.expectedRevision);
       return { bookId: target.bookId, status: 'applied', metadataRevision: receipt.metadataRevision };
     }
     if (command.kind === 'set_favorite') {
@@ -321,20 +296,13 @@ async function applyBatchTarget(
         target.bookId,
         { favorite: command.favorite },
         target.expectedRevision,
-        target.expectedContentRevisionId,
       );
       return { bookId: target.bookId, status: 'applied', metadataRevision: receipt.metadataRevision };
     }
     const receipt =
       command.kind === 'move_to_trash'
-        ? await moveNovelToTrash(target.bookId, {
-            metadataRevision: target.expectedRevision,
-            activeContentRevisionId: target.expectedContentRevisionId,
-          })
-        : await restoreNovelFromTrash(target.bookId, {
-            metadataRevision: target.expectedRevision,
-            activeContentRevisionId: target.expectedContentRevisionId,
-          });
+        ? await moveNovelToTrash(target.bookId, target.expectedRevision)
+        : await restoreNovelFromTrash(target.bookId, target.expectedRevision);
     return { bookId: target.bookId, status: 'applied', metadataRevision: receipt.metadataRevision };
   } catch (error) {
     return {

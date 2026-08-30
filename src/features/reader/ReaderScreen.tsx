@@ -216,11 +216,7 @@ function ReaderScreenComponent({ model, screenHandle }: ReaderScreenProps) {
     () => flushReaderBoundary(() => viewportApiRef.current?.flushPosition(), session.flush),
     [session.flush],
   );
-  const flushReaderStateImmediately = useCallback(
-    () => flushReaderBoundary(() => viewportApiRef.current?.flushPositionImmediately(), session.flush),
-    [session.flush],
-  );
-  useReaderLifecycleFlush(flushReaderStateImmediately);
+  useReaderLifecycleFlush(flushReaderState);
 
   const setMode = useCallback(
     (nextMode: ReaderMode) => {

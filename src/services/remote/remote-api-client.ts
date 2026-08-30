@@ -15,7 +15,6 @@ import {
   VoiceProfile,
 } from '../../domain/types';
 import type { ResourceMutationOptions } from '../../domain/resource-revisions';
-import type { BookLifecycleExpectation, BookMutationExpectation } from '../../repositories/library-catalog-repository';
 import type {
   ProviderCatalogItem,
   ProviderJob,
@@ -52,11 +51,8 @@ import {
   SyncEvent,
 } from '../../sync/types';
 import {
-  assertRemoteContentRevision,
   getRemoteBookSnapshot,
   getRemoteBookSnapshotStream,
-  RemoteSnapshotRevisionMismatchError,
-  snapshotQueryPath,
   type RemoteBookManifestResponse,
   type RemoteChapterListResponse,
   type RemotePageListResponse,
@@ -725,19 +721,12 @@ export class RemoteApiClient {
     return this.request('/trash/books');
   }
 
-  getBookSourceMetadata(bookId: string, expectedContentRevisionId?: string): Promise<{ source: JsonRecord }> {
-    return this.request(`/books/${encodeURIComponent(bookId)}/source/metadata`, {
-      headers: expectedContentRevisionId ? { 'X-Expected-Content-Revision-Id': expectedContentRevisionId } : undefined,
-    });
+  getBookSourceMetadata(bookId: string): Promise<{ source: JsonRecord }> {
+    return this.request(`/books/${encodeURIComponent(bookId)}/source/metadata`);
   }
 
-  getBookSource(
-    bookId: string,
-    expectedContentRevisionId?: string,
-  ): Promise<{ blob: Blob; headers: Headers; status: number }> {
-    return this.requestBlob(`/books/${encodeURIComponent(bookId)}/source`, {
-      headers: expectedContentRevisionId ? { 'X-Expected-Content-Revision-Id': expectedContentRevisionId } : undefined,
-    });
+  getBookSource(bookId: string): Promise<{ blob: Blob; headers: Headers; status: number }> {
+    return this.requestBlob(`/books/${encodeURIComponent(bookId)}/source`);
   }
 
   saveDocumentTextPage(
@@ -761,13 +750,9 @@ export class RemoteApiClient {
     startInclusive: number,
     endExclusive: number,
     signal?: AbortSignal,
-    expectedContentRevisionId?: string,
   ): Promise<{ blob: Blob; headers: Headers; status: number }> {
     return this.requestBlob(`/books/${encodeURIComponent(bookId)}/source`, {
-      headers: {
-        Range: `bytes=${startInclusive}-${Math.max(startInclusive, endExclusive - 1)}`,
-        ...(expectedContentRevisionId ? { 'X-Expected-Content-Revision-Id': expectedContentRevisionId } : undefined),
-      },
+      headers: { Range: `bytes=${startInclusive}-${Math.max(startInclusive, endExclusive - 1)}` },
       signal,
     });
   }
@@ -775,7 +760,7 @@ export class RemoteApiClient {
   reselectBookSource(
     bookId: string,
     source: Blob,
-    metadata: { fileName: string; contentType: string; expectedContentRevisionId?: string },
+    metadata: { fileName: string; contentType: string },
   ): Promise<{ source: JsonRecord }> {
     return this.request(
       `/books/${encodeURIComponent(bookId)}/source`,
@@ -786,9 +771,6 @@ export class RemoteApiClient {
           'Content-Type': 'application/octet-stream',
           'X-Source-File-Name': encodeURIComponent(metadata.fileName),
           'X-Source-Content-Type': metadata.contentType || 'text/plain',
-          ...(metadata.expectedContentRevisionId
-            ? { 'X-Expected-Content-Revision-Id': metadata.expectedContentRevisionId }
-            : undefined),
         },
       },
       DEFAULT_REMOTE_LARGE_UPLOAD_TIMEOUT_MS,
@@ -804,26 +786,8 @@ export class RemoteApiClient {
     return { ...response, metadata: coverMetadataFromHeaders(bookId, response.headers) };
   }
 
-  async getBookResource(
-    bookId: string,
-    assetId: string,
-    expectedContentRevisionId?: string,
-  ): Promise<{ blob: Blob; headers: Headers; status: number }> {
-    const response = await this.requestBlob(
-      snapshotQueryPath(
-        `/books/${encodeURIComponent(bookId)}/resources/${encodeURIComponent(assetId)}`,
-        expectedContentRevisionId,
-      ),
-    );
-    if (expectedContentRevisionId) {
-      const actual = response.headers.get('x-content-revision-id');
-      if (actual !== expectedContentRevisionId) {
-        throw new RemoteSnapshotRevisionMismatchError(
-          `book resource returned content revision ${actual ?? 'none'}; expected ${expectedContentRevisionId}`,
-        );
-      }
-    }
-    return response;
+  getBookResource(bookId: string, assetId: string): Promise<{ blob: Blob; headers: Headers; status: number }> {
+    return this.requestBlob(`/books/${encodeURIComponent(bookId)}/resources/${encodeURIComponent(assetId)}`);
   }
 
   saveBookCover(
@@ -839,15 +803,9 @@ export class RemoteApiClient {
       positionX: number;
       positionY: number;
       expectedMetadataRevision?: number;
-      expectedContentRevisionId?: string;
       provenance?: 'user_supplied' | 'approved_enrichment' | 'generated_preview';
     },
-  ): Promise<{
-    cover: JsonRecord;
-    previousCover?: JsonRecord;
-    metadataRevision?: number;
-    coverRemovedAt?: null;
-  }> {
+  ): Promise<{ cover: JsonRecord; previousCover?: JsonRecord; metadataRevision?: number }> {
     return this.request(`/books/${encodeURIComponent(bookId)}/cover`, {
       method: 'PUT',
       body: cover,
@@ -865,9 +823,6 @@ export class RemoteApiClient {
         ...(metadata.expectedMetadataRevision === undefined
           ? {}
           : { 'X-Expected-Metadata-Revision': String(metadata.expectedMetadataRevision) }),
-        ...(metadata.expectedContentRevisionId
-          ? { 'X-Expected-Content-Revision-Id': metadata.expectedContentRevisionId }
-          : {}),
       },
     });
   }
@@ -885,14 +840,8 @@ export class RemoteApiClient {
       positionX: number;
       positionY: number;
       expectedMetadataRevision: number;
-      expectedContentRevisionId?: string;
     },
-  ): Promise<{
-    cover: JsonRecord;
-    previousCover: JsonRecord | null;
-    metadataRevision: number;
-    coverRemovedAt?: null;
-  }> {
+  ): Promise<{ cover: JsonRecord; previousCover: JsonRecord | null; metadataRevision: number }> {
     return this.request(`/books/${encodeURIComponent(bookId)}/cover/approved-enrichment`, {
       method: 'PUT',
       body: cover,
@@ -907,9 +856,6 @@ export class RemoteApiClient {
         'X-Cover-Position-X': String(metadata.positionX),
         'X-Cover-Position-Y': String(metadata.positionY),
         'X-Expected-Metadata-Revision': String(metadata.expectedMetadataRevision),
-        ...(metadata.expectedContentRevisionId
-          ? { 'X-Expected-Content-Revision-Id': metadata.expectedContentRevisionId }
-          : {}),
       },
     });
   }
@@ -918,7 +864,6 @@ export class RemoteApiClient {
     bookId: string,
     input: {
       expectedMetadataRevision: number;
-      expectedContentRevisionId?: string;
       expectedActiveAssetId: string;
       expectedActiveContentHash: string;
       previousAssetId?: string;
@@ -927,23 +872,17 @@ export class RemoteApiClient {
       previousPositionX: number;
       previousPositionY: number;
     },
-  ): Promise<{ cover: JsonRecord | null; metadataRevision: number; coverRemovedAt?: string | null }> {
+  ): Promise<{ cover: JsonRecord | null; metadataRevision: number }> {
     return this.request(`/books/${encodeURIComponent(bookId)}/cover/approved-enrichment/restore`, {
       method: 'POST',
       body: JSON.stringify(input),
     });
   }
 
-  removeBookCover(
-    bookId: string,
-    expectation?: { metadataRevision?: number; activeContentRevisionId?: string },
-  ): Promise<{ ok: true; coverRemovedAt: string; metadataRevision: number }> {
+  removeBookCover(bookId: string, expectedMetadataRevision?: number): Promise<{ ok: true }> {
     return this.request(`/books/${encodeURIComponent(bookId)}/cover`, {
       method: 'DELETE',
-      body: JSON.stringify({
-        expectedRevision: expectation?.metadataRevision,
-        expectedContentRevisionId: expectation?.activeContentRevisionId,
-      }),
+      body: JSON.stringify({ expectedRevision: expectedMetadataRevision }),
     });
   }
 
@@ -1007,26 +946,16 @@ export class RemoteApiClient {
     return this.request(`/books/${encodeURIComponent(bookId)}/chapter-structure/review`);
   }
 
-  async getBookManifest(bookId: string, sourceRevision?: string): Promise<RemoteBookManifestResponse> {
-    const response = await this.bookTransport.getBookManifest(bookId, sourceRevision);
-    if (sourceRevision) assertRemoteContentRevision(sourceRevision, response, `book ${bookId} manifest`);
-    return response;
+  getBookManifest(bookId: string, sourceRevision?: string): Promise<RemoteBookManifestResponse> {
+    return this.bookTransport.getBookManifest(bookId, sourceRevision);
   }
 
-  async listChapters(bookId: string, sourceRevision?: string): Promise<RemoteChapterListResponse> {
-    const response = await this.bookTransport.listChapters(bookId, sourceRevision);
-    if (sourceRevision) assertRemoteContentRevision(sourceRevision, response, `book ${bookId} chapters`);
-    return response;
+  listChapters(bookId: string, sourceRevision?: string): Promise<RemoteChapterListResponse> {
+    return this.bookTransport.listChapters(bookId, sourceRevision);
   }
 
-  async getChapter(
-    chapterId: string,
-    contentRevisionId?: string,
-    signal?: AbortSignal,
-  ): Promise<{ chapter: JsonRecord; contentRevisionId?: string }> {
-    const response = await this.bookTransport.getChapter(chapterId, contentRevisionId, signal);
-    if (contentRevisionId) assertRemoteContentRevision(contentRevisionId, response, `chapter ${chapterId}`);
-    return response;
+  getChapter(chapterId: string, signal?: AbortSignal): Promise<{ chapter: JsonRecord }> {
+    return this.bookTransport.getChapter(chapterId, signal);
   }
 
   listPages(
@@ -1036,20 +965,11 @@ export class RemoteApiClient {
     sourceRevision?: string,
     signal?: AbortSignal,
   ): Promise<RemotePageListResponse> {
-    return this.bookTransport.listPages(chapterId, from, count, sourceRevision, signal).then((response) => {
-      if (sourceRevision) assertRemoteContentRevision(sourceRevision, response, `chapter ${chapterId} pages`);
-      return response;
-    });
+    return this.bookTransport.listPages(chapterId, from, count, sourceRevision, signal);
   }
 
-  async getParagraph(
-    paragraphId: string,
-    contentRevisionId?: string,
-    signal?: AbortSignal,
-  ): Promise<{ paragraph: Paragraph; contentRevisionId?: string }> {
-    const response = await this.bookTransport.getParagraph(paragraphId, contentRevisionId, signal);
-    if (contentRevisionId) assertRemoteContentRevision(contentRevisionId, response, `paragraph ${paragraphId}`);
-    return response;
+  getParagraph(paragraphId: string, signal?: AbortSignal): Promise<{ paragraph: Paragraph }> {
+    return this.bookTransport.getParagraph(paragraphId, signal);
   }
 
   searchParagraphPage(input: ReaderSearchPageRequest): Promise<ReaderSearchPage> {
@@ -1066,7 +986,7 @@ export class RemoteApiClient {
 
   patchBook(
     bookId: string,
-    body: BookMetadataPatch & Pick<Partial<Novel>, 'analysisStatus'> & BookMutationExpectation,
+    body: BookMetadataPatch & Pick<Partial<Novel>, 'analysisStatus'> & { expectedRevision?: number },
   ): Promise<{ ok: true; metadataRevision: number }> {
     return this.request(`/books/${encodeURIComponent(bookId)}`, {
       method: 'PATCH',
@@ -1119,55 +1039,40 @@ export class RemoteApiClient {
   deleteBook(
     bookId: string,
     deviceId?: string,
-    expectation?: BookLifecycleExpectation,
+    expectedRevision?: number,
   ): Promise<{ ok: true; metadataRevision: number }> {
     return this.request(`/books/${encodeURIComponent(bookId)}`, {
       method: 'DELETE',
-      body: JSON.stringify({
-        deviceId,
-        expectedRevision: expectation?.metadataRevision,
-        expectedContentRevisionId: expectation?.activeContentRevisionId,
-      }),
+      body: JSON.stringify({ deviceId, expectedRevision }),
     });
   }
 
-  restoreBook(bookId: string, expectation?: BookLifecycleExpectation): Promise<{ ok: true; metadataRevision: number }> {
+  restoreBook(bookId: string, expectedRevision?: number): Promise<{ ok: true; metadataRevision: number }> {
     return this.request(`/trash/books/${encodeURIComponent(bookId)}/restore`, {
       method: 'POST',
-      body: JSON.stringify({
-        expectedRevision: expectation?.metadataRevision,
-        expectedContentRevisionId: expectation?.activeContentRevisionId,
-      }),
+      body: JSON.stringify({ expectedRevision }),
     });
   }
 
-  purgeBook(bookId: string, expectation?: BookLifecycleExpectation): Promise<{ ok: true }> {
+  purgeBook(bookId: string, expectedRevision?: number): Promise<{ ok: true }> {
     return this.request(`/trash/books/${encodeURIComponent(bookId)}`, {
       method: 'DELETE',
-      body: JSON.stringify({
-        expectedRevision: expectation?.metadataRevision,
-        expectedContentRevisionId: expectation?.activeContentRevisionId,
-      }),
+      body: JSON.stringify({ expectedRevision }),
     });
   }
 
-  emptyTrash(): Promise<{ ok: true; purged: number; bookIds: string[] }> {
+  emptyTrash(): Promise<{ ok: true; purged: number }> {
     return this.request('/trash/books', { method: 'DELETE' });
   }
 
   saveReadingPosition(
     bookId: string,
-    position: Omit<ReadingPosition, 'id' | 'novelId'> & {
-      readonly expectedContentRevisionId?: string;
-      readonly documentSectionId?: string;
-    },
+    position: Omit<ReadingPosition, 'id' | 'novelId'> & { readonly documentSectionId?: string },
   ): Promise<RemoteMutationResult> {
     return this.request(`/books/${encodeURIComponent(bookId)}/reading-position`, {
       method: 'PATCH',
-      keepalive: true,
       body: JSON.stringify({
         chapterId: position.chapterId,
-        expectedContentRevisionId: position.expectedContentRevisionId,
         documentSectionId: position.documentSectionId,
         paragraphId: position.paragraphId,
         paragraphIndex: position.paragraphIndex,
@@ -1180,13 +1085,9 @@ export class RemoteApiClient {
     });
   }
 
-  deleteReadingPosition(
-    bookId: string,
-    body: { deviceId?: string; expectedContentRevisionId?: string; updatedAt: string },
-  ): Promise<RemoteMutationResult> {
+  deleteReadingPosition(bookId: string, body: { deviceId?: string; updatedAt: string }): Promise<RemoteMutationResult> {
     return this.request(`/books/${encodeURIComponent(bookId)}/reading-position`, {
       method: 'DELETE',
-      keepalive: true,
       body: JSON.stringify(body),
     });
   }

@@ -1,14 +1,6 @@
 import type { FastifyInstance } from 'fastify';
 import pg from 'pg';
 import type { ServerConfig } from '../../config.js';
-import {
-  canonicalContentReadRevision,
-  contentReadRevisionConflict,
-  expectedContentReadRevision,
-  sendContentReadRevisionConflict,
-  withoutContentReadRevision,
-  type ContentReadRevisionRow,
-} from './content-read-revision.js';
 import { mapChapterRows, mapManifestResponse, mapPageRows, mapParagraphSearchRows } from './row-mappers.js';
 
 export async function registerBookContentRoutes(
@@ -16,14 +8,11 @@ export async function registerBookContentRoutes(
   pool: pg.Pool,
   config: ServerConfig,
 ): Promise<void> {
-  app.get<{ Params: { bookId: string }; Querystring: { contentRevisionId?: string } }>(
-    '/api/books/:bookId/manifest',
-    async (request, reply) => {
-      const book = await pool.query(
-        `
+  app.get<{ Params: { bookId: string } }>('/api/books/:bookId/manifest', async (request, reply) => {
+    const book = await pool.query(
+      `
         select b.id, b.active_content_revision_id, b.format, b.title, b.author, b.series_title, b.series_index, b.tags,
                b.description, b.language, b.cover_asset_id, b.cover_fit, b.cover_position_x, b.cover_position_y,
-               b.cover_removed_at,
                b.source_file_name, b.source_encoding,
                b.normalized_text_hash, b.total_chapters, b.total_characters, b.total_paragraphs,
                b.document_section_count, b.cover_seed,
@@ -44,10 +33,7 @@ export async function registerBookContentRoutes(
                    )
                  )
                end as last_read_progress,
-               rp.updated_at as last_read_at,
-               exists(select 1 from book_id_generations identity
-                      where identity.user_id = b.user_id and identity.book_id = b.id and identity.generation > 1)
-                 as has_prior_purge
+               rp.updated_at as last_read_at
         from library_books b
         left join book_objects o on o.id = b.object_id
         left join book_assets ca on ca.id = b.cover_asset_id
@@ -55,81 +41,49 @@ export async function registerBookContentRoutes(
         left join chapters rc on rc.id = rp.chapter_id and rc.book_id = b.id
         where b.id = $1 and b.user_id = $2 and b.deleted_at is null
       `,
-        [request.params.bookId, config.defaultUserId],
-      );
-      if (!book.rows[0]) return reply.code(404).send({ error: 'book not found' });
-      const revisionRow = book.rows[0] as ContentReadRevisionRow;
-      const conflict = contentReadRevisionConflict(
-        revisionRow,
-        expectedContentReadRevision(request.query.contentRevisionId),
-      );
-      if (conflict) return sendContentReadRevisionConflict(reply, conflict, revisionRow);
+      [request.params.bookId, config.defaultUserId],
+    );
+    if (!book.rows[0]) return reply.code(404).send({ error: 'book not found' });
 
-      const position = await pool.query('select * from reading_positions where book_id = $1 and user_id = $2', [
-        request.params.bookId,
-        config.defaultUserId,
-      ]);
+    const position = await pool.query('select * from reading_positions where book_id = $1 and user_id = $2', [
+      request.params.bookId,
+      config.defaultUserId,
+    ]);
 
-      const { has_prior_purge: _priorPurge, ...manifestBook } = book.rows[0];
-      const response = mapManifestResponse([manifestBook], position.rows);
-      const contentRevisionId = canonicalContentReadRevision(revisionRow);
-      return { ...response, ...(contentRevisionId ? { contentRevisionId } : {}) };
-    },
-  );
+    return mapManifestResponse(book.rows, position.rows);
+  });
 
-  app.get<{ Params: { bookId: string }; Querystring: { contentRevisionId?: string } }>(
-    '/api/books/:bookId/chapters',
-    async (request, reply) => {
-      const result = await pool.query(
-        `
-        select b.active_content_revision_id,
-               exists(select 1 from book_id_generations identity
-                      where identity.user_id = b.user_id and identity.book_id = b.id and identity.generation > 1)
-                 as has_prior_purge,
-               c.id, c.book_id, c.chapter_index, c.title, c.text_hash, c.raw_start_offset, c.raw_end_offset,
+  app.get<{ Params: { bookId: string } }>('/api/books/:bookId/chapters', async (request, reply) => {
+    const exists = await pool.query(
+      'select id from library_books where id = $1 and user_id = $2 and deleted_at is null',
+      [request.params.bookId, config.defaultUserId],
+    );
+    if (!exists.rows[0]) return reply.code(404).send({ error: 'book not found' });
+
+    const result = await pool.query(
+      `
+        select c.id, c.book_id, c.chapter_index, c.title, c.text_hash, c.raw_start_offset, c.raw_end_offset,
                c.character_count, c.paragraph_count, c.document_section_id, c.document_section_title,
                c.document_section_index, c.document_page_index_in_section,
                section_state.last_read_at as document_section_read_at,
                c.created_at, c.updated_at
         from chapters c
-        right join library_books b on b.id = c.book_id
         left join fixed_document_section_read_states section_state
           on section_state.book_id = c.book_id
          and section_state.user_id = $2
          and section_state.document_section_id = c.document_section_id
-        where b.id = $1 and b.user_id = $2 and b.deleted_at is null
+        where c.book_id = $1
         order by c.chapter_index asc
       `,
-        [request.params.bookId, config.defaultUserId],
-      );
-      if (!result.rows[0]) return reply.code(404).send({ error: 'book not found' });
-      const revisionRow = result.rows[0] as ContentReadRevisionRow;
-      const conflict = contentReadRevisionConflict(
-        revisionRow,
-        expectedContentReadRevision(request.query.contentRevisionId),
-      );
-      if (conflict) return sendContentReadRevisionConflict(reply, conflict, revisionRow);
-      const chapterRows = result.rows
-        .filter((row) => typeof row.id === 'string')
-        .map((row) => withoutContentReadRevision(row));
-      const contentRevisionId = canonicalContentReadRevision(revisionRow);
-      return {
-        chapters: mapChapterRows(chapterRows),
-        ...(contentRevisionId ? { contentRevisionId } : {}),
-      };
-    },
-  );
+      [request.params.bookId, config.defaultUserId],
+    );
+    return { chapters: mapChapterRows(result.rows) };
+  });
 
-  app.get<{ Params: { chapterId: string }; Querystring: { contentRevisionId?: string } }>(
-    '/api/chapters/:chapterId',
-    async (request, reply) => {
-      const result = await pool.query(
-        `
-        select b.active_content_revision_id,
-               exists(select 1 from book_id_generations identity
-                      where identity.user_id = b.user_id and identity.book_id = b.id and identity.generation > 1)
-                 as has_prior_purge,
-               c.id, c.book_id, c.chapter_index, c.title, c.text_hash, c.raw_start_offset,
+  app.get<{ Params: { chapterId: string } }>('/api/chapters/:chapterId', async (request, reply) => {
+    const result = await pool.query(
+      `
+        select c.id, c.book_id, c.chapter_index, c.title, c.text_hash, c.raw_start_offset,
                c.raw_end_offset, c.character_count, c.paragraph_count, c.document_section_id,
                c.document_section_title, c.document_section_index, c.document_page_index_in_section,
                section_state.last_read_at as document_section_read_at,
@@ -142,89 +96,57 @@ export async function registerBookContentRoutes(
          and section_state.document_section_id = c.document_section_id
         where c.id = $1 and b.user_id = $2 and b.deleted_at is null
       `,
-        [request.params.chapterId, config.defaultUserId],
-      );
-      if (!result.rows[0]) return reply.code(404).send({ error: 'chapter not found' });
-      const revisionRow = result.rows[0] as ContentReadRevisionRow;
-      const conflict = contentReadRevisionConflict(
-        revisionRow,
-        expectedContentReadRevision(request.query.contentRevisionId),
-      );
-      if (conflict) return sendContentReadRevisionConflict(reply, conflict, revisionRow);
-      const contentRevisionId = canonicalContentReadRevision(revisionRow);
-      return {
-        chapter: mapChapterRows([withoutContentReadRevision(result.rows[0])])[0],
-        ...(contentRevisionId ? { contentRevisionId } : {}),
-      };
-    },
-  );
+      [request.params.chapterId, config.defaultUserId],
+    );
+    if (!result.rows[0]) return reply.code(404).send({ error: 'chapter not found' });
+    return { chapter: mapChapterRows(result.rows)[0] };
+  });
 
-  app.get<{
-    Params: { chapterId: string };
-    Querystring: { from?: string; count?: string; contentRevisionId?: string };
-  }>('/api/chapters/:chapterId/pages', async (request, reply) => {
-    const from = Math.max(0, Number.parseInt(request.query.from ?? '0', 10) || 0);
-    const count = Math.min(20, Math.max(1, Number.parseInt(request.query.count ?? '5', 10) || 5));
-    const result = await pool.query(
-      `
-          select b.active_content_revision_id,
-                 exists(select 1 from book_id_generations identity
-                        where identity.user_id = b.user_id and identity.book_id = b.id and identity.generation > 1)
-                   as has_prior_purge,
-                 pp.id, pp.book_id, pp.chapter_id, pp.page_index, pp.start_paragraph_index,
+  app.get<{ Params: { chapterId: string }; Querystring: { from?: string; count?: string } }>(
+    '/api/chapters/:chapterId/pages',
+    async (request, reply) => {
+      const from = Math.max(0, Number.parseInt(request.query.from ?? '0', 10) || 0);
+      const count = Math.min(20, Math.max(1, Number.parseInt(request.query.count ?? '5', 10) || 5));
+      const result = await pool.query(
+        `
+          select pp.id, pp.book_id, pp.chapter_id, pp.page_index, pp.start_paragraph_index,
                  pp.end_paragraph_index, pp.paragraphs, pp.text_hash
-          from chapters c
-          join library_books b on b.id = c.book_id
-          left join paragraph_pages pp on pp.chapter_id = c.id and pp.page_index >= $3
-          where c.id = $1 and b.user_id = $2 and b.deleted_at is null
+          from paragraph_pages pp
+          join library_books b on b.id = pp.book_id
+          where pp.chapter_id = $1 and b.user_id = $2 and b.deleted_at is null and pp.page_index >= $3
           order by pp.page_index asc
           limit $4
         `,
-      [request.params.chapterId, config.defaultUserId, from, count],
-    );
-    if (!result.rows[0]) return reply.code(404).send({ error: 'chapter not found' });
-    const revisionRow = result.rows[0] as ContentReadRevisionRow;
-    const conflict = contentReadRevisionConflict(
-      revisionRow,
-      expectedContentReadRevision(request.query.contentRevisionId),
-    );
-    if (conflict) return sendContentReadRevisionConflict(reply, conflict, revisionRow);
-    const pageRows = result.rows
-      .filter((row) => typeof row.id === 'string')
-      .map((row) => withoutContentReadRevision(row));
-    const contentRevisionId = canonicalContentReadRevision(revisionRow);
-    return { pages: mapPageRows(pageRows), ...(contentRevisionId ? { contentRevisionId } : {}) };
-  });
+        [request.params.chapterId, config.defaultUserId, from, count],
+      );
+      if (!result.rows.length) {
+        const chapter = await pool.query(
+          `
+            select c.id
+            from chapters c
+            join library_books b on b.id = c.book_id
+            where c.id = $1 and b.user_id = $2 and b.deleted_at is null
+          `,
+          [request.params.chapterId, config.defaultUserId],
+        );
+        if (!chapter.rows[0]) return reply.code(404).send({ error: 'chapter not found' });
+      }
+      return { pages: mapPageRows(result.rows) };
+    },
+  );
 
-  app.get<{ Params: { paragraphId: string }; Querystring: { contentRevisionId?: string } }>(
-    '/api/paragraphs/:paragraphId',
-    async (request, reply) => {
-      const result = await pool.query(
-        `
-          select b.active_content_revision_id,
-                 exists(select 1 from book_id_generations identity
-                        where identity.user_id = b.user_id and identity.book_id = b.id and identity.generation > 1)
-                   as has_prior_purge,
-                 ps.paragraph
+  app.get<{ Params: { paragraphId: string } }>('/api/paragraphs/:paragraphId', async (request, reply) => {
+    const result = await pool.query(
+      `
+          select ps.paragraph
           from paragraph_search ps
           join library_books b on b.id = ps.book_id
           where b.user_id = $1 and b.deleted_at is null and ps.paragraph_id = $2
           limit 1
         `,
-        [config.defaultUserId, request.params.paragraphId],
-      );
-      if (!result.rows[0]) return reply.code(404).send({ error: 'paragraph not found' });
-      const revisionRow = result.rows[0] as ContentReadRevisionRow;
-      const conflict = contentReadRevisionConflict(
-        revisionRow,
-        expectedContentReadRevision(request.query.contentRevisionId),
-      );
-      if (conflict) return sendContentReadRevisionConflict(reply, conflict, revisionRow);
-      const contentRevisionId = canonicalContentReadRevision(revisionRow);
-      return {
-        paragraph: mapParagraphSearchRows([withoutContentReadRevision(result.rows[0]) as { paragraph: unknown }])[0],
-        ...(contentRevisionId ? { contentRevisionId } : {}),
-      };
-    },
-  );
+      [config.defaultUserId, request.params.paragraphId],
+    );
+    if (!result.rows[0]) return reply.code(404).send({ error: 'paragraph not found' });
+    return { paragraph: mapParagraphSearchRows(result.rows)[0] };
+  });
 }

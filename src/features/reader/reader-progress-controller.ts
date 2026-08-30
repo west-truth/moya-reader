@@ -85,19 +85,4 @@ export class DebouncedProgressPersistence<T> {
     this.hasPending = false;
     return this.persistence.enqueue(() => this.persist(pending));
   }
-
-  /**
-   * Skips the debounce delay while preserving write order. Starting a newer
-   * write beside an older in-flight write can let the stale write finish last
-   * and replace the lifecycle snapshot we are trying to preserve.
-   */
-  flushImmediately(): Promise<void> {
-    if (this.timerHandle !== undefined) this.timer.clear(this.timerHandle);
-    this.timerHandle = undefined;
-    if (!this.hasPending) return this.persistence.settled();
-    const pending = this.pending as T;
-    this.pending = undefined;
-    this.hasPending = false;
-    return this.persistence.enqueue(() => this.persist(pending));
-  }
 }

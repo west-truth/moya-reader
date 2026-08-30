@@ -36,12 +36,8 @@ export class RemoteBookTransport {
     return this.request(snapshotQueryPath(`/books/${encodeURIComponent(bookId)}/chapters`, sourceRevision), { signal });
   }
 
-  getChapter(
-    chapterId: string,
-    contentRevisionId?: string,
-    signal?: AbortSignal,
-  ): Promise<{ chapter: Record<string, unknown>; contentRevisionId?: string }> {
-    return this.request(snapshotQueryPath(`/chapters/${encodeURIComponent(chapterId)}`, contentRevisionId), { signal });
+  getChapter(chapterId: string, signal?: AbortSignal): Promise<{ chapter: Record<string, unknown> }> {
+    return this.request(`/chapters/${encodeURIComponent(chapterId)}`, { signal });
   }
 
   listPages(
@@ -57,13 +53,7 @@ export class RemoteBookTransport {
     );
   }
 
-  getParagraph(
-    paragraphId: string,
-    contentRevisionId?: string,
-    signal?: AbortSignal,
-  ): Promise<{ paragraph: Paragraph; contentRevisionId?: string }> {
-    return this.request(snapshotQueryPath(`/paragraphs/${encodeURIComponent(paragraphId)}`, contentRevisionId), {
-      signal,
-    });
+  getParagraph(paragraphId: string, signal?: AbortSignal): Promise<{ paragraph: Paragraph }> {
+    return this.request(`/paragraphs/${encodeURIComponent(paragraphId)}`, { signal });
   }
 }

@@ -44,50 +44,11 @@ create table if not exists library_books (
   favorite boolean not null default false,
   analysis_status text not null default 'not_analyzed',
   metadata_revision bigint not null default 0,
-  cover_removed_at timestamptz,
   deleted_at timestamptz,
   deleted_by_device_id text,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );
-
-create table if not exists book_id_generations (
-  user_id text not null references users(id) on delete cascade,
-  book_id text not null,
-  generation bigint not null check (generation >= 0),
-  updated_at timestamptz not null default now(),
-  primary key (user_id, book_id)
-);
-
-create or replace function advance_book_id_generation()
-returns trigger
-language plpgsql
-as $$
-declare
-  target_user_id text;
-  target_book_id text;
-begin
-  target_user_id := case when tg_op = 'DELETE' then old.user_id else new.user_id end;
-  target_book_id := case when tg_op = 'DELETE' then old.id else new.id end;
-  if tg_op = 'DELETE' and not exists (select 1 from users where id = target_user_id) then
-    return old;
-  end if;
-  insert into book_id_generations (user_id, book_id, generation)
-  values (target_user_id, target_book_id, 1)
-  on conflict (user_id, book_id) do update
-    set generation = book_id_generations.generation + 1,
-        updated_at = now();
-  if tg_op = 'DELETE' then
-    return old;
-  end if;
-  return new;
-end;
-$$;
-
-drop trigger if exists trg_library_books_advance_id_generation on library_books;
-create trigger trg_library_books_advance_id_generation
-after insert or delete on library_books
-for each row execute function advance_book_id_generation();
 
 create index if not exists idx_library_books_active_catalog
   on library_books(user_id, updated_at desc)
@@ -244,8 +205,6 @@ create table if not exists upload_sessions (
   import_mode text not null default 'replace_book'
     check (import_mode in ('replace_book', 'append_image_series')),
   base_active_content_revision_id text,
-  target_book_generation bigint check (target_book_generation is null or target_book_generation >= 0),
-  target_active_content_revision_id text,
   status text not null default 'uploading',
   total_chunks integer,
   created_at timestamptz not null default now(),
@@ -302,7 +261,6 @@ create table if not exists object_delete_outbox (
   reason text not null,
   status text not null default 'pending' check (status in ('pending', 'processing', 'retry')),
   attempts integer not null default 0 check (attempts >= 0),
-  generation bigint not null default 1 check (generation >= 1),
   next_attempt_at timestamptz not null default now(),
   last_error text,
   created_at timestamptz not null default now(),

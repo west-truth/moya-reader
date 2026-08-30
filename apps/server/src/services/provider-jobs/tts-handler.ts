@@ -39,7 +39,6 @@ import {
   assertPinnedRenderSpec,
   verifyAnalysisInputBeforeExecution,
 } from '../book-ai-workflow/analysis-input-verification.js';
-import { lockImageSeriesBookLifecycle } from '../book-operation-lock.js';
 
 function parseTTSCacheProgress(progress: unknown): TTSCacheProgress {
   const root = recordValue(progress);
@@ -133,31 +132,8 @@ function enforceTTSSynthesisBudget(progress: unknown, inputCharacters: number, s
   }
 }
 
-function audioObjectKey(
-  bookId: string,
-  contentRevisionId: string,
-  chapterId: string,
-  cacheKey: string,
-  contentType: string,
-): string {
-  return `tts/${bookId}/${contentRevisionId}/${chapterId}/${cacheKey}${extensionForContentType(contentType)}`;
-}
-
-async function resolveTTSContentRevisionId(
-  pool: pg.Pool,
-  job: ProviderJobRow,
-  inputRevision: AnalysisInputRevision | undefined,
-): Promise<string> {
-  if (inputRevision?.contentRevisionId) return inputRevision.contentRevisionId;
-  const result = await pool.query<{ active_content_revision_id: string }>(
-    `select active_content_revision_id
-       from library_books
-      where id = $1 and user_id = $2 and deleted_at is null`,
-    [job.book_id, job.user_id],
-  );
-  const contentRevisionId = result.rows[0]?.active_content_revision_id;
-  if (!contentRevisionId) throw new Error(`TTS target book is no longer active: ${job.book_id}`);
-  return contentRevisionId;
+function audioObjectKey(bookId: string, chapterId: string, cacheKey: string, contentType: string): string {
+  return `tts/${bookId}/${chapterId}/${cacheKey}${extensionForContentType(contentType)}`;
 }
 
 function extensionForContentType(contentType: string): string {
@@ -249,7 +225,6 @@ export async function processTTSJob(
 ): Promise<void> {
   if (!job.chapter_id) throw new Error(`Provider job ${job.id} does not target a chapter`);
   const ttsCache = parseTTSCacheProgress(job.progress);
-  const contentRevisionId = await resolveTTSContentRevisionId(pool, job, inputRevision);
   if (inputRevision) {
     if (inputRevision.sourceSnapshot.kind !== 'tts_synthesis' || !inputRevision.renderSpec) {
       throw new AnalysisInputStaleError('analysis_render_spec_stale', `Pinned TTS input is invalid: ${job.id}`);
@@ -386,7 +361,7 @@ export async function processTTSJob(
   const contentType = result.contentType || 'audio/mpeg';
   const audioProbe = probeTTSAudioContainer(audio, contentType);
   if (!audioProbe.ok) throw new Error(`TTS audio integrity check failed: ${audioProbe.reason}`);
-  const objectKey = audioObjectKey(job.book_id, contentRevisionId, job.chapter_id, ttsCache.cacheKey, contentType);
+  const objectKey = audioObjectKey(job.book_id, job.chapter_id, ttsCache.cacheKey, contentType);
   const audioHash = ttsAudioIntegrityHash(audio);
 
   await updateProviderJobProgress(pool, job, {
@@ -405,17 +380,6 @@ export async function processTTSJob(
   let commitAttempted = false;
   try {
     await client.query('begin');
-    await lockImageSeriesBookLifecycle(client, job.book_id);
-    const activeBook = await client.query<{ active_content_revision_id: string }>(
-      `select active_content_revision_id
-         from library_books
-        where id = $1 and user_id = $2 and deleted_at is null
-        for share`,
-      [job.book_id, job.user_id],
-    );
-    if (activeBook.rows[0]?.active_content_revision_id !== contentRevisionId) {
-      throw new AnalysisInputStaleError('analysis_content_revision_stale', `TTS target content changed: ${job.id}`);
-    }
     await lockProviderJobForPersistence(client, job);
     await client.query(
       `
@@ -476,7 +440,7 @@ export async function processTTSJob(
         audio.byteLength,
         audioHash,
         result.durationMs ?? null,
-        contentRevisionId,
+        inputRevision?.contentRevisionId ?? null,
         inputRevision?.characterGraphRevisionId ?? null,
         inputRevision?.id ?? null,
         ttsCache.cachePurpose,

@@ -84,14 +84,6 @@ function arraysEqual(left, right) {
   return left.length === right.length && left.every((value, index) => value === right[index]);
 }
 
-function integrityHash(bytes) {
-  return `sha256:${createHash('sha256').update(bytes).digest('hex')}`;
-}
-
-function bookField(book, snakeName, camelName) {
-  return book?.[snakeName] ?? book?.[camelName];
-}
-
 function jsonBody(body) {
   return {
     headers: { 'Content-Type': 'application/json' },
@@ -306,57 +298,19 @@ async function waitForImport(jobId) {
   throw new Error(`Import job timed out after ${timeoutMs}ms: ${JSON.stringify(lastJob)}`);
 }
 
-async function singleReleaseSeriesComicArchive({
-  collectionRemoteId,
-  title,
-  releaseId,
-  releaseTitle,
-  chapterNumber,
-  pageBytes,
-  targetBookId,
-}) {
-  const pageEntryName = 'chapters/000001/00001.png';
+async function singlePageComicArchive(title) {
   const writer = new ZipWriter(new BlobWriter('application/vnd.comicbook+zip'));
-  await writer.add(pageEntryName, new Uint8ArrayReader(pageBytes), { level: 0 });
-  await writer.add(
-    'moya-series.json',
-    new TextReader(
-      JSON.stringify({
-        schemaVersion: 1,
-        collection: { remoteId: collectionRemoteId, title },
-        ...(targetBookId ? { targetBookId } : {}),
-        chapters: [
-          {
-            remoteId: releaseId,
-            title: releaseTitle,
-            chapterNumber,
-            sourceOrder: chapterNumber,
-            remoteRevision: `smoke-r${chapterNumber}`,
-            sourceContentHash: integrityHash(pageBytes),
-            pageCount: 1,
-            entryNames: [pageEntryName],
-          },
-        ],
-      }),
-    ),
-  );
   await writer.add(
     'ComicInfo.xml',
     new TextReader(
       `<?xml version="1.0" encoding="utf-8"?><ComicInfo><Title>${title}</Title><PageCount>1</PageCount></ComicInfo>`,
     ),
   );
+  await writer.add('001.png', new Uint8ArrayReader(sampleDocumentPageBytes));
   return new Uint8Array(await (await writer.close()).arrayBuffer());
 }
 
-async function uploadSingleChunkBook({
-  bookId,
-  fileName,
-  contentType,
-  bytes,
-  importMode = 'replace_book',
-  baseActiveContentRevisionId,
-}) {
+async function uploadSingleChunkBook({ bookId, fileName, contentType, bytes }) {
   const upload = await request('/uploads/init', {
     method: 'POST',
     ...jsonBody({
@@ -367,13 +321,6 @@ async function uploadSingleChunkBook({
       chapterSplitMode: 'auto',
       totalChunks: 1,
       clientBookId: bookId,
-      importMode,
-      ...(importMode === 'append_image_series'
-        ? {
-            baseActiveContentRevisionId,
-            sourceContentHash: integrityHash(bytes),
-          }
-        : {}),
     }),
   });
   assert(typeof upload.uploadId === 'string', 'fixed-document upload init did not return uploadId');
@@ -386,63 +333,6 @@ async function uploadSingleChunkBook({
   assert(typeof complete.jobId === 'string', 'fixed-document upload complete did not return jobId');
   const job = await waitForImport(complete.jobId);
   assert((job.book_id ?? bookId) === bookId, 'fixed-document import returned a different book id');
-  return job;
-}
-
-async function activeCatalogBook(bookId) {
-  const catalog = await request('/books?limit=1000');
-  return catalog.books?.find((candidate) => candidate.id === bookId);
-}
-
-async function cleanupSmokeBook(bookId) {
-  const manifestResponse = await fetch(joinUrl(apiBaseUrl, `/books/${encodeURIComponent(bookId)}/manifest`), {
-    headers: authHeaders(),
-  });
-  let contentRevisionId;
-  let metadataRevision;
-  if (manifestResponse.ok) {
-    const manifest = await manifestResponse.json();
-    contentRevisionId = String(bookField(manifest.book, 'active_content_revision_id', 'activeContentRevisionId') ?? '');
-    metadataRevision = Number(bookField(manifest.book, 'metadata_revision', 'metadataRevision'));
-    const trashed = await request(`/books/${encodeURIComponent(bookId)}`, {
-      method: 'DELETE',
-      ...jsonBody({
-        expectedRevision: metadataRevision,
-        expectedContentRevisionId: contentRevisionId,
-        deviceId: 'hosted-live-smoke',
-      }),
-    });
-    metadataRevision = Number(trashed.metadataRevision);
-  } else if (manifestResponse.status === 409) {
-    const book = await activeCatalogBook(bookId);
-    if (!book) throw new Error('cleanup could not resolve the active reused-id book');
-    contentRevisionId = String(bookField(book, 'active_content_revision_id', 'activeContentRevisionId') ?? '');
-    metadataRevision = Number(bookField(book, 'metadata_revision', 'metadataRevision'));
-    const trashed = await request(`/books/${encodeURIComponent(bookId)}`, {
-      method: 'DELETE',
-      ...jsonBody({
-        expectedRevision: metadataRevision,
-        expectedContentRevisionId: contentRevisionId,
-        deviceId: 'hosted-live-smoke',
-      }),
-    });
-    metadataRevision = Number(trashed.metadataRevision);
-  } else if (manifestResponse.status === 404) {
-    const trash = await request('/trash/books');
-    const book = trash.books?.find((candidate) => candidate.id === bookId);
-    if (!book) return false;
-    contentRevisionId = String(bookField(book, 'active_content_revision_id', 'activeContentRevisionId') ?? '');
-    metadataRevision = Number(bookField(book, 'metadata_revision', 'metadataRevision'));
-  } else {
-    throw new Error(`cleanup manifest probe returned ${manifestResponse.status}`);
-  }
-  assert(contentRevisionId, 'cleanup could not resolve the active content revision');
-  assert(Number.isSafeInteger(metadataRevision), 'cleanup could not resolve the metadata revision');
-  await request(`/trash/books/${encodeURIComponent(bookId)}`, {
-    method: 'DELETE',
-    ...jsonBody({ expectedRevision: metadataRevision, expectedContentRevisionId: contentRevisionId }),
-  });
-  return true;
 }
 
 async function run() {
@@ -559,10 +449,6 @@ async function run() {
     );
     const beforeCover = beforeCoverResponse.status === 200 ? (await beforeCoverResponse.json()).cover : undefined;
     const beforeMetadataRevision = Number(manifest.book.metadata_revision ?? manifest.book.metadataRevision ?? 0);
-    const importedContentRevisionId = String(
-      bookField(manifest.book, 'active_content_revision_id', 'activeContentRevisionId') ?? '',
-    );
-    assert(importedContentRevisionId, 'imported text book did not expose its active content revision');
     const approvedCover = await request(`/books/${encodeURIComponent(importedBookId)}/cover/approved-enrichment`, {
       method: 'PUT',
       headers: {
@@ -576,7 +462,6 @@ async function run() {
         'X-Cover-Position-X': '50',
         'X-Cover-Position-Y': '50',
         'X-Expected-Metadata-Revision': String(beforeMetadataRevision),
-        'X-Expected-Content-Revision-Id': importedContentRevisionId,
       },
       body: sampleCoverBytes,
     });
@@ -600,7 +485,6 @@ async function run() {
         method: 'POST',
         ...jsonBody({
           expectedMetadataRevision: approvedCover.metadataRevision,
-          expectedContentRevisionId: importedContentRevisionId,
           expectedActiveAssetId: approvedCover.cover.id,
           expectedActiveContentHash: approvedCover.cover.content_hash,
           previousAssetId: beforeCover?.id,
@@ -626,17 +510,7 @@ async function run() {
     console.log('ok applied and safely restored a hosted approved enrichment cover');
 
     fixedDocumentBookId = `${smokeId}_comic`;
-    const comicCollectionRemoteId = `${smokeId}_suwayomi_work`;
-    const firstReleaseId = 'chapter:smoke-1';
-    const secondReleaseId = 'chapter:smoke-2';
-    const comicBytes = await singleReleaseSeriesComicArchive({
-      collectionRemoteId: comicCollectionRemoteId,
-      title: 'Hosted fixed document smoke',
-      releaseId: firstReleaseId,
-      releaseTitle: '1화',
-      chapterNumber: 1,
-      pageBytes: sampleDocumentPageBytes,
-    });
+    const comicBytes = await singlePageComicArchive('Hosted fixed document smoke');
     await uploadSingleChunkBook({
       bookId: fixedDocumentBookId,
       fileName: `${fixedDocumentBookId}.cbz`,
@@ -645,9 +519,9 @@ async function run() {
     });
     const comicManifest = await request(`/books/${encodeURIComponent(fixedDocumentBookId)}/manifest`);
     const comicChapters = await request(`/books/${encodeURIComponent(fixedDocumentBookId)}/chapters`);
-    const comicChapter = comicChapters.chapters?.find((chapter) => chapter.document_section_id === firstReleaseId);
+    const comicChapter = comicChapters.chapters?.[0];
     assert(comicManifest.book?.format === 'image_archive', 'comic smoke import was not materialized as image_archive');
-    assert(comicChapter?.id, 'comic smoke import did not preserve the first release section id');
+    assert(comicChapter?.id, 'comic smoke import returned no page chapter');
     const comicPages = await request(`/chapters/${encodeURIComponent(comicChapter.id)}/pages?from=0&count=1`);
     const comicAssetId = comicPages.pages?.[0]?.paragraphs?.[0]?.assetId;
     assert(comicAssetId, 'comic smoke page did not expose its document asset id');
@@ -685,10 +559,6 @@ async function run() {
     const comicRevisionBefore = Number(
       comicManifest.book.metadata_revision ?? comicManifest.book.metadataRevision ?? 0,
     );
-    const comicContentRevisionBefore = String(
-      bookField(comicManifest.book, 'active_content_revision_id', 'activeContentRevisionId') ?? '',
-    );
-    assert(comicContentRevisionBefore, 'comic smoke import did not expose its active content revision');
     const sourceCover = await request(`/books/${encodeURIComponent(fixedDocumentBookId)}/cover/approved-enrichment`, {
       method: 'PUT',
       headers: {
@@ -702,27 +572,15 @@ async function run() {
         'X-Cover-Position-X': '50',
         'X-Cover-Position-Y': '50',
         'X-Expected-Metadata-Revision': String(comicRevisionBefore),
-        'X-Expected-Content-Revision-Id': comicContentRevisionBefore,
       },
       body: sampleCoverBytes,
     });
     assert(sourceCover.cover?.content_hash === sampleCoverHash, 'source cover was not applied to comic smoke book');
-    const secondReleaseBytes = await singleReleaseSeriesComicArchive({
-      collectionRemoteId: comicCollectionRemoteId,
-      title: 'Hosted fixed document smoke',
-      releaseId: secondReleaseId,
-      releaseTitle: '2화',
-      chapterNumber: 2,
-      pageBytes: sampleCoverBytes,
-      targetBookId: fixedDocumentBookId,
-    });
     await uploadSingleChunkBook({
       bookId: fixedDocumentBookId,
       fileName: `${fixedDocumentBookId}.cbz`,
       contentType: 'application/vnd.comicbook+zip',
-      bytes: secondReleaseBytes,
-      importMode: 'append_image_series',
-      baseActiveContentRevisionId: comicContentRevisionBefore,
+      bytes: comicBytes,
     });
     const comicCoverAfterUpdate = await request(`/books/${encodeURIComponent(fixedDocumentBookId)}/cover/metadata`);
     assert(
@@ -732,69 +590,6 @@ async function run() {
       'comic content update replaced the approved source cover',
     );
     const comicManifestAfterUpdate = await request(`/books/${encodeURIComponent(fixedDocumentBookId)}/manifest`);
-    const comicContentRevisionAfterAppend = String(
-      bookField(comicManifestAfterUpdate.book, 'active_content_revision_id', 'activeContentRevisionId') ?? '',
-    );
-    assert(
-      comicContentRevisionAfterAppend && comicContentRevisionAfterAppend !== comicContentRevisionBefore,
-      'comic chapter append did not activate a new content revision',
-    );
-    const chaptersAfterAppend = await request(`/books/${encodeURIComponent(fixedDocumentBookId)}/chapters`);
-    const firstReleaseChapter = chaptersAfterAppend.chapters?.find(
-      (chapter) => chapter.document_section_id === firstReleaseId,
-    );
-    const secondReleaseChapter = chaptersAfterAppend.chapters?.find(
-      (chapter) => chapter.document_section_id === secondReleaseId,
-    );
-    assert(firstReleaseChapter?.id, 'comic chapter append lost the first release');
-    assert(secondReleaseChapter?.id, 'comic chapter append did not expose the second release by its own section id');
-    const secondReleasePages = await request(
-      `/chapters/${encodeURIComponent(secondReleaseChapter.id)}/pages?from=0&count=1`,
-    );
-    const secondReleaseParagraph = secondReleasePages.pages?.[0]?.paragraphs?.[0];
-    assert(secondReleaseParagraph?.assetId, 'second comic release did not expose its own page asset');
-    const secondReleaseResource = await fetch(
-      joinUrl(
-        apiBaseUrl,
-        `/books/${encodeURIComponent(fixedDocumentBookId)}/resources/${encodeURIComponent(secondReleaseParagraph.assetId)}`,
-      ),
-      { headers: authHeaders() },
-    );
-    assert(secondReleaseResource.ok, `second comic release resource returned ${secondReleaseResource.status}`);
-    assert(
-      Buffer.from(await secondReleaseResource.arrayBuffer()).equals(sampleCoverBytes),
-      'opening the second release returned bytes from a different release',
-    );
-    const secondReleaseReadAt = new Date().toISOString();
-    const secondReleasePosition = await request(`/books/${encodeURIComponent(fixedDocumentBookId)}/reading-position`, {
-      method: 'PATCH',
-      ...jsonBody({
-        chapterId: secondReleaseChapter.id,
-        paragraphId: secondReleaseParagraph.id,
-        paragraphIndex: secondReleaseParagraph.index,
-        offsetInParagraph: 0,
-        chapterProgress: 0.25,
-        scrollTop: 0,
-        deviceId: 'hosted-live-smoke',
-        documentSectionId: secondReleaseId,
-        expectedContentRevisionId: comicContentRevisionAfterAppend,
-        updatedAt: secondReleaseReadAt,
-      }),
-    });
-    assert(secondReleasePosition.applied === true, 'second comic release reading position was not applied');
-    const chaptersAfterRead = await request(`/books/${encodeURIComponent(fixedDocumentBookId)}/chapters`);
-    assert(
-      chaptersAfterRead.chapters
-        ?.filter((chapter) => chapter.document_section_id === firstReleaseId)
-        .every((chapter) => !chapter.document_section_read_at),
-      'reading the second comic release incorrectly marked the first release as read',
-    );
-    assert(
-      chaptersAfterRead.chapters
-        ?.filter((chapter) => chapter.document_section_id === secondReleaseId)
-        .every((chapter) => Boolean(chapter.document_section_read_at)),
-      'reading the second comic release did not mark that exact release as read',
-    );
     const restoredComicCover = await request(
       `/books/${encodeURIComponent(fixedDocumentBookId)}/cover/approved-enrichment/restore`,
       {
@@ -803,7 +598,6 @@ async function run() {
           expectedMetadataRevision: Number(
             comicManifestAfterUpdate.book.metadata_revision ?? comicManifestAfterUpdate.book.metadataRevision,
           ),
-          expectedContentRevisionId: comicContentRevisionAfterAppend,
           expectedActiveAssetId: sourceCover.cover.id,
           expectedActiveContentHash: sampleCoverHash,
           previousAssetId: comicCoverBefore.cover.id,
@@ -818,95 +612,7 @@ async function run() {
       restoredComicCover.cover?.id === comicCoverBefore.cover.id,
       'comic content update removed the safely restorable previous cover',
     );
-    console.log('ok appended and opened an exact comic release without replacing its source cover or read states');
-
-    const comicMetadataRevisionAfterRestore = Number(restoredComicCover.metadataRevision);
-    const trashedComic = await request(`/books/${encodeURIComponent(fixedDocumentBookId)}`, {
-      method: 'DELETE',
-      ...jsonBody({
-        expectedRevision: comicMetadataRevisionAfterRestore,
-        expectedContentRevisionId: comicContentRevisionAfterAppend,
-        deviceId: 'hosted-live-smoke',
-      }),
-    });
-    await request(`/trash/books/${encodeURIComponent(fixedDocumentBookId)}`, {
-      method: 'DELETE',
-      ...jsonBody({
-        expectedRevision: Number(trashedComic.metadataRevision),
-        expectedContentRevisionId: comicContentRevisionAfterAppend,
-      }),
-    });
-    await uploadSingleChunkBook({
-      bookId: fixedDocumentBookId,
-      fileName: `${fixedDocumentBookId}.cbz`,
-      contentType: 'application/vnd.comicbook+zip',
-      bytes: comicBytes,
-    });
-    const recreatedCatalogBook = await activeCatalogBook(fixedDocumentBookId);
-    const recreatedContentRevisionId = String(
-      bookField(recreatedCatalogBook, 'active_content_revision_id', 'activeContentRevisionId') ?? '',
-    );
-    assert(recreatedContentRevisionId, 'recreated comic catalog entry did not expose its content revision');
-    const recreatedComicManifest = await request(
-      `/books/${encodeURIComponent(fixedDocumentBookId)}/manifest?contentRevisionId=${encodeURIComponent(recreatedContentRevisionId)}`,
-    );
-    assert(
-      recreatedContentRevisionId && recreatedContentRevisionId !== comicContentRevisionAfterAppend,
-      'hard purge and re-import reused the deleted comic content generation',
-    );
-    const recreatedChapters = await request(
-      `/books/${encodeURIComponent(fixedDocumentBookId)}/chapters?contentRevisionId=${encodeURIComponent(recreatedContentRevisionId)}`,
-    );
-    const recreatedFirstRelease = recreatedChapters.chapters?.find(
-      (chapter) => chapter.document_section_id === firstReleaseId,
-    );
-    assert(recreatedFirstRelease?.id, 'recreated comic did not expose its first release');
-    assert(
-      recreatedChapters.chapters.every((chapter) => !chapter.document_section_read_at),
-      'recreated comic inherited exact read markers from the purged generation',
-    );
-    const stalePosition = await request(`/books/${encodeURIComponent(fixedDocumentBookId)}/reading-position`, {
-      method: 'PATCH',
-      ...jsonBody({
-        chapterId: recreatedFirstRelease.id,
-        paragraphIndex: 0,
-        offsetInParagraph: 0,
-        chapterProgress: 0.1,
-        scrollTop: 0,
-        deviceId: 'hosted-live-smoke-stale-generation',
-        documentSectionId: firstReleaseId,
-        expectedContentRevisionId: comicContentRevisionAfterAppend,
-        updatedAt: new Date().toISOString(),
-      }),
-    });
-    assert(
-      stalePosition.applied === false && stalePosition.reason === 'content_revision_changed',
-      'recreated comic accepted a reading update from the purged generation',
-    );
-    const staleCoverResponse = await fetch(
-      joinUrl(apiBaseUrl, `/books/${encodeURIComponent(fixedDocumentBookId)}/cover/approved-enrichment`),
-      {
-        method: 'PUT',
-        headers: authHeaders({
-          'Content-Type': 'application/octet-stream',
-          'X-Cover-File-Name': encodeURIComponent(`${fixedDocumentBookId}-stale.png`),
-          'X-Cover-Content-Type': 'image/png',
-          'X-Cover-Content-Hash': sampleCoverHash,
-          'X-Cover-Width': '1',
-          'X-Cover-Height': '1',
-          'X-Cover-Fit': 'crop',
-          'X-Cover-Position-X': '50',
-          'X-Cover-Position-Y': '50',
-          'X-Expected-Metadata-Revision': String(
-            bookField(recreatedComicManifest.book, 'metadata_revision', 'metadataRevision') ?? 0,
-          ),
-          'X-Expected-Content-Revision-Id': comicContentRevisionAfterAppend,
-        }),
-        body: sampleCoverBytes,
-      },
-    );
-    assert(staleCoverResponse.status === 409, 'recreated comic accepted a cover from the purged generation');
-    console.log('ok isolated a hard-purged comic generation from its deterministic-id replacement');
+    console.log('ok preserved source cover and cover undo history across a hosted comic update');
 
     const paragraphLookup = await request(`/paragraphs/${encodeURIComponent(firstParagraph.id)}`);
     assert(
@@ -941,7 +647,6 @@ async function run() {
       chapterProgress: 0.25,
       scrollTop: 120,
       deviceId: 'hosted-live-smoke',
-      expectedContentRevisionId: importedContentRevisionId,
       updatedAt: new Date().toISOString(),
     };
     const savedPosition = await request(`/books/${encodeURIComponent(importedBookId)}/reading-position`, {
@@ -1104,11 +809,11 @@ async function run() {
     console.log('ok sync pull exposed import, reading-position, annotation, and tombstone events');
   } finally {
     if (fixedDocumentBookId && !keepBook) {
-      await cleanupSmokeBook(fixedDocumentBookId);
+      await request(`/books/${encodeURIComponent(fixedDocumentBookId)}`, { method: 'DELETE' });
       console.log('ok cleaned up fixed-document smoke book');
     }
     if (importedBookId && !keepBook) {
-      await cleanupSmokeBook(importedBookId);
+      await request(`/books/${encodeURIComponent(importedBookId)}`, { method: 'DELETE' });
       console.log('ok cleaned up smoke book');
     }
   }

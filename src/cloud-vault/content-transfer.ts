@@ -187,9 +187,7 @@ export class CloudVaultContentTransferService {
         (!localSnapshot || contentWasSelectedFromLocal(book, localBook) || sourceObject === undefined);
       if (maySupplySource) {
         try {
-          const exported = await this.assets.exportSource(novel.id, {
-            activeContentRevisionId: novel.activeContentRevisionId,
-          });
+          const exported = await this.assets.exportSource(novel.id);
           if (exported) {
             const nextObject = descriptor('source', exported, novel);
             if (
@@ -260,9 +258,7 @@ export class CloudVaultContentTransferService {
       let needsReplacement = Boolean(localNovel && localNovel.normalizedTextHash !== book.identity.normalizedTextHash);
       if (localNovel && book.sourceObject && !needsReplacement) {
         try {
-          const localSource = await this.assets.getActiveSource(localNovel.id, {
-            activeContentRevisionId: localNovel.activeContentRevisionId,
-          });
+          const localSource = await this.assets.getActiveSource(localNovel.id);
           needsReplacement = !activeSourceMatches(localSource, book.sourceObject);
         } catch (error) {
           contentFailures.push(
@@ -334,8 +330,6 @@ export class CloudVaultContentTransferService {
               fit: book.coverObject.fit ?? 'crop',
               positionX: book.coverObject.positionX ?? 50,
               positionY: book.coverObject.positionY ?? 50,
-              expectedMetadataRevision: localNovel.metadataRevision ?? 0,
-              expectedContentRevisionId: localNovel.activeContentRevisionId,
             });
             downloadedContentBytes += stored.blob.size;
           }

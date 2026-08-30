@@ -90,7 +90,7 @@ describe('server CORS policy', () => {
         origin: 'https://reader.example',
         'access-control-request-method': 'PUT',
         'access-control-request-headers':
-          'Authorization, Content-Type, Range, X-Cover-Content-Type, X-Cover-Content-Hash, X-Cover-File-Name, X-Cover-Width, X-Cover-Height, X-Cover-Fit, X-Cover-Position-X, X-Cover-Position-Y, X-Cover-Provenance, X-Expected-Metadata-Revision, X-Expected-Content-Revision-Id',
+          'Authorization, Content-Type, Range, X-Cover-Content-Type, X-Cover-Content-Hash, X-Cover-File-Name, X-Cover-Width, X-Cover-Height, X-Cover-Fit, X-Cover-Position-X, X-Cover-Position-Y, X-Cover-Provenance, X-Expected-Metadata-Revision',
       },
     });
     const denied = await app.inject({
@@ -107,7 +107,6 @@ describe('server CORS policy', () => {
     expect(allowed.headers['access-control-allow-origin']).toBe('https://reader.example');
     expect(allowed.headers['access-control-allow-headers']).toContain('Range');
     expect(allowed.headers['access-control-allow-headers']).toContain('X-Expected-Metadata-Revision');
-    expect(allowed.headers['access-control-allow-headers']).toContain('X-Expected-Content-Revision-Id');
     expect(denied.statusCode).toBe(403);
     expect(denied.json()).toEqual({ error: 'cors_preflight_denied' });
     await app.close();
@@ -128,7 +127,6 @@ describe('server CORS policy', () => {
     expect(exposed).toContain('X-Page-Index');
     expect(exposed).toContain('X-Source-File-Name');
     expect(exposed).toContain('X-Source-Content-Hash');
-    expect(exposed).toContain('X-Content-Revision-Id');
     expect(exposed).toContain('Accept-Ranges');
     expect(exposed).toContain('Content-Range');
     expect(exposed).toContain('Content-Disposition');
