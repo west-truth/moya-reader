@@ -35,6 +35,7 @@ export interface ReaderParagraphRowProps {
   readonly measureElement: (element: Element | null) => void;
   readonly onSelectCorrectionSegment: (segmentId: string) => void;
   readonly assetRepository?: BookAssetRepository;
+  readonly contentRevisionId?: string;
   readonly onDocumentLink?: (href: string, footnote: boolean) => void;
   readonly staticLayout?: boolean;
   readonly sourceOffset?: number;
@@ -45,11 +46,13 @@ function EpubImage({
   bookId,
   assetId,
   alt,
+  contentRevisionId,
 }: {
   repository?: BookAssetRepository;
   bookId: string;
   assetId?: string;
   alt: string;
+  contentRevisionId?: string;
 }) {
   const [source, setSource] = useState<string>();
   const [failed, setFailed] = useState(false);
@@ -63,7 +66,7 @@ function EpubImage({
       return;
     }
     void repository
-      .getEmbeddedResource(bookId, assetId)
+      .getEmbeddedResource(bookId, assetId, { activeContentRevisionId: contentRevisionId })
       .then((resource) => {
         if (!active || !resource) {
           if (active) setFailed(true);
@@ -77,7 +80,7 @@ function EpubImage({
       active = false;
       if (objectUrl) URL.revokeObjectURL(objectUrl);
     };
-  }, [assetId, bookId, repository]);
+  }, [assetId, bookId, contentRevisionId, repository]);
   if (failed) return <div className="reader-image-placeholder">{alt || '이미지를 표시할 수 없습니다.'}</div>;
   if (!source) return <div className="reader-image-placeholder is-loading" aria-label="이미지 불러오는 중" />;
   return <img className="reader-epub-image" src={source} alt={alt} onError={() => setFailed(true)} />;
@@ -153,6 +156,7 @@ function ReaderParagraphRowComponent({
   measureElement,
   onSelectCorrectionSegment,
   assetRepository,
+  contentRevisionId,
   onDocumentLink = () => undefined,
   staticLayout = false,
   sourceOffset = 0,
@@ -212,6 +216,7 @@ function ReaderParagraphRowComponent({
           bookId={paragraph.novelId}
           assetId={paragraph.assetId}
           alt={paragraph.text}
+          contentRevisionId={contentRevisionId}
         />
       );
     }

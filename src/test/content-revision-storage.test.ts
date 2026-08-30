@@ -435,7 +435,7 @@ describe('content revision storage', () => {
         description: '내 설명',
         language: 'ko',
       },
-      0,
+      { metadataRevision: 0, activeContentRevisionId: original.novel.activeContentRevisionId },
     );
     const edited = (await getNovel(original.novel.id))!;
     const cover = await assets.saveCover(original.novel.id, {

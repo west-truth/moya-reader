@@ -22,6 +22,7 @@ readerQueryContract('RemoteReaderRepository reader query contract', async () => 
   const parsed = createReaderQueryContractNovel();
   const pages = paragraphPagesFromParsed(parsed);
   const chapterIndex = new Map(parsed.chapters.map((chapter) => [chapter.id, chapter.index]));
+  const contentRevisionId = 'reader-query-contract-content-r1';
 
   vi.spyOn(globalThis, 'fetch').mockImplementation(async (input, init) => {
     if (init?.signal?.aborted) throw init.signal.reason;
@@ -44,7 +45,30 @@ readerQueryContract('RemoteReaderRepository reader query contract', async () => 
           paragraphs: page.paragraphs,
           text_hash: page.textHash,
         }));
-      return Response.json({ pages: selected });
+      return Response.json({ pages: selected, contentRevisionId });
+    }
+
+    const chapterMatch = url.pathname.match(/^\/chapters\/([^/]+)$/);
+    if (chapterMatch) {
+      const chapterId = decodeURIComponent(chapterMatch[1]);
+      const chapter = parsed.chapters.find((candidate) => candidate.id === chapterId);
+      if (!chapter) return new Response('not found', { status: 404 });
+      return Response.json({
+        chapter: {
+          id: chapter.id,
+          book_id: chapter.novelId,
+          chapter_index: chapter.index,
+          title: chapter.title,
+          text_hash: chapter.textHash,
+          raw_start_offset: chapter.rawStartOffset,
+          raw_end_offset: chapter.rawEndOffset,
+          character_count: chapter.characterCount,
+          paragraph_count: chapter.paragraphCount,
+          created_at: chapter.createdAt,
+          updated_at: chapter.updatedAt,
+        },
+        contentRevisionId,
+      });
     }
 
     const chapterSearch = url.pathname.match(/^\/chapters\/([^/]+)\/search$/);

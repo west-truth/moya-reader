@@ -64,6 +64,9 @@ import type { DocumentTextSearchResult } from '../../repositories/document-text-
 import type { ReaderRepository } from '../../repositories/reader-repository';
 import { LocalTesseractOcrProvider } from '../../providers/local-tesseract-ocr-provider';
 import { useScrollChapterBoundary } from '../reader/use-scroll-chapter-boundary';
+import type { FixedDocumentPageTarget } from '../book-workspace/book-workspace-contract';
+import { DebouncedProgressPersistence } from '../reader/reader-progress-controller';
+import { flushReaderBoundary, useReaderLifecycleFlush } from '../reader/use-reader-lifecycle-flush';
 import { IndexedDbDocumentTextRepository } from '../../storage/document-text-store';
 import { IndexedDbComicReadingProfileRepository } from '../../storage/comic-reading-profile-store';
 import {
@@ -181,7 +184,7 @@ export interface FixedDocumentScreenProps {
   readonly repository: ReaderRepository;
   readonly assets: BookAssetRepository;
   readonly onBack: () => void;
-  readonly onPageSettled: (pageIndex: number) => void | Promise<void>;
+  readonly onPageSettled: (pageIndex: number, target: FixedDocumentPageTarget) => void | Promise<void>;
   readonly onGeneratedCover?: (cover: BookAssetMetadata) => void;
   readonly onStartListening?: (pageIndex: number, blockId?: string, startOffset?: number) => void | Promise<void>;
   readonly onPrepareListening?: (startPageIndex: number, endPageIndex: number) => void | Promise<void>;
@@ -330,6 +333,7 @@ function PdfThumbnailPreview({
 function ArchiveThumbnailPreview({
   bookId,
   sourceHash,
+  contentRevisionId,
   chapterId,
   pageIndex,
   repository,
@@ -338,6 +342,7 @@ function ArchiveThumbnailPreview({
 }: {
   readonly bookId: string;
   readonly sourceHash: string;
+  readonly contentRevisionId?: string;
   readonly chapterId: string;
   readonly pageIndex: number;
   readonly repository: ReaderRepository;
@@ -364,7 +369,9 @@ function ArchiveThumbnailPreview({
       const cached = await getDocumentThumbnail({ bookId, pageIndex, pageHash, renderFingerprint });
       let blob = cached?.blob;
       if (!blob) {
-        const resource = await assets.getEmbeddedResource(bookId, assetId);
+        const resource = await assets.getEmbeddedResource(bookId, assetId, {
+          activeContentRevisionId: contentRevisionId,
+        });
         if (!resource) throw new Error('이미지 페이지를 찾을 수 없습니다.');
         const rendered = await renderArchiveThumbnail(resource.blob, controller.signal);
         blob = rendered.blob;
@@ -388,7 +395,7 @@ function ArchiveThumbnailPreview({
       controller.abort();
       if (objectUrl) URL.revokeObjectURL(objectUrl);
     };
-  }, [assets, bookId, chapterId, onPageHint, pageIndex, repository, sourceHash]);
+  }, [assets, bookId, chapterId, contentRevisionId, onPageHint, pageIndex, repository, sourceHash]);
   return url ? <img src={url} alt="" draggable={false} /> : <span>{pageIndex + 1}</span>;
 }
 
@@ -764,6 +771,27 @@ export default function FixedDocumentScreen({
   const [selectionNoteDraft, setSelectionNoteDraft] = useState('');
   const [pendingRegionSelection, setPendingRegionSelection] = useState<PdfRegionSelection>();
   const [regionNoteDraft, setRegionNoteDraft] = useState('');
+  const onPageSettledRef = useRef(onPageSettled);
+  onPageSettledRef.current = onPageSettled;
+  const pagePersistenceRef =
+    useRef<DebouncedProgressPersistence<{ readonly pageIndex: number; readonly target: FixedDocumentPageTarget }>>();
+  if (!pagePersistenceRef.current) {
+    pagePersistenceRef.current = new DebouncedProgressPersistence(
+      {
+        set: (callback, delayMs) => window.setTimeout(callback, delayMs),
+        clear: (handle) => window.clearTimeout(handle),
+      },
+      350,
+      (settled) => Promise.resolve(onPageSettledRef.current(settled.pageIndex, settled.target)),
+    );
+  }
+  const flushPageProgress = useCallback(() => pagePersistenceRef.current!.flush(), []);
+  const flushPageProgressImmediately = useCallback(() => pagePersistenceRef.current!.flushImmediately(), []);
+  useReaderLifecycleFlush(flushPageProgressImmediately);
+  const handleBack = useCallback(async () => {
+    await flushReaderBoundary(flushPageProgress);
+    onBack();
+  }, [flushPageProgress, onBack]);
 
   const refreshOcrModelCache = useCallback(async () => {
     setOcrModelCacheStatus('loading');
@@ -1067,11 +1095,15 @@ export default function FixedDocumentScreen({
       const chapter = sortedChapters[index];
       const paragraphPage = chapter ? await repository.getParagraphPage(chapter.id, 0) : undefined;
       const assetId = paragraphPage?.paragraphs[0]?.assetId;
-      const resource = assetId ? await assets.getEmbeddedResource(novel.id, assetId) : undefined;
+      const resource = assetId
+        ? await assets.getEmbeddedResource(novel.id, assetId, {
+            activeContentRevisionId: novel.activeContentRevisionId,
+          })
+        : undefined;
       if (!resource) throw new Error(`${index + 1}페이지 이미지를 찾을 수 없습니다.`);
       return resource.blob;
     },
-    [assets, novel.id, repository, sortedChapters],
+    [assets, novel.activeContentRevisionId, novel.id, repository, sortedChapters],
   );
 
   const autoCropPages = useCallback(
@@ -1266,7 +1298,9 @@ export default function FixedDocumentScreen({
             return;
           }
           const identity = await resolveArchiveIdentity(index);
-          const resource = await assets.getEmbeddedResource(novel.id, identity.assetId);
+          const resource = await assets.getEmbeddedResource(novel.id, identity.assetId, {
+            activeContentRevisionId: novel.activeContentRevisionId,
+          });
           if (!resource) throw new Error(`${index + 1}페이지 이미지를 찾을 수 없습니다.`);
           const rendered = await renderArchiveThumbnail(resource.blob, signal);
           await saveDocumentThumbnail({
@@ -1725,9 +1759,20 @@ export default function FixedDocumentScreen({
   );
 
   useEffect(() => {
-    const timer = window.setTimeout(() => void onPageSettled(pageIndex), 350);
-    return () => window.clearTimeout(timer);
-  }, [onPageSettled, pageIndex]);
+    const chapter = sortedChapters[pageIndex];
+    if (!chapter) return;
+    pagePersistenceRef.current!.schedule({
+      pageIndex,
+      target: {
+        novelId: novel.id,
+        contentRevisionId: novel.activeContentRevisionId,
+        chapterId: chapter.id,
+        documentSectionId: chapter.documentSectionId,
+        chapterIndex: chapter.index,
+        totalPages,
+      },
+    });
+  }, [novel.activeContentRevisionId, novel.id, pageIndex, sortedChapters, totalPages]);
 
   useEffect(() => {
     const anchor = listeningPosition?.anchor;
@@ -1825,7 +1870,7 @@ export default function FixedDocumentScreen({
     let rangeTransport: BookSourcePdfRangeTransport | undefined;
     setStatus('loading');
     void assets
-      .openSource(novel.id)
+      .openSource(novel.id, { activeContentRevisionId: novel.activeContentRevisionId })
       .then(async (source) => {
         if (!source) throw new Error('PDF 원본을 찾을 수 없습니다. 원본 파일을 다시 연결해 주세요.');
         rangeTransport = await BookSourcePdfRangeTransport.open(source);
@@ -1850,7 +1895,7 @@ export default function FixedDocumentScreen({
       rangeTransport?.abort();
       if (loaded) void loaded.destroy();
     };
-  }, [assets, novel.format, novel.id]);
+  }, [assets, novel.activeContentRevisionId, novel.format, novel.id]);
 
   useEffect(() => {
     if (novel.format !== 'pdf' || novel.coverAssetId || !pdf || !assets.saveGeneratedCover) return;
@@ -1865,7 +1910,10 @@ export default function FixedDocumentScreen({
       const page = cached ?? (await pdf.getPage(1));
       try {
         const input = await renderPdfGeneratedCover({ page, sourceHash, pageHash });
-        const cover = await assets.saveGeneratedCover?.(novel.id, input);
+        const cover = await assets.saveGeneratedCover?.(novel.id, {
+          ...input,
+          expectedContentRevisionId: novel.activeContentRevisionId,
+        });
         if (active && cover) onGeneratedCover?.(cover);
       } finally {
         if (!cached) page.cleanup();
@@ -2016,7 +2064,7 @@ export default function FixedDocumentScreen({
     setStatus('loading');
     void Promise.all(
       missing.map((index) => {
-        const loadKey = `${novel.id}:${index}`;
+        const loadKey = `${novel.id}:${novel.activeContentRevisionId ?? 'legacy'}:${index}`;
         const existing = archiveImageLoadsRef.current.get(loadKey);
         if (existing) return existing;
         const pending = (async (): Promise<LoadedArchivePage> => {
@@ -2024,7 +2072,11 @@ export default function FixedDocumentScreen({
           const paragraphPage = chapter ? await repository.getParagraphPage(chapter.id, 0) : undefined;
           const paragraph = paragraphPage?.paragraphs[0];
           const assetId = paragraph?.assetId;
-          const resource = assetId ? await assets.getEmbeddedResource(novel.id, assetId) : undefined;
+          const resource = assetId
+            ? await assets.getEmbeddedResource(novel.id, assetId, {
+                activeContentRevisionId: novel.activeContentRevisionId,
+              })
+            : undefined;
           if (!resource) throw new Error(`${index + 1}페이지 이미지를 찾을 수 없습니다.`);
           return {
             index,
@@ -2091,7 +2143,16 @@ export default function FixedDocumentScreen({
     return () => {
       active = false;
     };
-  }, [assets, imageWantedPageIndexes, novel.format, novel.id, repository, sortedChapters, totalPages]);
+  }, [
+    assets,
+    imageWantedPageIndexes,
+    novel.activeContentRevisionId,
+    novel.format,
+    novel.id,
+    repository,
+    sortedChapters,
+    totalPages,
+  ]);
 
   useEffect(() => {
     setImageUrls((previous) => {
@@ -2377,7 +2438,12 @@ export default function FixedDocumentScreen({
     <main className={`fixed-doc-screen${immersive ? ' is-immersive' : ''}`}>
       <header className="fixed-doc-header">
         <div className="fixed-doc-title-group">
-          <button type="button" className="fixed-doc-icon-button" onClick={onBack} aria-label="라이브러리로 돌아가기">
+          <button
+            type="button"
+            className="fixed-doc-icon-button"
+            onClick={() => void handleBack()}
+            aria-label="라이브러리로 돌아가기"
+          >
             <ArrowLeft size={19} />
           </button>
           <div>
@@ -2720,6 +2786,7 @@ export default function FixedDocumentScreen({
                         <ArchiveThumbnailPreview
                           bookId={novel.id}
                           sourceHash={novel.sourceContentHash ?? novel.rawTextHash}
+                          contentRevisionId={novel.activeContentRevisionId}
                           chapterId={chapter.id}
                           pageIndex={index}
                           repository={repository}

@@ -246,6 +246,8 @@ export interface ExternalSourceLink {
     readonly stagedAt: string;
     readonly hadExistingLink: boolean;
     readonly previousActiveContentRevisionId?: string;
+    /** Exact content incarnation returned by the completed canonical import. */
+    readonly activatedContentRevisionId?: string;
     /** Exact source hash expected after activation, or the uploaded delta hash when resolved by the importer. */
     readonly expectedActiveSourceContentHash: string;
     /**

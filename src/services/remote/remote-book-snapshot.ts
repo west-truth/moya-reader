@@ -63,8 +63,10 @@ function snapshotMetadataRecords(response: SnapshotJsonRecord): Array<SnapshotJs
   return [response, optionalJsonRecord(response.snapshot), optionalJsonRecord(response.book)];
 }
 
-function snapshotSourceRevision(response: SnapshotJsonRecord): string | undefined {
+export function snapshotSourceRevision(response: SnapshotJsonRecord): string | undefined {
   return firstString(snapshotMetadataRecords(response), [
+    'activeContentRevisionId',
+    'active_content_revision_id',
     'contentRevisionId',
     'content_revision_id',
     'snapshotRevision',
@@ -97,15 +99,23 @@ function snapshotManifestFingerprint(manifest: SnapshotAwareResponse<{ book: Sna
 
 function assertSnapshotPin(pin: RemoteSnapshotPin, response: SnapshotJsonRecord, context: string): void {
   const responseRevision = snapshotSourceRevision(response);
-  if (pin.sourceRevision && responseRevision && responseRevision !== pin.sourceRevision) {
+  if (pin.sourceRevision && responseRevision !== pin.sourceRevision) {
     throw new RemoteSnapshotRevisionMismatchError(
-      `${context} returned content revision ${responseRevision}; expected ${pin.sourceRevision}`,
+      `${context} returned content revision ${responseRevision ?? 'none'}; expected ${pin.sourceRevision}`,
     );
   }
   const responseHash = snapshotContentHash(response);
   if (pin.contentHash && responseHash && responseHash !== pin.contentHash) {
     throw new RemoteSnapshotRevisionMismatchError(`${context} returned a different content hash`);
   }
+}
+
+export function assertRemoteContentRevision(
+  expectedContentRevisionId: string,
+  response: SnapshotJsonRecord,
+  context: string,
+): void {
+  assertSnapshotPin({ sourceRevision: expectedContentRevisionId, fingerprint: '' }, response, context);
 }
 
 export function snapshotQueryPath(path: string, sourceRevision?: string): string {
@@ -139,6 +149,7 @@ export function mapServerBook(row: SnapshotJsonRecord): Novel {
     coverFit: stringValue(row.cover_fit ?? row.coverFit, 'crop') as Novel['coverFit'],
     coverPositionX: numberValue(row.cover_position_x ?? row.coverPositionX, 50),
     coverPositionY: numberValue(row.cover_position_y ?? row.coverPositionY, 50),
+    coverRemovedAt: stringValue(row.cover_removed_at ?? row.coverRemovedAt) || undefined,
     sourceFileName: stringValue(row.source_file_name),
     sourceEncoding: stringValue(row.source_encoding, 'auto') as EncodingMode,
     rawText: '',

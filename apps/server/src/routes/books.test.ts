@@ -174,7 +174,8 @@ describe('book routes', () => {
     };
     const pool = {
       query: vi.fn(async (sql: string, params?: unknown[]) => {
-        expect(sql).toContain('from paragraph_pages pp');
+        expect(sql).toContain('from chapters c');
+        expect(sql).toContain('left join paragraph_pages pp');
         expect(sql).toContain('limit $4');
         expect(params).toEqual(['chapter_1', 'user_test', 2, 20]);
         return { rows: [page] };
@@ -277,12 +278,17 @@ describe('book routes', () => {
   });
 
   it('saves reading position and emits a sync event only when the update is applied', async () => {
-    const pool = {
+    const client = {
       query: vi.fn(async (sql: string, params?: unknown[]) => {
-        if (sql.includes('select exists(') && sql.includes('from chapters c')) {
-          expect(params).toEqual(['book_1', 'user_test', 'chapter_1', 'chapter:6']);
-          return { rows: [{ exists: true }] };
+        if (sql === 'begin' || sql === 'commit') return { rowCount: null, rows: [] };
+        if (sql.includes('pg_advisory_xact_lock')) return { rowCount: 1, rows: [] };
+        if (sql.includes('from library_books book') && sql.includes('join chapters chapter')) {
+          return {
+            rowCount: 1,
+            rows: [{ active_content_revision_id: 'content-1', document_section_id: 'chapter:6' }],
+          };
         }
+        if (sql.includes("type = 'reading_position_deleted'")) return { rows: [{ blocked: false }] };
         if (sql.includes('insert into reading_positions')) {
           expect(params).toEqual([
             'book_1',
@@ -332,6 +338,16 @@ describe('book routes', () => {
         }
         throw new Error(`unexpected query: ${sql}`);
       }),
+      release: vi.fn(),
+    };
+    const pool = {
+      query: vi.fn(async (sql: string, params?: unknown[]) => {
+        expect(sql).toContain('select exists(');
+        expect(sql).toContain('from chapters c');
+        expect(params).toEqual(['book_1', 'user_test', 'chapter_1', 'chapter:6']);
+        return { rows: [{ exists: true }] };
+      }),
+      connect: vi.fn(async () => client),
     } as unknown as pg.Pool;
     const app = await appWithBooks(pool);
 
@@ -341,6 +357,7 @@ describe('book routes', () => {
       payload: {
         chapterId: 'chapter_1',
         documentSectionId: 'chapter:6',
+        expectedContentRevisionId: 'content-1',
         paragraphId: 'paragraph_7',
         paragraphIndex: 7,
         offsetInParagraph: 2,
@@ -353,21 +370,40 @@ describe('book routes', () => {
 
     expect(response.statusCode).toBe(200);
     expect(response.json()).toEqual({ ok: true, applied: true });
-    expect(pool.query).toHaveBeenCalledTimes(4);
+    expect(pool.query).not.toHaveBeenCalled();
+    expect(client.query).toHaveBeenCalledTimes(8);
+    expect(client.query.mock.calls[0]?.[0]).toBe('begin');
+    expect(client.query.mock.calls.at(-1)?.[0]).toBe('commit');
+    expect(client.release).toHaveBeenCalledOnce();
 
     await app.close();
   });
 
   it('does not emit sync events for stale reading-position patches', async () => {
-    const pool = {
-      query: vi.fn(async (sql: string, params?: unknown[]) => {
-        if (sql.includes('select exists(') && sql.includes('from chapters c')) {
-          expect(params).toEqual(['book_1', 'user_test', 'chapter_1']);
-          return { rows: [{ exists: true }] };
+    const client = {
+      query: vi.fn(async (sql: string) => {
+        if (sql === 'begin' || sql === 'commit') return { rowCount: null, rows: [] };
+        if (sql.includes('pg_advisory_xact_lock')) return { rowCount: 1, rows: [] };
+        if (sql.includes('from library_books book') && sql.includes('join chapters chapter')) {
+          return {
+            rowCount: 1,
+            rows: [{ active_content_revision_id: 'content-1', document_section_id: null }],
+          };
         }
+        if (sql.includes("type = 'reading_position_deleted'")) return { rows: [{ blocked: false }] };
         expect(sql).toContain('insert into reading_positions');
         return { rowCount: 0, rows: [] };
       }),
+      release: vi.fn(),
+    };
+    const pool = {
+      query: vi.fn(async (sql: string, params?: unknown[]) => {
+        expect(sql).toContain('select exists(');
+        expect(sql).toContain('from chapters c');
+        expect(params).toEqual(['book_1', 'user_test', 'chapter_1']);
+        return { rows: [{ exists: true }] };
+      }),
+      connect: vi.fn(async () => client),
     } as unknown as pg.Pool;
     const app = await appWithBooks(pool);
 
@@ -376,13 +412,162 @@ describe('book routes', () => {
       url: '/api/books/book_1/reading-position',
       payload: {
         chapterId: 'chapter_1',
+        expectedContentRevisionId: 'content-1',
         updatedAt: '2026-07-04T23:59:00.000Z',
       },
     });
 
     expect(response.statusCode).toBe(200);
     expect(response.json()).toEqual({ ok: true, applied: false });
-    expect(pool.query).toHaveBeenCalledTimes(2);
+    expect(pool.query).not.toHaveBeenCalled();
+    expect(client.query).toHaveBeenCalledTimes(6);
+    expect(client.query.mock.calls.at(-1)?.[0]).toBe('commit');
+    expect(client.release).toHaveBeenCalledOnce();
+
+    await app.close();
+  });
+
+  it('records an exact fixed-document section even when the global position is newer', async () => {
+    const client = {
+      query: vi.fn(async (sql: string, params?: unknown[]) => {
+        if (sql === 'begin' || sql === 'commit') return { rowCount: null, rows: [] };
+        if (sql.includes('pg_advisory_xact_lock')) return { rowCount: 1, rows: [] };
+        if (sql.includes('from library_books book') && sql.includes('join chapters chapter')) {
+          return {
+            rowCount: 1,
+            rows: [{ active_content_revision_id: 'content-1', document_section_id: 'chapter:6' }],
+          };
+        }
+        if (sql.includes("type = 'reading_position_deleted'")) return { rows: [{ blocked: false }] };
+        if (sql.includes('insert into reading_positions')) return { rowCount: 0, rows: [] };
+        if (sql.includes('insert into fixed_document_section_read_states')) {
+          expect(params).toEqual(['book_1', 'user_test', 'chapter:6', '2026-07-05T00:03:00.000Z']);
+          return { rowCount: 1, rows: [{ last_read_at: '2026-07-05T00:03:00.000Z' }] };
+        }
+        if (sql.includes('insert into sync_events')) return { rowCount: 1, rows: [] };
+        throw new Error(`unexpected query: ${sql}`);
+      }),
+      release: vi.fn(),
+    };
+    const pool = {
+      query: vi.fn(async () => ({ rows: [{ exists: true }] })),
+      connect: vi.fn(async () => client),
+    } as unknown as pg.Pool;
+    const app = await appWithBooks(pool);
+
+    const response = await app.inject({
+      method: 'PATCH',
+      url: '/api/books/book_1/reading-position',
+      payload: {
+        chapterId: 'chapter_1',
+        documentSectionId: 'chapter:6',
+        expectedContentRevisionId: 'content-1',
+        updatedAt: '2026-07-05T00:03:00.000Z',
+      },
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toEqual({ ok: true, applied: true });
+    expect(client.query.mock.calls.some(([sql]) => String(sql).includes('insert into sync_events'))).toBe(true);
+    expect(client.query.mock.calls.at(-1)?.[0]).toBe('commit');
+    expect(client.release).toHaveBeenCalledOnce();
+
+    await app.close();
+  });
+
+  it('rejects a delayed fixed-document write after the active content revision changes', async () => {
+    const client = {
+      query: vi.fn(async (sql: string) => {
+        if (sql === 'begin' || sql === 'commit') return { rowCount: null, rows: [] };
+        if (sql.includes('pg_advisory_xact_lock')) return { rowCount: 1, rows: [] };
+        if (sql.includes('from library_books book') && sql.includes('join chapters chapter')) {
+          return {
+            rowCount: 1,
+            rows: [{ active_content_revision_id: 'content-new', document_section_id: 'chapter:6' }],
+          };
+        }
+        throw new Error(`unexpected query: ${sql}`);
+      }),
+      release: vi.fn(),
+    };
+    const pool = {
+      query: vi.fn(async () => ({ rows: [{ exists: true }] })),
+      connect: vi.fn(async () => client),
+    } as unknown as pg.Pool;
+    const app = await appWithBooks(pool);
+
+    const response = await app.inject({
+      method: 'PATCH',
+      url: '/api/books/book_1/reading-position',
+      payload: {
+        chapterId: 'chapter_1',
+        documentSectionId: 'chapter:6',
+        expectedContentRevisionId: 'content-old',
+        updatedAt: '2026-07-05T00:03:00.000Z',
+      },
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toEqual({ ok: true, applied: false, reason: 'content_revision_changed' });
+    expect(client.query.mock.calls.map(([sql]) => sql)).toEqual([
+      'begin',
+      expect.stringContaining('pg_advisory_xact_lock'),
+      expect.stringContaining('from library_books book'),
+      'commit',
+    ]);
+    expect(client.release).toHaveBeenCalledOnce();
+
+    await app.close();
+  });
+
+  it('rolls back reading position and section state together when persistence fails', async () => {
+    const queries: string[] = [];
+    const client = {
+      query: vi.fn(async (sql: string) => {
+        queries.push(sql);
+        if (sql === 'begin' || sql === 'rollback') return { rowCount: null, rows: [] };
+        if (sql.includes('pg_advisory_xact_lock')) return { rowCount: 1, rows: [] };
+        if (sql.includes('from library_books book') && sql.includes('join chapters chapter')) {
+          return {
+            rowCount: 1,
+            rows: [{ active_content_revision_id: 'content-1', document_section_id: 'chapter:6' }],
+          };
+        }
+        if (sql.includes("type = 'reading_position_deleted'")) return { rows: [{ blocked: false }] };
+        if (sql.includes('insert into reading_positions')) return { rowCount: 1, rows: [] };
+        if (sql.includes('insert into fixed_document_section_read_states')) throw new Error('section write failed');
+        throw new Error(`unexpected query: ${sql}`);
+      }),
+      release: vi.fn(),
+    };
+    const pool = {
+      query: vi.fn(async () => ({ rows: [{ exists: true }] })),
+      connect: vi.fn(async () => client),
+    } as unknown as pg.Pool;
+    const app = await appWithBooks(pool);
+
+    const response = await app.inject({
+      method: 'PATCH',
+      url: '/api/books/book_1/reading-position',
+      payload: {
+        chapterId: 'chapter_1',
+        documentSectionId: 'chapter:6',
+        expectedContentRevisionId: 'content-1',
+        updatedAt: '2026-07-05T00:03:00.000Z',
+      },
+    });
+
+    expect(response.statusCode).toBe(500);
+    expect(queries).toEqual([
+      'begin',
+      expect.stringContaining('pg_advisory_xact_lock'),
+      expect.stringContaining('from library_books book'),
+      expect.stringContaining("type = 'reading_position_deleted'"),
+      expect.stringContaining('insert into reading_positions'),
+      expect.stringContaining('insert into fixed_document_section_read_states'),
+      'rollback',
+    ]);
+    expect(client.release).toHaveBeenCalledOnce();
 
     await app.close();
   });
@@ -761,6 +946,17 @@ describe('book routes', () => {
   });
 
   it('rejects direct reader mutations for missing server book or chapter before writes', async () => {
+    const readerClient = {
+      query: vi.fn(async (sql: string) => {
+        if (sql === 'begin' || sql === 'rollback') return { rowCount: null, rows: [] };
+        if (sql.includes('pg_advisory_xact_lock')) return { rowCount: 1, rows: [] };
+        if (sql.includes('from library_books book') && sql.includes('join chapters chapter')) {
+          return { rowCount: 0, rows: [] };
+        }
+        throw new Error(`unexpected query: ${sql}`);
+      }),
+      release: vi.fn(),
+    };
     const pool = {
       query: vi.fn(async (sql: string, params?: unknown[]) => {
         expect(sql).toContain('select exists(');
@@ -770,6 +966,7 @@ describe('book routes', () => {
         expect(params?.[2]).toBe('missing_chapter');
         return { rows: [{ exists: false }] };
       }),
+      connect: vi.fn(async () => readerClient),
     } as unknown as pg.Pool;
     const app = await appWithBooks(pool);
     const timestamp = '2026-07-05T00:08:00.000Z';
@@ -778,7 +975,12 @@ describe('book routes', () => {
       {
         method: 'PATCH',
         url: '/api/books/missing_book/reading-position',
-        payload: { chapterId: 'missing_chapter', chapterProgress: 0.1, updatedAt: timestamp },
+        payload: {
+          chapterId: 'missing_chapter',
+          expectedContentRevisionId: 'missing-content',
+          chapterProgress: 0.1,
+          updatedAt: timestamp,
+        },
       },
       {
         method: 'POST',
@@ -829,7 +1031,8 @@ describe('book routes', () => {
       expect(response.statusCode).toBe(404);
       expect(response.json()).toEqual({ error: 'book or chapter not found' });
     }
-    expect(pool.query).toHaveBeenCalledTimes(cases.length);
+    expect(pool.query).toHaveBeenCalledTimes(cases.length - 1);
+    expect(readerClient.release).toHaveBeenCalledOnce();
 
     await app.close();
   });

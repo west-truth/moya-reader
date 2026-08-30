@@ -222,7 +222,13 @@ function remapSyncEventPayload(
   if (!payloadKey) return undefined;
   const remapped = remapJsonAnchorRecord(recordValue(payload[payloadKey]), oldIndex, nextIndex);
   return remapped
-    ? { payload: jsonValue({ ...payload, [payloadKey]: remapped.record }), changed: remapped.changed }
+    ? {
+        payload: jsonValue({
+          ...payload,
+          [payloadKey]: remapped.record,
+        }),
+        changed: remapped.changed,
+      }
     : undefined;
 }
 
@@ -297,6 +303,9 @@ export function prepareRemoteContentActivation(input: {
   for (const item of input.outboxItems) {
     if (!eventBelongsToNovel(item.event, novelId)) continue;
     const payloadKey = syncEventAnchorPayloadKey(item.event);
+    // A cached snapshot can replace the local physical revision for the same
+    // book ID. Never promote a pending metadata/lifecycle/reset event to that
+    // new incarnation: its original server CAS token must remain authoritative.
     if (!payloadKey) continue;
     const remapped = remapSyncEventPayload(item.event, oldIndex, nextIndex);
     if (!remapped) {

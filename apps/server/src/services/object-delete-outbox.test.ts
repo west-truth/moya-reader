@@ -42,7 +42,7 @@ describe('object delete outbox', () => {
   it('drops the cleanup request without deleting a key that became referenced again', async () => {
     const query = vi.fn(async (sql: string) => {
       if (sql.includes('with candidates')) {
-        return { rows: [{ id: '1', storage_key: 'books/reused', attempts: 1 }], rowCount: 1 };
+        return { rows: [{ id: '1', storage_key: 'books/reused', attempts: 1, generation: 2 }], rowCount: 1 };
       }
       if (sql.startsWith('select 1 where')) return { rows: [{ '?column?': 1 }], rowCount: 1 };
       if (sql.startsWith('delete from object_delete_outbox')) return { rows: [], rowCount: 1 };
@@ -61,9 +61,10 @@ describe('object delete outbox', () => {
   it('deletes unreferenced objects and completes their outbox row', async () => {
     const query = vi.fn(async (sql: string) => {
       if (sql.includes('with candidates')) {
-        return { rows: [{ id: '2', storage_key: 'books/orphan', attempts: 1 }], rowCount: 1 };
+        return { rows: [{ id: '2', storage_key: 'books/orphan', attempts: 1, generation: 3 }], rowCount: 1 };
       }
       if (sql.startsWith('select 1 where')) return { rows: [], rowCount: 0 };
+      if (sql.includes("status = 'processing' and generation")) return { rows: [{ '?column?': 1 }], rowCount: 1 };
       if (sql.startsWith('delete from object_delete_outbox')) return { rows: [], rowCount: 1 };
       throw new Error(`unexpected query: ${sql}`);
     });

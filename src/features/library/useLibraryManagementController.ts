@@ -310,6 +310,7 @@ export function useLibraryManagementController(
               savedCover = await input.assets!.saveCover(book.id, {
                 ...cover.input,
                 expectedMetadataRevision: expectedRevision,
+                expectedContentRevisionId: current.activeContentRevisionId,
               });
             } catch (cause) {
               if (!metadataRevisionConflict(cause)) throw cause;
@@ -326,6 +327,7 @@ export function useLibraryManagementController(
               savedCover = await input.assets!.saveCover(book.id, {
                 ...cover.input,
                 expectedMetadataRevision: expectedRevision,
+                expectedContentRevisionId: current.activeContentRevisionId,
               });
             }
             expectedRevision += 1;
@@ -336,12 +338,16 @@ export function useLibraryManagementController(
               coverFit: cover.input.fit,
               coverPositionX: cover.input.positionX,
               coverPositionY: cover.input.positionY,
+              coverRemovedAt: undefined,
               metadataRevision: expectedRevision,
               updatedAt: savedCover.createdAt,
             });
           } else if (cover.kind === 'remove' && current.coverAssetId) {
             try {
-              await input.assets!.removeCover(book.id, expectedRevision);
+              await input.assets!.removeCover(book.id, {
+                metadataRevision: expectedRevision,
+                activeContentRevisionId: current.activeContentRevisionId,
+              });
             } catch (cause) {
               if (!metadataRevisionConflict(cause)) throw cause;
               const fresh = await input.getNovel(book.id);
@@ -354,20 +360,28 @@ export function useLibraryManagementController(
               }
               current = rememberBook(fresh);
               expectedRevision = metadataRevision(current);
-              await input.assets!.removeCover(book.id, expectedRevision);
+              await input.assets!.removeCover(book.id, {
+                metadataRevision: expectedRevision,
+                activeContentRevisionId: current.activeContentRevisionId,
+              });
             }
             expectedRevision += 1;
+            const removedAt = new Date().toISOString();
             current = rememberBook({
               ...current,
               coverAssetId: undefined,
               coverContentHash: undefined,
+              coverRemovedAt: removedAt,
               metadataRevision: expectedRevision,
-              updatedAt: new Date().toISOString(),
+              updatedAt: removedAt,
             });
           }
           if (Object.keys(patch).length > 0) {
             try {
-              const receipt = await input.catalog!.patchMetadata(book.id, patch, expectedRevision);
+              const receipt = await input.catalog!.patchMetadata(book.id, patch, {
+                metadataRevision: expectedRevision,
+                activeContentRevisionId: current.activeContentRevisionId,
+              });
               current = rememberBook(
                 applyMetadataPatchSnapshot(current, patch, receipt.metadataRevision, receipt.changedAt),
               );
@@ -379,7 +393,10 @@ export function useLibraryManagementController(
                 rememberBook(fresh);
               } else if (metadataEditCanRebase(current, fresh, patch)) {
                 current = rememberBook(fresh);
-                const receipt = await input.catalog!.patchMetadata(book.id, patch, metadataRevision(current));
+                const receipt = await input.catalog!.patchMetadata(book.id, patch, {
+                  metadataRevision: metadataRevision(current),
+                  activeContentRevisionId: current.activeContentRevisionId,
+                });
                 rememberBook(applyMetadataPatchSnapshot(current, patch, receipt.metadataRevision, receipt.changedAt));
               } else {
                 current = rememberBook(fresh);
@@ -400,7 +417,11 @@ export function useLibraryManagementController(
           const selected = books.filter((book) => selectedBookIds.has(book.id));
           receipt = await input.catalog!.applyBatch(
             command,
-            selected.map((book) => ({ bookId: book.id, expectedRevision: book.metadataRevision ?? 0 })),
+            selected.map((book) => ({
+              bookId: book.id,
+              expectedRevision: book.metadataRevision ?? 0,
+              expectedContentRevisionId: book.activeContentRevisionId,
+            })),
             globalThis.crypto?.randomUUID?.() ?? `batch-${Date.now()}`,
           );
           setLastBatchReceipt(receipt);

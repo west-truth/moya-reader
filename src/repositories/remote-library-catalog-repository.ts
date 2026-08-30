@@ -34,9 +34,9 @@ export class RemoteLibraryCatalogRepository implements LibraryCatalogRepository 
   async patchMetadata(
     bookId: string,
     patch: Parameters<LibraryCatalogRepository['patchMetadata']>[1],
-    expectedRevision?: number,
+    expectation?: Parameters<LibraryCatalogRepository['patchMetadata']>[2],
   ) {
-    const result = await this.client.patchBook(bookId, { ...patch, expectedRevision });
+    const result = await this.client.patchBook(bookId, { ...patch, ...expectation });
     return { bookId, metadataRevision: result.metadataRevision, changedAt: new Date().toISOString() };
   }
 
@@ -45,22 +45,23 @@ export class RemoteLibraryCatalogRepository implements LibraryCatalogRepository 
     return response.books.map(mapServerBook);
   }
 
-  async moveToTrash(bookId: string, expectedRevision?: number) {
-    const result = await this.client.deleteBook(bookId, undefined, expectedRevision);
+  async moveToTrash(bookId: string, expectation?: Parameters<LibraryCatalogRepository['moveToTrash']>[1]) {
+    const result = await this.client.deleteBook(bookId, undefined, expectation);
     return { bookId, metadataRevision: result.metadataRevision, changedAt: new Date().toISOString() };
   }
 
-  async restore(bookId: string, expectedRevision?: number) {
-    const result = await this.client.restoreBook(bookId, expectedRevision);
+  async restore(bookId: string, expectation?: Parameters<LibraryCatalogRepository['restore']>[1]) {
+    const result = await this.client.restoreBook(bookId, expectation);
     return { bookId, metadataRevision: result.metadataRevision, changedAt: new Date().toISOString() };
   }
 
-  purge(bookId: string, expectedRevision?: number) {
-    return this.client.purgeBook(bookId, expectedRevision).then(() => undefined);
+  purge(bookId: string, expectation?: Parameters<LibraryCatalogRepository['purge']>[1]) {
+    return this.client.purgeBook(bookId, expectation).then(() => undefined);
   }
 
   async emptyTrash() {
-    return (await this.client.emptyTrash()).purged;
+    const result = await this.client.emptyTrash();
+    return { purged: result.purged, bookIds: result.bookIds };
   }
 
   async listShelves() {

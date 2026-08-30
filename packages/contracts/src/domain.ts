@@ -282,6 +282,10 @@ export interface ReadingPosition {
   scrollTop: number;
   deviceId: string;
   updatedAt: string;
+  /** Exact logical section for fixed-document page chapters. */
+  documentSectionId?: string;
+  /** Content revision captured when this position was produced. */
+  contentRevisionId?: string;
   anchor?: ReaderAnchor;
 }
 

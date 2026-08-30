@@ -17,6 +17,8 @@ import {
   validateUploadChunkPlan,
   validateUploadSize,
 } from '../services/upload-validation.js';
+import { lockImageSeriesBookLifecycle } from '../services/book-operation-lock.js';
+import { captureBookGenerationTicket } from '../services/book-generation-ticket.js';
 
 interface InitUploadBody {
   fileName?: string;
@@ -41,6 +43,8 @@ interface UploadSessionRow {
   chapter_split_mode?: ChapterSplitMode;
   import_mode?: 'replace_book' | 'append_image_series';
   base_active_content_revision_id?: string | null;
+  target_book_generation?: number | string | null;
+  target_active_content_revision_id?: string | null;
   status: string;
   total_chunks: number | null;
   source_content_hash?: string | null;
@@ -207,30 +211,82 @@ export async function registerUploadRoutes(
     const uploadId = `upload_${randomUUID()}`;
     const fileName = sanitizeFileName(body.fileName);
     await mkdir(uploadDirectory(config, uploadId), { recursive: true });
-    await pool.query(
-      `
+    const insertSession = async (
+      queryable: Pick<pg.PoolClient, 'query'> | pg.Pool,
+      targetBookGeneration?: number,
+      targetActiveContentRevisionId?: string,
+    ) =>
+      queryable.query(
+        `
         insert into upload_sessions (
           id, user_id, file_name, size_bytes, content_type, encoding, chapter_split_mode, client_hash_hint,
-          client_book_id, total_chunks, source_content_hash, import_mode, base_active_content_revision_id
+          client_book_id, total_chunks, source_content_hash, import_mode, base_active_content_revision_id,
+          target_book_generation, target_active_content_revision_id
         )
-        values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+        values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
       `,
-      [
-        uploadId,
-        config.defaultUserId,
-        fileName,
-        sizeBytes,
-        body.contentType ?? 'text/plain',
-        body.encoding ?? 'auto',
-        chapterSplitMode,
-        body.clientHashHint,
-        clientBookId,
-        totalChunks,
-        sourceContentHash,
-        importMode,
-        baseActiveContentRevisionId,
-      ],
-    );
+        [
+          uploadId,
+          config.defaultUserId,
+          fileName,
+          sizeBytes,
+          body.contentType ?? 'text/plain',
+          body.encoding ?? 'auto',
+          chapterSplitMode,
+          body.clientHashHint,
+          clientBookId,
+          totalChunks,
+          sourceContentHash,
+          importMode,
+          baseActiveContentRevisionId,
+          targetBookGeneration,
+          targetActiveContentRevisionId,
+        ],
+      );
+
+    if (!clientBookId) {
+      await insertSession(pool);
+    } else {
+      const client = await pool.connect();
+      let committed = false;
+      try {
+        await client.query('begin');
+        await lockImageSeriesBookLifecycle(client, clientBookId);
+        const ticket = await captureBookGenerationTicket(client, config.defaultUserId, clientBookId);
+        if (ticket.deleted) {
+          await client.query('rollback');
+          await removeUploadDirectory(config, uploadId);
+          return reply.code(409).send({ error: 'book_target_is_trashed' });
+        }
+        if (importMode === 'append_image_series') {
+          if (!ticket.activeContentRevisionId) {
+            await client.query('rollback');
+            await removeUploadDirectory(config, uploadId);
+            return reply.code(409).send({ error: 'image_series_append_target_missing' });
+          }
+          const baseRevision = await client.query<{ id: string }>(
+            `select id from book_content_revisions
+              where id = $1 and book_id = $2
+              limit 1`,
+            [baseActiveContentRevisionId, clientBookId],
+          );
+          if (!baseRevision.rows[0]) {
+            await client.query('rollback');
+            await removeUploadDirectory(config, uploadId);
+            return reply.code(409).send({ error: 'image_series_append_base_changed' });
+          }
+        }
+        await insertSession(client, ticket.generation, ticket.activeContentRevisionId);
+        await client.query('commit');
+        committed = true;
+      } catch (error) {
+        if (!committed) await client.query('rollback').catch(() => undefined);
+        await removeUploadDirectory(config, uploadId).catch(() => undefined);
+        throw error;
+      } finally {
+        client.release();
+      }
+    }
 
     return {
       uploadId,

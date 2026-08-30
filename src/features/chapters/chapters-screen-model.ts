@@ -32,8 +32,19 @@ export interface BuildChapterListInput {
   readFilter: ChapterReadFilter;
   sort: ChapterSort;
   currentChapter?: Pick<Chapter, 'id' | 'index'>;
+  /** Fixed-document releases use durable per-section markers instead of ordered novel inference. */
+  readPolicy?: 'sequential' | 'document_section';
   annotationCounts: ReadonlyMap<string, ChapterAnnotationCounts>;
   actualTtsDurationSeconds?: ReadonlyMap<string, number>;
+}
+
+function chapterIsRead(
+  chapter: Chapter,
+  currentChapter: BuildChapterListInput['currentChapter'],
+  policy: BuildChapterListInput['readPolicy'],
+): boolean {
+  if (policy === 'document_section' && chapter.documentSectionId) return Boolean(chapter.documentSectionReadAt);
+  return currentChapter !== undefined && chapter.index < currentChapter.index;
 }
 
 export interface ChapterTtsDuration {
@@ -102,7 +113,7 @@ export function buildChapterListModel(input: BuildChapterListInput): ChapterList
   const query = input.query.trim().toLocaleLowerCase();
   const rows = input.chapters
     .filter((chapter) => {
-      const isRead = input.currentChapter !== undefined && chapter.index < input.currentChapter.index;
+      const isRead = chapterIsRead(chapter, input.currentChapter, input.readPolicy);
       if (input.readFilter === 'read' && !isRead) return false;
       if (input.readFilter === 'unread' && isRead) return false;
       if (!query) return true;
@@ -116,7 +127,7 @@ export function buildChapterListModel(input: BuildChapterListInput): ChapterList
       paragraphCountLabel: `${formatCount(chapter.paragraphCount)}문단`,
       ttsDuration: projectChapterTtsDuration(chapter.characterCount, input.actualTtsDurationSeconds?.get(chapter.id)),
       isCurrent: input.currentChapter?.id === chapter.id,
-      isRead: input.currentChapter !== undefined && chapter.index < input.currentChapter.index,
+      isRead: chapterIsRead(chapter, input.currentChapter, input.readPolicy),
       annotationCounts: input.annotationCounts.get(chapter.id),
     }));
 

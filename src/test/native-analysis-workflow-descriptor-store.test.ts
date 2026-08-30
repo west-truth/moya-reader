@@ -306,7 +306,7 @@ describe('native analysis workflow descriptor store', () => {
     await saveNativeAnalysisWorkflowDescriptor(descriptor());
     await deleteNovel(NOVEL_ID);
     const trashedNovel = await getNovel(NOVEL_ID);
-    await purgeNovel(NOVEL_ID, trashedNovel?.metadataRevision);
+    await purgeNovel(NOVEL_ID, { metadataRevision: trashedNovel?.metadataRevision });
     expect(await getNativeAnalysisWorkflowDescriptor('workflow-1')).toBeUndefined();
   });
 });

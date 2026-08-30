@@ -24,6 +24,10 @@ export interface RandomAccessBookSource {
   close(): Promise<void>;
 }
 
+export interface BookSourceReadExpectation {
+  readonly activeContentRevisionId?: string;
+}
+
 export interface BookCoverAssetInput {
   readonly blob: Blob;
   readonly fileName: string;
@@ -35,6 +39,12 @@ export interface BookCoverAssetInput {
   readonly positionX: number;
   readonly positionY: number;
   readonly expectedMetadataRevision?: number;
+  readonly expectedContentRevisionId?: string;
+}
+
+export interface BookCoverMutationExpectation {
+  readonly metadataRevision?: number;
+  readonly activeContentRevisionId?: string;
 }
 
 export interface ExportedBookCover {
@@ -50,6 +60,7 @@ export interface ApprovedEnrichmentCoverMutationReceipt {
 
 export interface ApprovedEnrichmentCoverRestoreInput {
   readonly expectedMetadataRevision: number;
+  readonly expectedContentRevisionId?: string;
   readonly expectedActiveAssetId: string;
   readonly expectedActiveContentHash: string;
   readonly previousAssetId?: string;
@@ -77,6 +88,11 @@ export interface ReselectedBookSourceInput {
   readonly fileName: string;
   readonly contentType: string;
   readonly blob: Blob;
+  /**
+   * Fences a delayed source attachment to the content incarnation that opened
+   * the picker. Hosted clients must send this value after an ID was reused.
+   */
+  readonly expectedContentRevisionId?: string;
 }
 
 export class OriginalSourceMismatchError extends Error {
@@ -87,11 +103,16 @@ export class OriginalSourceMismatchError extends Error {
 }
 
 export interface BookAssetRepository {
-  getActiveSource(bookId: string): Promise<BookAssetMetadata | undefined>;
-  exportSource(bookId: string): Promise<ExportedBookSource | undefined>;
-  openSource(bookId: string): Promise<RandomAccessBookSource | undefined>;
+  getActiveSource(bookId: string, expectation?: BookSourceReadExpectation): Promise<BookAssetMetadata | undefined>;
+  exportSource(bookId: string, expectation?: BookSourceReadExpectation): Promise<ExportedBookSource | undefined>;
+  openSource(bookId: string, expectation?: BookSourceReadExpectation): Promise<RandomAccessBookSource | undefined>;
   reselectOriginalSource(bookId: string, input: ReselectedBookSourceInput): Promise<BookAssetMetadata>;
   reconstructCanonicalSource?(bookId: string): Promise<BookAssetMetadata>;
+  /**
+   * Reads only the active cover descriptor. Hosted adapters must not download
+   * the cover body for provenance checks.
+   */
+  getActiveCoverMetadata(bookId: string): Promise<BookAssetMetadata | undefined>;
   getActiveCover(bookId: string): Promise<ExportedBookCover | undefined>;
   saveCover(bookId: string, input: BookCoverAssetInput): Promise<BookAssetMetadata>;
   saveApprovedEnrichmentCover?(
@@ -103,6 +124,10 @@ export interface BookAssetRepository {
     input: ApprovedEnrichmentCoverRestoreInput,
   ): Promise<ApprovedEnrichmentCoverRestoreReceipt>;
   saveGeneratedCover?(bookId: string, input: GeneratedBookCoverInput): Promise<BookAssetMetadata | undefined>;
-  removeCover(bookId: string, expectedMetadataRevision?: number): Promise<void>;
-  getEmbeddedResource(bookId: string, assetId: string): Promise<ExportedBookResource | undefined>;
+  removeCover(bookId: string, expectation?: BookCoverMutationExpectation): Promise<void>;
+  getEmbeddedResource(
+    bookId: string,
+    assetId: string,
+    expectation?: BookSourceReadExpectation,
+  ): Promise<ExportedBookResource | undefined>;
 }

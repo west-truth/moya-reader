@@ -3,7 +3,9 @@ import {
   type ApprovedEnrichmentCoverMutationReceipt,
   type ApprovedEnrichmentCoverRestoreInput,
   type ApprovedEnrichmentCoverRestoreReceipt,
+  type BookCoverMutationExpectation,
   type BookCoverAssetInput,
+  type BookSourceReadExpectation,
   type ExportedBookCover,
   type GeneratedBookCoverInput,
   OriginalSourceMismatchError,
@@ -20,6 +22,8 @@ import { BOOK_ASSET_STORES, type StoredBookAsset, type StoredBookAssetBlob } fro
 import { openReaderDb } from './reader-database';
 import { jsonValue, queueSyncEventInTransaction } from './sync-event-store';
 import type { SyncTombstone } from './sync-event-store';
+import { canonicalRemoteContentRevisionId } from './content-revision-identity';
+import { CONTENT_REVISION_STORES } from './content-revision-migration';
 
 function assetId(contentRevisionId: string): string {
   return `source_asset_${contentRevisionId}`;
@@ -45,6 +49,12 @@ function coverVaultTombstone(novel: Novel, deletedAt: string): SyncTombstone {
     deletedAt,
     createdAt: deletedAt,
   };
+}
+
+function assertCoverContentRevision(novel: Novel, expectedContentRevisionId?: string): void {
+  if (expectedContentRevisionId !== undefined && expectedContentRevisionId !== novel.activeContentRevisionId) {
+    throw new Error(`Book ${novel.id} content revision changed before cover mutation`);
+  }
 }
 
 export async function stageOriginalSourceAsset(input: OriginalSourceAssetInput): Promise<BookAssetMetadata> {
@@ -190,26 +200,19 @@ export async function exportEmbeddedBookAsset(
   return { metadata, blob: stored.blob };
 }
 
-export async function getActiveSourceAsset(bookId: string): Promise<BookAssetMetadata | undefined> {
-  const db = await openReaderDb();
-  const tx = db.transaction(BOOK_ASSET_STORES.assets, 'readonly');
-  const matches = await requestToPromise<StoredBookAsset[]>(
-    tx.objectStore(BOOK_ASSET_STORES.assets).index('bookId_kind_status').getAll([bookId, 'source', 'active']),
-  );
-  await transactionDone(tx);
-  return matches.sort((a, b) => b.createdAt.localeCompare(a.createdAt))[0];
+export async function getActiveSourceAsset(
+  bookId: string,
+  expectation?: BookSourceReadExpectation,
+): Promise<BookAssetMetadata | undefined> {
+  return (await getActiveBookSourceSnapshot(bookId, expectation))?.metadata;
 }
 
-export async function exportBookSource(bookId: string): Promise<ExportedBookSource | undefined> {
-  const metadata = await getActiveSourceAsset(bookId);
-  if (!metadata) return undefined;
-  const db = await openReaderDb();
-  const tx = db.transaction(BOOK_ASSET_STORES.blobs, 'readonly');
-  const stored = await requestToPromise<StoredBookAssetBlob | undefined>(
-    tx.objectStore(BOOK_ASSET_STORES.blobs).get(metadata.storageKey),
-  );
-  await transactionDone(tx);
-  return stored ? { metadata, blob: stored.blob } : undefined;
+export async function exportBookSource(
+  bookId: string,
+  expectation?: BookSourceReadExpectation,
+): Promise<ExportedBookSource | undefined> {
+  const snapshot = await getActiveBookSourceSnapshot(bookId, expectation);
+  return snapshot ? { metadata: snapshot.metadata, blob: snapshot.blob } : undefined;
 }
 
 export interface ActiveBookSourceSnapshot extends ExportedBookSource {
@@ -221,7 +224,10 @@ export interface ActiveBookSourceSnapshot extends ExportedBookSource {
  * IndexedDB snapshot. Delta imports must not combine a newer Novel row with an
  * older source lookup performed in a separate transaction.
  */
-export async function getActiveBookSourceSnapshot(bookId: string): Promise<ActiveBookSourceSnapshot | undefined> {
+export async function getActiveBookSourceSnapshot(
+  bookId: string,
+  expectation?: BookSourceReadExpectation,
+): Promise<ActiveBookSourceSnapshot | undefined> {
   const db = await openReaderDb();
   const tx = db.transaction(['novels', BOOK_ASSET_STORES.assets, BOOK_ASSET_STORES.blobs], 'readonly');
   const novel = await requestToPromise<Novel | undefined>(tx.objectStore('novels').get(bookId));
@@ -236,6 +242,12 @@ export async function getActiveBookSourceSnapshot(bookId: string): Promise<Activ
       )
     : undefined;
   await transactionDone(tx);
+  if (
+    expectation?.activeContentRevisionId !== undefined &&
+    novel?.activeContentRevisionId !== expectation.activeContentRevisionId
+  ) {
+    throw new Error(`Book ${bookId} content revision changed before source read`);
+  }
   if (
     !novel?.activeContentRevisionId ||
     !metadata ||
@@ -269,6 +281,16 @@ export async function getActiveBookCover(bookId: string): Promise<ExportedBookCo
   return metadata && stored ? { metadata, blob: stored.blob } : undefined;
 }
 
+export async function getActiveBookCoverMetadata(bookId: string): Promise<BookAssetMetadata | undefined> {
+  const db = await openReaderDb();
+  const tx = db.transaction(BOOK_ASSET_STORES.assets, 'readonly');
+  const assets = await requestToPromise<StoredBookAsset[]>(
+    tx.objectStore(BOOK_ASSET_STORES.assets).index('bookId_kind_status').getAll([bookId, 'cover', 'active']),
+  );
+  await transactionDone(tx);
+  return assets.sort((left, right) => right.createdAt.localeCompare(left.createdAt))[0];
+}
+
 function coverSyncNovel(novel: Novel) {
   return {
     id: novel.id,
@@ -292,6 +314,7 @@ export async function saveBookCover(bookId: string, input: BookCoverAssetInput):
   const metadata: StoredBookAsset = {
     id,
     bookId,
+    contentRevisionId: input.expectedContentRevisionId,
     kind: 'cover',
     provenance: 'user_supplied',
     status: 'active',
@@ -314,6 +337,7 @@ export async function saveBookCover(bookId: string, input: BookCoverAssetInput):
       'devices',
       'sync_outbox',
       'sync_state',
+      CONTENT_REVISION_STORES.revisions,
     ],
     'readwrite',
   );
@@ -327,6 +351,7 @@ export async function saveBookCover(bookId: string, input: BookCoverAssetInput):
     await done.catch(() => undefined);
     throw new Error('책을 찾을 수 없습니다.');
   }
+  assertCoverContentRevision(novel, input.expectedContentRevisionId);
   const actualRevision = novel.metadataRevision ?? 0;
   if (input.expectedMetadataRevision !== undefined && input.expectedMetadataRevision !== actualRevision) {
     tx.abort();
@@ -368,11 +393,16 @@ export async function saveBookCover(bookId: string, input: BookCoverAssetInput):
     updatedAt: now,
   };
   novelStore.put(next);
+  const canonicalContentRevisionId = await canonicalRemoteContentRevisionId(tx, novel);
   tx.objectStore('sync_tombstones').delete(coverVaultTombstoneId(novel));
   await queueSyncEventInTransaction(
     tx,
     'book_updated',
-    jsonValue({ novel: coverSyncNovel(next), coverMutation: 'replace' }),
+    jsonValue({
+      novel: coverSyncNovel(next),
+      coverMutation: 'replace',
+      contentRevisionId: canonicalContentRevisionId,
+    }),
     {
       novelId: bookId,
       entityId: bookId,
@@ -393,6 +423,7 @@ export async function saveApprovedEnrichmentBookCover(
   const metadata: StoredBookAsset = {
     id,
     bookId,
+    contentRevisionId: input.expectedContentRevisionId,
     kind: 'cover',
     provenance: 'approved_enrichment',
     status: 'active',
@@ -415,6 +446,7 @@ export async function saveApprovedEnrichmentBookCover(
       'devices',
       'sync_outbox',
       'sync_state',
+      CONTENT_REVISION_STORES.revisions,
     ],
     'readwrite',
   );
@@ -428,6 +460,7 @@ export async function saveApprovedEnrichmentBookCover(
     await done.catch(() => undefined);
     throw new Error('책을 찾을 수 없습니다.');
   }
+  assertCoverContentRevision(novel, input.expectedContentRevisionId);
   const actualRevision = novel.metadataRevision ?? 0;
   if (input.expectedMetadataRevision !== undefined && input.expectedMetadataRevision !== actualRevision) {
     tx.abort();
@@ -465,11 +498,16 @@ export async function saveApprovedEnrichmentBookCover(
     updatedAt: now,
   };
   novelStore.put(next);
+  const canonicalContentRevisionId = await canonicalRemoteContentRevisionId(tx, novel);
   tx.objectStore('sync_tombstones').delete(coverVaultTombstoneId(novel));
   await queueSyncEventInTransaction(
     tx,
     'book_updated',
-    jsonValue({ novel: coverSyncNovel(next), coverMutation: 'replace' }),
+    jsonValue({
+      novel: coverSyncNovel(next),
+      coverMutation: 'replace',
+      contentRevisionId: canonicalContentRevisionId,
+    }),
     {
       novelId: bookId,
       entityId: bookId,
@@ -518,7 +556,15 @@ export async function restoreApprovedEnrichmentBookCover(
 
   const db = await openReaderDb();
   const tx = db.transaction(
-    ['novels', BOOK_ASSET_STORES.assets, 'sync_tombstones', 'devices', 'sync_outbox', 'sync_state'],
+    [
+      'novels',
+      BOOK_ASSET_STORES.assets,
+      'sync_tombstones',
+      'devices',
+      'sync_outbox',
+      'sync_state',
+      CONTENT_REVISION_STORES.revisions,
+    ],
     'readwrite',
   );
   const done = transactionDone(tx);
@@ -532,6 +578,8 @@ export async function restoreApprovedEnrichmentBookCover(
   const validCurrent =
     novel &&
     (novel.metadataRevision ?? 0) === input.expectedMetadataRevision &&
+    (input.expectedContentRevisionId === undefined ||
+      novel.activeContentRevisionId === input.expectedContentRevisionId) &&
     novel.coverAssetId === input.expectedActiveAssetId &&
     novel.coverContentHash === input.expectedActiveContentHash &&
     active?.bookId === bookId &&
@@ -566,12 +614,17 @@ export async function restoreApprovedEnrichmentBookCover(
     updatedAt: now,
   };
   novelStore.put(next);
+  const canonicalContentRevisionId = await canonicalRemoteContentRevisionId(tx, novel);
   if (previous) tx.objectStore('sync_tombstones').delete(coverVaultTombstoneId(novel));
   else tx.objectStore('sync_tombstones').put(coverVaultTombstone(novel, now));
   await queueSyncEventInTransaction(
     tx,
     'book_updated',
-    jsonValue({ novel: coverSyncNovel(next), coverMutation: previous ? 'replace' : 'remove' }),
+    jsonValue({
+      novel: coverSyncNovel(next),
+      coverMutation: previous ? 'replace' : 'remove',
+      contentRevisionId: canonicalContentRevisionId,
+    }),
     { novelId: bookId, entityId: bookId },
   );
   await done;
@@ -600,6 +653,7 @@ export async function saveGeneratedBookCover(
     await done.catch(() => undefined);
     throw new Error('책을 찾을 수 없습니다.');
   }
+  assertCoverContentRevision(novel, input.expectedContentRevisionId);
   const active = await requestToPromise<StoredBookAsset[]>(
     assetStore.index('bookId_kind_status').getAll([bookId, 'cover', 'active']),
   );
@@ -678,7 +732,7 @@ export async function saveGeneratedBookCover(
   return metadata;
 }
 
-export async function removeBookCover(bookId: string, expectedMetadataRevision?: number): Promise<void> {
+export async function removeBookCover(bookId: string, expectation?: BookCoverMutationExpectation): Promise<void> {
   const db = await openReaderDb();
   const tx = db.transaction(
     [
@@ -689,6 +743,7 @@ export async function removeBookCover(bookId: string, expectedMetadataRevision?:
       'devices',
       'sync_outbox',
       'sync_state',
+      CONTENT_REVISION_STORES.revisions,
     ],
     'readwrite',
   );
@@ -701,8 +756,9 @@ export async function removeBookCover(bookId: string, expectedMetadataRevision?:
     await done;
     throw new Error('책을 찾을 수 없습니다.');
   }
+  assertCoverContentRevision(novel, expectation?.activeContentRevisionId);
   const actualRevision = novel.metadataRevision ?? 0;
-  if (expectedMetadataRevision !== undefined && expectedMetadataRevision !== actualRevision) {
+  if (expectation?.metadataRevision !== undefined && expectation.metadataRevision !== actualRevision) {
     tx.abort();
     await done.catch(() => undefined);
     throw new Error('다른 기기에서 책 정보가 변경되었습니다.');
@@ -733,11 +789,16 @@ export async function removeBookCover(bookId: string, expectedMetadataRevision?:
     updatedAt: now,
   };
   novelStore.put(next);
+  const canonicalContentRevisionId = await canonicalRemoteContentRevisionId(tx, novel);
   tx.objectStore('sync_tombstones').put(coverVaultTombstone(novel, now));
   await queueSyncEventInTransaction(
     tx,
     'book_updated',
-    jsonValue({ novel: coverSyncNovel(next), coverMutation: 'remove' }),
+    jsonValue({
+      novel: coverSyncNovel(next),
+      coverMutation: 'remove',
+      contentRevisionId: canonicalContentRevisionId,
+    }),
     {
       novelId: bookId,
       entityId: bookId,
@@ -816,6 +877,12 @@ export async function reselectOriginalBookSource(
   await transactionDone(readTx);
   if (!novel) throw new Error('책을 찾을 수 없습니다.');
   if (!novel.activeContentRevisionId) throw new Error('이 책은 원본을 연결할 content revision이 없습니다.');
+  if (
+    input.expectedContentRevisionId !== undefined &&
+    input.expectedContentRevisionId !== novel.activeContentRevisionId
+  ) {
+    throw new Error(`Book ${bookId} content revision changed before source attachment`);
+  }
   if (!sourceMatches(novel.rawTextHash, bytes, novel.sourceEncoding)) throw new OriginalSourceMismatchError();
 
   const contentHash = integrityHash(bytes);
@@ -868,6 +935,13 @@ async function persistActiveBookSource(
   const done = transactionDone(tx);
   const assetStore = tx.objectStore(BOOK_ASSET_STORES.assets);
   const blobStore = tx.objectStore(BOOK_ASSET_STORES.blobs);
+  const novelStore = tx.objectStore('novels');
+  const currentNovel = await requestToPromise<Novel | undefined>(novelStore.get(novel.id));
+  if (!currentNovel || currentNovel.activeContentRevisionId !== novel.activeContentRevisionId) {
+    tx.abort();
+    await done.catch(() => undefined);
+    throw new Error(`Book ${novel.id} content revision changed before source attachment`);
+  }
   const previous = await requestToPromise<StoredBookAsset | undefined>(assetStore.get(id));
   const existingBlob = await requestToPromise<StoredBookAssetBlob | undefined>(blobStore.get(storageKey));
   if (!existingBlob) {
@@ -881,8 +955,8 @@ async function persistActiveBookSource(
     } satisfies StoredBookAssetBlob);
   }
   assetStore.put(metadata);
-  tx.objectStore('novels').put({
-    ...novel,
+  novelStore.put({
+    ...currentNovel,
     sourceAssetId: id,
     sourceProvenance: input.provenance,
     sourceByteLength: input.blob.size,

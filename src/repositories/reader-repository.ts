@@ -34,11 +34,12 @@ import type {
 import type { BookContentRevisionHandle } from '../storage/content-revision-read-handle';
 import type { ReaderSearchPage, ReaderSearchPageRequest } from './reader-query-contract';
 import type { ResourceMutationOptions } from '../domain/resource-revisions';
+import type { BookLifecycleExpectation, BookMutationExpectation } from './library-catalog-repository';
 
 export interface LibraryQueries {
   listNovels(): Promise<Novel[]>;
   getNovel(id: string): Promise<Novel | undefined>;
-  listChapters(novelId: string): Promise<Chapter[]>;
+  listChapters(novelId: string, expectedContentRevisionId?: string): Promise<Chapter[]>;
 }
 
 export interface ReaderQueries {
@@ -51,11 +52,11 @@ export interface ReaderQueries {
 }
 
 export interface ReaderCommands {
-  patchNovelMetadata(novelId: string, patch: NovelMetadataPatch): Promise<void>;
-  deleteNovel(novelId: string, expectedRevision?: number): Promise<void>;
+  patchNovelMetadata(novelId: string, patch: NovelMetadataPatch, expectation?: BookMutationExpectation): Promise<void>;
+  deleteNovel(novelId: string, expectation?: BookLifecycleExpectation): Promise<void>;
   saveImportedNovel(parsed: ParsedNovel): Promise<void>;
   saveReadingPosition(input: SaveReadingPositionInput): Promise<void>;
-  clearReadingPosition(novelId: string): Promise<void>;
+  clearReadingPosition(novelId: string, expectedContentRevisionId?: string): Promise<void>;
   addNovelReadingTime?(novelId: string, seconds: number, readAt?: string): Promise<void>;
   saveSettings(settings: ReaderSettings): Promise<void>;
 }

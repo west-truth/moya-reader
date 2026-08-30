@@ -71,4 +71,25 @@ describe('chapters screen model', () => {
       11, 12, 13, 14, 15, 16, 17, 18, 19, 20,
     ]);
   });
+
+  it('does not infer skipped fixed-document sections as read from a later current page', () => {
+    const chapters = Array.from({ length: 6 }, (_, index) => ({
+      ...chapter(index + 1),
+      documentSectionId: `chapter:${index + 1}`,
+      documentSectionReadAt: index < 3 || index === 5 ? `2026-08-30T01:0${index + 1}:00.000Z` : undefined,
+    }));
+
+    const model = buildChapterListModel({
+      chapters,
+      query: '',
+      readFilter: 'all',
+      sort: 'asc',
+      currentChapter: chapters[5],
+      readPolicy: 'document_section',
+      annotationCounts: new Map(),
+    });
+
+    expect(model.rows.map((row) => row.isRead)).toEqual([true, true, true, false, false, true]);
+    expect(model.rows.map((row) => row.isCurrent)).toEqual([false, false, false, false, false, true]);
+  });
 });

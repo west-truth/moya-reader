@@ -142,7 +142,7 @@ export interface BookEnrichmentMetadataCandidate extends BookEnrichmentCandidate
 export interface BookEnrichmentCoverCandidate extends BookEnrichmentCandidateBase {
   readonly kind: 'cover';
   readonly baseCover: PublicBookMetadataSnapshot['cover'];
-  readonly cover: Omit<BookCoverAssetInput, 'expectedMetadataRevision'>;
+  readonly cover: Omit<BookCoverAssetInput, 'expectedMetadataRevision' | 'expectedContentRevisionId'>;
   readonly derivationFingerprint: string;
 }
 

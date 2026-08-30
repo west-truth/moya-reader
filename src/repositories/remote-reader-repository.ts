@@ -21,7 +21,7 @@ import type {
 import { ReadingPosition, SyncOutboxItem, SyncState } from '../sync/types';
 import { ReaderRepository } from './reader-repository';
 import type { BulkParagraphPageRequest } from './reader-repository';
-import type { NovelMetadataPatch, SaveReadingPositionInput } from './reader-repository';
+import type { SaveReadingPositionInput } from './reader-repository';
 import type { ReaderSearchPage, ReaderSearchPageRequest } from './reader-query-contract';
 import { throwIfReaderSearchAborted } from './reader-query-contract';
 import {
@@ -39,6 +39,7 @@ import type { RemoteMutationResult } from '../services/remote/remote-api-contrac
 import { defaultSettings } from './reader-defaults';
 import { ResourceRevisionConflictError, type ResourceMutationOptions } from '../domain/resource-revisions';
 import { normalizeVoiceCastingWorkspace } from '../providers/voice-casting';
+import { snapshotSourceRevision } from '../services/remote/remote-book-snapshot';
 
 const FALLBACK_IMPORT_CHUNK_BYTES = 2 * 1024 * 1024;
 const DEFAULT_REMOTE_DEVICE_ID = 'web_remote';
@@ -148,32 +149,92 @@ export class RemoteReaderRepository implements ReaderRepository {
     parsedNovelImport: 'upload_reparse',
   } as const;
 
+  private readonly lastReaderStateMutationAtByBook = new Map<string, number>();
+  private readonly contentRevisionByBook = new Map<string, string>();
+  private readonly contentTargetByChapter = new Map<string, { bookId: string; contentRevisionId: string }>();
+  private readonly contentTargetByParagraph = new Map<string, { bookId: string; contentRevisionId: string }>();
+
   constructor(
     private readonly client: RemoteApiClient,
     private readonly deviceId: string = DEFAULT_REMOTE_DEVICE_ID,
   ) {}
 
+  private observeReaderStateTimestamp(bookId: string, updatedAt?: string): void {
+    if (!updatedAt) return;
+    const timestamp = Date.parse(updatedAt);
+    if (Number.isFinite(timestamp)) {
+      this.lastReaderStateMutationAtByBook.set(
+        bookId,
+        Math.max(this.lastReaderStateMutationAtByBook.get(bookId) ?? 0, timestamp),
+      );
+    }
+  }
+
+  private nextReaderStateTimestamp(bookId: string): string {
+    const next = Math.max(Date.now(), (this.lastReaderStateMutationAtByBook.get(bookId) ?? 0) + 1);
+    this.lastReaderStateMutationAtByBook.set(bookId, next);
+    return new Date(next).toISOString();
+  }
+
+  private rememberNovelRevision(novel: Novel): void {
+    const nextRevision = novel.activeContentRevisionId;
+    if (!nextRevision) return;
+    const previousRevision = this.contentRevisionByBook.get(novel.id);
+    if (previousRevision && previousRevision !== nextRevision) {
+      for (const [chapterId, target] of this.contentTargetByChapter) {
+        if (target.bookId === novel.id) this.contentTargetByChapter.delete(chapterId);
+      }
+      for (const [paragraphId, target] of this.contentTargetByParagraph) {
+        if (target.bookId === novel.id) this.contentTargetByParagraph.delete(paragraphId);
+      }
+    }
+    this.contentRevisionByBook.set(novel.id, nextRevision);
+  }
+
+  private async resolveBookRevision(bookId: string): Promise<string> {
+    const known = this.contentRevisionByBook.get(bookId);
+    if (known) return known;
+    const manifest = await this.client.getBookManifest(bookId);
+    const revision = snapshotSourceRevision(manifest);
+    if (!revision) throw new RemoteMutationProtocolError('book_content_revision');
+    this.contentRevisionByBook.set(bookId, revision);
+    return revision;
+  }
+
+  private rememberChapterTarget(chapter: Chapter, contentRevisionId: string): void {
+    this.contentTargetByChapter.set(chapter.id, { bookId: chapter.novelId, contentRevisionId });
+  }
+
   async listNovels(): Promise<Novel[]> {
     const response = await this.client.listBooks();
-    return response.books.map(mapServerBook);
+    const novels = response.books.map(mapServerBook);
+    novels.forEach((novel) => this.rememberNovelRevision(novel));
+    novels.forEach((novel) => this.observeReaderStateTimestamp(novel.id, novel.lastReadAt));
+    return novels;
   }
 
   async getNovel(id: string): Promise<Novel | undefined> {
     try {
       const response = await this.client.getBookManifest(id);
-      return applyPosition(mapServerBook(response.book), mapServerReadingPosition(response.readingPosition));
+      const position = mapServerReadingPosition(response.readingPosition);
+      this.observeReaderStateTimestamp(id, position?.updatedAt);
+      const novel = applyPosition(mapServerBook(response.book), position);
+      this.rememberNovelRevision(novel);
+      return novel;
     } catch (error) {
       if (isNotFound(error)) return undefined;
       throw error;
     }
   }
 
-  async patchNovelMetadata(novelId: string, patch: NovelMetadataPatch): Promise<void> {
-    await this.client.patchBook(novelId, patch);
+  async patchNovelMetadata(...args: Parameters<ReaderRepository['patchNovelMetadata']>): Promise<void> {
+    const [novelId, patch, expectation] = args;
+    await this.client.patchBook(novelId, { ...patch, ...expectation });
   }
 
-  async deleteNovel(novelId: string, expectedRevision?: number): Promise<void> {
-    await this.client.deleteBook(novelId, this.deviceId, expectedRevision);
+  async deleteNovel(...args: Parameters<ReaderRepository['deleteNovel']>): Promise<void> {
+    const [novelId, expectation] = args;
+    await this.client.deleteBook(novelId, this.deviceId, expectation);
   }
 
   async saveImportedNovel(parsed: ParsedNovel): Promise<void> {
@@ -203,6 +264,7 @@ export class RemoteReaderRepository implements ReaderRepository {
   async saveReadingPosition(input: SaveReadingPositionInput): Promise<void> {
     const result = await this.client.saveReadingPosition(input.novelId, {
       chapterId: input.chapterId,
+      expectedContentRevisionId: input.expectedContentRevisionId,
       documentSectionId: input.documentSectionId,
       paragraphId: input.paragraphId,
       paragraphIndex: input.paragraphIndex,
@@ -210,7 +272,7 @@ export class RemoteReaderRepository implements ReaderRepository {
       chapterProgress: Math.max(0, Math.min(1, input.chapterProgress)),
       scrollTop: Math.max(0, Math.round(input.scrollTop)),
       deviceId: this.deviceId,
-      updatedAt: new Date().toISOString(),
+      updatedAt: this.nextReaderStateTimestamp(input.novelId),
     });
     ensureApplied(result, 'reading_position');
   }
@@ -218,30 +280,47 @@ export class RemoteReaderRepository implements ReaderRepository {
   async getReadingPosition(novelId: string): Promise<ReadingPosition | undefined> {
     try {
       const response = await this.client.getBookManifest(novelId);
-      return mapServerReadingPosition(response.readingPosition);
+      const position = mapServerReadingPosition(response.readingPosition);
+      this.observeReaderStateTimestamp(novelId, position?.updatedAt);
+      return position;
     } catch (error) {
       if (isNotFound(error)) return undefined;
       throw error;
     }
   }
 
-  async clearReadingPosition(novelId: string): Promise<void> {
+  async clearReadingPosition(novelId: string, expectedContentRevisionId?: string): Promise<void> {
     const result = await this.client.deleteReadingPosition(novelId, {
       deviceId: this.deviceId,
-      updatedAt: new Date().toISOString(),
+      expectedContentRevisionId,
+      updatedAt: this.nextReaderStateTimestamp(novelId),
     });
     ensureApplied(result, 'reading_position');
   }
 
-  async listChapters(novelId: string): Promise<Chapter[]> {
-    const response = await this.client.listChapters(novelId);
-    return response.chapters.map(mapServerChapter);
+  async listChapters(novelId: string, expectedContentRevisionId?: string): Promise<Chapter[]> {
+    const contentRevisionId = expectedContentRevisionId ?? (await this.resolveBookRevision(novelId));
+    const response = await this.client.listChapters(novelId, contentRevisionId);
+    const chapters = response.chapters.map(mapServerChapter);
+    chapters.forEach((chapter) => this.rememberChapterTarget(chapter, contentRevisionId));
+    chapters.forEach((chapter) => this.observeReaderStateTimestamp(novelId, chapter.documentSectionReadAt));
+    return chapters;
   }
 
   async getChapter(id: string): Promise<Chapter | undefined> {
     try {
-      const response = await this.client.getChapter(id);
-      return mapServerChapter(response.chapter);
+      let target = this.contentTargetByChapter.get(id);
+      if (!target) {
+        const discovery = await this.client.getChapter(id);
+        const revision = snapshotSourceRevision(discovery);
+        const discovered = mapServerChapter(discovery.chapter);
+        if (!revision) throw new RemoteMutationProtocolError('chapter_content_revision');
+        target = { bookId: discovered.novelId, contentRevisionId: revision };
+      }
+      const response = await this.client.getChapter(id, target.contentRevisionId);
+      const chapter = mapServerChapter(response.chapter);
+      this.rememberChapterTarget(chapter, target.contentRevisionId);
+      return chapter;
     } catch (error) {
       if (isNotFound(error)) return undefined;
       throw error;
@@ -250,7 +329,15 @@ export class RemoteReaderRepository implements ReaderRepository {
 
   async getParagraph(id: string, signal?: AbortSignal): Promise<Paragraph | undefined> {
     try {
-      const response = await this.client.getParagraph(id, signal);
+      let target = this.contentTargetByParagraph.get(id);
+      if (!target) {
+        const discovery = await this.client.getParagraph(id, undefined, signal);
+        const revision = snapshotSourceRevision(discovery);
+        if (!revision) throw new RemoteMutationProtocolError('paragraph_content_revision');
+        target = { bookId: discovery.paragraph.novelId, contentRevisionId: revision };
+      }
+      const response = await this.client.getParagraph(id, target.contentRevisionId, signal);
+      this.contentTargetByParagraph.set(id, target);
       return response.paragraph;
     } catch (error) {
       if (isNotFound(error)) return undefined;
@@ -263,9 +350,18 @@ export class RemoteReaderRepository implements ReaderRepository {
     pageIndex: number,
     signal?: AbortSignal,
   ): Promise<ParagraphPage | undefined> {
-    const response = await this.client.listPages(chapterId, pageIndex, 1, undefined, signal);
+    let target = this.contentTargetByChapter.get(chapterId);
+    if (!target) {
+      const chapter = await this.getChapter(chapterId);
+      if (!chapter) return undefined;
+      target = this.contentTargetByChapter.get(chapterId);
+    }
+    if (!target) throw new RemoteMutationProtocolError('chapter_content_revision');
+    const response = await this.client.listPages(chapterId, pageIndex, 1, target.contentRevisionId, signal);
     const page = response.pages[0];
-    return page ? mapServerParagraphPage(page) : undefined;
+    const mappedPage = page ? mapServerParagraphPage(page) : undefined;
+    mappedPage?.paragraphs.forEach((paragraph) => this.contentTargetByParagraph.set(paragraph.id, target!));
+    return mappedPage;
   }
 
   searchParagraphPage(request: ReaderSearchPageRequest): Promise<ReaderSearchPage> {
@@ -273,10 +369,23 @@ export class RemoteReaderRepository implements ReaderRepository {
   }
 
   async *iterateParagraphPages(request: BulkParagraphPageRequest): AsyncIterable<ParagraphPage> {
+    let target = this.contentTargetByChapter.get(request.chapterId);
+    if (!target) {
+      const chapter = await this.getChapter(request.chapterId);
+      if (!chapter) return;
+      target = this.contentTargetByChapter.get(request.chapterId);
+    }
+    if (!target) throw new RemoteMutationProtocolError('chapter_content_revision');
     const batchSize = Math.min(20, Math.max(1, Math.trunc(request.batchSize ?? 20)));
     for (let from = 0; ;) {
       throwIfReaderSearchAborted(request.signal);
-      const response = await this.client.listPages(request.chapterId, from, batchSize, undefined, request.signal);
+      const response = await this.client.listPages(
+        request.chapterId,
+        from,
+        batchSize,
+        target.contentRevisionId,
+        request.signal,
+      );
       throwIfReaderSearchAborted(request.signal);
       const pages = response.pages.map(mapServerParagraphPage).sort((left, right) => left.pageIndex - right.pageIndex);
       for (const page of pages) {

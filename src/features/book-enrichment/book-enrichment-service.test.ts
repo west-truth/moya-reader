@@ -143,7 +143,7 @@ describe('BookEnrichmentService', () => {
       expected: { kind: 'metadata', values: { author: '홍길동' } },
     };
     await repository.stageApprovalIntent(candidate.id, intent);
-    await catalog.patchMetadata(candidate.bookId, { author: '홍길동' }, 0);
+    await catalog.patchMetadata(candidate.bookId, { author: '홍길동' }, { metadataRevision: 0 });
 
     const receipts = await service.listReceipts(candidate.bookId);
 
@@ -315,7 +315,13 @@ describe('BookEnrichmentService', () => {
     const [candidate] = await service.propose(parsed.novel.id, LIBRARY_BOOK_ENRICHMENT_PROVIDER_ID);
     if (!candidate || candidate.kind !== 'metadata') throw new Error('metadata candidate missing');
     const approval = await service.applyMetadata(candidate.id, ['author']);
-    await catalog.patchMetadata(parsed.novel.id, { author: '직접 수정한 작가' }, approval.appliedMetadataRevision);
+    await catalog.patchMetadata(
+      parsed.novel.id,
+      { author: '직접 수정한 작가' },
+      {
+        metadataRevision: approval.appliedMetadataRevision,
+      },
+    );
 
     await expect(service.undo(approval.id)).rejects.toBeInstanceOf(BookEnrichmentUndoConflictError);
 
@@ -578,7 +584,7 @@ describe('BookEnrichmentService', () => {
     const { parsed, repository, books, catalog, service } = await serviceFixture();
     const [candidate] = await service.propose(parsed.novel.id, LIBRARY_BOOK_ENRICHMENT_PROVIDER_ID);
     if (!candidate || candidate.kind !== 'metadata') throw new Error('metadata candidate missing');
-    await catalog.patchMetadata(parsed.novel.id, { favorite: true }, 0);
+    await catalog.patchMetadata(parsed.novel.id, { favorite: true }, { metadataRevision: 0 });
     const revisionBeforeApply = (await books.getNovel(parsed.novel.id))?.metadataRevision;
 
     await expect(service.applyMetadata(candidate.id, ['author'])).rejects.toBeInstanceOf(
@@ -658,9 +664,9 @@ describe('BookEnrichmentService', () => {
     const [candidate] = await service.propose(parsed.novel.id, LIBRARY_BOOK_ENRICHMENT_PROVIDER_ID);
     if (!candidate || candidate.kind !== 'metadata') throw new Error('metadata candidate missing');
     await service.applyMetadata(candidate.id, ['author']);
-    const trashed = await catalog.moveToTrash(parsed.novel.id, 1);
+    const trashed = await catalog.moveToTrash(parsed.novel.id, { metadataRevision: 1 });
 
-    await catalog.purge(parsed.novel.id, trashed.metadataRevision);
+    await catalog.purge(parsed.novel.id, { metadataRevision: trashed.metadataRevision });
 
     expect(await repository.listCandidates(parsed.novel.id)).toEqual([]);
     expect(await repository.listReceipts(parsed.novel.id)).toEqual([]);

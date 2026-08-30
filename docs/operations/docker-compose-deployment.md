@@ -1,7 +1,7 @@
 # Docker Compose deployment
 
 Status: current
-Last verified: 2026-08-30
+Last verified: 2026-08-31
 
 This is the operational reference for the self-host web/API/worker stack. The default deployment is intentionally
 loopback-only. Public exposure requires the fail-closed override and a separate TLS-terminating reverse proxy.
@@ -84,6 +84,19 @@ Intermediate BullMQ attempts remain queued/retrying in PostgreSQL and only the f
 `/health` is the API container bootstrap check. `/ready` is the client/operator readiness check and requires database,
 Redis queue, object storage, and a fresh worker heartbeat. This separation lets the worker start without a dependency
 cycle while preventing uploads from looking ready when no process can consume them.
+
+The 2026-08-31 self-host lifecycle update includes forward-only migrations `0037`-`0040`. They make content revision IDs
+unique across same-ID book reincarnations, add generation-aware object-delete claims, persist book-generation upload
+tickets, and retain explicit cover removal in `library_books.cover_removed_at`. Deploy Web/API/worker from the same
+checkout and let API migrations finish before accepting new imports. A
+known-book replacement session created by an older server without a generation ticket fails closed and must be started
+again; it is not allowed to guess that a purged or recreated target is the old book. The worker is also required to drain
+the durable object-delete outbox, so running API without a healthy worker can retain orphan candidates even though it does
+not make referenced content unsafe.
+
+Suwayomi remains optional. The generation/content fences, exact section read state, source-cover retry and association
+purge recovery are Moya contracts and do not require a Suwayomi container. When the override is enabled, the source
+runtime still stays outside the PostgreSQL/Redis/MinIO/API network described below.
 
 ## Optional webnovel cover and metadata collector
 
@@ -268,6 +281,11 @@ Hosted import still assembles the uploaded source for the parser, so `MAX_UPLOAD
 not a promise that every compressed 500 MiB archive fits in the default 3 GiB worker. Fixed-document page reads are
 streamed from object storage, but archive parsing and backup restore remain memory-sensitive. Do not raise the upload
 limit without a representative large-file gate and worker memory observation.
+
+Before relying on restore as a lifecycle recovery mechanism, run a representative post-`0040` restore audit that includes
+a hard-purged and same-ID recreated book, its explicit cover-removal state, MinIO objects, source association and exact
+section read state. Migration and normal import coverage does not by itself prove that every legacy backup shape
+reconstructs the new generation ledger and removal marker.
 
 ## Verification and known limits
 
