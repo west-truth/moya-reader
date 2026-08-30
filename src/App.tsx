@@ -1321,6 +1321,7 @@ export default function App() {
     state: externalSourceState,
     importService,
     assets: bookAssetRepository,
+    supportsExactDocumentSectionReadMarkers: readerRuntime.mode === 'remote',
     extensionRevision: extensionRevision + externalSourceBrokerRevision,
     getNovel: (id) => readerRepository.getNovel(id),
     listChapters: (novelId) => readerRepository.listChapters(novelId),

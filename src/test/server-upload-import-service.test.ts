@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { RemoteApiClient, RemoteApiError, RemoteUploadStatus } from '../services/remote/remote-api-client';
 import {
   DEFAULT_SERVER_UPLOAD_CHUNK_BYTES,
+  DEFAULT_SERVER_UPLOAD_CONCURRENCY,
   RemoteUploadSessionStore,
   ServerImportActivityTimeoutError,
   ServerImportCancelledError,
@@ -143,6 +144,250 @@ describe('ServerUploadImportService', () => {
       expect.objectContaining({ totalChunks: 2, sizeBytes: DEFAULT_SERVER_UPLOAD_CHUNK_BYTES + 1 }),
       expect.any(AbortSignal),
     );
+  });
+
+  it('uploads large files with bounded concurrency while preserving every chunk', async () => {
+    const file = new File(['abcdefghijkl'], 'large.cbz', { type: 'application/vnd.comicbook+zip' });
+    const received = new Set<number>();
+    let activeUploads = 0;
+    let maxActiveUploads = 0;
+    let chunkZeroAttempts = 0;
+    let uploadStatusRequests = 0;
+    const currentStatus = (): RemoteUploadStatus => ({
+      uploadId: 'upload_1',
+      fileName: file.name,
+      sizeBytes: file.size,
+      status: 'uploading',
+      totalChunks: file.size,
+      expectedBytes: file.size,
+      expectedChunks: file.size,
+      uploadedBytes: received.size,
+      receivedChunkIndexes: [...received].sort((left, right) => left - right),
+      missingChunkIndexes: Array.from({ length: file.size }, (_, index) => index).filter(
+        (index) => !received.has(index),
+      ),
+      complete: received.size === file.size,
+    });
+    const client = {
+      initUpload: vi.fn(async () => ({ uploadId: 'upload_1', chunkUrlTemplate: '/chunks/{chunkIndex}' })),
+      getUpload: vi.fn(async () => {
+        uploadStatusRequests += 1;
+        if (uploadStatusRequests === 2) throw new Error('temporary upload status failure');
+        return currentStatus();
+      }),
+      putUploadChunk: vi.fn(async (_uploadId: string, chunkIndex: number, chunk: Blob) => {
+        activeUploads += 1;
+        maxActiveUploads = Math.max(maxActiveUploads, activeUploads);
+        if (chunkIndex === 0) chunkZeroAttempts += 1;
+        try {
+          await new Promise((resolve) =>
+            globalThis.setTimeout(resolve, chunkIndex === 0 && chunkZeroAttempts === 1 ? 20 : 5),
+          );
+          if (chunkIndex === 0 && chunkZeroAttempts === 1) throw new Error('temporary chunk failure');
+          expect(await chunk.text()).toBe('abcdefghijkl'[chunkIndex]);
+          received.add(chunkIndex);
+          return { ok: true as const, upload: currentStatus() };
+        } finally {
+          activeUploads -= 1;
+        }
+      }),
+      completeUpload: vi.fn(async () => ({ jobId: 'job_1', statusUrl: '/import-jobs/job_1' })),
+      getImportJob: vi.fn(async () => ({
+        id: 'job_1',
+        upload_id: 'upload_1',
+        status: 'done' as const,
+        stage: 'ready' as const,
+        bytes_read: file.size,
+        total_bytes: file.size,
+        chapters_detected: 1,
+        paragraphs_written: 1,
+        message: 'done',
+        book_id: 'book_1',
+      })),
+      getBookManifest: vi.fn(async () => importedBook()),
+    };
+    const service = new ServerUploadImportService(
+      client as unknown as RemoteApiClient,
+      1,
+      3,
+      undefined,
+      90_000,
+      20_000,
+      DEFAULT_SERVER_UPLOAD_CONCURRENCY,
+    );
+    const progress = vi.fn();
+
+    await expect(service.importFile({ file, encoding: 'auto' }, progress).promise).resolves.toMatchObject({
+      novel: expect.objectContaining({ id: 'book_1' }),
+    });
+
+    expect(maxActiveUploads).toBe(DEFAULT_SERVER_UPLOAD_CONCURRENCY);
+    expect(client.putUploadChunk.mock.calls.filter((call) => call[1] === 0)).toHaveLength(2);
+    expect(new Set(client.putUploadChunk.mock.calls.map((call) => call[1]))).toEqual(
+      new Set(Array.from({ length: file.size }, (_, index) => index)),
+    );
+    expect([...received].sort((left, right) => left - right)).toEqual(
+      Array.from({ length: file.size }, (_, index) => index),
+    );
+    const uploadedByteProgress = progress.mock.calls
+      .map(([detail]) => detail)
+      .filter((detail) => detail.message.startsWith('서버로 업로드 중'))
+      .map((detail) => detail.bytesRead);
+    expect(uploadedByteProgress).toEqual([...uploadedByteProgress].sort((left, right) => left - right));
+    expect(uploadedByteProgress.at(-1)).toBe(file.size);
+  });
+
+  it('resumes only missing chunks with bounded concurrency when four or more chunks remain', async () => {
+    const file = new File(['abcdefgh'], 'resume.cbz', { type: 'application/vnd.comicbook+zip' });
+    const resumeSourceHash = `sha256:${'a'.repeat(64)}`;
+    const received = new Set([0, 2]);
+    let activeUploads = 0;
+    let maxActiveUploads = 0;
+    const currentStatus = (): RemoteUploadStatus => ({
+      uploadId: 'upload_old',
+      fileName: file.name,
+      sizeBytes: file.size,
+      status: 'uploading',
+      totalChunks: file.size,
+      expectedBytes: file.size,
+      expectedChunks: file.size,
+      uploadedBytes: received.size,
+      receivedChunkIndexes: [...received].sort((left, right) => left - right),
+      missingChunkIndexes: Array.from({ length: file.size }, (_, index) => index).filter(
+        (index) => !received.has(index),
+      ),
+      complete: received.size === file.size,
+      sourceContentHash: resumeSourceHash,
+    });
+    const resumeSession: StoredUploadSession = {
+      uploadId: 'upload_old',
+      fileName: file.name,
+      sizeBytes: file.size,
+      lastModified: file.lastModified,
+      encoding: 'auto',
+      chapterSplitMode: 'auto',
+      chunkBytes: 1,
+      totalChunks: file.size,
+      sourceContentHash: resumeSourceHash,
+      createdAt: now,
+      updatedAt: now,
+    };
+    const store: RemoteUploadSessionStore = {
+      read: vi.fn(() => resumeSession),
+      write: vi.fn(),
+      remove: vi.fn(),
+    };
+    const client = {
+      initUpload: vi.fn(),
+      getUpload: vi.fn(async () => currentStatus()),
+      putUploadChunk: vi.fn(async (_uploadId: string, chunkIndex: number) => {
+        activeUploads += 1;
+        maxActiveUploads = Math.max(maxActiveUploads, activeUploads);
+        await new Promise((resolve) => globalThis.setTimeout(resolve, 5));
+        received.add(chunkIndex);
+        activeUploads -= 1;
+        return { ok: true as const, upload: currentStatus() };
+      }),
+      completeUpload: vi.fn(async () => ({ jobId: 'job_1', statusUrl: '/import-jobs/job_1' })),
+      getImportJob: vi.fn(async () => ({
+        id: 'job_1',
+        upload_id: 'upload_old',
+        status: 'done' as const,
+        stage: 'ready' as const,
+        bytes_read: file.size,
+        total_bytes: file.size,
+        chapters_detected: 1,
+        paragraphs_written: 1,
+        message: 'done',
+        book_id: 'book_1',
+      })),
+      getBookManifest: vi.fn(async () => importedBook()),
+    };
+    const service = new ServerUploadImportService(
+      client as unknown as RemoteApiClient,
+      1,
+      3,
+      store,
+      90_000,
+      20_000,
+      DEFAULT_SERVER_UPLOAD_CONCURRENCY,
+    );
+
+    await expect(
+      service.importFile({ file, encoding: 'auto', expectedSourceContentHash: resumeSourceHash }, vi.fn()).promise,
+    ).resolves.toMatchObject({ novel: expect.objectContaining({ id: 'book_1' }) });
+
+    expect(client.initUpload).not.toHaveBeenCalled();
+    expect(maxActiveUploads).toBe(DEFAULT_SERVER_UPLOAD_CONCURRENCY);
+    expect(client.putUploadChunk.mock.calls.map((call) => call[1]).sort((left, right) => left - right)).toEqual([
+      1, 3, 4, 5, 6, 7,
+    ]);
+    expect([...received].sort((left, right) => left - right)).toEqual(
+      Array.from({ length: file.size }, (_, index) => index),
+    );
+  });
+
+  it('aborts in-flight parallel chunks and does not schedule more chunks after cancellation', async () => {
+    const file = new File(['abcdefghijkl'], 'large.cbz', { type: 'application/vnd.comicbook+zip' });
+    const emptyStatus: RemoteUploadStatus = {
+      uploadId: 'upload_1',
+      fileName: file.name,
+      sizeBytes: file.size,
+      status: 'uploading',
+      totalChunks: file.size,
+      expectedBytes: file.size,
+      expectedChunks: file.size,
+      uploadedBytes: 0,
+      receivedChunkIndexes: [],
+      missingChunkIndexes: Array.from({ length: file.size }, (_, index) => index),
+      complete: false,
+    };
+    let activeUploads = 0;
+    let maxActiveUploads = 0;
+    let abortedUploads = 0;
+    const client = {
+      initUpload: vi.fn(async () => ({ uploadId: 'upload_1', chunkUrlTemplate: '/chunks/{chunkIndex}' })),
+      getUpload: vi.fn(async () => emptyStatus),
+      putUploadChunk: vi.fn(async (_uploadId: string, _chunkIndex: number, _chunk: Blob, signal: AbortSignal) => {
+        activeUploads += 1;
+        maxActiveUploads = Math.max(maxActiveUploads, activeUploads);
+        await new Promise((_resolve, reject) => {
+          signal.addEventListener(
+            'abort',
+            () => {
+              activeUploads -= 1;
+              abortedUploads += 1;
+              reject(new DOMException('Import cancelled', 'AbortError'));
+            },
+            { once: true },
+          );
+        });
+        return { ok: true as const, upload: emptyStatus };
+      }),
+      completeUpload: vi.fn(),
+      cancelUpload: vi.fn(async () => ({ ok: true as const, cancellationState: 'cancelled' as const })),
+    };
+    const service = new ServerUploadImportService(
+      client as unknown as RemoteApiClient,
+      1,
+      3,
+      undefined,
+      90_000,
+      20_000,
+      DEFAULT_SERVER_UPLOAD_CONCURRENCY,
+    );
+    const controller = service.importFile({ file, encoding: 'auto' }, vi.fn());
+
+    await vi.waitFor(() => expect(client.putUploadChunk).toHaveBeenCalledTimes(DEFAULT_SERVER_UPLOAD_CONCURRENCY));
+    controller.cancel();
+
+    await expect(controller.promise).rejects.toMatchObject({ name: 'AbortError' });
+    expect(maxActiveUploads).toBe(DEFAULT_SERVER_UPLOAD_CONCURRENCY);
+    expect(client.putUploadChunk).toHaveBeenCalledTimes(DEFAULT_SERVER_UPLOAD_CONCURRENCY);
+    expect(abortedUploads).toBe(DEFAULT_SERVER_UPLOAD_CONCURRENCY);
+    expect(activeUploads).toBe(0);
+    expect(client.completeUpload).not.toHaveBeenCalled();
+    expect(client.cancelUpload).toHaveBeenCalledWith('upload_1');
   });
 
   it('passes a client book id through upload initialization and resume metadata', async () => {

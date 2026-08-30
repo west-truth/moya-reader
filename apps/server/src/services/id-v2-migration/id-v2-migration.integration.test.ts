@@ -154,6 +154,29 @@ describeWithPostgres('PostgreSQL ID/hash v2 backfill', () => {
         highlight_paragraph: paragraphId,
         note_paragraph: paragraphId,
       });
+      const fixedSectionReadStates = await pool.query<{
+        book_id: string;
+        user_id: string;
+        document_section_id: string;
+        last_read_at: Date;
+      }>(
+        `select book_id, user_id, document_section_id, last_read_at
+           from fixed_document_section_read_states
+          where book_id = $1`,
+        [fixture.canonicalBookId],
+      );
+      expect(fixedSectionReadStates.rows).toEqual([
+        {
+          book_id: fixture.canonicalBookId,
+          user_id: fixture.userId,
+          document_section_id: fixture.documentSectionId,
+          last_read_at: new Date('2026-01-01T00:00:00.000Z'),
+        },
+      ]);
+      expect(
+        (await pool.query('select 1 from fixed_document_section_read_states where book_id = $1', [fixture.ids.book]))
+          .rowCount,
+      ).toBe(0);
 
       const graph = await pool.query<{
         character_id: string;
@@ -369,6 +392,32 @@ describeWithPostgres('PostgreSQL ID/hash v2 backfill', () => {
       expect((await pool.query('select 1 from tts_audio_cache where id = $1', [fixture.ids.ttsCache])).rowCount).toBe(
         1,
       );
+      const restoredFixedSectionReadState = await pool.query<{
+        book_id: string;
+        user_id: string;
+        document_section_id: string;
+        last_read_at: Date;
+      }>(
+        `select book_id, user_id, document_section_id, last_read_at
+           from fixed_document_section_read_states
+          where book_id = $1`,
+        [fixture.ids.book],
+      );
+      expect(restoredFixedSectionReadState.rows).toEqual([
+        {
+          book_id: fixture.ids.book,
+          user_id: fixture.userId,
+          document_section_id: fixture.documentSectionId,
+          last_read_at: new Date('2026-01-01T00:00:00.000Z'),
+        },
+      ]);
+      expect(
+        (
+          await pool.query('select 1 from fixed_document_section_read_states where book_id = $1', [
+            fixture.canonicalBookId,
+          ])
+        ).rowCount,
+      ).toBe(0);
       const alias = await pool.query('select status, alias_complete from id_v2_book_aliases where run_id = $1', [
         staged.runId,
       ]);

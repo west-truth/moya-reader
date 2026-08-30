@@ -117,6 +117,17 @@ create table if not exists reading_positions (
   primary key (book_id, user_id)
 );
 
+create table if not exists fixed_document_section_read_states (
+  book_id text not null references library_books(id) on delete cascade,
+  user_id text not null references users(id) on delete cascade,
+  document_section_id text not null,
+  last_read_at timestamptz not null,
+  primary key (book_id, user_id, document_section_id)
+);
+
+create index if not exists idx_fixed_document_section_read_states_user
+  on fixed_document_section_read_states(user_id, last_read_at desc);
+
 create table if not exists bookmarks (
   id text primary key,
   book_id text not null references library_books(id) on delete cascade,

@@ -139,9 +139,8 @@ describe('book enrichment automation', () => {
   });
 
   it('fills still-missing fields after another metadata edit while preserving existing values', async () => {
-    const refreshedCover = { ...coverCandidate(), id: 'cover-2', baseMetadataRevision: 3 };
     const runner = {
-      propose: vi.fn(async () => [refreshedCover]),
+      propose: vi.fn(async () => []),
       applyMetadata: vi.fn(async () => undefined),
       applyCover: vi.fn(async () => undefined),
     } as unknown as BookEnrichmentAutomationRunner;
@@ -153,13 +152,44 @@ describe('book enrichment automation', () => {
       ),
     ).resolves.toEqual({ appliedCount: 2, errors: [] });
     expect(runner.applyMetadata).toHaveBeenCalledWith('metadata-1', ['tags', 'description', 'language']);
+    expect(runner.propose).not.toHaveBeenCalled();
+    expect(runner.applyCover).toHaveBeenCalledWith('cover-1');
+  });
+
+  it('retries the exact proposal once when the first lookup produced metadata without a cover', async () => {
+    const refreshedCover = { ...coverCandidate(), id: 'cover-2', baseMetadataRevision: 1 };
+    const runner = {
+      propose: vi.fn(async () => [refreshedCover]),
+      applyMetadata: vi.fn(async () => undefined),
+      applyCover: vi.fn(async () => undefined),
+    } as unknown as BookEnrichmentAutomationRunner;
+
+    await expect(applyEligibleMissingEnrichment(runner, book(), [metadataCandidate()])).resolves.toEqual({
+      appliedCount: 2,
+      errors: [],
+    });
+    expect(runner.propose).toHaveBeenCalledOnce();
     expect(runner.propose).toHaveBeenCalledWith('book-1', 'moya.webnovel-metadata.enrichment', undefined);
     expect(runner.applyCover).toHaveBeenCalledWith('cover-2');
   });
 
+  it('reports a partial automatic apply when the retry still has no cover', async () => {
+    const runner = {
+      propose: vi.fn(async () => [{ ...metadataCandidate(), id: 'metadata-2', baseMetadataRevision: 1 }]),
+      applyMetadata: vi.fn(async () => undefined),
+      applyCover: vi.fn(async () => undefined),
+    } as unknown as BookEnrichmentAutomationRunner;
+
+    await expect(applyEligibleMissingEnrichment(runner, book(), [metadataCandidate()])).resolves.toEqual({
+      appliedCount: 1,
+      errors: ['작품 정보는 적용했지만 최신 표지 후보를 확인하지 못했습니다.'],
+    });
+    expect(runner.applyCover).not.toHaveBeenCalled();
+  });
+
   it('preserves a partial metadata apply when the cover step fails', async () => {
     const runner = {
-      propose: vi.fn(async () => [coverCandidate()]),
+      propose: vi.fn(async () => []),
       applyMetadata: vi.fn(async () => undefined),
       applyCover: vi.fn(async () => {
         throw new Error('cover failed');
@@ -248,9 +278,8 @@ describe('book enrichment automation', () => {
     });
 
     expect(result).toMatchObject({ total: 1, completed: 1, skipped: 1, matched: 1, applied: 1 });
-    expect(runner.propose).toHaveBeenCalledTimes(2);
-    expect(runner.propose).toHaveBeenNthCalledWith(1, 'incomplete', 'moya.webnovel-metadata.enrichment', undefined);
-    expect(runner.propose).toHaveBeenNthCalledWith(2, 'incomplete', 'moya.webnovel-metadata.enrichment', undefined);
+    expect(runner.propose).toHaveBeenCalledOnce();
+    expect(runner.propose).toHaveBeenCalledWith('incomplete', 'moya.webnovel-metadata.enrichment', undefined);
   });
 
   it('never searches works that are still in the trash', async () => {
@@ -268,8 +297,7 @@ describe('book enrichment automation', () => {
     });
 
     expect(result).toMatchObject({ total: 1, completed: 1, skipped: 1, matched: 1, applied: 1 });
-    expect(runner.propose).toHaveBeenCalledTimes(2);
-    expect(runner.propose).toHaveBeenNthCalledWith(1, 'active', 'moya.webnovel-metadata.enrichment', undefined);
-    expect(runner.propose).toHaveBeenNthCalledWith(2, 'active', 'moya.webnovel-metadata.enrichment', undefined);
+    expect(runner.propose).toHaveBeenCalledOnce();
+    expect(runner.propose).toHaveBeenCalledWith('active', 'moya.webnovel-metadata.enrichment', undefined);
   });
 });

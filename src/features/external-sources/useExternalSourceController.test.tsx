@@ -73,11 +73,13 @@ async function createHarness(input: {
   downloadedFile?: File;
   downloadGate?: Promise<void>;
   assets?: BookAssetRepository;
+  supportsExactDocumentSectionReadMarkers?: boolean;
+  novelOverrides?: Partial<Novel>;
 }) {
   const oldContent = '기존 원격 원문';
   const oldHash = await sha256(oldContent);
   const downloadedHash = await sha256(input.downloadedContent);
-  const currentNovel = novel({ sourceContentHash: oldHash });
+  const currentNovel = novel({ sourceContentHash: oldHash, ...input.novelOverrides });
   let currentLink: ExternalSourceLink = {
     id: 'external-link::fixture.source::fixture-account::work-1',
     source: ITEM_KEY,
@@ -224,6 +226,7 @@ async function createHarness(input: {
       state,
       importService: { importFile },
       assets: input.assets,
+      supportsExactDocumentSectionReadMarkers: input.supportsExactDocumentSectionReadMarkers,
       extensionRevision: 0,
       listNovels: async () => (input.localBookMissing ? [] : [currentNovel]),
       listChapters: async () => input.chapters ?? [],
@@ -521,6 +524,48 @@ describe('useExternalSourceController remote updates', () => {
       { title: '01화', importState: 'imported', localBookId: serialized.id },
       { title: '02화', importState: 'imported', localBookId: serialized.id },
     ]);
+    await act(async () => harness.renderer.unmount());
+  });
+
+  it.each([
+    {
+      label: 'local IndexedDB without exact markers',
+      supportsExactDocumentSectionReadMarkers: false,
+      expected: ['read', 'current', 'unread'],
+    },
+    {
+      label: 'self-host with exact markers',
+      supportsExactDocumentSectionReadMarkers: true,
+      expected: ['unread', 'current', 'unread'],
+    },
+  ])('uses the reader capability for serialized read-state fallback: $label', async (input) => {
+    const chapters = [1, 2, 3].map((index) =>
+      testChapter(index, {
+        documentSectionId: `local:${index}`,
+        documentSectionTitle: `${index}화`,
+        documentSectionIndex: index,
+      }),
+    );
+    const novelOverrides: Partial<Novel> = {
+      format: 'image_archive',
+      documentSectionCount: 3,
+      totalChapters: 3,
+      lastReadChapterId: 'chapter-2',
+      lastReadChapterIndex: 2,
+      lastReadProgress: 0.5,
+    };
+    const harness = await createHarness({
+      downloadedContent: '기존 원격 원문',
+      chapters,
+      supportsExactDocumentSectionReadMarkers: input.supportsExactDocumentSectionReadMarkers,
+      novelOverrides,
+    });
+
+    await act(async () => {
+      await harness.controller.showLocalSeries(novel(novelOverrides));
+    });
+
+    expect(harness.controller.items.map((item) => item.readingState)).toEqual(input.expected);
     await act(async () => harness.renderer.unmount());
   });
 

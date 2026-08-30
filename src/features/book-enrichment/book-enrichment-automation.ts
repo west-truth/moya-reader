@@ -124,11 +124,11 @@ export async function applyEligibleMissingEnrichment(
       }
     }
   }
-  if (cover && !book.coverAssetId && !cover.baseCover.present) {
+  if (!book.coverAssetId) {
     if (signal?.aborted) throw new DOMException('The operation was aborted.', 'AbortError');
-    if (metadataApplied) {
+    if (!cover && metadataApplied) {
       try {
-        const refreshed = await runner.propose(book.id, cover.provenance.contributionId, signal);
+        const refreshed = await runner.propose(book.id, group[0]!.provenance.contributionId, signal);
         cover = eligibleAutomaticCandidateGroup(refreshed)?.find(
           (candidate): candidate is Extract<BookEnrichmentCandidate, { kind: 'cover' }> => candidate.kind === 'cover',
         );
@@ -141,6 +141,7 @@ export async function applyEligibleMissingEnrichment(
         return { appliedCount, errors };
       }
     }
+    if (!cover || cover.baseCover.present) return { appliedCount, errors };
     try {
       await runner.applyCover(cover.id);
       appliedCount += 1;

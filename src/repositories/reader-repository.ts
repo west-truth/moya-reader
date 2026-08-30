@@ -71,6 +71,8 @@ export interface SaveReadingPositionInput {
   /** Rejects a delayed reader write after the displayed body revision was replaced. */
   readonly expectedContentRevisionId?: string;
   readonly chapterId: string;
+  /** Exact logical section for fixed-document page chapters. */
+  readonly documentSectionId?: string;
   readonly scrollTop: number;
   readonly chapterProgress: number;
   readonly paragraphId?: string;

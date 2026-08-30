@@ -22,6 +22,7 @@ export const BOOK_BACKUP_TABLE_ORDER = [
   'paragraph_pages',
   'paragraph_search',
   'reading_positions',
+  'fixed_document_section_read_states',
   'bookmarks',
   'highlights',
   'notes',
@@ -94,6 +95,7 @@ export async function loadBookSnapshot(
     paragraphPages,
     paragraphSearch,
     readingPositions,
+    fixedDocumentSectionReadStates,
     bookmarks,
     highlights,
     notes,
@@ -130,6 +132,15 @@ export async function loadBookSnapshot(
       jsonRows(
         queryable,
         'select to_jsonb(row_data) as row_data from reading_positions row_data where row_data.user_id = $1 and row_data.book_id = $2',
+        [userId, bookId],
+      ),
+    () =>
+      jsonRows(
+        queryable,
+        `select to_jsonb(row_data) as row_data
+           from fixed_document_section_read_states row_data
+          where row_data.user_id = $1 and row_data.book_id = $2
+          order by row_data.document_section_id`,
         [userId, bookId],
       ),
     () => direct('bookmarks'),
@@ -216,6 +227,7 @@ export async function loadBookSnapshot(
     paragraph_pages: paragraphPages,
     paragraph_search: paragraphSearch,
     reading_positions: readingPositions,
+    fixed_document_section_read_states: fixedDocumentSectionReadStates,
     bookmarks,
     highlights,
     notes,

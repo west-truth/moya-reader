@@ -203,6 +203,7 @@ export class RemoteReaderRepository implements ReaderRepository {
   async saveReadingPosition(input: SaveReadingPositionInput): Promise<void> {
     const result = await this.client.saveReadingPosition(input.novelId, {
       chapterId: input.chapterId,
+      documentSectionId: input.documentSectionId,
       paragraphId: input.paragraphId,
       paragraphIndex: input.paragraphIndex,
       offsetInParagraph: input.offsetInParagraph ?? 0,

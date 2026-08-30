@@ -426,6 +426,12 @@ export function buildDependentMigrationRows(input: {
       paragraph_id: canonicalId(aliases, 'paragraph', row.paragraph_id, true) ?? null,
     })),
   );
+  target.fixed_document_section_read_states.push(
+    ...sourceRows.fixed_document_section_read_states.map((row) => ({
+      ...row,
+      book_id: core.canonicalBookId,
+    })),
+  );
   target.bookmarks.push(...transformAnnotationRows(sourceRows.bookmarks, 'bookmark', core));
   target.highlights.push(...transformAnnotationRows(sourceRows.highlights, 'highlight', core));
   target.notes.push(...transformAnnotationRows(sourceRows.notes, 'note', core));

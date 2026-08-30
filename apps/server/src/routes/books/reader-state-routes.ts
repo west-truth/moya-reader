@@ -22,7 +22,7 @@ export async function registerReaderStateRoutes(
       const parsed = validateReadingPositionBody(request.body);
       if (!parsed.ok) return reply.code(400).send({ error: parsed.error });
       const body = parsed.value;
-      if (!(await hasBookChapterAccess(pool, config, request.params.bookId, body.chapterId))) {
+      if (!(await hasBookChapterAccess(pool, config, request.params.bookId, body.chapterId, body.documentSectionId))) {
         return reply.code(404).send({ error: 'book or chapter not found' });
       }
 
@@ -61,6 +61,20 @@ export async function registerReaderStateRoutes(
       );
       if ((positionResult.rowCount ?? 0) === 0) {
         return { ok: true, applied: false };
+      }
+
+      if (body.documentSectionId) {
+        await pool.query(
+          `
+            insert into fixed_document_section_read_states (
+              book_id, user_id, document_section_id, last_read_at
+            ) values ($1, $2, $3, $4)
+            on conflict (book_id, user_id, document_section_id) do update
+              set last_read_at = excluded.last_read_at
+              where fixed_document_section_read_states.last_read_at <= excluded.last_read_at
+          `,
+          [request.params.bookId, config.defaultUserId, body.documentSectionId, updatedAt],
+        );
       }
 
       const positionId = `reading_position_${request.params.bookId}`;
@@ -124,6 +138,10 @@ export async function registerReaderStateRoutes(
       if (!row.should_apply) return { ok: true, applied: false };
 
       await pool.query('delete from reading_positions where book_id = $1 and user_id = $2', [
+        request.params.bookId,
+        config.defaultUserId,
+      ]);
+      await pool.query('delete from fixed_document_section_read_states where book_id = $1 and user_id = $2', [
         request.params.bookId,
         config.defaultUserId,
       ]);

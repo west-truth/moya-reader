@@ -23,21 +23,34 @@ export async function persistReaderSyncEvent(
     if (position.chapterId && event.novelId) {
       await client.query(
         `
-          insert into reading_positions (
-            book_id, user_id, chapter_id, paragraph_id, paragraph_index, offset_in_paragraph,
-            chapter_progress, scroll_top, device_id, updated_at
+          with applied_position as (
+            insert into reading_positions (
+              book_id, user_id, chapter_id, paragraph_id, paragraph_index, offset_in_paragraph,
+              chapter_progress, scroll_top, device_id, updated_at
+            )
+            values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+            on conflict (book_id, user_id) do update
+              set chapter_id = excluded.chapter_id,
+                  paragraph_id = excluded.paragraph_id,
+                  paragraph_index = excluded.paragraph_index,
+                  offset_in_paragraph = excluded.offset_in_paragraph,
+                  chapter_progress = excluded.chapter_progress,
+                  scroll_top = excluded.scroll_top,
+                  device_id = excluded.device_id,
+                  updated_at = excluded.updated_at
+              where reading_positions.updated_at <= excluded.updated_at
+            returning book_id, user_id, chapter_id, updated_at
           )
-          values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
-          on conflict (book_id, user_id) do update
-            set chapter_id = excluded.chapter_id,
-                paragraph_id = excluded.paragraph_id,
-                paragraph_index = excluded.paragraph_index,
-                offset_in_paragraph = excluded.offset_in_paragraph,
-                chapter_progress = excluded.chapter_progress,
-                scroll_top = excluded.scroll_top,
-                device_id = excluded.device_id,
-                updated_at = excluded.updated_at
-            where reading_positions.updated_at <= excluded.updated_at
+          insert into fixed_document_section_read_states (
+            book_id, user_id, document_section_id, last_read_at
+          )
+          select applied.book_id, applied.user_id, chapter.document_section_id, applied.updated_at
+            from applied_position applied
+            join chapters chapter on chapter.id = applied.chapter_id and chapter.book_id = applied.book_id
+           where chapter.document_section_id is not null
+          on conflict (book_id, user_id, document_section_id) do update
+            set last_read_at = excluded.last_read_at
+            where fixed_document_section_read_states.last_read_at <= excluded.last_read_at
         `,
         [
           event.novelId,
@@ -57,7 +70,15 @@ export async function persistReaderSyncEvent(
   }
 
   if (event.type === 'reading_position_deleted' && event.novelId) {
-    await client.query('delete from reading_positions where book_id = $1 and user_id = $2', [event.novelId, userId]);
+    await client.query(
+      `
+        with deleted_position as (
+          delete from reading_positions where book_id = $1 and user_id = $2
+        )
+        delete from fixed_document_section_read_states where book_id = $1 and user_id = $2
+      `,
+      [event.novelId, userId],
+    );
     return true;
   }
 

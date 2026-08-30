@@ -1067,12 +1067,13 @@ export class RemoteApiClient {
 
   saveReadingPosition(
     bookId: string,
-    position: Omit<ReadingPosition, 'id' | 'novelId'>,
+    position: Omit<ReadingPosition, 'id' | 'novelId'> & { readonly documentSectionId?: string },
   ): Promise<RemoteMutationResult> {
     return this.request(`/books/${encodeURIComponent(bookId)}/reading-position`, {
       method: 'PATCH',
       body: JSON.stringify({
         chapterId: position.chapterId,
+        documentSectionId: position.documentSectionId,
         paragraphId: position.paragraphId,
         paragraphIndex: position.paragraphIndex,
         offsetInParagraph: position.offsetInParagraph,

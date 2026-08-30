@@ -17,6 +17,7 @@ const INSERT_ORDER: readonly BookBackupTable[] = [
   'paragraph_pages',
   'paragraph_search',
   'reading_positions',
+  'fixed_document_section_read_states',
   'bookmarks',
   'highlights',
   'notes',
@@ -49,6 +50,9 @@ function chunks<T>(items: readonly T[], size: number): T[][] {
 function sourceKey(table: BookBackupTable, row: Record<string, unknown>): string {
   if (typeof row.id === 'string') return row.id;
   if (table === 'reading_positions') return JSON.stringify([row.book_id, row.user_id]);
+  if (table === 'fixed_document_section_read_states') {
+    return JSON.stringify([row.book_id, row.user_id, row.document_section_id]);
+  }
   if (table === 'sync_events') return String(row.sequence);
   return JSON.stringify(row);
 }
@@ -177,6 +181,7 @@ export async function deleteBookDependents(client: pg.PoolClient, sourceBookId: 
     'delete from notes where book_id = $1',
     'delete from highlights where book_id = $1',
     'delete from bookmarks where book_id = $1',
+    'delete from fixed_document_section_read_states where book_id = $1',
     'delete from reading_positions where book_id = $1',
     'delete from paragraph_search where book_id = $1',
     'delete from paragraph_pages where book_id = $1',

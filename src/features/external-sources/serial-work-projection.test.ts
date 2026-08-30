@@ -101,7 +101,7 @@ describe('projectLocalSeries', () => {
     expect(projection.links).toHaveLength(1);
   });
 
-  it('keeps legacy hosted release pages grouped while the Suwayomi source is offline', () => {
+  it('keeps legacy hosted release pages grouped without guessing skipped state while Suwayomi is offline', () => {
     const novel = testNovel({
       format: 'image_archive',
       title: '기존 연동 만화',
@@ -112,7 +112,11 @@ describe('projectLocalSeries', () => {
       lastReadProgress: 0.5,
     });
     const chapters = [
-      testChapter(1, { title: '1화 · 1페이지', documentSectionTitle: '1화', documentSectionIndex: 1 }),
+      testChapter(1, {
+        title: '1화 · 1페이지',
+        documentSectionTitle: '1화',
+        documentSectionIndex: 1,
+      }),
       testChapter(2, { title: '1화 · 2페이지', documentSectionTitle: '1화', documentSectionIndex: 1 }),
       testChapter(3, { title: '2화 · 1페이지', documentSectionTitle: '2화', documentSectionIndex: 2 }),
     ];
@@ -123,9 +127,30 @@ describe('projectLocalSeries', () => {
       { title: '1화', subtitle: '2페이지', release: { sourceOrder: 1 } },
       { title: '2화', subtitle: '1페이지', release: { sourceOrder: 2 } },
     ]);
-    expect([...projectLocalSeriesReadingStates(novel, chapters)]).toEqual([
-      [`local-section:${novel.id}:1`, 'read'],
+    expect([...projectLocalSeriesReadingStates(novel, chapters, [], { allowSequentialFallback: false })]).toEqual([
+      [`local-section:${novel.id}:1`, 'unread'],
       [`local-section:${novel.id}:2`, 'current'],
+    ]);
+  });
+
+  it('keeps the legacy sequential projection for local archives without durable section markers', () => {
+    const novel = testNovel({
+      format: 'image_archive',
+      lastReadChapterId: 'chapter-3',
+      lastReadChapterIndex: 3,
+      lastReadProgress: 0.5,
+    });
+    const chapters = [
+      testChapter(1, { documentSectionId: 'local:1', documentSectionTitle: '1화', documentSectionIndex: 1 }),
+      testChapter(2, { documentSectionId: 'local:1', documentSectionTitle: '1화', documentSectionIndex: 1 }),
+      testChapter(3, { documentSectionId: 'local:2', documentSectionTitle: '2화', documentSectionIndex: 2 }),
+      testChapter(4, { documentSectionId: 'local:3', documentSectionTitle: '3화', documentSectionIndex: 3 }),
+    ];
+
+    expect([...projectLocalSeriesReadingStates(novel, chapters)]).toEqual([
+      ['local:1', 'read'],
+      ['local:2', 'current'],
+      ['local:3', 'unread'],
     ]);
   });
 
@@ -137,7 +162,12 @@ describe('projectLocalSeries', () => {
       lastReadProgress: 0.5,
     });
     const chapters = [
-      testChapter(1, { documentSectionId: 'release:1', documentSectionTitle: '1화', documentSectionIndex: 1 }),
+      testChapter(1, {
+        documentSectionId: 'release:1',
+        documentSectionTitle: '1화',
+        documentSectionIndex: 1,
+        documentSectionReadAt: '2026-08-30T01:00:00.000Z',
+      }),
       testChapter(2, { documentSectionId: 'release:1', documentSectionTitle: '1화', documentSectionIndex: 1 }),
       testChapter(3, { documentSectionId: 'release:2', documentSectionTitle: '2화', documentSectionIndex: 2 }),
       testChapter(4, { documentSectionId: 'release:3', documentSectionTitle: '3화', documentSectionIndex: 3 }),
@@ -154,7 +184,7 @@ describe('projectLocalSeries', () => {
         chapters,
       ),
     ]).toEqual([
-      ['release:1', 'unread'],
+      ['release:1', 'read'],
       ['release:2', 'unread'],
       ['release:3', 'unread'],
     ]);
@@ -168,7 +198,12 @@ describe('projectLocalSeries', () => {
       lastReadProgress: 0.5,
     });
     const chapters = [
-      testChapter(1, { documentSectionId: 'chapter:101', documentSectionTitle: '1화', documentSectionIndex: 1 }),
+      testChapter(1, {
+        documentSectionId: 'chapter:101',
+        documentSectionTitle: '1화',
+        documentSectionIndex: 1,
+        documentSectionReadAt: '2026-08-30T01:00:00.000Z',
+      }),
       testChapter(2, { documentSectionId: 'chapter:101', documentSectionTitle: '1화', documentSectionIndex: 1 }),
       testChapter(3, { documentSectionId: 'chapter:102', documentSectionTitle: '2화', documentSectionIndex: 2 }),
       testChapter(4, { documentSectionId: 'chapter:103', documentSectionTitle: '3화', documentSectionIndex: 3 }),
@@ -189,7 +224,7 @@ describe('projectLocalSeries', () => {
       lastReadProgress: 0.5,
     });
     const chapters = [
-      testChapter(1, { title: '1화 · 1페이지' }),
+      testChapter(1, { title: '1화 · 1페이지', documentSectionReadAt: '2026-08-30T01:00:00.000Z' }),
       testChapter(2, { title: '1화 · 2페이지' }),
       testChapter(3, { title: '2화 · 1페이지' }),
       testChapter(4, { title: '2화 · 2페이지' }),
@@ -223,6 +258,33 @@ describe('projectLocalSeries', () => {
       ['chapter:101', 'read'],
       ['chapter:102', 'current'],
       ['chapter:103', 'unread'],
+    ]);
+  });
+
+  it('does not mark skipped fixed-document releases read when a later release is opened', () => {
+    const novel = testNovel({
+      format: 'image_archive',
+      lastReadChapterId: 'chapter-6',
+      lastReadChapterIndex: 6,
+      lastReadProgress: 1,
+    });
+    const chapters = Array.from({ length: 6 }, (_, index) => {
+      const release = index + 1;
+      return testChapter(release, {
+        documentSectionId: `chapter:${release}`,
+        documentSectionTitle: `${release}화`,
+        documentSectionIndex: release,
+        documentSectionReadAt: release <= 3 || release === 6 ? `2026-08-30T01:0${release}:00.000Z` : undefined,
+      });
+    });
+
+    expect([...projectLocalSeriesReadingStates(novel, chapters)]).toEqual([
+      ['chapter:1', 'read'],
+      ['chapter:2', 'read'],
+      ['chapter:3', 'read'],
+      ['chapter:4', 'unread'],
+      ['chapter:5', 'unread'],
+      ['chapter:6', 'current'],
     ]);
   });
 });

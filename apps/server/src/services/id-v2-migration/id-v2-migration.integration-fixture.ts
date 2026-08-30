@@ -62,6 +62,7 @@ export interface LegacyBookIds {
 
 export interface LegacyBookFixture {
   readonly userId: string;
+  readonly documentSectionId: string;
   readonly fileName: string;
   readonly body: Buffer;
   readonly normalizedTextHash: string;
@@ -100,6 +101,7 @@ export async function seedLegacyBook(
     legacyId('paragraph', `${sourceBookId}:${sourceChapterId}:${index}:${paragraph.text}`),
   );
   const sourcePageId = legacyId('page', `${sourceBookId}:${sourceChapterId}:0`);
+  const documentSectionId = `fixed-section-${suffix}`;
   const sourceSearchIds = sourceParagraphIds.map((paragraphId) =>
     legacyId('paragraph_search', `${sourceBookId}:${sourceChapterId}:${paragraphId}`),
   );
@@ -158,8 +160,8 @@ export async function seedLegacyBook(
     await client.query(
       `insert into chapters (
          id, book_id, chapter_index, title, text_hash, raw_start_offset, raw_end_offset,
-         character_count, paragraph_count, created_at, updated_at
-       ) values ($1, $2, 1, $3, $4, $5, $6, $7, $8, $9, $9)`,
+         character_count, paragraph_count, document_section_id, created_at, updated_at
+       ) values ($1, $2, 1, $3, $4, $5, $6, $7, $8, $9, $10, $10)`,
       [
         sourceChapterId,
         sourceBookId,
@@ -169,6 +171,7 @@ export async function seedLegacyBook(
         chapter.rawEndOffset,
         chapter.characterCount,
         chapter.paragraphCount,
+        documentSectionId,
         FIXED_TIME,
       ],
     );
@@ -209,7 +212,7 @@ export async function seedLegacyBook(
     }
 
     if (options.includeDependents) {
-      Object.assign(ids, await seedLegacyDependents(client, userId, suffix, ids, legacyParagraphs));
+      Object.assign(ids, await seedLegacyDependents(client, userId, suffix, documentSectionId, ids, legacyParagraphs));
     } else if (options.activeProviderJob) {
       const providerJob = legacyId('provider_job', `${sourceBookId}:active`);
       await client.query(
@@ -230,6 +233,7 @@ export async function seedLegacyBook(
 
   return {
     userId,
+    documentSectionId,
     fileName,
     body,
     normalizedTextHash,
@@ -246,6 +250,7 @@ async function seedLegacyDependents(
   client: pg.PoolClient,
   userId: string,
   suffix: string,
+  documentSectionId: string,
   coreIds: LegacyBookIds,
   paragraphs: readonly Record<string, unknown>[],
 ): Promise<Partial<LegacyBookIds>> {
@@ -285,6 +290,12 @@ async function seedLegacyDependents(
        offset_in_paragraph, chapter_progress, device_id, updated_at
      ) values ($1, $2, $3, $4, 1, 2, 0.5, 'device-legacy', $5)`,
     [coreIds.book, userId, coreIds.chapter, firstParagraphId, createdAt],
+  );
+  await client.query(
+    `insert into fixed_document_section_read_states (
+       book_id, user_id, document_section_id, last_read_at
+     ) values ($1, $2, $3, $4)`,
+    [coreIds.book, userId, documentSectionId, createdAt],
   );
   await client.query(
     `insert into bookmarks (
