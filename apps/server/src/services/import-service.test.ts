@@ -5,13 +5,17 @@ import { describe, expect, it, vi } from 'vitest';
 import { integrityHash, persistentId128 } from '@noveldesk/text-core/hash';
 import { paragraphPageId, parsedChapterId, parsedParagraphId } from '@noveldesk/text-core/identity/parser';
 import type { ParagraphPage, ParsedNovel, ParsedNovelImport } from '@noveldesk/contracts';
+import { readSeriesImageArchiveManifest } from '@noveldesk/fixed-document-core/series-image-archive';
 import type { ServerConfig } from '../config.js';
 import { BlobWriter, TextReader, Uint8ArrayReader, ZipWriter } from '@zip.js/zip.js';
 
 vi.mock('./object-storage.js', () => ({
   createS3Client: vi.fn(() => ({})),
+  getObjectBuffer: vi.fn(),
   putRawBookObject: vi.fn(async () => undefined),
 }));
+
+import { getObjectBuffer, putRawBookObject } from './object-storage.js';
 
 import {
   arrayBufferFromBuffer,
@@ -234,6 +238,41 @@ async function twoReleaseSeriesComicArchive(): Promise<Buffer> {
             entryNames: [secondPage],
           },
         ],
+      }),
+    ),
+  );
+  return Buffer.from(await (await writer.close()).arrayBuffer());
+}
+
+async function seriesComicArchive(
+  chapters: readonly { readonly remoteId: string; readonly title: string; readonly sourceContentHash: string }[],
+): Promise<Buffer> {
+  const png = Uint8Array.from(
+    Buffer.from(
+      'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Wl2ZQAAAABJRU5ErkJggg==',
+      'base64',
+    ),
+  );
+  const writer = new ZipWriter(new BlobWriter('application/vnd.comicbook+zip'));
+  const manifestChapters = [];
+  for (const [index, chapter] of chapters.entries()) {
+    const entryName = `chapters/${String(index + 1).padStart(6, '0')}/00001.png`;
+    await writer.add(entryName, new Uint8ArrayReader(png));
+    manifestChapters.push({
+      ...chapter,
+      chapterNumber: index + 1,
+      sourceOrder: index + 1,
+      pageCount: 1,
+      entryNames: [entryName],
+    });
+  }
+  await writer.add(
+    'moya-series.json',
+    new TextReader(
+      JSON.stringify({
+        schemaVersion: 1,
+        collection: { remoteId: 'manga:41', title: '연재 작품' },
+        chapters: manifestChapters,
       }),
     ),
   );
@@ -504,7 +543,17 @@ describe('server import service', () => {
     expect(libraryBookParams?.[3]).toBe('txt');
     expect(libraryBookParams?.[11]).toBe(1);
     expect(libraryBookSql).not.toContain('title = excluded.title');
+    expect(libraryBookSql).not.toContain('author = excluded.author');
+    expect(libraryBookSql).not.toContain('description = excluded.description');
+    expect(libraryBookSql).not.toContain('language = excluded.language');
     expect(libraryBookSql).not.toContain('favorite = excluded.favorite');
+    expect(libraryBookSql).not.toContain('cover_asset_id = excluded.cover_asset_id');
+    expect(libraryBookSql).not.toContain('cover_fit = excluded.cover_fit');
+    expect(libraryBookSql).not.toContain('cover_position_x = excluded.cover_position_x');
+    expect(libraryBookSql).not.toContain('cover_position_y = excluded.cover_position_y');
+    expect(libraryBookSql).toContain("when $19::text = 'append_image_series' then library_books.cover_seed");
+    expect(libraryBookSql).toContain("when $19::text = 'append_image_series' then library_books.metadata_revision");
+    expect(libraryBookParams?.[18]).toBe('replace_book');
     expect(objectParams?.[0]).toBe(persistentId128('object', [String(objectParams?.[1])]));
     expect(objectParams?.[1]).toBe(integrityHash(Buffer.from(text)));
     expect(client.query).toHaveBeenCalledWith('select pg_advisory_xact_lock(hashtextextended($1, 0))', [
@@ -626,6 +675,570 @@ describe('server import service', () => {
     expect(chapterInsertParams?.slice(24, 28)).toEqual(['chapter:102', '2화', 2, 1]);
   });
 
+  it('finishes a repeated image-series delta as a no-op without rewriting the aggregate or cover', async () => {
+    const tempDir = await mkdtemp(path.join(os.tmpdir(), 'moya-import-series-noop-'));
+    const base = await seriesComicArchive([{ remoteId: 'chapter:101', title: '1화', sourceContentHash: 'hash-1' }]);
+    const delta = await seriesComicArchive([
+      { remoteId: 'chapter:101', title: '무시할 중복 1화', sourceContentHash: 'sha256:HASH-1' },
+    ]);
+    const uploadDir = path.join(tempDir, 'uploads', 'upload_series_noop');
+    const chunkPath = path.join(uploadDir, '00000000.part');
+    await mkdir(uploadDir, { recursive: true });
+    await writeFile(chunkPath, delta);
+    vi.mocked(getObjectBuffer).mockResolvedValueOnce({
+      body: base,
+      contentType: 'application/vnd.comicbook+zip',
+      contentLength: base.length,
+    });
+    vi.mocked(putRawBookObject).mockClear();
+
+    const appendClient = {
+      query: vi.fn(async (sql: string) => {
+        if (sql.includes('select pg_advisory_lock') || sql.includes('select pg_advisory_unlock')) {
+          return { rows: [{ locked: true }], rowCount: 1 };
+        }
+        if (sql.includes('join book_objects object')) {
+          return {
+            rows: [
+              {
+                id: 'book_series_1',
+                format: 'image_archive',
+                active_content_revision_id: 'content_revision_7',
+                source_file_name: '연재 작품.cbz',
+                storage_key: 'user_test/sources/series.cbz',
+                content_type: 'application/vnd.comicbook+zip',
+                total_chapters: 1,
+              },
+            ],
+            rowCount: 1,
+          };
+        }
+        if (sql === 'begin' || sql === 'commit' || sql === 'rollback') return { rows: [], rowCount: 1 };
+        if (sql.includes('select active_content_revision_id from library_books')) {
+          return { rows: [{ active_content_revision_id: 'content_revision_7' }], rowCount: 1 };
+        }
+        if (sql.includes("update upload_sessions set status = 'imported'")) {
+          return { rows: [{ id: 'upload_series_noop' }], rowCount: 1 };
+        }
+        if (sql.startsWith('delete from upload_chunks')) return { rows: [], rowCount: 1 };
+        if (sql.startsWith('update import_jobs')) return { rows: [{ id: 'job_series_noop' }], rowCount: 1 };
+        throw new Error(`unexpected append query: ${sql}`);
+      }),
+      release: vi.fn(),
+    };
+    const pool = {
+      query: vi.fn(async (sql: string) => {
+        if (sql.includes('select * from upload_sessions')) {
+          return {
+            rows: [
+              {
+                id: 'upload_series_noop',
+                user_id: 'user_test',
+                file_name: 'delta.cbz',
+                size_bytes: String(delta.length),
+                content_type: 'application/vnd.comicbook+zip',
+                encoding: 'auto',
+                total_chunks: 1,
+                client_book_id: 'book_series_1',
+                source_content_hash: integrityHash(delta),
+                import_mode: 'append_image_series',
+                base_active_content_revision_id: 'content_revision_7',
+              },
+            ],
+          };
+        }
+        if (sql.includes('from upload_chunks')) {
+          return { rows: [{ chunk_index: 0, size_bytes: delta.length, storage_path: chunkPath }] };
+        }
+        if (sql.startsWith('update import_jobs')) return { rows: [{ id: 'job_series_noop' }], rowCount: 1 };
+        return { rows: [], rowCount: 1 };
+      }),
+      connect: vi.fn(async () => appendClient),
+    };
+
+    let uploadDirectoryRemoved: boolean | undefined;
+    try {
+      await processImportJob(
+        pool as unknown as Parameters<typeof processImportJob>[0],
+        { ...testConfig(), dataDir: tempDir },
+        'job_series_noop',
+        'upload_series_noop',
+      );
+      uploadDirectoryRemoved = await access(uploadDir).then(
+        () => false,
+        () => true,
+      );
+    } finally {
+      await rm(tempDir, { recursive: true, force: true });
+    }
+
+    expect(getObjectBuffer).toHaveBeenCalledTimes(1);
+    expect(putRawBookObject).not.toHaveBeenCalled();
+    expect(appendClient.query).not.toHaveBeenCalledWith(expect.stringContaining('delete from book_assets'));
+    expect(appendClient.query).toHaveBeenCalledWith('delete from upload_chunks where upload_id = $1', [
+      'upload_series_noop',
+    ]);
+    expect(uploadDirectoryRemoved).toBe(true);
+    expect(appendClient.release).toHaveBeenCalledTimes(1);
+  });
+
+  it('rejects a stale image-series delta that would replace an existing chapter', async () => {
+    const tempDir = await mkdtemp(path.join(os.tmpdir(), 'moya-import-series-stale-replacement-'));
+    const base = await seriesComicArchive([
+      { remoteId: 'chapter:101', title: '1화 최신', sourceContentHash: 'hash-new' },
+    ]);
+    const delta = await seriesComicArchive([
+      { remoteId: 'chapter:101', title: '1화 이전', sourceContentHash: 'hash-old' },
+    ]);
+    const uploadDir = path.join(tempDir, 'uploads', 'upload_series_stale_replacement');
+    const chunkPath = path.join(uploadDir, '00000000.part');
+    await mkdir(uploadDir, { recursive: true });
+    await writeFile(chunkPath, delta);
+    vi.mocked(getObjectBuffer).mockClear();
+    vi.mocked(getObjectBuffer).mockResolvedValueOnce({
+      body: base,
+      contentType: 'application/vnd.comicbook+zip',
+      contentLength: base.length,
+    });
+    vi.mocked(putRawBookObject).mockClear();
+
+    const appendClient = {
+      query: vi.fn(async (sql: string) => {
+        if (sql.includes('select pg_advisory_lock') || sql.includes('select pg_advisory_unlock')) {
+          return { rows: [{ locked: true }], rowCount: 1 };
+        }
+        if (sql.includes('join book_objects object')) {
+          return {
+            rows: [
+              {
+                id: 'book_series_1',
+                format: 'image_archive',
+                active_content_revision_id: 'content_revision_7',
+                source_file_name: '연재 작품.cbz',
+                storage_key: 'user_test/sources/series.cbz',
+                content_type: 'application/vnd.comicbook+zip',
+                total_chapters: 1,
+              },
+            ],
+            rowCount: 1,
+          };
+        }
+        return { rows: [], rowCount: 1 };
+      }),
+      release: vi.fn(),
+    };
+    const pool = {
+      query: vi.fn(async (sql: string) => {
+        if (sql.includes('select * from upload_sessions')) {
+          return {
+            rows: [
+              {
+                id: 'upload_series_stale_replacement',
+                user_id: 'user_test',
+                file_name: 'delta.cbz',
+                size_bytes: String(delta.length),
+                content_type: 'application/vnd.comicbook+zip',
+                encoding: 'auto',
+                total_chunks: 1,
+                client_book_id: 'book_series_1',
+                source_content_hash: integrityHash(delta),
+                import_mode: 'append_image_series',
+                base_active_content_revision_id: 'content_revision_6',
+              },
+            ],
+          };
+        }
+        if (sql.includes('from upload_chunks')) {
+          return { rows: [{ chunk_index: 0, size_bytes: delta.length, storage_path: chunkPath }] };
+        }
+        return { rows: [], rowCount: 1 };
+      }),
+      connect: vi.fn(async () => appendClient),
+    };
+
+    try {
+      await expect(
+        processImportJob(
+          pool as unknown as Parameters<typeof processImportJob>[0],
+          { ...testConfig(), dataDir: tempDir },
+          'job_series_stale_replacement',
+          'upload_series_stale_replacement',
+        ),
+      ).rejects.toThrow('image_series_append_base_changed');
+    } finally {
+      await rm(tempDir, { recursive: true, force: true });
+    }
+
+    expect(getObjectBuffer).toHaveBeenCalledTimes(1);
+    expect(putRawBookObject).not.toHaveBeenCalled();
+    expect(appendClient.release).toHaveBeenCalledTimes(1);
+  });
+
+  it('merges and activates a changed image-series delta without replacing the existing cover or metadata', async () => {
+    const tempDir = await mkdtemp(path.join(os.tmpdir(), 'moya-import-series-append-'));
+    const base = await seriesComicArchive([{ remoteId: 'chapter:101', title: '1화', sourceContentHash: 'hash-1' }]);
+    const delta = await seriesComicArchive([
+      { remoteId: 'chapter:101', title: '1화 수정', sourceContentHash: 'hash-1-revised' },
+      { remoteId: 'chapter:102', title: '2화', sourceContentHash: 'hash-2' },
+    ]);
+    const uploadDir = path.join(tempDir, 'uploads', 'upload_series_append');
+    const chunkPath = path.join(uploadDir, '00000000.part');
+    await mkdir(uploadDir, { recursive: true });
+    await writeFile(chunkPath, delta);
+    vi.mocked(getObjectBuffer).mockResolvedValueOnce({
+      body: base,
+      contentType: 'application/vnd.comicbook+zip',
+      contentLength: base.length,
+    });
+    vi.mocked(putRawBookObject).mockClear();
+
+    const queries: Array<{ sql: string; params?: unknown[] }> = [];
+    let libraryBookSql: string | undefined;
+    let libraryBookParams: unknown[] | undefined;
+    let chapterInsertParams: unknown[] | undefined;
+    const insertedAssetKinds: string[] = [];
+    const appendClient = {
+      query: vi.fn(async (sql: string, params?: unknown[]) => {
+        queries.push({ sql, params });
+        if (sql.includes('select pg_advisory_lock') || sql.includes('select pg_advisory_unlock')) {
+          return { rows: [{ locked: true }], rowCount: 1 };
+        }
+        if (sql.includes('join book_objects object')) {
+          return {
+            rows: [
+              {
+                id: 'book_series_1',
+                format: 'image_archive',
+                active_content_revision_id: 'content_revision_7',
+                source_file_name: '연재 작품.cbz',
+                storage_key: 'user_test/sources/series.cbz',
+                content_type: 'application/vnd.comicbook+zip',
+                total_chapters: 1,
+              },
+            ],
+            rowCount: 1,
+          };
+        }
+        if (sql.includes('normalized_text_hash, active_content_revision_id')) {
+          return {
+            rows: [
+              {
+                id: 'book_series_1',
+                user_id: 'user_test',
+                normalized_text_hash: 'old-normalized-hash',
+                active_content_revision_id: 'content_revision_7',
+                content_revision_number: 7,
+                active_character_graph_revision_id: null,
+                revision_fence: 11,
+              },
+            ],
+            rowCount: 1,
+          };
+        }
+        if (sql.includes('select id from library_books') && sql.includes('active_content_revision_id = $3')) {
+          return { rows: [{ id: 'book_series_1' }], rowCount: 1 };
+        }
+        if (sql === 'select storage_key from book_objects where raw_text_hash = $1 for update') {
+          return { rows: [], rowCount: 0 };
+        }
+        if (sql === 'select object_id from library_books where id = $1 and user_id = $2') {
+          return { rows: [{ object_id: 'object_old_series' }], rowCount: 1 };
+        }
+        if (sql.includes('delete from book_objects object')) {
+          return { rows: [{ storage_key: 'user_test/sources/series.cbz' }], rowCount: 1 };
+        }
+        if (sql.includes('asset.provenance')) {
+          return { rows: [{ id: 'cover_existing', provenance: 'archive_embedded' }], rowCount: 1 };
+        }
+        if (sql.includes("kind in ('epub_resource', 'document_page')")) {
+          return { rows: [{ storage_key: 'user_test/book_series_1/old/001.png' }], rowCount: 1 };
+        }
+        if (sql === 'select id, storage_key from book_assets where id = any($1::text[])') {
+          return { rows: [], rowCount: 0 };
+        }
+        if (sql.includes("status = 'superseded' and kind <> 'cover'")) {
+          return { rows: [], rowCount: 0 };
+        }
+        if (sql.includes('insert into library_books')) {
+          libraryBookSql = sql;
+          libraryBookParams = params;
+        }
+        if (sql.includes('insert into book_assets')) insertedAssetKinds.push(String(params?.[3]));
+        if (sql.includes('insert into chapters')) chapterInsertParams = params;
+        if (sql.includes('insert into reading_positions')) return { rows: [], rowCount: 1 };
+        if (sql.includes('select coalesce(max(revision_number)')) {
+          return { rows: [{ revision_number: 3 }], rowCount: 1 };
+        }
+        if (sql.includes('select id, book_id, canonical_name, aliases')) {
+          return { rows: [], rowCount: 0 };
+        }
+        if (sql.includes('from character_relations') && sql.includes('order by id asc')) {
+          return { rows: [], rowCount: 0 };
+        }
+        if (sql.includes('set active_content_revision_id = $4')) {
+          return { rows: [{ id: 'book_series_1' }], rowCount: 1 };
+        }
+        if (sql.includes("update upload_sessions set status = 'imported'")) {
+          return { rows: [{ id: 'upload_series_append' }], rowCount: 1 };
+        }
+        return { rows: [], rowCount: 1 };
+      }),
+      release: vi.fn(),
+    };
+    const pool = {
+      query: vi.fn(async (sql: string) => {
+        if (sql.includes('select * from upload_sessions')) {
+          return {
+            rows: [
+              {
+                id: 'upload_series_append',
+                user_id: 'user_test',
+                file_name: 'delta.cbz',
+                size_bytes: String(delta.length),
+                content_type: 'application/vnd.comicbook+zip',
+                encoding: 'auto',
+                total_chunks: 1,
+                client_book_id: 'book_series_1',
+                source_content_hash: integrityHash(delta),
+                import_mode: 'append_image_series',
+                base_active_content_revision_id: 'content_revision_7',
+              },
+            ],
+          };
+        }
+        if (sql.includes('from upload_chunks')) {
+          return { rows: [{ chunk_index: 0, size_bytes: delta.length, storage_path: chunkPath }] };
+        }
+        return { rows: [], rowCount: 1 };
+      }),
+      connect: vi.fn(async () => appendClient),
+    };
+
+    let uploadDirectoryRemoved: boolean | undefined;
+    try {
+      await processImportJob(
+        pool as unknown as Parameters<typeof processImportJob>[0],
+        { ...testConfig(), dataDir: tempDir },
+        'job_series_append',
+        'upload_series_append',
+      );
+      uploadDirectoryRemoved = await access(uploadDir).then(
+        () => false,
+        () => true,
+      );
+    } finally {
+      await rm(tempDir, { recursive: true, force: true });
+    }
+
+    const storedSource = vi.mocked(putRawBookObject).mock.calls.find((call) => String(call[2]).includes('/sources/'));
+    expect(storedSource).toBeDefined();
+    const mergedManifest = await readSeriesImageArchiveManifest(
+      new Blob([new Uint8Array(storedSource?.[3] ?? Buffer.alloc(0))], {
+        type: String(storedSource?.[4] ?? ''),
+      }),
+    );
+    expect(mergedManifest?.chapters.map((chapter) => [chapter.remoteId, chapter.title])).toEqual([
+      ['chapter:101', '1화 수정'],
+      ['chapter:102', '2화'],
+    ]);
+    expect(libraryBookSql).toContain("when $19::text = 'append_image_series' then library_books.cover_seed");
+    expect(libraryBookSql).toContain("when $19::text = 'append_image_series' then library_books.metadata_revision");
+    expect(libraryBookParams?.[18]).toBe('append_image_series');
+    expect(libraryBookParams?.[11]).toBe(2);
+    expect(chapterInsertParams).toHaveLength(30);
+    expect(chapterInsertParams?.slice(9, 13)).toEqual(['chapter:101', '1화 수정', 1, 1]);
+    expect(chapterInsertParams?.slice(24, 28)).toEqual(['chapter:102', '2화', 2, 1]);
+    expect(insertedAssetKinds).toEqual(['document_page', 'document_page']);
+    expect(queries.some(({ sql }) => sql.includes("kind = 'cover' and status = 'active'"))).toBe(false);
+    expect(queries.some(({ sql }) => sql.includes('set cover_asset_id = $1'))).toBe(false);
+    expect(queries.some(({ sql }) => sql.includes('insert into reading_positions'))).toBe(true);
+    expect(queries.some(({ sql }) => sql.includes("set status = 'superseded', superseded_at = now()"))).toBe(true);
+    expect(queries.some(({ sql }) => sql.includes("set status = 'active', activated_at = now()"))).toBe(true);
+    expect(queries.some(({ sql }) => sql.includes('set active_content_revision_id = $4'))).toBe(true);
+    const replacedKeys = queries
+      .filter(
+        ({ sql, params }) =>
+          sql.includes('insert into object_delete_outbox') && params?.[1] === 'replaced_import_object',
+      )
+      .flatMap(({ params }) => (Array.isArray(params?.[0]) ? params[0] : []));
+    expect(replacedKeys).toEqual(
+      expect.arrayContaining([
+        'user_test/sources/series.cbz',
+        'user_test/book_series_1/old/001.png',
+        expect.stringMatching(/\/staged\/job_series_append\/legacy\/attempt-1\/[^/]+\/.+\/00001\.png$/),
+      ]),
+    );
+    expect(uploadDirectoryRemoved).toBe(true);
+    expect(appendClient.release).toHaveBeenCalledTimes(1);
+  });
+
+  it('rebases a stale new-chapter delta and activates its archive cover when no active cover exists', async () => {
+    const tempDir = await mkdtemp(path.join(os.tmpdir(), 'moya-import-series-stale-add-'));
+    const base = await seriesComicArchive([{ remoteId: 'chapter:101', title: '1화', sourceContentHash: 'hash-1' }]);
+    const delta = await seriesComicArchive([{ remoteId: 'chapter:102', title: '2화', sourceContentHash: 'hash-2' }]);
+    const uploadDir = path.join(tempDir, 'uploads', 'upload_series_stale_add');
+    const chunkPath = path.join(uploadDir, '00000000.part');
+    await mkdir(uploadDir, { recursive: true });
+    await writeFile(chunkPath, delta);
+    vi.mocked(getObjectBuffer).mockResolvedValueOnce({
+      body: base,
+      contentType: 'application/vnd.comicbook+zip',
+      contentLength: base.length,
+    });
+    vi.mocked(putRawBookObject).mockClear();
+
+    const queries: Array<{ sql: string; params?: unknown[] }> = [];
+    const insertedAssetKinds: string[] = [];
+    const appendClient = {
+      query: vi.fn(async (sql: string, params?: unknown[]) => {
+        queries.push({ sql, params });
+        if (sql.includes('select pg_advisory_lock') || sql.includes('select pg_advisory_unlock')) {
+          return { rows: [{ locked: true }], rowCount: 1 };
+        }
+        if (sql.includes('join book_objects object')) {
+          return {
+            rows: [
+              {
+                id: 'book_series_1',
+                format: 'image_archive',
+                active_content_revision_id: 'content_revision_7',
+                source_file_name: '연재 작품.cbz',
+                storage_key: 'user_test/sources/series.cbz',
+                content_type: 'application/vnd.comicbook+zip',
+                total_chapters: 1,
+              },
+            ],
+            rowCount: 1,
+          };
+        }
+        if (sql.includes('normalized_text_hash, active_content_revision_id')) {
+          return {
+            rows: [
+              {
+                id: 'book_series_1',
+                user_id: 'user_test',
+                normalized_text_hash: 'old-normalized-hash',
+                active_content_revision_id: 'content_revision_7',
+                content_revision_number: 7,
+                active_character_graph_revision_id: null,
+                revision_fence: 11,
+              },
+            ],
+            rowCount: 1,
+          };
+        }
+        if (sql.includes('select id from library_books') && sql.includes('active_content_revision_id = $3')) {
+          return { rows: [{ id: 'book_series_1' }], rowCount: 1 };
+        }
+        if (sql === 'select storage_key from book_objects where raw_text_hash = $1 for update') {
+          return { rows: [], rowCount: 0 };
+        }
+        if (sql === 'select object_id from library_books where id = $1 and user_id = $2') {
+          return { rows: [{ object_id: 'object_old_series' }], rowCount: 1 };
+        }
+        if (sql.includes('delete from book_objects object')) {
+          return { rows: [{ storage_key: 'user_test/sources/series.cbz' }], rowCount: 1 };
+        }
+        if (sql.includes('asset.provenance')) {
+          return { rows: [{ id: null, provenance: null }], rowCount: 1 };
+        }
+        if (sql.includes("kind in ('epub_resource', 'document_page')")) {
+          return { rows: [{ storage_key: 'user_test/book_series_1/old/001.png' }], rowCount: 1 };
+        }
+        if (sql === 'select id, storage_key from book_assets where id = any($1::text[])') {
+          return { rows: [], rowCount: 0 };
+        }
+        if (sql.includes("status = 'superseded' and kind <> 'cover'")) {
+          return { rows: [], rowCount: 0 };
+        }
+        if (sql.includes('insert into book_assets')) insertedAssetKinds.push(String(params?.[3]));
+        if (sql.includes('insert into reading_positions')) return { rows: [], rowCount: 1 };
+        if (sql.includes('select coalesce(max(revision_number)')) {
+          return { rows: [{ revision_number: 3 }], rowCount: 1 };
+        }
+        if (sql.includes('select id, book_id, canonical_name, aliases')) {
+          return { rows: [], rowCount: 0 };
+        }
+        if (sql.includes('from character_relations') && sql.includes('order by id asc')) {
+          return { rows: [], rowCount: 0 };
+        }
+        if (sql.includes('set active_content_revision_id = $4')) {
+          return { rows: [{ id: 'book_series_1' }], rowCount: 1 };
+        }
+        if (sql.includes("update upload_sessions set status = 'imported'")) {
+          return { rows: [{ id: 'upload_series_stale_add' }], rowCount: 1 };
+        }
+        return { rows: [], rowCount: 1 };
+      }),
+      release: vi.fn(),
+    };
+    const pool = {
+      query: vi.fn(async (sql: string) => {
+        if (sql.includes('select * from upload_sessions')) {
+          return {
+            rows: [
+              {
+                id: 'upload_series_stale_add',
+                user_id: 'user_test',
+                file_name: 'delta.cbz',
+                size_bytes: String(delta.length),
+                content_type: 'application/vnd.comicbook+zip',
+                encoding: 'auto',
+                total_chunks: 1,
+                client_book_id: 'book_series_1',
+                source_content_hash: integrityHash(delta),
+                import_mode: 'append_image_series',
+                base_active_content_revision_id: 'content_revision_6',
+              },
+            ],
+          };
+        }
+        if (sql.includes('from upload_chunks')) {
+          return { rows: [{ chunk_index: 0, size_bytes: delta.length, storage_path: chunkPath }] };
+        }
+        return { rows: [], rowCount: 1 };
+      }),
+      connect: vi.fn(async () => appendClient),
+    };
+
+    let uploadDirectoryRemoved: boolean | undefined;
+    try {
+      await processImportJob(
+        pool as unknown as Parameters<typeof processImportJob>[0],
+        { ...testConfig(), dataDir: tempDir },
+        'job_series_stale_add',
+        'upload_series_stale_add',
+      );
+      uploadDirectoryRemoved = await access(uploadDir).then(
+        () => false,
+        () => true,
+      );
+    } finally {
+      await rm(tempDir, { recursive: true, force: true });
+    }
+
+    const storedSource = vi.mocked(putRawBookObject).mock.calls.find((call) => String(call[2]).includes('/sources/'));
+    expect(storedSource).toBeDefined();
+    const mergedManifest = await readSeriesImageArchiveManifest(
+      new Blob([new Uint8Array(storedSource?.[3] ?? Buffer.alloc(0))], {
+        type: String(storedSource?.[4] ?? ''),
+      }),
+    );
+    expect(mergedManifest?.chapters.map((chapter) => chapter.remoteId)).toEqual(['chapter:101', 'chapter:102']);
+    expect(
+      queries.some(
+        ({ sql, params }) =>
+          sql.includes('select id from library_books') &&
+          sql.includes('active_content_revision_id = $3') &&
+          params?.[2] === 'content_revision_7',
+      ),
+    ).toBe(true);
+    expect(insertedAssetKinds).toEqual(expect.arrayContaining(['cover', 'document_page']));
+    expect(queries.some(({ sql }) => sql.includes('set cover_asset_id = $1'))).toBe(true);
+    expect(uploadDirectoryRemoved).toBe(true);
+    expect(appendClient.release).toHaveBeenCalledTimes(1);
+  });
+
   it('keeps an import queued while BullMQ still has retry attempts remaining', async () => {
     const queries: Array<{ sql: string; params?: unknown[] }> = [];
     const pool = {
@@ -668,7 +1281,9 @@ describe('server import service', () => {
         query: vi.fn(async (sql: string, params?: unknown[]) => {
           lifecycleQueries.push({ sql, params });
           if (sql === 'begin' || sql === 'commit' || sql === 'rollback') return { rows: [], rowCount: 1 };
-          if (sql.includes('select asset.provenance')) return { rows: [{ provenance: coverProvenance }], rowCount: 1 };
+          if (sql.includes('asset.provenance')) {
+            return { rows: [{ id: 'cover_existing', provenance: coverProvenance }], rowCount: 1 };
+          }
           if (sql.includes('insert into book_assets')) insertedAssetKinds.push(String(params?.[3]));
           if (sql.includes("update upload_sessions set status = 'imported'")) {
             return { rows: [{ id: 'upload_cover' }], rowCount: 1 };

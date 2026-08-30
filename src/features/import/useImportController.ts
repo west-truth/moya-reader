@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { Chapter, ChapterSplitMode, EncodingMode, Novel } from '../../domain/types';
 import type { ImportProgress, ImportService } from '../../services/import/import-service';
+import { hashBlobInChunks } from '../../services/import/chunked-file-reader';
 import type { PlatformDocumentIo } from '../../platform/document-io';
 import type { StoredUploadSessionEntry } from '../../services/import/server-upload-import-service';
 import type { ToastTone } from '../../shared/ui/ToastHost';
@@ -47,6 +48,49 @@ export interface UseImportControllerOptions {
 }
 
 export type { ImportDuplicateConflict, ImportDuplicatePolicy } from './import-duplicate-inspection';
+
+function supportsIncrementalLocalSeriesAppend(
+  importService: ImportService,
+  targetNovel: Novel | undefined,
+  chapters: readonly Chapter[],
+): boolean {
+  if (
+    !importService.supportsIncrementalImageSeriesAppend ||
+    targetNovel?.format !== 'image_archive' ||
+    !targetNovel.activeContentRevisionId ||
+    !targetNovel.sourceAssetId ||
+    !targetNovel.documentSectionCount
+  ) {
+    return false;
+  }
+  const sectionIds = new Set(
+    chapters.map((chapter) => chapter.documentSectionId).filter((id): id is string => Boolean(id)),
+  );
+  return (
+    sectionIds.size === targetNovel.documentSectionCount &&
+    [...sectionIds].every((id) => id.startsWith('local_series_release_'))
+  );
+}
+
+async function planLocalSeriesForRuntime(
+  inspection: LocalSeriesImportInspection,
+  targetNovel: Novel | undefined,
+  options: Pick<UseImportControllerOptions, 'assets' | 'importService' | 'listChapters'>,
+): Promise<LocalSeriesImportPlan> {
+  const canInspectIncrementalSections = Boolean(
+    options.importService.supportsIncrementalImageSeriesAppend &&
+    targetNovel?.format === 'image_archive' &&
+    targetNovel.activeContentRevisionId &&
+    targetNovel.sourceAssetId &&
+    targetNovel.documentSectionCount,
+  );
+  const existingChapters = canInspectIncrementalSections ? await options.listChapters(targetNovel!.id) : [];
+  const incrementalAppend = supportsIncrementalLocalSeriesAppend(options.importService, targetNovel, existingChapters);
+  return planLocalSeriesImport(inspection, targetNovel, options.assets, {
+    incrementalAppend,
+    existingChapters: incrementalAppend ? existingChapters : undefined,
+  });
+}
 
 function filesMatchAppendTarget(files: readonly File[], novel: Novel): boolean {
   if (novel.format === 'image_archive') return files.every((file) => /\.(?:zip|cbz|rar|cbr|7z|cb7)$/iu.test(file.name));
@@ -272,7 +316,7 @@ export function useImportController(options: UseImportControllerOptions): Import
       setSeriesTargetNovelId(target?.id);
       try {
         if (localSeries) {
-          setSeriesPlan(await planLocalSeriesImport(localSeries, target, optionsRef.current.assets));
+          setSeriesPlan(await planLocalSeriesForRuntime(localSeries, target, optionsRef.current));
           setDocumentSeriesPlan(undefined);
         } else if (localDocumentSeries) {
           const targetChapters = target ? await optionsRef.current.listChapters(target.id) : [];
@@ -367,7 +411,13 @@ export function useImportController(options: UseImportControllerOptions): Import
         const conflicts = await inspectImportDuplicates(supportedFiles, novels);
         resolution = { policies: new Map(conflicts.map((conflict) => [conflict.fileKey, conflict])) };
       }
-      const preparedFiles: Array<{ file: File; clientBookId?: string }> = [];
+      const preparedFiles: Array<{
+        file: File;
+        clientBookId?: string;
+        importMode?: 'replace_book' | 'append_image_series';
+        baseActiveContentRevisionId?: string;
+        expectedSourceContentHash?: string;
+      }> = [];
       let duplicateSkipped = 0;
       let openExisting = resolution?.openExisting;
       if (!queuedSeriesPlan && !queuedDocumentSeriesPlan) {
@@ -450,7 +500,18 @@ export function useImportController(options: UseImportControllerOptions): Import
           );
           seriesBuildAbortRef.current = undefined;
           if (!aggregate) throw new Error('추가할 새 회차가 없습니다.');
-          preparedFiles.push({ file: aggregate, clientBookId: queuedSeriesPlan.targetNovel?.id });
+          const expectedSourceContentHash = queuedSeriesPlan.incrementalAppend
+            ? await hashBlobInChunks(aggregate, { shouldCancel: () => abort.signal.aborted })
+            : undefined;
+          preparedFiles.push({
+            file: aggregate,
+            clientBookId: queuedSeriesPlan.targetNovel?.id,
+            importMode: queuedSeriesPlan.incrementalAppend ? 'append_image_series' : undefined,
+            baseActiveContentRevisionId: queuedSeriesPlan.incrementalAppend
+              ? queuedSeriesPlan.targetNovel?.activeContentRevisionId
+              : undefined,
+            expectedSourceContentHash,
+          });
         } else if (queuedDocumentSeriesPlan) {
           const abort = new AbortController();
           seriesBuildAbortRef.current = abort;
@@ -647,7 +708,7 @@ export function useImportController(options: UseImportControllerOptions): Import
       setSeriesError(undefined);
       try {
         if (seriesInspection) {
-          setSeriesPlan(await planLocalSeriesImport(seriesInspection, target, optionsRef.current.assets));
+          setSeriesPlan(await planLocalSeriesForRuntime(seriesInspection, target, optionsRef.current));
           setDocumentSeriesPlan(undefined);
         } else if (documentSeriesInspection) {
           const targetChapters = target ? await optionsRef.current.listChapters(target.id) : [];

@@ -14,6 +14,7 @@ import type {
 } from '../../external-sources/local-state';
 import type { ImportService } from '../../services/import/import-service';
 import type { BookAssetRepository } from '../../repositories/book-asset-repository';
+import { buildSeriesImageArchive, readSeriesImageArchiveManifest } from '../../services/import/series-image-archive';
 import { testChapter } from '../book-workspace/book-workspace-test-fixtures';
 import {
   useExternalSourceController,
@@ -74,7 +75,10 @@ async function createHarness(input: {
   downloadGate?: Promise<void>;
   assets?: BookAssetRepository;
   supportsExactDocumentSectionReadMarkers?: boolean;
+  supportsIncrementalImageSeriesAppend?: boolean;
+  supportsExpectedSourceContentHash?: boolean;
   novelOverrides?: Partial<Novel>;
+  initialLinkOverrides?: Partial<ExternalSourceLink>;
 }) {
   const oldContent = '기존 원격 원문';
   const oldHash = await sha256(oldContent);
@@ -88,6 +92,7 @@ async function createHarness(input: {
     importedSourceContentHash: oldHash,
     activeContentRevisionId: currentNovel.activeContentRevisionId,
     linkedAt: '2026-08-23T00:00:00.000Z',
+    ...input.initialLinkOverrides,
   };
   const saveLink = vi.fn(async (link: ExternalSourceLink) => {
     currentLink = link;
@@ -224,7 +229,11 @@ async function createHarness(input: {
       registry,
       hostContext: { brokers: { get: () => undefined } },
       state,
-      importService: { importFile },
+      importService: {
+        importFile,
+        supportsIncrementalImageSeriesAppend: input.supportsIncrementalImageSeriesAppend,
+        supportsExpectedSourceContentHash: input.supportsExpectedSourceContentHash,
+      },
       assets: input.assets,
       supportsExactDocumentSectionReadMarkers: input.supportsExactDocumentSectionReadMarkers,
       extensionRevision: 0,
@@ -836,6 +845,8 @@ describe('useExternalSourceController remote updates', () => {
       downloadedFile: await singlePageComicFile(),
       localBookMissing: true,
       serial: true,
+      supportsIncrementalImageSeriesAppend: true,
+      supportsExpectedSourceContentHash: true,
       assets,
       subscriptions: [
         {
@@ -871,11 +882,153 @@ describe('useExternalSourceController remote updates', () => {
           fit: 'crop',
         }),
       );
+      expect(harness.importFile.mock.calls[0]![0]).not.toHaveProperty('importMode');
       expect(harness.notify).toHaveBeenCalledWith(expect.stringContaining('1개 회차'), 'success');
     } finally {
       vi.stubGlobal('createImageBitmap', previousCreateImageBitmap);
       await act(async () => harness.renderer.unmount());
     }
+  });
+
+  it('uploads only a Suwayomi chapter delta when the active importer supports series append', async () => {
+    const exportSource = vi.fn(async () => ({ metadata: {} as BookAssetMetadata, blob: new Blob(['old aggregate']) }));
+    const assets = {
+      exportSource,
+      getActiveCover: vi.fn(async () => undefined),
+    } as unknown as BookAssetRepository;
+    const finalAggregateHash = await sha256('server merged aggregate');
+    const harness = await createHarness({
+      downloadedContent: '',
+      downloadedFile: await singlePageComicFile(),
+      serial: true,
+      assets,
+      supportsIncrementalImageSeriesAppend: true,
+      supportsExpectedSourceContentHash: true,
+      novelOverrides: {
+        format: 'image_archive',
+        documentSectionCount: 1,
+        sourceFileName: '연동 작품.cbz',
+      },
+      initialLinkOverrides: { collectionRemoteId: 'manga:1' },
+      importedContent: novel({
+        format: 'image_archive',
+        documentSectionCount: 1,
+        sourceFileName: '연동 작품.cbz',
+        sourceContentHash: finalAggregateHash,
+        activeContentRevisionId: 'content-merged',
+      }),
+    });
+
+    await act(async () => {
+      await harness.controller.importSelected();
+    });
+
+    expect(exportSource).not.toHaveBeenCalled();
+    const request = harness.importFile.mock.calls[0]![0];
+    expect(request).toMatchObject({
+      clientBookId: 'book-1',
+      importMode: 'append_image_series',
+      baseActiveContentRevisionId: 'content-old',
+    });
+    expect(request.expectedSourceContentHash).toBe(`sha256:${await sha256(await request.file.arrayBuffer())}`);
+    const manifest = await readSeriesImageArchiveManifest(request.file);
+    expect(manifest).toMatchObject({
+      targetBookId: 'book-1',
+      chapters: [
+        {
+          remoteId: 'work-1',
+          title: '1화',
+          expectedPreviousSourceContentHash: harness.oldHash,
+        },
+      ],
+    });
+    expect(harness.currentLink).toMatchObject({
+      activeContentRevisionId: 'content-merged',
+      importedRemoteRevision: 'remote-r2',
+      pendingImport: undefined,
+    });
+    await act(async () => harness.renderer.unmount());
+  });
+
+  it('repairs an importer-resolved pending link from the active aggregate after a restart', async () => {
+    const releaseFile = await singlePageComicFile();
+    const releaseHash = await sha256(await releaseFile.arrayBuffer());
+    const aggregate = await buildSeriesImageArchive({
+      collection: { remoteId: 'manga:1', title: '연동 작품' },
+      targetBookId: 'book-1',
+      chapters: [
+        {
+          remoteId: 'work-1',
+          release: { title: '1화', chapterNumber: 1 },
+          remoteRevision: 'remote-r3',
+          sourceContentHash: releaseHash,
+          file: releaseFile,
+        },
+      ],
+      signal: new AbortController().signal,
+    });
+    const aggregateHash = await sha256(await aggregate.arrayBuffer());
+    const exportSource = vi.fn(async () => ({
+      metadata: { contentHash: aggregateHash } as BookAssetMetadata,
+      blob: aggregate,
+    }));
+    const harness = await createHarness({
+      downloadedContent: '',
+      serial: true,
+      assets: { exportSource, getActiveCover: vi.fn(async () => undefined) } as unknown as BookAssetRepository,
+      novelOverrides: {
+        format: 'image_archive',
+        sourceFileName: aggregate.name,
+        sourceContentHash: aggregateHash,
+        activeContentRevisionId: 'content-merged',
+      },
+      initialLinkOverrides: {
+        collectionRemoteId: 'manga:1',
+        pendingImport: {
+          operationId: 'interrupted-import',
+          stagedAt: '2026-08-30T00:00:00.000Z',
+          hadExistingLink: true,
+          previousActiveContentRevisionId: 'content-old',
+          expectedActiveSourceContentHash: 'uploaded-delta-hash',
+          sourceHashResolvedByImporter: true,
+          collectionRemoteId: 'manga:1',
+          importedRemoteRevision: 'remote-r2',
+          importedSourceContentHash: releaseHash,
+        },
+      },
+    });
+
+    expect(exportSource).toHaveBeenCalledWith('book-1');
+    expect(harness.currentLink).toMatchObject({
+      activeContentRevisionId: 'content-merged',
+      importedRemoteRevision: 'remote-r2',
+      importedSourceContentHash: releaseHash,
+      pendingImport: undefined,
+    });
+    await act(async () => harness.renderer.unmount());
+  });
+
+  it('keeps the full aggregate fallback when the importer cannot append image-series deltas', async () => {
+    const existingArchive = await singlePageComicFile();
+    const exportSource = vi.fn(async () => ({
+      metadata: {} as BookAssetMetadata,
+      blob: existingArchive,
+    }));
+    const harness = await createHarness({
+      downloadedContent: '',
+      downloadedFile: await singlePageComicFile(),
+      serial: true,
+      assets: { exportSource, getActiveCover: vi.fn(async () => undefined) } as unknown as BookAssetRepository,
+      novelOverrides: { format: 'image_archive', documentSectionCount: 1 },
+    });
+
+    await act(async () => {
+      await harness.controller.importSelected();
+    });
+
+    expect(exportSource).toHaveBeenCalledWith('book-1');
+    expect(harness.importFile.mock.calls[0]![0]).not.toHaveProperty('importMode');
+    await act(async () => harness.renderer.unmount());
   });
 
   it('advances only the checked link revision when exact source bytes did not change', async () => {

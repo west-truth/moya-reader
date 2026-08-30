@@ -3,7 +3,10 @@ import { sha256 } from '../../domain/hash';
 import type { ChapterSplitMode, EncodingMode } from '../../domain/types';
 import pdfWorkerUrl from 'pdfjs-dist/legacy/build/pdf.worker.min.mjs?url';
 import { saveParsedNovelImport } from '../../storage/db';
+import { getActiveBookSourceSnapshot } from '../../storage/book-asset-store';
+import { ContentRevisionConflictError } from '../../storage/content-revisions';
 import { hashBlobInChunks } from './chunked-file-reader';
+import { mergeSeriesImageArchiveDelta } from './series-image-archive';
 import {
   parseDecodedNovelTextForImportCooperatively,
   type CooperativeImportParseProgress,
@@ -21,6 +24,12 @@ export interface BrowserImportPipelineInput {
   encoding: EncodingMode;
   chapterSplitMode?: ChapterSplitMode;
   clientBookId?: string;
+  importMode?: 'replace_book' | 'append_image_series';
+  baseActiveContentRevisionId?: string;
+  expectedSourceContentHash?: string;
+  expectedBaseActiveContentRevisionId?: string;
+  preserveExistingEmbeddedAssets?: boolean;
+  preserveExistingCover?: boolean;
   expectedNormalizedTextHash?: string;
   archivePassword?: string;
   shouldCancel?: () => boolean;
@@ -40,6 +49,114 @@ function assertExpectedNormalizedTextHash(input: BrowserImportPipelineInput, act
   if (input.expectedNormalizedTextHash && input.expectedNormalizedTextHash !== actual) {
     throw new Error('가져온 원본의 본문 식별자가 예상한 Cloud Vault 기록과 다릅니다.');
   }
+}
+
+function assertExpectedSourceContentHash(input: BrowserImportPipelineInput, actual: string): void {
+  if (
+    input.expectedSourceContentHash &&
+    normalizedContentHash(input.expectedSourceContentHash) !== normalizedContentHash(actual)
+  ) {
+    throw new Error('가져온 원본의 식별자가 예상한 기록과 다릅니다.');
+  }
+}
+
+function normalizedContentHash(value: string): string {
+  return value
+    .replace(/^sha256:/iu, '')
+    .trim()
+    .toLocaleLowerCase();
+}
+
+async function runBrowserImageSeriesAppendPipeline(input: BrowserImportPipelineInput): Promise<ImportResult> {
+  const bookId = input.clientBookId;
+  const deltaArchive = input.sourceBlob;
+  if (!bookId || !deltaArchive) throw new Error('추가할 만화 회차의 작품 정보가 없습니다.');
+  if (!input.baseActiveContentRevisionId) throw new Error('회차를 추가할 기준 본문 revision이 없습니다.');
+  const deltaHash = await hashBlobInChunks(deltaArchive, {
+    shouldCancel: input.shouldCancel,
+    onProgress: ({ bytesRead }) =>
+      input.onProgress(
+        pipelineProgress(input, bytesRead, 'decoding', 'hashing_source', {
+          message: `추가할 회차를 확인하는 중입니다. ${bytesRead.toLocaleString()} / ${input.totalBytes.toLocaleString()} 바이트`,
+        }),
+      ),
+  });
+  if (
+    input.expectedSourceContentHash &&
+    normalizedContentHash(input.expectedSourceContentHash) !== normalizedContentHash(deltaHash)
+  ) {
+    throw new Error('추가할 만화 회차의 원본 식별자가 다릅니다.');
+  }
+
+  let lastConflict: ContentRevisionConflictError | undefined;
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    throwIfCancelled(input);
+    const snapshot = await getActiveBookSourceSnapshot(bookId);
+    if (!snapshot || snapshot.novel.format !== 'image_archive' || !snapshot.novel.documentSectionCount) {
+      throw new Error('기존 만화 작품의 원본을 찾지 못해 회차를 추가할 수 없습니다.');
+    }
+    const mergeController = new AbortController();
+    const cancelPoll = input.shouldCancel
+      ? setInterval(() => {
+          if (input.shouldCancel?.()) mergeController.abort();
+        }, 50)
+      : undefined;
+    let merged: Awaited<ReturnType<typeof mergeSeriesImageArchiveDelta>>;
+    try {
+      merged = await mergeSeriesImageArchiveDelta({
+        existingArchive: snapshot.blob,
+        deltaArchive,
+        targetBookId: bookId,
+        signal: mergeController.signal,
+      });
+    } finally {
+      if (cancelPoll !== undefined) clearInterval(cancelPoll);
+    }
+    throwIfCancelled(input);
+    if (
+      snapshot.novel.activeContentRevisionId !== input.baseActiveContentRevisionId &&
+      merged.replacedSectionIds.length > 0
+    ) {
+      throw new ContentRevisionConflictError(
+        '같은 회차가 다른 작업에서 먼저 변경되어 오래된 회차 파일로 덮어쓰지 않았습니다.',
+      );
+    }
+    if (!merged.changedSectionIds.length) {
+      const latest = await getActiveBookSourceSnapshot(bookId);
+      if (
+        latest &&
+        latest.novel.activeContentRevisionId === snapshot.novel.activeContentRevisionId &&
+        latest.metadata.contentHash.toLocaleLowerCase() === snapshot.metadata.contentHash.toLocaleLowerCase()
+      ) {
+        input.onProgress(
+          pipelineProgress(input, input.totalBytes, 'ready', 'complete', {
+            chaptersDetected: snapshot.novel.documentSectionCount,
+            paragraphsWritten: snapshot.novel.totalParagraphs,
+            message: '선택한 회차가 이미 작품에 들어 있습니다.',
+          }),
+        );
+        return { novel: latest.novel };
+      }
+      continue;
+    }
+    try {
+      return await runBrowserFixedDocumentImportPipeline({
+        ...input,
+        fileName: snapshot.metadata.fileName ?? snapshot.novel.sourceFileName,
+        buffer: new ArrayBuffer(0),
+        sourceBlob: merged.file,
+        totalBytes: merged.file.size,
+        importMode: 'replace_book',
+        expectedSourceContentHash: undefined,
+        expectedBaseActiveContentRevisionId: snapshot.novel.activeContentRevisionId,
+        preserveExistingCover: true,
+      });
+    } catch (error) {
+      if (!(error instanceof ContentRevisionConflictError)) throw error;
+      lastConflict = error;
+    }
+  }
+  throw lastConflict ?? new ContentRevisionConflictError('만화 회차를 추가하는 동안 작품이 계속 변경되었습니다.');
 }
 
 async function defaultYieldControl(): Promise<void> {
@@ -116,6 +233,7 @@ async function decodeImportSource(input: BrowserImportPipelineInput) {
 
 export async function runBrowserImportPipeline(input: BrowserImportPipelineInput): Promise<ImportResult> {
   const { bytesRead, decoded, rawTextHash } = await decodeImportSource(input);
+  assertExpectedSourceContentHash(input, rawTextHash);
   input.buffer = new ArrayBuffer(0);
   throwIfCancelled(input);
 
@@ -196,6 +314,7 @@ export async function runBrowserEpubImportPipeline(input: BrowserImportPipelineI
     sourceBytes: bytes,
     clientBookId: input.clientBookId,
   });
+  assertExpectedSourceContentHash(input, parsed.novel.rawTextHash);
   assertExpectedNormalizedTextHash(input, parsed.novel.normalizedTextHash);
   input.buffer = new ArrayBuffer(0);
   input.onProgress(
@@ -240,6 +359,7 @@ export async function runBrowserEpubImportPipeline(input: BrowserImportPipelineI
 }
 
 export async function runBrowserFixedDocumentImportPipeline(input: BrowserImportPipelineInput): Promise<ImportResult> {
+  if (input.importMode === 'append_image_series') return runBrowserImageSeriesAppendPipeline(input);
   const bytes = new Uint8Array(input.buffer);
   const isPdf = /\.pdf$/i.test(input.fileName);
   const sourceBlob = input.sourceBlob;
@@ -351,6 +471,7 @@ export async function runBrowserFixedDocumentImportPipeline(input: BrowserImport
             clientBookId: input.clientBookId,
           });
   throwIfCancelled(input);
+  assertExpectedSourceContentHash(input, parsed.novel.rawTextHash);
   assertExpectedNormalizedTextHash(input, parsed.novel.normalizedTextHash);
   input.buffer = new ArrayBuffer(0);
   input.onProgress(
@@ -366,6 +487,9 @@ export async function runBrowserFixedDocumentImportPipeline(input: BrowserImport
   await saveParsedNovelImport(parsed, {
     batchPageCount: BROWSER_IMPORT_WRITE_BATCH_PAGES,
     allowAppendDelta: isDocumentSeries,
+    expectedBaseActiveContentRevisionId: input.expectedBaseActiveContentRevisionId,
+    preserveExistingEmbeddedAssets: input.preserveExistingEmbeddedAssets,
+    preserveExistingCover: input.preserveExistingCover,
     shouldCancel: input.shouldCancel,
     sourceAsset: input.sourceBlob
       ? {

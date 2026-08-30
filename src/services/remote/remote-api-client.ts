@@ -1676,6 +1676,8 @@ export class RemoteApiClient {
       contentType: string;
       encoding: EncodingMode;
       chapterSplitMode?: ChapterSplitMode;
+      importMode?: 'replace_book' | 'append_image_series';
+      baseActiveContentRevisionId?: string;
       totalChunks: number;
       clientBookId?: string;
       sourceContentHash?: string;

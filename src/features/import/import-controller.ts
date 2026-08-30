@@ -1,5 +1,15 @@
 import type { EncodingMode, ChapterSplitMode, Novel } from '../../domain/types';
-import type { ImportController, ImportProgress, ImportService } from '../../services/import/import-service';
+import type {
+  ImportController,
+  ImportFileInput,
+  ImportProgress,
+  ImportService,
+} from '../../services/import/import-service';
+
+export type ImportBatchFile = Pick<
+  ImportFileInput,
+  'file' | 'clientBookId' | 'importMode' | 'baseActiveContentRevisionId' | 'expectedSourceContentHash'
+>;
 
 export interface ImportBatchState {
   total: number;
@@ -26,7 +36,7 @@ export interface ImportBatchCallbacks {
 }
 
 export interface RunImportBatchInput {
-  files: readonly { readonly file: File; readonly clientBookId?: string }[];
+  files: readonly ImportBatchFile[];
   skipped: number;
   encoding: EncodingMode;
   chapterSplitMode: ChapterSplitMode;
@@ -93,7 +103,8 @@ export async function runImportBatch(
       break;
     }
 
-    const { file, clientBookId } = input.files[index];
+    const { file, clientBookId, importMode, baseActiveContentRevisionId, expectedSourceContentHash } =
+      input.files[index];
     callbacks.onBatchChange({
       total: input.files.length,
       current: index + 1,
@@ -111,6 +122,9 @@ export async function runImportBatch(
           encoding: input.encoding,
           chapterSplitMode: input.chapterSplitMode,
           clientBookId,
+          importMode,
+          baseActiveContentRevisionId,
+          expectedSourceContentHash,
           archivePassword: input.importService.supportsArchivePassword ? input.archivePassword : undefined,
         },
         callbacks.onProgress,

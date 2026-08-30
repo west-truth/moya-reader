@@ -16,6 +16,12 @@ export interface SaveImportedNovelOptions {
    * an unchanged prefix before selecting the incremental path.
    */
   allowAppendDelta?: boolean;
+  /** Reject staging when the aggregate used to build this import is no longer active. */
+  expectedBaseActiveContentRevisionId?: string;
+  /** Keep the active archive cover and other embedded assets during an aggregate append. */
+  preserveExistingEmbeddedAssets?: boolean;
+  /** Keep only the active cover while replacing obsolete embedded document resources. */
+  preserveExistingCover?: boolean;
   onProgress?: (progress: SaveImportedNovelProgress) => void | Promise<void>;
   shouldCancel?: () => boolean;
   sourceAsset?: {

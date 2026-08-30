@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { assertLocalImportCapacity, estimatedLocalImportBytes } from './browser-import-service';
+import { assertLocalImportCapacity, BrowserImportService, estimatedLocalImportBytes } from './browser-import-service';
 
 describe('browser import storage preflight', () => {
   afterEach(() => vi.unstubAllGlobals());
@@ -22,5 +22,51 @@ describe('browser import storage preflight', () => {
   it('keeps the existing import path when StorageManager is unavailable', async () => {
     vi.stubGlobal('navigator', {});
     await expect(assertLocalImportCapacity(20 * 1024 * 1024)).resolves.toBeUndefined();
+  });
+
+  it('forwards the image-series delta contract to the import worker', async () => {
+    const posted: unknown[] = [];
+    class TestWorker {
+      onmessage?: (event: MessageEvent) => void;
+      onerror?: (event: ErrorEvent) => void;
+
+      postMessage(message: { type?: string }) {
+        posted.push(message);
+        if (message.type === 'cancel') {
+          queueMicrotask(() =>
+            this.onmessage?.({
+              data: { type: 'error', name: 'AbortError', message: 'cancelled' },
+            } as MessageEvent),
+          );
+        }
+      }
+
+      terminate() {}
+    }
+    vi.stubGlobal('navigator', {});
+    vi.stubGlobal('Worker', TestWorker);
+    const service = new BrowserImportService();
+    const file = new File(['delta'], '회차.cbz', { type: 'application/vnd.comicbook+zip' });
+    const controller = service.importFile(
+      {
+        file,
+        encoding: 'auto',
+        clientBookId: 'book-1',
+        importMode: 'append_image_series',
+        baseActiveContentRevisionId: 'revision-1',
+        expectedSourceContentHash: 'delta-hash',
+      },
+      vi.fn(),
+    );
+    await vi.waitFor(() => expect(posted).toHaveLength(1));
+    expect(posted[0]).toMatchObject({
+      type: 'start',
+      clientBookId: 'book-1',
+      importMode: 'append_image_series',
+      baseActiveContentRevisionId: 'revision-1',
+      expectedSourceContentHash: 'delta-hash',
+    });
+    controller.cancel();
+    await expect(controller.promise).rejects.toMatchObject({ name: 'AbortError' });
   });
 });

@@ -381,6 +381,7 @@ export async function createStagingContentRevision(
     sourceRevision?: string;
     sourceHash?: string;
     expected: ContentRevisionExpectedCounts;
+    expectedBaseActiveContentRevisionId?: string;
     appendDelta?: {
       baseRevision: BookContentRevisionRecord;
       logicalCounts: StoredContentRevisionCounts;
@@ -389,6 +390,13 @@ export async function createStagingContentRevision(
 ): Promise<BookContentRevisionRecord> {
   const tx = db.transaction(['novels', CONTENT_REVISION_STORES.revisions], 'readwrite');
   const currentNovel = await requestToPromise<Novel | undefined>(tx.objectStore('novels').get(input.novel.id));
+  if (
+    input.expectedBaseActiveContentRevisionId !== undefined &&
+    currentNovel?.activeContentRevisionId !== input.expectedBaseActiveContentRevisionId
+  ) {
+    tx.abort();
+    throw new ContentRevisionConflictError('active content revision changed before replacement staging');
+  }
   if (
     input.appendDelta &&
     (input.appendDelta.baseRevision.novelId !== input.novel.id ||
@@ -780,6 +788,7 @@ export async function activateStagedContentRevision(
     sourceAssetId?: string;
     embeddedAssetIds?: readonly string[];
     preserveExistingEmbeddedAssets?: boolean;
+    preserveExistingCover?: boolean;
   },
 ): Promise<void> {
   const tx = db.transaction(
@@ -835,7 +844,7 @@ export async function activateStagedContentRevision(
       storedRevision.baseMutableMetadata,
       storedRevision.source === 'local_import',
     );
-    if (input.preserveExistingEmbeddedAssets && currentNovel) {
+    if ((input.preserveExistingEmbeddedAssets || input.preserveExistingCover) && currentNovel) {
       nextNovel = {
         ...nextNovel,
         coverAssetId: currentNovel.coverAssetId,
@@ -888,6 +897,7 @@ export async function activateStagedContentRevision(
         contentRevisionId: storedRevision.id,
         activatedAt,
         preserveExisting: input.preserveExistingEmbeddedAssets,
+        preserveExistingCover: input.preserveExistingCover,
       });
       const cover = preservedCover ?? assets.find((asset) => asset.kind === 'cover' && asset.status === 'active');
       if (cover) {

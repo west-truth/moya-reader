@@ -5,6 +5,13 @@ import type { ExternalSourceLocalState } from './local-state';
 export const EXTERNAL_SOURCE_PENDING_INTENT_LEASE_MS = 30 * 60_000;
 const EXTERNAL_SOURCE_PENDING_CLOCK_SKEW_MS = 5 * 60_000;
 
+export interface PendingExternalSourceLinkReconciliationOptions {
+  readonly resolveImporterApplied?: (
+    staged: readonly ExternalSourceLink[],
+    novel: Novel,
+  ) => Promise<boolean | undefined>;
+}
+
 function normalizedHash(value: string | undefined): string | undefined {
   return (
     value
@@ -117,11 +124,43 @@ export async function finalizeExternalSourceLinks(
   return next;
 }
 
+export async function finalizeImporterResolvedExternalSourceLinks(
+  state: ExternalSourceLocalState,
+  staged: readonly ExternalSourceLink[],
+  novel: Novel,
+): Promise<ExternalSourceLink[]> {
+  if (
+    staged.length === 0 ||
+    staged.some(
+      (link) =>
+        !link.pendingImport?.sourceHashResolvedByImporter ||
+        link.localBookId !== novel.id ||
+        !novel.activeContentRevisionId ||
+        !novel.sourceContentHash,
+    )
+  ) {
+    throw new Error('가져온 본문과 외부 소스 연결 식별자가 일치하지 않습니다.');
+  }
+  const next = finalizedExternalSourceLinks(staged, novel);
+  const expected = staged.map((link) => ({
+    id: link.id,
+    operationId: link.pendingImport!.operationId,
+  }));
+  if (state.compareAndSwapPendingLinks) {
+    const applied = await state.compareAndSwapPendingLinks(expected, next, []);
+    if (!applied) throw new Error('다른 창에서 외부 소스 연결이 변경되었습니다.');
+  } else {
+    await saveExternalSourceLinks(state, next);
+  }
+  return next;
+}
+
 export async function reconcilePendingExternalSourceLinks(
   state: ExternalSourceLocalState,
   links: readonly ExternalSourceLink[],
   novels: readonly Novel[],
   now = Date.now(),
+  options: PendingExternalSourceLinkReconciliationOptions = {},
 ): Promise<ExternalSourceLink[]> {
   const novelById = new Map(novels.map((novel) => [novel.id, novel]));
   const groups = new Map<string, ExternalSourceLink[]>();
@@ -137,7 +176,22 @@ export async function reconcilePendingExternalSourceLinks(
 
   for (const staged of groups.values()) {
     const novel = novelById.get(staged[0]!.localBookId);
+    const importerResolvedSource = staged.every((link) => link.pendingImport?.sourceHashResolvedByImporter);
+    if (importerResolvedSource && novel && !novel.deletedAt && options.resolveImporterApplied) {
+      const importerApplied = await options.resolveImporterApplied(staged, novel).catch(() => undefined);
+      if (importerApplied === true) {
+        const finalized = await finalizeImporterResolvedExternalSourceLinks(state, staged, novel).catch(
+          () => undefined,
+        );
+        if (finalized) {
+          finalized.forEach((link) => projected.set(link.id, link));
+          continue;
+        }
+      }
+      if (importerApplied === undefined) continue;
+    }
     const contentMatches = Boolean(
+      !importerResolvedSource &&
       novel &&
       !novel.deletedAt &&
       novel.sourceContentHash &&

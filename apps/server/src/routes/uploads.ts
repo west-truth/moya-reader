@@ -27,6 +27,8 @@ interface InitUploadBody {
   clientHashHint?: string;
   sourceContentHash?: string;
   clientBookId?: string;
+  importMode?: 'replace_book' | 'append_image_series';
+  baseActiveContentRevisionId?: string;
   totalChunks?: number;
 }
 
@@ -37,6 +39,8 @@ interface UploadSessionRow {
   content_type?: string;
   encoding?: string;
   chapter_split_mode?: ChapterSplitMode;
+  import_mode?: 'replace_book' | 'append_image_series';
+  base_active_content_revision_id?: string | null;
   status: string;
   total_chunks: number | null;
   source_content_hash?: string | null;
@@ -68,6 +72,11 @@ function validClientBookId(value: unknown): string | undefined {
   return /^[A-Za-z0-9:_-]{1,160}$/.test(trimmed) ? trimmed : undefined;
 }
 
+function validImportMode(value: unknown): 'replace_book' | 'append_image_series' | undefined {
+  if (value === undefined) return 'replace_book';
+  return value === 'replace_book' || value === 'append_image_series' ? value : undefined;
+}
+
 function validChapterSplitMode(value: unknown): ChapterSplitMode | undefined {
   if (value === undefined) return 'auto';
   return value === 'auto' || value === 'mixed' || value === 'single' ? value : undefined;
@@ -91,7 +100,7 @@ async function uploadProgress(
   const sessionResult = await poolOrClient.query<UploadSessionRow>(
     `
       select id, file_name, size_bytes, content_type, encoding, chapter_split_mode, status, total_chunks,
-             source_content_hash, created_at, updated_at
+             source_content_hash, import_mode, base_active_content_revision_id, created_at, updated_at
       from upload_sessions
       where id = $1
     `,
@@ -128,6 +137,8 @@ function uploadStatusPayload(session: UploadSessionRow, chunks: UploadChunkRow[]
     contentType: session.content_type,
     encoding: session.encoding,
     chapterSplitMode: session.chapter_split_mode ?? 'auto',
+    importMode: session.import_mode ?? 'replace_book',
+    baseActiveContentRevisionId: session.base_active_content_revision_id ?? undefined,
     status: session.status,
     totalChunks: session.total_chunks,
     sourceContentHash: session.source_content_hash ?? undefined,
@@ -176,6 +187,22 @@ export async function registerUploadRoutes(
     if (body.sourceContentHash !== undefined && !sourceContentHash) {
       return reply.code(400).send({ error: 'sourceContentHash must be a canonical sha256 hash when provided' });
     }
+    const importMode = validImportMode(body.importMode);
+    if (!importMode) return reply.code(400).send({ error: 'importMode is not supported' });
+    const baseActiveContentRevisionId = validClientBookId(body.baseActiveContentRevisionId);
+    if (body.baseActiveContentRevisionId !== undefined && !baseActiveContentRevisionId) {
+      return reply.code(400).send({ error: 'baseActiveContentRevisionId must be a safe identifier when provided' });
+    }
+    if (importMode === 'append_image_series') {
+      if (!clientBookId || !sourceContentHash || !baseActiveContentRevisionId) {
+        return reply.code(400).send({
+          error: 'append_image_series requires clientBookId and sourceContentHash and baseActiveContentRevisionId',
+        });
+      }
+      if (!/\.(?:zip|cbz)$/iu.test(body.fileName)) {
+        return reply.code(400).send({ error: 'append_image_series requires a ZIP or CBZ delta archive' });
+      }
+    }
 
     const uploadId = `upload_${randomUUID()}`;
     const fileName = sanitizeFileName(body.fileName);
@@ -184,9 +211,9 @@ export async function registerUploadRoutes(
       `
         insert into upload_sessions (
           id, user_id, file_name, size_bytes, content_type, encoding, chapter_split_mode, client_hash_hint,
-          client_book_id, total_chunks, source_content_hash
+          client_book_id, total_chunks, source_content_hash, import_mode, base_active_content_revision_id
         )
-        values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+        values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
       `,
       [
         uploadId,
@@ -200,6 +227,8 @@ export async function registerUploadRoutes(
         clientBookId,
         totalChunks,
         sourceContentHash,
+        importMode,
+        baseActiveContentRevisionId,
       ],
     );
 
@@ -237,7 +266,7 @@ export async function registerUploadRoutes(
         const sessionResult = await client.query<UploadSessionRow>(
           `
             select id, file_name, size_bytes, content_type, encoding, chapter_split_mode, status, total_chunks,
-                   source_content_hash, created_at, updated_at
+                   source_content_hash, import_mode, base_active_content_revision_id, created_at, updated_at
             from upload_sessions
             where id = $1
             for update
@@ -316,7 +345,7 @@ export async function registerUploadRoutes(
       await client.query('begin');
       const sessionResult = await client.query<UploadSessionRow>(
         `select id, file_name, size_bytes, content_type, encoding, chapter_split_mode, status, total_chunks,
-                source_content_hash, created_at, updated_at
+                source_content_hash, import_mode, base_active_content_revision_id, created_at, updated_at
            from upload_sessions where id = $1 for update`,
         [request.params.uploadId],
       );

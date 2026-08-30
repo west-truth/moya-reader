@@ -5,6 +5,7 @@ import {
   acquireExternalSourcePendingLinks,
   EXTERNAL_SOURCE_PENDING_INTENT_LEASE_MS,
   finalizeExternalSourceLinks,
+  finalizeImporterResolvedExternalSourceLinks,
   finalizedExternalSourceLinks,
   reconcilePendingExternalSourceLinks,
 } from './link-import-reconciliation';
@@ -96,6 +97,133 @@ describe('external source link import reconciliation', () => {
       [expect.objectContaining({ id: 'link-1', pendingImport: undefined })],
       [],
     );
+  });
+
+  it('finalizes an importer-resolved aggregate with the returned revision and source hash', async () => {
+    const saveLinks = vi.fn(async () => undefined);
+    const state = { saveLinks } as never;
+    const staged = {
+      ...baseLink,
+      pendingImport: {
+        ...baseLink.pendingImport!,
+        sourceHashResolvedByImporter: true,
+      },
+    } satisfies ExternalSourceLink;
+    const mergedNovel = { ...novel, sourceContentHash: 'merged-aggregate-hash' };
+
+    const finalized = await finalizeImporterResolvedExternalSourceLinks(state, [staged], mergedNovel);
+
+    expect(finalized[0]).toMatchObject({
+      activeContentRevisionId: 'content-new',
+      importedSourceContentHash: 'new-hash',
+      pendingImport: undefined,
+    });
+    expect(saveLinks).toHaveBeenCalledWith(finalized);
+  });
+
+  it('keeps a fresh importer-resolved intent pending because revision movement alone is not proof of its import', async () => {
+    const saveLinks = vi.fn(async () => undefined);
+    const state = { saveLinks } as never;
+    const staged = {
+      ...baseLink,
+      pendingImport: {
+        ...baseLink.pendingImport!,
+        sourceHashResolvedByImporter: true,
+      },
+    } satisfies ExternalSourceLink;
+
+    const reconciled = await reconcilePendingExternalSourceLinks(
+      state,
+      [staged],
+      [{ ...novel, sourceContentHash: 'merged-aggregate-hash' }],
+      Date.parse(staged.pendingImport.stagedAt) + 60_000,
+    );
+
+    expect(reconciled).toEqual([staged]);
+    expect(saveLinks).not.toHaveBeenCalled();
+  });
+
+  it('repairs an importer-resolved link after the active archive proves that its releases were imported', async () => {
+    const saveLinks = vi.fn(async () => undefined);
+    const resolveImporterApplied = vi.fn(async () => true);
+    const state = { saveLinks } as never;
+    const staged = {
+      ...baseLink,
+      pendingImport: {
+        ...baseLink.pendingImport!,
+        sourceHashResolvedByImporter: true,
+      },
+    } satisfies ExternalSourceLink;
+    const mergedNovel = { ...novel, sourceContentHash: 'merged-aggregate-hash' };
+
+    const reconciled = await reconcilePendingExternalSourceLinks(state, [staged], [mergedNovel], expiredNow, {
+      resolveImporterApplied,
+    });
+
+    expect(resolveImporterApplied).toHaveBeenCalledWith([staged], mergedNovel);
+    expect(reconciled[0]).toMatchObject({
+      activeContentRevisionId: 'content-new',
+      importedRemoteRevision: 'new',
+      importedSourceContentHash: 'new-hash',
+      pendingImport: undefined,
+    });
+    expect(saveLinks).toHaveBeenCalledOnce();
+  });
+
+  it('keeps an importer-resolved intent when the active archive is temporarily unavailable', async () => {
+    const saveLinks = vi.fn(async () => undefined);
+    const state = { saveLinks } as never;
+    const staged = {
+      ...baseLink,
+      pendingImport: {
+        ...baseLink.pendingImport!,
+        sourceHashResolvedByImporter: true,
+      },
+    } satisfies ExternalSourceLink;
+
+    const reconciled = await reconcilePendingExternalSourceLinks(
+      state,
+      [staged],
+      [{ ...novel, sourceContentHash: 'merged-aggregate-hash' }],
+      expiredNow,
+      { resolveImporterApplied: async () => undefined },
+    );
+
+    expect(reconciled).toEqual([staged]);
+    expect(saveLinks).not.toHaveBeenCalled();
+  });
+
+  it('does not finalize an importer-resolved intent when an unrelated replacement changed the active revision', async () => {
+    const saveLinks = vi.fn(async () => undefined);
+    const state = { saveLinks } as never;
+    const staged = {
+      ...baseLink,
+      pendingImport: {
+        ...baseLink.pendingImport!,
+        sourceHashResolvedByImporter: true,
+      },
+    } satisfies ExternalSourceLink;
+
+    const reconciled = await reconcilePendingExternalSourceLinks(
+      state,
+      [staged],
+      [
+        {
+          ...novel,
+          activeContentRevisionId: 'content-from-unrelated-replacement',
+          sourceContentHash: 'unrelated-aggregate-hash',
+        },
+      ],
+      expiredNow,
+    );
+
+    expect(reconciled[0]).toMatchObject({
+      importedRemoteRevision: 'old',
+      importedSourceContentHash: 'old-hash',
+      activeContentRevisionId: 'content-old',
+      pendingImport: undefined,
+    });
+    expect(saveLinks).toHaveBeenCalledOnce();
   });
 
   it('leaves a fresh pending intent untouched while the canonical import may still be running', async () => {

@@ -12,6 +12,8 @@ export interface BookChildIdIndex {
   chapterIdByIndex: Map<number, string>;
   paragraphKeyById: Map<string, string>;
   paragraphIdByKey: Map<string, string>;
+  stableFixedDocumentChapterIds: Set<string>;
+  stableFixedDocumentParagraphIds: Set<string>;
 }
 
 export interface LocalReaderChildSnapshot {
@@ -57,10 +59,13 @@ export function createBookChildIdIndex(chapters: Chapter[]): BookChildIdIndex {
     chapterIdByIndex: new Map(),
     paragraphKeyById: new Map(),
     paragraphIdByKey: new Map(),
+    stableFixedDocumentChapterIds: new Set(),
+    stableFixedDocumentParagraphIds: new Set(),
   };
   for (const chapter of chapters) {
     index.chapterIndexById.set(chapter.id, chapter.index);
     index.chapterIdByIndex.set(chapter.index, chapter.id);
+    if (chapter.documentSectionId) index.stableFixedDocumentChapterIds.add(chapter.id);
   }
   return index;
 }
@@ -79,6 +84,9 @@ export function addParagraphToChildIdIndex(index: BookChildIdIndex, paragraph: P
   const key = paragraphRemapKey(chapterIndex, paragraph.index, textHash);
   index.paragraphKeyById.set(paragraph.id, key);
   if (!index.paragraphIdByKey.has(key)) index.paragraphIdByKey.set(key, paragraph.id);
+  if (index.stableFixedDocumentChapterIds.has(paragraph.chapterId)) {
+    index.stableFixedDocumentParagraphIds.add(paragraph.id);
+  }
 }
 
 export function addParagraphPagesToChildIdIndex(index: BookChildIdIndex, pages: ParagraphPage[]): void {
@@ -92,6 +100,12 @@ function remapAnchorIds(
   nextIndex: BookChildIdIndex,
 ): { chapterId: string; paragraphId: string; changed: boolean } | undefined {
   if (!paragraphId) return undefined;
+  if (
+    nextIndex.stableFixedDocumentChapterIds.has(chapterId) &&
+    nextIndex.stableFixedDocumentParagraphIds.has(paragraphId)
+  ) {
+    return { chapterId, paragraphId, changed: false };
+  }
   const chapterIndex = oldIndex.chapterIndexById.get(chapterId);
   if (chapterIndex === undefined) return undefined;
   const nextChapterId = nextIndex.chapterIdByIndex.get(chapterIndex);

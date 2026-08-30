@@ -89,6 +89,94 @@ function novel(): Novel {
 }
 
 describe('remote snapshot child remap hash compatibility', () => {
+  it('keeps exact fixed-document anchors when a new section is inserted before them', () => {
+    const stableChapter = { ...chapter('chapter-stable'), documentSectionId: 'section-stable' };
+    const insertedChapter = {
+      ...chapter('chapter-inserted'),
+      index: 1,
+      title: 'Inserted',
+      documentSectionId: 'section-inserted',
+    };
+    const movedStableChapter = { ...stableChapter, index: 2 };
+    const stableParagraph = paragraph('paragraph-stable', stableChapter.id, integrityHash('Same paragraph'));
+    const insertedParagraph = paragraph('paragraph-inserted', insertedChapter.id, integrityHash('Same paragraph'));
+    const oldIndex = createBookChildIdIndex([stableChapter]);
+    const nextIndex = createBookChildIdIndex([insertedChapter, movedStableChapter]);
+    addParagraphPagesToChildIdIndex(oldIndex, [page('page-stable-old', stableParagraph)]);
+    addParagraphPagesToChildIdIndex(nextIndex, [
+      page('page-inserted', insertedParagraph),
+      page('page-stable-next', stableParagraph),
+    ]);
+    const readingPosition: ReadingPosition = {
+      id: 'reading-position-stable',
+      novelId: 'book-1',
+      chapterId: stableChapter.id,
+      paragraphId: stableParagraph.id,
+      paragraphIndex: 1,
+      offsetInParagraph: 2,
+      chapterProgress: 0.5,
+      scrollTop: 20,
+      deviceId: 'device-local',
+      updatedAt: now,
+    };
+    const bookmark: Bookmark = {
+      id: 'bookmark-stable',
+      novelId: 'book-1',
+      chapterId: stableChapter.id,
+      paragraphId: stableParagraph.id,
+      label: 'anchor',
+      progress: 0.5,
+      scrollTop: 20,
+      createdAt: now,
+    };
+    const highlight: ReaderHighlight = {
+      id: 'highlight-stable',
+      novelId: 'book-1',
+      chapterId: stableChapter.id,
+      paragraphId: stableParagraph.id,
+      quote: stableParagraph.text,
+      color: 'yellow',
+      progress: 0.5,
+      createdAt: now,
+      updatedAt: now,
+    };
+    const note: ReaderNote = {
+      id: 'note-stable',
+      novelId: 'book-1',
+      chapterId: stableChapter.id,
+      paragraphId: stableParagraph.id,
+      body: 'note',
+      progress: 0.5,
+      createdAt: now,
+      updatedAt: now,
+    };
+
+    const result = prepareRemoteContentActivation({
+      snapshot: {
+        novel: { ...novel(), totalChapters: 2 },
+        chapters: [insertedChapter, movedStableChapter],
+      },
+      baseNovel: novel(),
+      localSnapshot: { readingPosition, bookmarks: [bookmark], highlights: [highlight], notes: [note] },
+      outboxItems: [],
+      oldIndex,
+      nextIndex,
+      now,
+    });
+
+    expect(result.readerPlan.readingPosition).toMatchObject({
+      chapterId: stableChapter.id,
+      paragraphId: stableParagraph.id,
+    });
+    expect(result.readerPlan.bookmarks).toEqual([]);
+    expect(result.readerPlan.highlights).toEqual([]);
+    expect(result.readerPlan.notes).toEqual([]);
+    expect(result.readerPlan.deleteBookmarkIds).toEqual([]);
+    expect(result.readerPlan.deleteHighlightIds).toEqual([]);
+    expect(result.readerPlan.deleteNoteIds).toEqual([]);
+    expect(result.readerPlan.quarantineRecords).toEqual([]);
+  });
+
   it('remaps v1-FNV local anchors to v2-tagged server paragraphs by canonical text', () => {
     const oldChapter = chapter('ch_deadbeef');
     const nextChapter = chapter('chapter_0123456789abcdef0123456789abcdef');
