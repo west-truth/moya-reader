@@ -3,6 +3,19 @@
 Status: current
 Last verified: 2026-08-31
 
+## 만화 회차 추가 시 서버 저장 최적화
+
+- Suwayomi 또는 로컬 만화의 `회차 추가`에서 변하지 않은 기존 페이지 이미지는 다시 저장하지 않는다.
+  같은 작품의 hash·크기·형식이 일치하고 객체가 실제로 있을 때만 재사용하며, 없으면 원본에서 다시 저장한다.
+- 원본 CBZ 형식, 회차 식별자, 표지와 읽음 기록의 저장 계약은 유지한다. 이 최적화 자체에는 새 migration이나
+  기존 작품 재가져오기, 볼륨 초기화가 필요 없다. 기존 방식대로 API와 worker를 같은 버전으로 갱신한다.
+- 전체 원본 읽기·압축 병합·파싱은 아직 남는다. 내부 전송량 감소가 곧 같은 비율의 속도 향상을 뜻하지 않는다.
+- worker의 `import_job_profile` 로그에서 `phasesMs`, `writtenPages`, `writtenPageBytes`, `reusedPages`,
+  `reusedPageBytes`를 확인할 수 있다. `base_read_merge`는 기존 원본 읽기와 병합,
+  `write_assets`는 이미지 추출·hash·객체 확인·저장을 포함한다. 제목·본문·파일명·객체 경로는 기록하지 않는다.
+- 로컬 회귀 검사는 `pnpm test:import-pages`로 실행한다. 실제 PostgreSQL이 필요하며 테스트용 객체 저장은
+  loopback HTTP fixture다. 실 MinIO 성능이나 운영 환경의 전체 동작까지 이 결과로 보장하지 않는다.
+
 ## 2026-08-31 호환성 패치 업데이트
 
 - 업데이트 전 PostgreSQL과 MinIO의 기존 백업을 보관하고, 사용 중인 Compose 구성의 `web`, `api`, `worker`를

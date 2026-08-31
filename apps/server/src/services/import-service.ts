@@ -2,7 +2,7 @@ import { readFile } from 'node:fs/promises';
 import { randomUUID } from 'node:crypto';
 import pg from 'pg';
 import { ServerConfig } from '../config.js';
-import { createS3Client, getObjectBuffer, putRawBookObject } from './object-storage.js';
+import { createS3Client, getObjectBuffer, inspectStoredObject, putRawBookObject } from './object-storage.js';
 import { parseNovelFileForImport } from '@noveldesk/text-core/parser';
 import { materializeEpubImport, parseEpub } from '@noveldesk/epub-core';
 import { hasDocumentSeriesManifest, materializeDocumentSeriesArchive } from '@noveldesk/document-series-core';
@@ -38,6 +38,9 @@ import {
   reserveObjectDeletions,
 } from './object-delete-outbox.js';
 import { mergeSeriesImageArchiveDelta } from '@noveldesk/fixed-document-core/series-image-archive';
+import { loadImportPageReuse } from './import-page-reuse.js';
+import { ImportMeasurements } from './import-measurements.js';
+import type { StructuredLogger } from '../observability/logger.js';
 
 const PARAGRAPHS_PER_PAGE = 120;
 const SERVER_IMPORT_CHAPTER_BATCH_SIZE = 100;
@@ -739,8 +742,10 @@ export async function processImportJob(
   jobId: string,
   uploadId: string,
   attempt: ImportExecutionAttempt = SINGLE_IMPORT_ATTEMPT,
+  logger?: Pick<StructuredLogger, 'info'>,
 ): Promise<void> {
   if (!(await claimImportExecution(pool, jobId, attempt.executionId))) return;
+  const measurements = new ImportMeasurements(logger, jobId);
   if (!attempt.executionId) {
     await updateImportJobProgress(pool, jobId, {
       status: 'processing',
@@ -767,6 +772,7 @@ export async function processImportJob(
 
   const uploadedObjectKeys: string[] = [];
   let importCommitted = false;
+  let appendNoop = false;
   let appendLockClient: pg.PoolClient | undefined;
   let appendLockBookId: string | undefined;
   try {
@@ -775,6 +781,7 @@ export async function processImportJob(
     let buffer: Buffer | undefined = uploadBuffer;
     const bytesRead = buffer.length;
     const totalBytes = Number(session.size_bytes);
+    measurements.counts.uploadBytes = bytesRead;
     const uploadedSourceContentHash = integrityHash(buffer);
     if (session.source_content_hash && uploadedSourceContentHash !== session.source_content_hash) {
       throw new Error('Uploaded source bytes do not match sourceContentHash');
@@ -786,17 +793,21 @@ export async function processImportJob(
     let appendNoopTotalChapters = 0;
     const importMode = session.import_mode ?? 'replace_book';
     const incrementalImageSeriesAppend = importMode === 'append_image_series';
+    measurements.counts.incrementalAppend = incrementalImageSeriesAppend;
     if (incrementalImageSeriesAppend) {
       const bookId = session.client_book_id?.trim();
       if (!bookId) throw new Error('회차 delta에 대상 만화 작품 ID가 없습니다.');
       appendLockBookId = bookId;
+      measurements.start('append_lock');
       appendLockClient = await lockImageSeriesAppend(pool, bookId);
+      measurements.start('base_read_merge');
       await assertImportExecutionActive(pool, jobId, attempt.executionId);
       const appendBase = await loadImageSeriesAppendBase(appendLockClient, session.user_id, bookId);
       appendBaseContentRevisionId = appendBase.active_content_revision_id;
       appendNoopTotalChapters = Number(appendBase.total_chapters);
       const s3Client = createS3Client(config);
       const existingObject = await getObjectBuffer(s3Client, config, appendBase.storage_key);
+      measurements.counts.baseBytes = existingObject.body.length;
       const merged = await mergeSeriesImageArchiveDelta({
         existingArchive: new Blob([arrayBufferFromBuffer(existingObject.body)], {
           type: appendBase.content_type || 'application/vnd.comicbook+zip',
@@ -814,6 +825,8 @@ export async function processImportJob(
         throw new Error('image_series_append_base_changed');
       }
       if (merged.changedSectionIds.length === 0) {
+        appendNoop = true;
+        measurements.start('commit_database');
         await finalizeNoopImageSeriesAppend(appendLockClient, {
           uploadId,
           jobId,
@@ -826,6 +839,7 @@ export async function processImportJob(
           attempt,
         });
         importCommitted = true;
+        measurements.start('cleanup');
         await removeUploadDirectory(config, uploadId);
         return;
       }
@@ -859,6 +873,7 @@ export async function processImportJob(
       attempt.executionId,
     );
     await assertImportExecutionActive(pool, jobId, attempt.executionId);
+    measurements.start('parse_archive');
     let arrayBuffer: ArrayBuffer | undefined = arrayBufferFromBuffer(buffer);
     let parsed: ParsedNovelImport;
     const sourceBlob = new Blob([arrayBuffer]);
@@ -897,6 +912,8 @@ export async function processImportJob(
       );
     }
     arrayBuffer = undefined;
+    measurements.counts.pageCount =
+      parsed.novel.format === 'image_archive' || parsed.novel.format === 'pdf' ? parsed.chapters.length : 0;
     await updateImportJobProgress(
       pool,
       jobId,
@@ -916,12 +933,21 @@ export async function processImportJob(
     const storageKey = `${session.user_id}/sources/${objectId}/${jobId}/${attempt.executionId ?? randomUUID()}/attempt-${attempt.attemptNumber}/${canonicalFileName}`;
     const s3Client = createS3Client(config);
     const canonicalSizeBytes = buffer.length;
+    measurements.counts.canonicalBytes = canonicalSizeBytes;
+    measurements.start('write_source');
 
     await assertImportExecutionActive(pool, jobId, attempt.executionId);
     await reserveObjectDeletions(pool, [storageKey], 'import_source_staging');
     await putRawBookObject(s3Client, config, storageKey, buffer, canonicalContentType);
     uploadedObjectKeys.push(storageKey);
     buffer = undefined;
+    measurements.start('write_assets');
+    const reusePage =
+      incrementalImageSeriesAppend && appendLockClient
+        ? await loadImportPageReuse(appendLockClient, session.user_id, parsed.novel.id, (key) =>
+            inspectStoredObject(s3Client, config, key),
+          )
+        : undefined;
     const storedAssets: Array<Omit<ParsedNovelImportAsset, 'bytes'> & { byteLength: number; storageKey: string }> = [];
     const eagerAssets = (parsed.embeddedAssets ?? []).map((asset) => ({
       asset,
@@ -972,18 +998,36 @@ export async function processImportJob(
       let assetBatch: Array<{ asset: ParsedNovelImportAsset; storageKey: string }> = [];
       const flushAssetBatch = async () => {
         if (assetBatch.length === 0) return;
-        const currentBatch = assetBatch;
+        const pendingBatch = assetBatch;
         assetBatch = [];
         await assertImportExecutionActive(pool, jobId, attempt.executionId);
+        const currentBatch = await Promise.all(
+          pendingBatch.map(async (entry) => {
+            const existingKey = await reusePage?.(entry.asset);
+            return { ...entry, storageKey: existingKey ?? entry.storageKey, reused: existingKey !== undefined };
+          }),
+        );
         await reserveObjectDeletions(
           pool,
-          currentBatch.map((entry) => entry.storageKey),
+          currentBatch.filter((entry) => !entry.reused).map((entry) => entry.storageKey),
           'import_asset_staging',
         );
         const outcomes = await Promise.allSettled(
-          currentBatch.map(async ({ asset, storageKey: assetStorageKey }) => {
-            await putRawBookObject(s3Client, config, assetStorageKey, Buffer.from(asset.bytes), asset.contentType);
-            uploadedObjectKeys.push(assetStorageKey);
+          currentBatch.map(async ({ asset, storageKey: assetStorageKey, reused }) => {
+            if (!reused) {
+              await putRawBookObject(s3Client, config, assetStorageKey, Buffer.from(asset.bytes), asset.contentType);
+              // Only newly written objects belong to this attempt's failure cleanup.
+              uploadedObjectKeys.push(assetStorageKey);
+            }
+            if (asset.kind === 'document_page') {
+              if (reused) {
+                measurements.counts.reusedPages += 1;
+                measurements.counts.reusedPageBytes += asset.bytes.byteLength;
+              } else {
+                measurements.counts.writtenPages += 1;
+                measurements.counts.writtenPageBytes += asset.bytes.byteLength;
+              }
+            }
             const { bytes: _releasedBytes, ...metadata } = asset;
             return { ...metadata, byteLength: asset.bytes.byteLength, storageKey: assetStorageKey };
           }),
@@ -1035,6 +1079,7 @@ export async function processImportJob(
     arrayBuffer = undefined;
     await assertImportExecutionActive(pool, jobId, attempt.executionId);
 
+    measurements.start('commit_database');
     const client = appendLockClient ?? (await pool.connect());
     const releaseTransactionClient = client !== appendLockClient;
     try {
@@ -1321,7 +1366,14 @@ export async function processImportJob(
       );
       if (attempt.executionId && !finalized) throw new ImportExecutionStoppedError('cancelled');
       await releaseObjectDeletionReservations(client, uploadedObjectKeys);
-      await enqueueObjectDeletions(client, obsoleteAssetKeys, 'replaced_import_object');
+      // New asset ids can still point to an old immutable object. Preserve those
+      // references atomically; never queue a reused page for replacement cleanup.
+      const retainedAssetKeys = new Set(assetsToActivate.map((asset) => asset.storageKey));
+      await enqueueObjectDeletions(
+        client,
+        obsoleteAssetKeys.filter((key) => !retainedAssetKeys.has(key)),
+        'replaced_import_object',
+      );
       await client.query('commit');
       importCommitted = true;
     } catch (error) {
@@ -1330,6 +1382,7 @@ export async function processImportJob(
     } finally {
       if (releaseTransactionClient) client.release();
     }
+    measurements.start('cleanup');
     if (importCommitted) await removeUploadDirectory(config, uploadId);
   } catch (error) {
     if (!importCommitted && uploadedObjectKeys.length) {
@@ -1383,6 +1436,7 @@ export async function processImportJob(
     throw error;
   } finally {
     clearInterval(heartbeat);
+    measurements.finish(importCommitted ? (appendNoop ? 'noop' : 'committed') : 'not_committed');
     if (appendLockClient && appendLockBookId) {
       await unlockImageSeriesAppend(appendLockClient, appendLockBookId).catch(() => undefined);
     }

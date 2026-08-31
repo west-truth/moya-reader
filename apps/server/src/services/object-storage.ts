@@ -3,6 +3,7 @@ import {
   DeleteObjectCommand,
   GetObjectCommand,
   HeadBucketCommand,
+  HeadObjectCommand,
   PutObjectCommand,
   S3Client,
 } from '@aws-sdk/client-s3';
@@ -127,6 +128,20 @@ export async function getObjectBuffer(client: S3Client, config: ServerConfig, ke
     contentType: result.ContentType,
     contentLength: result.ContentLength,
   };
+}
+
+export async function inspectStoredObject(
+  client: S3Client,
+  config: ServerConfig,
+  key: string,
+): Promise<{ byteLength?: number; contentType?: string } | undefined> {
+  try {
+    const result = await client.send(new HeadObjectCommand({ Bucket: config.s3.bucket, Key: key }));
+    return { byteLength: result.ContentLength, contentType: result.ContentType };
+  } catch (error) {
+    if ((error as { $metadata?: { httpStatusCode?: number } })?.$metadata?.httpStatusCode === 404) return undefined;
+    throw error;
+  }
 }
 
 export async function getObjectRangeBuffer(

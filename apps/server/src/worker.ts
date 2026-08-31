@@ -151,7 +151,9 @@ const objectDeleteTimer = setInterval(() => void runObjectDeleteOutbox(), 30_000
 objectDeleteTimer.unref();
 
 const importWorker = createImportWorker(config, async (jobId, uploadId, attempt) => {
-  await observeImportJobExecution(logger, jobId, () => processImportJob(pool, config, jobId, uploadId, attempt));
+  await observeImportJobExecution(logger, jobId, () =>
+    processImportJob(pool, config, jobId, uploadId, attempt, logger),
+  );
 });
 const providerWorker = createProviderWorker(config, async (jobId, attempt) => {
   await observeProviderJobExecution(pool, metrics, logger, { jobId, attemptId: attempt.attemptId }, async () => {
