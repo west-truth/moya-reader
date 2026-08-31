@@ -1,4 +1,5 @@
 import { BlobReader, BlobWriter, TextReader, TextWriter, ZipReader, ZipWriter, type FileEntry } from '@zip.js/zip.js';
+import { MAX_COMIC_SOURCE_MANIFEST_BYTES } from './comic-source-limits';
 
 const MANIFEST_NAME = 'moya-series.json';
 const MAX_PAGE_COUNT = 5_000;
@@ -120,10 +121,10 @@ function contentType(extension: string): string {
   return 'image/jpeg';
 }
 
-function assertSafeManifestEntry(entry: FileEntry, label: string): void {
+function assertSafeManifestEntry(entry: FileEntry, label: string, maxBytes = MAX_MANIFEST_BYTES): void {
   const size = Number(entry.uncompressedSize ?? 0);
   const compressedSize = Number(entry.compressedSize ?? 0);
-  if (!Number.isSafeInteger(size) || size <= 0 || size > MAX_MANIFEST_BYTES) {
+  if (!Number.isSafeInteger(size) || size <= 0 || size > maxBytes) {
     throw new Error(`${label} manifest 크기가 안전 한도를 벗어났습니다.`);
   }
   if (!Number.isSafeInteger(compressedSize) || compressedSize <= 0) {
@@ -232,7 +233,7 @@ export async function readSeriesImageArchiveManifest(blob: Blob): Promise<Series
         candidate.filename.toLocaleLowerCase() === MANIFEST_NAME,
     );
     if (!entry) return undefined;
-    assertSafeManifestEntry(entry, '기존 연재 작품');
+    assertSafeManifestEntry(entry, '기존 연재 작품', MAX_COMIC_SOURCE_MANIFEST_BYTES);
     let parsed: unknown;
     try {
       parsed = JSON.parse(await entry.getData!(new TextWriter())) as unknown;
@@ -240,13 +241,16 @@ export async function readSeriesImageArchiveManifest(blob: Blob): Promise<Series
       throw new Error('기존 연재 작품 manifest가 올바르지 않습니다.');
     }
     if (!isSeriesImageArchiveManifest(parsed)) throw new Error('기존 연재 작품 manifest가 올바르지 않습니다.');
+    // Only the reference-only work index gets the larger budget. A normal archive
+    // still has the original decompression and manifest limits.
+    if (!('storageVersion' in parsed && parsed.storageVersion === 1)) assertSafeManifestEntry(entry, '기존 연재 작품');
     return parsed;
   } finally {
     await reader.close().catch(() => undefined);
   }
 }
 
-async function inspectSeriesArchiveManifest(
+export async function inspectSeriesArchiveManifest(
   blob: Blob,
   signal: AbortSignal,
   label: '기존 aggregate' | 'delta archive',

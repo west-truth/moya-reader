@@ -2,11 +2,38 @@
 
 Status: implemented v1
 
-Last verified: 2026-08-27
+Last verified: 2026-08-31
 
 이 문서는 모야의 파일 형식별 import, 저장, 읽기 UI와 아직 지원하지 않는 범위를 정리한다.
 텍스트 계열과 고정 레이아웃 계열은 같은 책장·진행 위치·백업 경계를 사용하지만, 읽기 화면은 서로 다른
 renderer를 사용한다.
+
+## 2026-08-31 만화 회차별 저장
+
+- 누적 원본 합계 1GiB 제한은 제거하고 회차 목록을 별도로 20,000페이지·2,000회차/원본·JSON 8MiB로
+  제한한다. 개별 archive 해제 1GiB/5,000페이지, 이미지 64MiB/압축률 250배 제한은 그대로다.
+- 여러 화를 선택하면 한 화 구성·저장을 완료한 뒤 다음 화로 넘어간다. 1회 업로드 기본 500MiB를
+  선택한 화 전체 합계에 적용하지 않는다. 한 화가 서버 한도를 넘으면 설정된 한도를 표시한다.
+- 실패/취소 시 완료한 회차는 남는다. 소스 link는 매 화 finalize하고 로컬 재시도는 같은 작품 ID와
+  최신 revision/중복 목록을 사용한다. 앱을 닫아도 계속되는 background queue를 추가한 것은 아니다.
+- 대용량 백업/복원은 별도 후속 작업이다. 전체 백업 복원은 Hosted 512MiB/1,000 ZIP entries, 로컬
+  256MiB/500 entries 제한이 남는다. Cloud Vault 복원의 portable comic package도 모든 원본을 한 번에
+  복원하므로 합계 1GiB 안전 제한을 유지한다. 1GiB 초과 작품의 기기 간 전체 복원은 아직 지원하지 않는다.
+  일반 CBZ export는 메모리와 ZIP, 재가져오기 단일 archive 제한을 해결하지 않는다. 로컬 중첩 ZIP 자체의
+  기존 확장 안전 제한 역시 유지하므로 큰 묶음은 별도 회차 파일로 선택해야 한다.
+- 로컬 만화 회차 추가와 Suwayomi 회차 다운로드는 같은 `append_image_series` 경로를 쓴다. 작품 전체를
+  다시 CBZ로 병합하지 않고 새/변경 회차 원본, 페이지와 작은 manifest만 저장한다. 여러 회차를 선택한
+  업로드도 새로 받은 부분만 회차별로 나눈다. TXT/EPUB/PDF와 일반 최초 가져오기는 그대로다.
+- 기존 작품은 첫 추가 시 기존 CBZ를 한 legacy part로 보존한다. Hosted에서는 공유 source key를 직접
+  재사용하지 않고 원본을 한 번 별도 저장하며 기존 페이지는 다시 쓰지 않는다. 이후 추가는 증분 처리다.
+- 현재 Reader, 회차 ID/읽음, 표지와 편집 metadata의 저장 정책은 유지한다. 실패/취소 시 기존 revision을
+  보존하며, 누락 페이지 복구는 해당 part만 읽는다. metadata 활성화와 자산 확인에는 전체 페이지 수에
+  비례하는 작업이 여전히 남는다.
+- 전체 백업에는 manifest와 part가 모두 들어간다. 사용자가 파일 내보내기를 선택할 때만 일반 CBZ를
+  구성한다. 현재 이 CBZ에는 ComicInfo 작가/소개/태그가 포함되지 않으므로 재가져오기 시 보존되지 않는다.
+  앱 Library에 저장된 metadata와 표지가 제거되는 것은 아니다.
+- 배포 전 전체 백업을 확보하고 Web/API/worker를 함께 갱신한다. 새 형식으로 회차를 추가한 뒤 이미지
+  버전만 낮춰도 데이터가 구형 aggregate로 돌아오지는 않는다.
 
 ## 2026-08-27 ZIP 문서 묶음 가져오기
 
@@ -143,6 +170,9 @@ PDF도 1~5,000페이지 범위만 받는다. PDF.js와 이미지 page cache는 l
 
 ## 백업과 플랫폼
 
+- 로컬 백업은 생성·복원 모두 ZIP 500항목/압축 전 256MiB 한도를 검사한다. manifest JSON도
+  항목 수와 UTF-8 bytes에 포함하며, 복원 한도를 넘는 백업은 ZIP 생성 전에 중단한다. 대용량 백업이나
+  형식·크기별 선택/분할 백업은 아직 지원하지 않는다.
 - Local exact backup은 기존 `book_assets` 순회로 source, cover와 `document_page`를 보존한다.
 - Hosted backup/restore는 active `document_page` object를 포함하고 copy/replace 시 book/asset ID를 다시 연결한다.
 - Android SAF picker allowlist에는 PDF, ZIP, CBZ MIME과 확장자가 연결됐다. 실제 content URI import 완료와

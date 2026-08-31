@@ -9,6 +9,24 @@ loopback-only. Public exposure requires the fail-closed override and a separate 
 For a Korean step-by-step first deployment, read [모야 Docker Compose 배포 가이드](docker-compose-guide-ko.md)
 before this technical reference.
 
+## Comic append storage compatibility (2026-08-31)
+
+The chapter-original checkpoint adds migration `0042_comic_source_parts.sql`. It only permits the `source_part`
+asset kind; it does not convert or delete existing books. TXT/EPUB/PDF and ordinary first imports are unchanged.
+The first comic chapter addition keeps the old CBZ as a legacy part and activates a small manifest. Later additions
+write only changed chapter originals and pages, not another whole-book CBZ. Full backups include the manifest and
+parts; an explicit source download still produces a portable ordinary CBZ.
+
+Before deploying this checkpoint, keep a complete pre-upgrade backup and update Web/API/worker together. Mixed
+API/worker versions are not supported. Once a book has been appended in the new format, an older application does
+not support its new source for append/export/Cloud Vault restore. Reverting the container image alone is therefore
+not a complete data rollback: use the pre-upgrade backup, or export an ordinary CBZ using the new version first.
+Do not remove volumes or rewrite shipped migrations as a rollback procedure.
+
+Local verification uses the real worker, PostgreSQL and the S3 SDK against a loopback object-storage fixture.
+It is not a production MinIO or physical-mobile test. Existing-book opening, cover/read-state preservation and
+append timing should still be checked after deployment. This local checkpoint itself does not deploy the server.
+
 ## Supported Linux baseline
 
 The supported hosted baseline is an x86-64 Ubuntu server running Docker Engine and Docker Compose v2. GitHub source

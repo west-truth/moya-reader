@@ -208,7 +208,10 @@ async function snapshotHostedData(pool: pg.Pool, userId: string) {
     const embeddedAssets = (tables.get('book_assets') ?? [])
       .filter(
         (row) =>
-          (row.kind === 'cover' || row.kind === 'epub_resource' || row.kind === 'document_page') &&
+          (row.kind === 'cover' ||
+            row.kind === 'epub_resource' ||
+            row.kind === 'document_page' ||
+            row.kind === 'source_part') &&
           row.status === 'active',
       )
       .map(
@@ -221,7 +224,7 @@ async function snapshotHostedData(pool: pg.Pool, userId: string) {
             content_type: String(row.content_type ?? 'image/jpeg'),
             size_bytes: Number(row.byte_length),
             created_at: row.created_at as string | Date,
-            asset_kind: row.kind as 'cover' | 'epub_resource' | 'document_page',
+            asset_kind: row.kind as 'cover' | 'epub_resource' | 'document_page' | 'source_part',
           }) satisfies HostedBookObjectRow,
       );
     const fontAssets = (tables.get('user_fonts') ?? []).map(
@@ -288,7 +291,9 @@ async function insertRow(client: pg.PoolClient, table: HostedBackupTableName, ro
   const entries = Object.entries(row).filter(([, value]) => value !== undefined);
   if (entries.length === 0) return;
   const columns = entries.map(([column]) => quoteIdentifier(column));
-  const values = entries.map(([, value]) => value);
+  // Persisted arrays (tags, quads, fingerprints, etc.) are JSON/JSONB, not PostgreSQL array columns.
+  // node-postgres otherwise encodes JS arrays as `{...}`, which fails real backup restore.
+  const values = entries.map(([, value]) => (Array.isArray(value) ? JSON.stringify(value) : value));
   const placeholders = values.map((_, index) => `$${index + 1}`);
   if (table === 'reader_settings') {
     await client.query(
@@ -309,11 +314,14 @@ async function insertRow(client: pg.PoolClient, table: HostedBackupTableName, ro
     );
     return;
   }
-  await client.query(
+  const inserted = await client.query(
     `insert into ${quoteIdentifier(table)} (${columns.join(', ')}) values (${placeholders.join(', ')})
-     on conflict do nothing`,
+     on conflict do nothing${table === 'library_books' ? ' returning id' : ''}`,
     values,
   );
+  if (table === 'library_books' && inserted.rowCount === 0) {
+    throw new Error('복원하는 동안 같은 작품이 생성되어 기존 작품을 변경하지 않았습니다.');
+  }
 }
 
 function sourceObjectsById(objects: readonly HostedBookObjectRow[]): Map<string, HostedBookObjectRow> {
@@ -397,7 +405,10 @@ async function restoreEmbeddedBookObjects(
   const s3 = createS3Client(config);
   for (const row of parsed.tables.get('book_assets') ?? []) {
     if (
-      (row.kind !== 'cover' && row.kind !== 'epub_resource' && row.kind !== 'document_page') ||
+      (row.kind !== 'cover' &&
+        row.kind !== 'epub_resource' &&
+        row.kind !== 'document_page' &&
+        row.kind !== 'source_part') ||
       row.status !== 'active'
     )
       continue;
@@ -638,7 +649,10 @@ export async function restoreHostedBackup(
         }
         if (
           table === 'book_assets' &&
-          (original.kind === 'cover' || original.kind === 'epub_resource' || original.kind === 'document_page')
+          (original.kind === 'cover' ||
+            original.kind === 'epub_resource' ||
+            original.kind === 'document_page' ||
+            original.kind === 'source_part')
         ) {
           const storageKey = embeddedStorageKeys.get(String(original.id));
           if (!storageKey) throw new Error(`Backup embedded asset storage is missing: ${String(original.id)}`);
@@ -654,6 +668,15 @@ export async function restoreHostedBackup(
           transformed.source_review_artifact_id = null;
         }
         await insertRow(client, table, transformed);
+        if (table === 'library_books') {
+          // The normal book-insert trigger creates a fresh initial revision. Restore has its own
+          // complete revision rows; remove only this just-created default before inserting them.
+          await client.query(
+            'update library_books set active_content_revision_id = null where id = $1 and user_id = $2',
+            [transformed.id, config.defaultUserId],
+          );
+          await client.query('delete from book_content_revisions where book_id = $1', [transformed.id]);
+        }
         restoredEntries += 1;
       }
     }

@@ -77,6 +77,19 @@ function fileLastModified(): number {
 }
 
 describe('ServerUploadImportService', () => {
+  it('explains the configured per-upload cap without confusing it with the total work size', async () => {
+    const store: RemoteUploadSessionStore = { read: vi.fn(), write: vi.fn(), remove: vi.fn() };
+    const client = {
+      initUpload: vi.fn(async () => {
+        throw new RemoteApiError('too large', 413, { maxUploadBytes: 500 * 1024 * 1024 });
+      }),
+    };
+    const service = new ServerUploadImportService(client as unknown as RemoteApiClient, 2, 3, store);
+    await expect(service.importFile({ file: makeFile(), encoding: 'auto' }, vi.fn()).promise).rejects.toThrow(
+      '1회 업로드 한도(500MiB)',
+    );
+    expect(store.write).not.toHaveBeenCalled();
+  });
   beforeEach(() => {
     vi.spyOn(Date, 'now').mockReturnValue(new Date('2026-07-06T00:00:00.000Z').getTime());
   });

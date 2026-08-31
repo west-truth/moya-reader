@@ -1,7 +1,7 @@
 export type EncodingMode = 'auto' | 'utf-8' | 'euc-kr';
 export type ChapterSplitMode = 'auto' | 'mixed' | 'single';
 export type BookFormat = 'txt' | 'markdown' | 'epub' | 'pdf' | 'image_archive';
-export type BookAssetKind = 'source' | 'cover' | 'epub_resource' | 'document_page' | 'user_font';
+export type BookAssetKind = 'source' | 'source_part' | 'cover' | 'epub_resource' | 'document_page' | 'user_font';
 export type BookAssetProvenance =
   | 'original'
   | 'canonical_reconstruction'
@@ -567,7 +567,7 @@ export interface ParsedNovelImport {
 export interface ParsedNovelImportAsset {
   id: string;
   bookId: string;
-  kind: 'cover' | 'epub_resource' | 'document_page';
+  kind: 'cover' | 'epub_resource' | 'document_page' | 'source_part';
   provenance: 'epub_embedded' | 'archive_embedded';
   fileName: string;
   contentType: string;

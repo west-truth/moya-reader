@@ -274,7 +274,10 @@ export async function planLocalSeriesImport(
   options: PlanLocalSeriesImportOptions = {},
 ): Promise<LocalSeriesImportPlan> {
   const incrementalAppend = Boolean(targetNovel && options.incrementalAppend);
-  const targetSource = targetNovel && !incrementalAppend ? await assets?.exportSource(targetNovel.id) : undefined;
+  const targetSource =
+    targetNovel && !incrementalAppend
+      ? await (await import('../../repositories/comic-source-export')).exportPortableBookSource(assets, targetNovel.id)
+      : undefined;
   if (targetNovel && !incrementalAppend && !targetSource) {
     throw new Error('기존 작품의 원본을 찾지 못해 회차를 안전하게 추가할 수 없습니다.');
   }
@@ -349,24 +352,35 @@ export async function buildLocalSeriesImportFile(
   plan: LocalSeriesImportPlan,
   signal: AbortSignal,
   archivePassword?: string,
+  onlyReleaseId?: string,
 ): Promise<File | undefined> {
   const additions = plan.releases.filter((release) => release.disposition === 'add');
   if (!additions.length) return undefined;
   const workKey = plan.inspection.normalizedWorkKey;
-  const chapters: SeriesImageChapterInput[] = additions.map((release, index) => ({
-    remoteId:
-      plan.incrementalAppend && plan.targetNovel
-        ? stableId('local_series_release', `${plan.targetNovel.id}:${release.releaseKey}`, 20)
-        : release.id,
-    release: {
-      title: release.parsed.releaseTitle,
-      chapterNumber: release.parsed.chapterNumber,
-      sourceOrder: releaseSourceOrder(release.parsed, index + 1),
-    },
-    sourceContentHash: release.contentHash,
-    file: release.file,
-    archivePassword,
-  }));
+  const chapters: SeriesImageChapterInput[] = additions.flatMap((release) =>
+    onlyReleaseId && release.id !== onlyReleaseId
+      ? []
+      : [
+          {
+            remoteId:
+              plan.incrementalAppend && plan.targetNovel
+                ? stableId('local_series_release', `${plan.targetNovel.id}:${release.releaseKey}`, 20)
+                : release.id,
+            release: {
+              title: release.parsed.releaseTitle,
+              chapterNumber: release.parsed.chapterNumber,
+              sourceOrder: releaseSourceOrder(
+                release.parsed,
+                plan.inspection.releases.findIndex((entry) => entry.id === release.id) + 1,
+              ),
+            },
+            sourceContentHash: release.contentHash,
+            file: release.file,
+            archivePassword,
+          },
+        ],
+  );
+  if (!chapters.length) return undefined;
   const existingLegacyChapter =
     plan.targetNovel && plan.targetSource && !plan.existingManifest
       ? (() => {

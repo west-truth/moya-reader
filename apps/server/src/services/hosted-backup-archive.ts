@@ -102,7 +102,7 @@ export interface HostedBookObjectRow extends Record<string, unknown> {
   readonly content_type: string;
   readonly size_bytes: number | string;
   readonly created_at: string | Date;
-  readonly asset_kind?: 'source' | 'cover' | 'epub_resource' | 'document_page' | 'user_font';
+  readonly asset_kind?: 'source' | 'source_part' | 'cover' | 'epub_resource' | 'document_page' | 'user_font';
 }
 
 export interface HostedBackupSnapshot {

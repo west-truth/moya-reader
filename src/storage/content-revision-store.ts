@@ -787,6 +787,7 @@ export async function activateStagedContentRevision(
     shouldCancel?: () => boolean;
     sourceAssetId?: string;
     embeddedAssetIds?: readonly string[];
+    embeddedAssetPageIndexes?: Readonly<Record<string, number>>;
     preserveExistingEmbeddedAssets?: boolean;
     preserveExistingCover?: boolean;
   },
@@ -893,6 +894,7 @@ export async function activateStagedContentRevision(
     if (input.embeddedAssetIds?.length) {
       const { assets, preservedCover } = await activateEmbeddedAssetsInTransaction(tx, {
         assetIds: input.embeddedAssetIds,
+        pageIndexes: input.embeddedAssetPageIndexes,
         bookId: input.novel.id,
         contentRevisionId: storedRevision.id,
         activatedAt,

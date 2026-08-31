@@ -1,7 +1,21 @@
 # Cloud Vault 동기화 아키텍처
 
 Status: metadata v1, per-book AI/TTS encrypted objects, Web content objects, revision-aware foreground auto sync implemented
-Last updated: 2026-08-29
+Last updated: 2026-08-31
+
+## 만화 회차별 원본
+
+- 누적 작품 목록 한도 확대가 대용량 복원까지 지원한다는 뜻은 아니다. 현재 복원용 portable package는
+  모든 part를 한 번에 materialize하므로 원본 합계 1GiB까지만 지원한다. 앱 전체 백업의 별도 용량/항목
+  한도도 남아 있다. 이 경계의 스트리밍 복원은 별도 checkpoint다.
+- 만화 회차 추가로 만든 작은 manifest 원본과 immutable 회차 CBZ를 별도로 전송한다. 본문 소유권에
+  속하는 `sourcePartObjects`는 제목/표지 metadata clock과 섞지 않는다. 소설의 원본 전송은 바꾸지 않는다.
+- 원본은 기존 content hash 기반 경로에 저장한다. 이전 완료 목록에 있는 part는 재업로드하지 않고,
+  모든 part가 준비된 뒤 manifest를 게시한다. 실패한 원본 전송을 완료 상태로 표시하지 않는다.
+- 복원은 hash/크기를 검사하고 이미 기기에 있는 part는 재다운로드하지 않는다. 검증된 manifest+part
+  package를 기존 importer에 전달하며, 기존 기기의 페이지 순서 변경도 revision 활성화와 함께 갱신한다.
+- 전체 백업과 일반 CBZ 내보내기는 별도다. 구버전 앱은 새 source format을 복원할 수 없으므로 기기 앱을
+  함께 갱신하거나 신버전에서 일반 CBZ로 내보낸다. 복원 DB 쓰기 자체를 완전 증분화한 것은 아니다.
 
 ## 목적
 

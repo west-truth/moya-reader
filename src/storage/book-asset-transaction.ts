@@ -27,6 +27,7 @@ export async function activateEmbeddedAssetsInTransaction(
   tx: IDBTransaction,
   input: {
     assetIds: readonly string[];
+    pageIndexes?: Readonly<Record<string, number>>;
     bookId: string;
     contentRevisionId: string;
     activatedAt: string;
@@ -43,8 +44,11 @@ export async function activateEmbeddedAssetsInTransaction(
   const activeDocumentPages = await requestToPromise<StoredBookAsset[]>(
     store.index('bookId_kind_status').getAll([input.bookId, 'document_page', 'active']),
   );
+  const activeSourceParts = await requestToPromise<StoredBookAsset[]>(
+    store.index('bookId_kind_status').getAll([input.bookId, 'source_part', 'active']),
+  );
   if (!input.preserveExisting) {
-    [...activeResources, ...activeDocumentPages].forEach((asset) => {
+    [...activeResources, ...activeDocumentPages, ...activeSourceParts].forEach((asset) => {
       if (!incomingIds.has(asset.id)) store.put({ ...asset, status: 'superseded' } satisfies StoredBookAsset);
     });
   }
@@ -66,7 +70,10 @@ export async function activateEmbeddedAssetsInTransaction(
     if (
       (asset?.status === 'active' || asset?.status === 'superseded') &&
       asset.bookId === input.bookId &&
-      (asset.kind === 'cover' || asset.kind === 'epub_resource' || asset.kind === 'document_page')
+      (asset.kind === 'cover' ||
+        asset.kind === 'epub_resource' ||
+        asset.kind === 'document_page' ||
+        asset.kind === 'source_part')
     ) {
       // Exact superseded assets were identity-checked during staging and are safe to rebind here.
       const status =
@@ -74,6 +81,7 @@ export async function activateEmbeddedAssetsInTransaction(
       const next: StoredBookAsset = {
         ...asset,
         contentRevisionId: input.contentRevisionId,
+        pageIndex: input.pageIndexes?.[asset.id] ?? asset.pageIndex,
         status,
         activatedAt: input.activatedAt,
       };
@@ -86,7 +94,10 @@ export async function activateEmbeddedAssetsInTransaction(
       asset.status !== 'staged' ||
       asset.bookId !== input.bookId ||
       asset.contentRevisionId !== input.contentRevisionId ||
-      (asset.kind !== 'cover' && asset.kind !== 'epub_resource' && asset.kind !== 'document_page')
+      (asset.kind !== 'cover' &&
+        asset.kind !== 'epub_resource' &&
+        asset.kind !== 'document_page' &&
+        asset.kind !== 'source_part')
     ) {
       throw new Error(`Staged embedded document asset ${assetId} is unavailable`);
     }

@@ -2,6 +2,7 @@ import { BlobReader, BlobWriter, Uint8ArrayReader, ZipWriter } from '@zip.js/zip
 import { act, create, type ReactTestRenderer } from 'react-test-renderer';
 import { describe, expect, it, vi } from 'vitest';
 import type { Novel } from '../../domain/types';
+import { testChapter } from '../book-workspace/book-workspace-test-fixtures';
 import type { BookAssetRepository } from '../../repositories/book-asset-repository';
 import type { ImportService } from '../../services/import/import-service';
 import { inspectDocumentSeriesSource, materializeDocumentSeriesArchive } from '@noveldesk/document-series-core';
@@ -16,7 +17,7 @@ const PNG_1X1 = Uint8Array.from(
 
 async function chapter(name: string): Promise<File> {
   const writer = new ZipWriter(new BlobWriter('application/vnd.comicbook+zip'));
-  await writer.add('001.png', new Uint8ArrayReader(PNG_1X1));
+  await writer.add(`${name}.png`, new Uint8ArrayReader(PNG_1X1));
   return new File([await writer.close()], name, { type: 'application/vnd.comicbook+zip' });
 }
 
@@ -98,7 +99,7 @@ describe('useImportController local series analysis', () => {
     await act(async () => renderer.unmount());
   });
 
-  it('builds one aggregate archive and sends it through the existing import boundary', async () => {
+  it('commits nested chapters separately into the same book using each new active revision', async () => {
     vi.stubGlobal('window', globalThis);
     let controller!: ImportFeatureController;
     let importedFile: File | undefined;
@@ -123,6 +124,9 @@ describe('useImportController local series analysis', () => {
       favorite: false,
       analysisStatus: 'not_analyzed',
     };
+    const sectionChapters: ReturnType<typeof testChapter>[] = [];
+    importedNovel.sourceAssetId = 'source';
+    importedNovel.activeContentRevisionId = 'revision-0';
     const importFile = vi.fn<ImportService['importFile']>((input, onProgress) => {
       importedFile = input.file;
       onProgress({
@@ -134,15 +138,32 @@ describe('useImportController local series analysis', () => {
         chaptersDetected: 2,
         paragraphsWritten: 2,
       });
-      return { jobId: 'job-series', cancel: vi.fn(), promise: Promise.resolve({ novel: importedNovel }) };
+      return {
+        jobId: 'job-series',
+        cancel: vi.fn(),
+        promise: (async () => {
+          const manifest = await readLocalSeriesManifest(input.file);
+          for (const section of manifest!.chapters)
+            sectionChapters.push(
+              testChapter(sectionChapters.length + 1, {
+                documentSectionId: section.remoteId,
+                documentSectionTitle: section.title,
+                documentSectionSourceContentHash: section.sourceContentHash,
+              }),
+            );
+          importedNovel.activeContentRevisionId = `revision-${sectionChapters.length}`;
+          importedNovel.documentSectionCount = sectionChapters.length;
+          return { novel: { ...importedNovel } };
+        })(),
+      };
     });
     const onImportCommitted = vi.fn(async () => undefined);
     function Harness() {
       controller = useImportController({
-        importService: { importFile },
+        importService: { importFile, supportsIncrementalImageSeriesAppend: true },
         getNovel: vi.fn(async () => undefined),
         listNovels: vi.fn(async () => []),
-        listChapters: vi.fn(async () => []),
+        listChapters: vi.fn(async () => sectionChapters),
         onImportCommitted,
         notify: vi.fn(),
       });
@@ -160,9 +181,14 @@ describe('useImportController local series analysis', () => {
     }
     await act(async () => controller.startPendingImport());
 
-    expect(importFile).toHaveBeenCalledOnce();
+    expect(importFile).toHaveBeenCalledTimes(2);
     expect(importedFile?.name).toBe('서른의 봄.cbz');
-    expect((await readLocalSeriesManifest(importedFile!))?.chapters).toHaveLength(2);
+    expect((await readLocalSeriesManifest(importedFile!))?.chapters).toHaveLength(1);
+    expect(importFile.mock.calls[1]![0]).toMatchObject({
+      clientBookId: importedNovel.id,
+      importMode: 'append_image_series',
+      baseActiveContentRevisionId: 'revision-1',
+    });
     expect(onImportCommitted).toHaveBeenCalledWith(importedNovel);
     await act(async () => renderer.unmount());
     vi.unstubAllGlobals();

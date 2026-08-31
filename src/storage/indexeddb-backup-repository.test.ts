@@ -1,5 +1,5 @@
 import 'fake-indexeddb/auto';
-import { beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { sha256 } from '../domain/hash';
 import { runBrowserImportPipeline } from '../services/import/browser-import-pipeline';
 import {
@@ -19,6 +19,41 @@ import { createEmptyVoiceCastingWorkspace } from '../providers/voice-casting';
 import { getVoiceCastingWorkspace, saveVoiceCastingWorkspace } from './voice-casting-store';
 import { getListeningPosition, saveListeningPosition } from './listening-position-store';
 import { IndexedDbDocumentTextRepository } from './document-text-store';
+import { BOOK_ASSET_STORES, type StoredBookAssetBlob } from './book-asset-schema';
+import { openReaderDb } from './reader-database';
+import { transactionDone } from './indexeddb-transaction';
+
+const limitTestContentType = 'application/x-backup-limit-test';
+
+async function addBackupAssets(count: number, prefix: string): Promise<void> {
+  const records = await Promise.all(
+    Array.from({ length: count }, async (_, index): Promise<StoredBookAssetBlob> => {
+      const id = `${prefix}_${index}`;
+      const blob = new Blob([id], { type: limitTestContentType });
+      return {
+        id,
+        blob,
+        contentHash: `sha256:${await sha256(id)}`,
+        contentType: blob.type,
+        byteLength: blob.size,
+        createdAt: '2026-08-31T00:00:00.000Z',
+      };
+    }),
+  );
+  const db = await openReaderDb();
+  const tx = db.transaction(BOOK_ASSET_STORES.blobs, 'readwrite');
+  const done = transactionDone(tx);
+  for (const record of records) tx.objectStore(BOOK_ASSET_STORES.blobs).put(record);
+  await done;
+}
+
+function mockAssetSize(byteLength: number): void {
+  // Exercise the production byte limit without allocating hundreds of MiB in a unit test.
+  const originalSize = Object.getOwnPropertyDescriptor(Blob.prototype, 'size')!.get!;
+  vi.spyOn(Blob.prototype, 'size', 'get').mockImplementation(function (this: Blob) {
+    return this.type === limitTestContentType ? byteLength : originalSize.call(this);
+  });
+}
 
 const source = `제1화 시작
 
@@ -67,6 +102,64 @@ async function rewriteManifest(archive: Blob, mutate: (manifest: Record<string, 
 describe('IndexedDbBackupRepository', () => {
   beforeEach(async () => {
     await resetReaderDbForTests();
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it('round-trips exactly 500 ZIP entries and rejects 501 before writing any ZIP data', async () => {
+    const imported = await importFixture();
+    const repository = new IndexedDbBackupRepository();
+    const initial = await repository.exportBackup();
+    await addBackupAssets(499 - initial.manifest.entries.length, 'entry_limit');
+    const atLimit = await repository.exportBackup();
+    expect(atLimit.manifest.entries).toHaveLength(499); // Plus manifest.json.
+    await expect(repository.inspectBackup(atLimit.blob)).resolves.toMatchObject({
+      manifest: { books: [expect.objectContaining({ id: imported.novel.id })] },
+    });
+
+    await addBackupAssets(1, 'over_limit');
+    const { ZipWriter } = await import('@zip.js/zip.js');
+    const writeEntry = vi.spyOn(ZipWriter.prototype, 'add');
+    const readBlob = vi.spyOn(Blob.prototype, 'arrayBuffer');
+    await expect(repository.exportBackup()).rejects.toThrow('500개');
+    expect(writeEntry).not.toHaveBeenCalled();
+    expect(readBlob).not.toHaveBeenCalled();
+    writeEntry.mockRestore();
+    readBlob.mockRestore();
+
+    await resetReaderDbForTests();
+    await expect(
+      repository.restoreBackup(atLimit.blob, { defaultConflictResolution: 'replace' }),
+    ).resolves.toMatchObject({
+      restoredBooks: 1,
+    });
+    expect(await exportBookSource(imported.novel.id)).toBeDefined();
+  });
+
+  it('rejects oversized assets before hashing or writing ZIP entries', async () => {
+    await addBackupAssets(1, 'size_limit');
+    mockAssetSize(256 * 1024 * 1024 + 1);
+    const { ZipWriter } = await import('@zip.js/zip.js');
+    const writeEntry = vi.spyOn(ZipWriter.prototype, 'add');
+    const readBlob = vi.spyOn(Blob.prototype, 'arrayBuffer');
+    await expect(new IndexedDbBackupRepository().exportBackup()).rejects.toThrow('256MiB');
+    expect(writeEntry).not.toHaveBeenCalled();
+    expect(readBlob).not.toHaveBeenCalled();
+  });
+
+  it('includes manifest UTF-8 bytes in the size limit before writing ZIP entries', async () => {
+    const repository = new IndexedDbBackupRepository();
+    const initial = await repository.exportBackup();
+    const jsonBytes = initial.manifest.entries.reduce((total, entry) => total + entry.byteLength, 0);
+    await addBackupAssets(1, '목록_크기');
+    // Stores + asset fit exactly; manifest.json pushes the archive over the restore limit.
+    mockAssetSize(256 * 1024 * 1024 - jsonBytes);
+    const { ZipWriter } = await import('@zip.js/zip.js');
+    const writeEntry = vi.spyOn(ZipWriter.prototype, 'add');
+    await expect(repository.exportBackup()).rejects.toThrow('256MiB');
+    expect(writeEntry).not.toHaveBeenCalled();
   });
 
   it('round-trips source, normalized content, annotations, position and settings', async () => {

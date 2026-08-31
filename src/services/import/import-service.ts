@@ -36,8 +36,8 @@ export interface ImportFileInput {
   clientBookId?: string;
   /**
    * The input contains only new or changed image-series sections. Supporting
-   * local and Hosted boundaries merge it with the latest canonical aggregate
-   * before their normal atomic replacement path.
+   * local and Hosted boundaries update a manifest of immutable comic originals
+   * before their normal atomic activation path. Text/EPUB imports do not use this mode.
    */
   importMode?: 'replace_book' | 'append_image_series';
   /**

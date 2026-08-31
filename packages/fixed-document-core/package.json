@@ -6,7 +6,8 @@
   "type": "module",
   "exports": {
     ".": "./index.ts",
-    "./series-image-archive": "./series-image-archive.ts"
+    "./series-image-archive": "./series-image-archive.ts",
+    "./comic-source": "./comic-source.ts"
   },
   "scripts": {
     "typecheck": "tsc -p tsconfig.json --noEmit"

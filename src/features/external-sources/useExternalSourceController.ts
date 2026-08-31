@@ -1137,308 +1137,326 @@ export function useExternalSourceController(options: UseExternalSourceController
       let stagedLinks: readonly ExternalSourceLink[] = [];
       let previousLinks: readonly ExternalSourceLink[] = [];
       let contentApplied = false;
+      let coverWarning: string | undefined;
+      let coverAttempted = false;
+      const completedKeys = new Set<string>();
       try {
-        const { novels: knownNovels, links: knownLinks } = await loadSourceLibrary(optionsRef.current, sourceId);
-        const sameConnection = (link: ExternalSourceLink) =>
-          link.source.connectorId === importable[0]!.key.connectorId &&
-          (link.source.accountConnectionId ?? '') === (importable[0]!.key.accountConnectionId ?? '');
-        const relatedRemoteIds = new Set(
-          rawItems
-            .filter(isSerialSourceItem)
-            .filter((item) => serialCollectionKey(item) === serialCollectionKey(importable[0]!))
-            .map((item) => item.key.remoteId),
-        );
-        const relatedLinks = knownLinks.filter(
-          (link) =>
-            sameConnection(link) &&
-            (link.collectionRemoteId === collection.remoteId || relatedRemoteIds.has(link.source.remoteId)),
-        );
-        const knownNovelIds = new Set(knownNovels.map((novel) => novel.id));
-        const targetIds = new Set(
-          relatedLinks.filter((link) => knownNovelIds.has(link.localBookId)).map((link) => link.localBookId),
-        );
-        if (targetIds.size > 1) {
-          throw new Error(
-            '이 작품의 회차가 여러 라이브러리 항목에 따로 연결되어 있습니다. 중복 작품 정리는 다음 마이그레이션 단계에서 지원합니다.',
-          );
-        }
-        const existingLocalBookId = [...targetIds][0];
-        const existingNovel = existingLocalBookId
-          ? knownNovels.find((novel) => novel.id === existingLocalBookId)
-          : undefined;
-        if (existingNovel?.deletedAt)
-          throw new Error('휴지통에 있는 작품입니다. 복원하거나 영구 삭제한 뒤 다시 가져와 주세요.');
-        const incrementalSeriesAppend = Boolean(
-          optionsRef.current.importService.supportsIncrementalImageSeriesAppend &&
-          existingNovel?.format === 'image_archive' &&
-          existingNovel.activeContentRevisionId &&
-          (existingNovel.documentSectionCount ?? 0) > 0 &&
-          relatedLinks.some((link) => link.collectionRemoteId === collection.remoteId),
-        );
-        const existingSource =
-          existingLocalBookId && !incrementalSeriesAppend
-            ? await optionsRef.current.assets?.exportSource(existingLocalBookId)
-            : undefined;
-        if (existingLocalBookId && !incrementalSeriesAppend && !existingSource) {
-          throw new Error('기존 연재 작품의 원본을 찾지 못해 회차를 안전하게 합칠 수 없습니다.');
-        }
-        const legacyLink = relatedLinks.find(
-          (link) => link.localBookId === existingLocalBookId && !link.collectionRemoteId,
-        );
-        const legacyItem = legacyLink
-          ? rawItems
-              .filter(isSerialSourceItem)
-              .find((item) => externalItemKeyId(item.key) === externalItemKeyId(legacyLink.source))
-          : undefined;
-        const existingLegacyChapter =
-          legacyLink && legacyItem
-            ? {
-                remoteId: legacyItem.key.remoteId,
-                release: legacyItem.release,
-                remoteRevision: legacyLink.importedRemoteRevision,
-                sourceContentHash:
-                  normalizedHash(legacyLink.importedSourceContentHash) ??
-                  normalizedHash(existingNovel?.sourceContentHash) ??
-                  (existingSource
-                    ? (normalizedHash(
-                        await hashBlobInChunks(existingSource.blob, {
-                          shouldCancel: () => abort.signal.aborted,
-                        }),
-                      ) ?? '')
-                    : ''),
-              }
-            : undefined;
-
-        const downloadedChapters: SuwayomiSeriesChapterInput[] = [];
-        const checked = new Map<
-          string,
-          { item: SerialSourceItem; sourceHash: string; remoteRevision?: string; existingLink?: ExternalSourceLink }
-        >();
-        for (const [index, item] of importable.entries()) {
+        let { novels: knownNovels, links: knownLinks } = await loadSourceLibrary(optionsRef.current, sourceId);
+        // Download/build/commit one chapter at a time. The selection is not one
+        // growing upload, and completed chapters survive a later failure/cancel.
+        for (const [batchIndex, selectedItem] of importable.entries()) {
+          stagedLinks = [];
+          previousLinks = [];
+          contentApplied = false;
           abort.signal.throwIfAborted();
-          setProgress({
-            current: index + 1,
-            total: importable.length,
-            completed: changedCount,
-            failed: 0,
-            linkedExisting: revisionChecked,
-            fileName: item.title,
-            phase: 'downloading',
-          });
-          const downloaded = await optionsRef.current.registry.downloadExternalSource(
-            sourceId,
-            optionsRef.current.hostContext,
-            {
-              key: item.key,
-              fileName: item.importFileName ?? `${collection.title} - ${item.release.title}.cbz`,
-              mimeType: item.mimeType,
-              byteLength: item.byteLength,
-              remoteRevision: item.remoteRevision,
-            },
-            abort.signal,
+          const sameConnection = (link: ExternalSourceLink) =>
+            link.source.connectorId === importable[0]!.key.connectorId &&
+            (link.source.accountConnectionId ?? '') === (importable[0]!.key.accountConnectionId ?? '');
+          const relatedRemoteIds = new Set(
+            rawItems
+              .filter(isSerialSourceItem)
+              .filter((item) => serialCollectionKey(item) === serialCollectionKey(importable[0]!))
+              .map((item) => item.key.remoteId),
           );
-          setProgress((current) => (current ? { ...current, phase: 'verifying' } : current));
-          const sourceHash =
-            normalizedHash(
-              await hashBlobInChunks(downloaded.file, {
-                shouldCancel: () => abort.signal.aborted,
-              }),
-            ) ?? '';
-          const existingLink = knownLinks.find(
+          const relatedLinks = knownLinks.filter(
             (link) =>
-              existingNovel &&
-              link.localBookId === existingNovel.id &&
-              externalItemKeyId(link.source) === externalItemKeyId(item.key),
+              sameConnection(link) &&
+              (link.collectionRemoteId === collection.remoteId || relatedRemoteIds.has(link.source.remoteId)),
           );
-          checked.set(externalItemKeyId(item.key), {
-            item,
-            sourceHash,
-            remoteRevision: downloaded.remoteRevision ?? item.remoteRevision,
-            existingLink,
-          });
-          if (existingLink && normalizedHash(existingLink.importedSourceContentHash) === normalizedHash(sourceHash)) {
-            revisionChecked += 1;
-            continue;
+          const knownNovelIds = new Set(knownNovels.map((novel) => novel.id));
+          const targetIds = new Set(
+            relatedLinks.filter((link) => knownNovelIds.has(link.localBookId)).map((link) => link.localBookId),
+          );
+          if (targetIds.size > 1) {
+            throw new Error(
+              '이 작품의 회차가 여러 라이브러리 항목에 따로 연결되어 있습니다. 중복 작품 정리는 다음 마이그레이션 단계에서 지원합니다.',
+            );
           }
-          downloadedChapters.push({
-            remoteId: item.key.remoteId,
-            release: item.release,
-            remoteRevision: downloaded.remoteRevision ?? item.remoteRevision,
-            sourceContentHash: sourceHash,
-            expectedPreviousSourceContentHash: existingLink?.importedSourceContentHash,
-            file: downloaded.file,
-          });
-          changedCount += 1;
-        }
+          const existingLocalBookId = [...targetIds][0];
+          const existingNovel = existingLocalBookId
+            ? knownNovels.find((novel) => novel.id === existingLocalBookId)
+            : undefined;
+          if (existingNovel?.deletedAt)
+            throw new Error('휴지통에 있는 작품입니다. 복원하거나 영구 삭제한 뒤 다시 가져와 주세요.');
+          const incrementalSeriesAppend = Boolean(
+            optionsRef.current.importService.supportsIncrementalImageSeriesAppend &&
+            existingNovel?.format === 'image_archive' &&
+            existingNovel.activeContentRevisionId &&
+            (existingNovel.documentSectionCount ?? 0) > 0 &&
+            relatedLinks.some((link) => link.collectionRemoteId === collection.remoteId),
+          );
+          const existingSource =
+            existingLocalBookId && !incrementalSeriesAppend
+              ? await (
+                  await import('../../repositories/comic-source-export')
+                ).exportPortableBookSource(optionsRef.current.assets, existingLocalBookId)
+              : undefined;
+          if (existingLocalBookId && !incrementalSeriesAppend && !existingSource) {
+            throw new Error('기존 연재 작품의 원본을 찾지 못해 회차를 안전하게 합칠 수 없습니다.');
+          }
+          const legacyLink = relatedLinks.find(
+            (link) => link.localBookId === existingLocalBookId && !link.collectionRemoteId,
+          );
+          const legacyItem = legacyLink
+            ? rawItems
+                .filter(isSerialSourceItem)
+                .find((item) => externalItemKeyId(item.key) === externalItemKeyId(legacyLink.source))
+            : undefined;
+          const existingLegacyChapter =
+            legacyLink && legacyItem
+              ? {
+                  remoteId: legacyItem.key.remoteId,
+                  release: legacyItem.release,
+                  remoteRevision: legacyLink.importedRemoteRevision,
+                  sourceContentHash:
+                    normalizedHash(legacyLink.importedSourceContentHash) ??
+                    normalizedHash(existingNovel?.sourceContentHash) ??
+                    (existingSource
+                      ? (normalizedHash(
+                          await hashBlobInChunks(existingSource.blob, {
+                            shouldCancel: () => abort.signal.aborted,
+                          }),
+                        ) ?? '')
+                      : ''),
+                }
+              : undefined;
 
-        if (downloadedChapters.length > 0) {
-          setProgress({
-            current: importable.length,
-            total: importable.length,
-            completed: 0,
-            failed: 0,
-            linkedExisting: revisionChecked,
-            fileName: collection.title,
-            phase: 'importing',
-          });
-          const { buildSuwayomiSeriesArchive } = await import('../../external-sources/suwayomi/suwayomi-series-cbz');
-          const aggregate = await buildSuwayomiSeriesArchive({
-            collection,
-            targetBookId: incrementalSeriesAppend ? existingLocalBookId : undefined,
-            chapters: downloadedChapters,
-            existingArchive: incrementalSeriesAppend ? undefined : existingSource?.blob,
-            existingLegacyChapter: incrementalSeriesAppend ? undefined : existingLegacyChapter,
-            signal: abort.signal,
-          });
-          const uploadedSourceContentHash = await hashBlobInChunks(aggregate, {
-            shouldCancel: () => abort.signal.aborted,
-          });
-          const localBookId =
-            existingLocalBookId ?? persistentId128('external_series', [serialCollectionKey(importable[0]!)]);
-          const stagedAt = currentIso();
-          const operationId = externalImportOperationId(serialCollectionKey(importable[0]!));
-          const stagedByKey = new Map<string, ExternalSourceLink>();
-          relatedLinks
-            .filter((link) => link.localBookId === localBookId)
-            .forEach((link) =>
-              stagedByKey.set(externalItemKeyId(link.source), {
-                ...link,
+          const downloadedChapters: SuwayomiSeriesChapterInput[] = [];
+          const checked = new Map<
+            string,
+            { item: SerialSourceItem; sourceHash: string; remoteRevision?: string; existingLink?: ExternalSourceLink }
+          >();
+          for (const item of [selectedItem]) {
+            abort.signal.throwIfAborted();
+            setProgress({
+              current: batchIndex + 1,
+              total: importable.length,
+              completed: changedCount,
+              failed: 0,
+              linkedExisting: revisionChecked,
+              fileName: item.title,
+              phase: 'downloading',
+            });
+            const downloaded = await optionsRef.current.registry.downloadExternalSource(
+              sourceId,
+              optionsRef.current.hostContext,
+              {
+                key: item.key,
+                fileName: item.importFileName ?? `${collection.title} - ${item.release.title}.cbz`,
+                mimeType: item.mimeType,
+                byteLength: item.byteLength,
+                remoteRevision: item.remoteRevision,
+              },
+              abort.signal,
+            );
+            setProgress((current) => (current ? { ...current, phase: 'verifying' } : current));
+            const sourceHash =
+              normalizedHash(
+                await hashBlobInChunks(downloaded.file, {
+                  shouldCancel: () => abort.signal.aborted,
+                }),
+              ) ?? '';
+            const existingLink = knownLinks.find(
+              (link) =>
+                existingNovel &&
+                link.localBookId === existingNovel.id &&
+                externalItemKeyId(link.source) === externalItemKeyId(item.key),
+            );
+            checked.set(externalItemKeyId(item.key), {
+              item,
+              sourceHash,
+              remoteRevision: downloaded.remoteRevision ?? item.remoteRevision,
+              existingLink,
+            });
+            if (existingLink && normalizedHash(existingLink.importedSourceContentHash) === normalizedHash(sourceHash)) {
+              revisionChecked += 1;
+              continue;
+            }
+            downloadedChapters.push({
+              remoteId: item.key.remoteId,
+              release: item.release,
+              remoteRevision: downloaded.remoteRevision ?? item.remoteRevision,
+              sourceContentHash: sourceHash,
+              expectedPreviousSourceContentHash: existingLink?.importedSourceContentHash,
+              file: downloaded.file,
+            });
+          }
+
+          if (downloadedChapters.length > 0) {
+            setProgress({
+              current: batchIndex + 1,
+              total: importable.length,
+              completed: changedCount,
+              failed: 0,
+              linkedExisting: revisionChecked,
+              fileName: collection.title,
+              phase: 'importing',
+            });
+            const { buildSuwayomiSeriesArchive } = await import('../../external-sources/suwayomi/suwayomi-series-cbz');
+            const aggregate = await buildSuwayomiSeriesArchive({
+              collection,
+              targetBookId: incrementalSeriesAppend ? existingLocalBookId : undefined,
+              chapters: downloadedChapters,
+              existingArchive: incrementalSeriesAppend ? undefined : existingSource?.blob,
+              existingLegacyChapter: incrementalSeriesAppend ? undefined : existingLegacyChapter,
+              signal: abort.signal,
+            });
+            const uploadedSourceContentHash = await hashBlobInChunks(aggregate, {
+              shouldCancel: () => abort.signal.aborted,
+            });
+            const localBookId =
+              existingLocalBookId ?? persistentId128('external_series', [serialCollectionKey(importable[0]!)]);
+            const stagedAt = currentIso();
+            const operationId = externalImportOperationId(serialCollectionKey(importable[0]!));
+            const stagedByKey = new Map<string, ExternalSourceLink>();
+            relatedLinks
+              .filter((link) => link.localBookId === localBookId)
+              .forEach((link) =>
+                stagedByKey.set(externalItemKeyId(link.source), {
+                  ...link,
+                  collectionRemoteId: collection.remoteId,
+                  pendingImport: {
+                    operationId,
+                    stagedAt,
+                    hadExistingLink: true,
+                    previousActiveContentRevisionId: existingNovel?.activeContentRevisionId,
+                    expectedActiveSourceContentHash: uploadedSourceContentHash,
+                    sourceHashResolvedByImporter: incrementalSeriesAppend || undefined,
+                    collectionRemoteId: collection.remoteId,
+                    importedRemoteRevision: link.importedRemoteRevision,
+                    importedSourceContentHash: link.importedSourceContentHash,
+                  },
+                }),
+              );
+            checked.forEach(({ item, sourceHash, remoteRevision, existingLink }) => {
+              stagedByKey.set(externalItemKeyId(item.key), {
+                ...(existingLink ?? {
+                  id: externalSourceLinkId(item.key),
+                  source: item.key,
+                  localBookId,
+                  linkedAt: stagedAt,
+                }),
+                localBookId,
                 collectionRemoteId: collection.remoteId,
                 pendingImport: {
                   operationId,
                   stagedAt,
-                  hadExistingLink: true,
+                  hadExistingLink: Boolean(existingLink),
                   previousActiveContentRevisionId: existingNovel?.activeContentRevisionId,
                   expectedActiveSourceContentHash: uploadedSourceContentHash,
                   sourceHashResolvedByImporter: incrementalSeriesAppend || undefined,
                   collectionRemoteId: collection.remoteId,
-                  importedRemoteRevision: link.importedRemoteRevision,
-                  importedSourceContentHash: link.importedSourceContentHash,
+                  importedRemoteRevision: remoteRevision,
+                  importedSourceContentHash: sourceHash,
                 },
-              }),
+              });
+            });
+            const nextStagedLinks = [...stagedByKey.values()];
+            previousLinks = relatedLinks;
+            await acquireExternalSourcePendingLinks(optionsRef.current.state, nextStagedLinks);
+            stagedLinks = nextStagedLinks;
+            const controller = optionsRef.current.importService.importFile(
+              {
+                file: aggregate,
+                encoding: 'auto',
+                chapterSplitMode: 'auto',
+                clientBookId: localBookId,
+                ...(incrementalSeriesAppend
+                  ? {
+                      importMode: 'append_image_series' as const,
+                      baseActiveContentRevisionId: existingNovel?.activeContentRevisionId,
+                    }
+                  : {}),
+                ...(optionsRef.current.importService.supportsExpectedSourceContentHash
+                  ? { expectedSourceContentHash: uploadedSourceContentHash }
+                  : {}),
+              },
+              (progressDetail) => {
+                if (!mountedRef.current) return;
+                setProgress({
+                  current: batchIndex + 1,
+                  total: importable.length,
+                  completed: changedCount,
+                  failed: 0,
+                  linkedExisting: revisionChecked,
+                  fileName: collection.title,
+                  phase: 'importing',
+                  detail: progressDetail,
+                });
+              },
             );
-          checked.forEach(({ item, sourceHash, remoteRevision, existingLink }) => {
-            stagedByKey.set(externalItemKeyId(item.key), {
-              ...(existingLink ?? {
+            importRef.current = controller;
+            if (abort.signal.aborted) controller.cancel();
+            const result = await controller.promise;
+            importRef.current = undefined;
+            contentApplied = true;
+            changedCount += downloadedChapters.length;
+            importedNovel = (await optionsRef.current.getNovel(result.novel.id).catch(() => undefined)) ?? result.novel;
+          } else {
+            importedNovel = existingNovel;
+          }
+          if (!importedNovel) throw new Error('가져온 연재 작품을 확인하지 못했습니다.');
+
+          const linkedAt = currentIso();
+          let nextLinks: readonly ExternalSourceLink[];
+          if (stagedLinks.length > 0) {
+            nextLinks = incrementalSeriesAppend
+              ? await finalizeImporterResolvedExternalSourceLinks(optionsRef.current.state, stagedLinks, importedNovel)
+              : await finalizeExternalSourceLinks(optionsRef.current.state, stagedLinks, importedNovel);
+          } else {
+            const byKey = new Map<string, ExternalSourceLink>();
+            relatedLinks
+              .filter((link) => link.localBookId === importedNovel!.id)
+              .forEach((link) =>
+                byKey.set(externalItemKeyId(link.source), {
+                  ...link,
+                  collectionRemoteId: collection.remoteId,
+                  activeContentRevisionId: importedNovel!.activeContentRevisionId,
+                  lastCheckedAt: linkedAt,
+                }),
+              );
+            checked.forEach(({ item, sourceHash, remoteRevision, existingLink }) => {
+              byKey.set(externalItemKeyId(item.key), {
                 id: externalSourceLinkId(item.key),
                 source: item.key,
-                localBookId,
-                linkedAt: stagedAt,
-              }),
-              localBookId,
-              collectionRemoteId: collection.remoteId,
-              pendingImport: {
-                operationId,
-                stagedAt,
-                hadExistingLink: Boolean(existingLink),
-                previousActiveContentRevisionId: existingNovel?.activeContentRevisionId,
-                expectedActiveSourceContentHash: uploadedSourceContentHash,
-                sourceHashResolvedByImporter: incrementalSeriesAppend || undefined,
+                localBookId: importedNovel!.id,
                 collectionRemoteId: collection.remoteId,
                 importedRemoteRevision: remoteRevision,
                 importedSourceContentHash: sourceHash,
-              },
-            });
-          });
-          const nextStagedLinks = [...stagedByKey.values()];
-          previousLinks = relatedLinks;
-          await acquireExternalSourcePendingLinks(optionsRef.current.state, nextStagedLinks);
-          stagedLinks = nextStagedLinks;
-          const controller = optionsRef.current.importService.importFile(
-            {
-              file: aggregate,
-              encoding: 'auto',
-              chapterSplitMode: 'auto',
-              clientBookId: localBookId,
-              ...(incrementalSeriesAppend
-                ? {
-                    importMode: 'append_image_series' as const,
-                    baseActiveContentRevisionId: existingNovel?.activeContentRevisionId,
-                  }
-                : {}),
-              ...(optionsRef.current.importService.supportsExpectedSourceContentHash
-                ? { expectedSourceContentHash: uploadedSourceContentHash }
-                : {}),
-            },
-            (progressDetail) => {
-              if (!mountedRef.current) return;
-              setProgress({
-                current: importable.length,
-                total: importable.length,
-                completed: 0,
-                failed: 0,
-                linkedExisting: revisionChecked,
-                fileName: collection.title,
-                phase: 'importing',
-                detail: progressDetail,
-              });
-            },
-          );
-          importRef.current = controller;
-          const result = await controller.promise;
-          importRef.current = undefined;
-          contentApplied = true;
-          importedNovel = (await optionsRef.current.getNovel(result.novel.id).catch(() => undefined)) ?? result.novel;
-        } else {
-          importedNovel = existingNovel;
-        }
-        if (!importedNovel) throw new Error('가져온 연재 작품을 확인하지 못했습니다.');
-
-        const linkedAt = currentIso();
-        let nextLinks: readonly ExternalSourceLink[];
-        if (stagedLinks.length > 0) {
-          nextLinks = incrementalSeriesAppend
-            ? await finalizeImporterResolvedExternalSourceLinks(optionsRef.current.state, stagedLinks, importedNovel)
-            : await finalizeExternalSourceLinks(optionsRef.current.state, stagedLinks, importedNovel);
-        } else {
-          const byKey = new Map<string, ExternalSourceLink>();
-          relatedLinks
-            .filter((link) => link.localBookId === importedNovel!.id)
-            .forEach((link) =>
-              byKey.set(externalItemKeyId(link.source), {
-                ...link,
-                collectionRemoteId: collection.remoteId,
                 activeContentRevisionId: importedNovel!.activeContentRevisionId,
+                linkedAt: existingLink?.linkedAt ?? linkedAt,
                 lastCheckedAt: linkedAt,
-              }),
-            );
-          checked.forEach(({ item, sourceHash, remoteRevision, existingLink }) => {
-            byKey.set(externalItemKeyId(item.key), {
-              id: externalSourceLinkId(item.key),
-              source: item.key,
-              localBookId: importedNovel!.id,
-              collectionRemoteId: collection.remoteId,
-              importedRemoteRevision: remoteRevision,
-              importedSourceContentHash: sourceHash,
-              activeContentRevisionId: importedNovel!.activeContentRevisionId,
-              linkedAt: existingLink?.linkedAt ?? linkedAt,
-              lastCheckedAt: linkedAt,
+              });
             });
-          });
-          nextLinks = [...byKey.values()];
-          await saveExternalSourceLinks(optionsRef.current.state, nextLinks);
-        }
-        await acknowledgeImportedReleaseIds(
-          sourceId,
-          importable[0]!.key.accountConnectionId,
-          collection.remoteId,
-          [...checked.values()].map(({ item }) => item.key.remoteId),
-        );
+            nextLinks = [...byKey.values()];
+            await saveExternalSourceLinks(optionsRef.current.state, nextLinks);
+          }
+          await acknowledgeImportedReleaseIds(
+            sourceId,
+            importable[0]!.key.accountConnectionId,
+            collection.remoteId,
+            [...checked.values()].map(({ item }) => item.key.remoteId),
+          );
 
-        let coverWarning: string | undefined;
-        if (downloadedChapters.length > 0 && sourceThumbnailUrl) {
-          try {
-            await persistSourceCover(optionsRef.current.assets, importedNovel, sourceThumbnailUrl);
-          } catch (error) {
-            coverWarning = error instanceof Error ? error.message : '원격 표지를 저장하지 못했습니다.';
+          completedKeys.add(externalItemKeyId(selectedItem.key));
+          const nextKeys = new Set(nextLinks.map((link) => externalItemKeyId(link.source)));
+          knownLinks = [...knownLinks.filter((link) => !nextKeys.has(externalItemKeyId(link.source))), ...nextLinks];
+          knownNovels = [...knownNovels.filter((novel) => novel.id !== importedNovel!.id), importedNovel];
+          if (!coverAttempted && downloadedChapters.length > 0 && sourceThumbnailUrl) {
+            coverAttempted = true;
+            try {
+              await persistSourceCover(optionsRef.current.assets, importedNovel, sourceThumbnailUrl);
+            } catch (error) {
+              coverWarning = error instanceof Error ? error.message : '원격 표지를 저장하지 못했습니다.';
+            }
           }
         }
         await optionsRef.current.onLibraryChanged();
         await refreshLocalProjection(sourceId);
-        setSelectedKeys(new Set());
+        setSelectedKeys((current) => new Set([...current].filter((key) => !completedKeys.has(key))));
         const importedMessage =
-          downloadedChapters.length > 0
-            ? `${collection.title}에 ${downloadedChapters.length}개 회차를 추가하거나 갱신했습니다.${revisionChecked > 0 ? ` ${revisionChecked}개 회차는 원문이 같아 연결 revision만 갱신했습니다.` : ''}`
+          changedCount > 0
+            ? `${collection.title}에 ${changedCount}개 회차를 추가하거나 갱신했습니다.${revisionChecked > 0 ? ` ${revisionChecked}개 회차는 원문이 같아 연결 revision만 갱신했습니다.` : ''}`
             : `${revisionChecked}개 회차는 원문이 같아 연결 revision만 갱신했습니다.`;
         optionsRef.current.notify(
           coverWarning ? `${importedMessage} 표지는 저장하지 못했습니다. ${coverWarning}` : importedMessage,
@@ -1449,16 +1467,22 @@ export function useExternalSourceController(options: UseExternalSourceController
         if (!contentApplied && stagedLinks.length > 0) {
           await restoreExternalSourceLinks(optionsRef.current.state, stagedLinks, previousLinks).catch(() => undefined);
         }
+        if (changedCount > 0 || completedKeys.size > 0) {
+          await optionsRef.current.onLibraryChanged().catch(() => undefined);
+          await refreshLocalProjection(sourceId).catch(() => undefined);
+          setSelectedKeys((current) => new Set([...current].filter((key) => !completedKeys.has(key))));
+        }
         optionsRef.current.notify(
-          contentApplied
-            ? `연재 본문 적용은 완료했으며 소스 연결은 다음 새로고침에서 복구합니다. ${
-                error instanceof Error ? error.message : String(error || '')
-              }`.trim()
-            : isAbort(error)
-              ? '가져오기를 취소했습니다. 기존 연재 작품과 연결은 유지됩니다.'
-              : `연재 작품을 적용하지 못해 기존 본문과 연결을 유지했습니다. ${
+          (changedCount > 0 ? `${changedCount}개 회차는 저장되었습니다. ` : '') +
+            (contentApplied
+              ? `연재 본문 적용은 완료했으며 소스 연결은 다음 새로고침에서 복구합니다. ${
                   error instanceof Error ? error.message : String(error || '')
-                }`.trim(),
+                }`.trim()
+              : isAbort(error)
+                ? '가져오기를 취소했습니다. 기존 연재 작품과 연결은 유지됩니다.'
+                : `연재 작품을 적용하지 못해 기존 본문과 연결을 유지했습니다. ${
+                    error instanceof Error ? error.message : String(error || '')
+                  }`.trim()),
           'warning',
         );
       } finally {

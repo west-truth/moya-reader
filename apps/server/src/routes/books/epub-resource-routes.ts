@@ -11,7 +11,7 @@ interface ResourceRow {
   content_type: string;
   byte_length: string | number;
   content_hash: string;
-  kind: 'epub_resource' | 'document_page';
+  kind: 'epub_resource' | 'document_page' | 'source_part';
   page_index: number | null;
 }
 
@@ -29,8 +29,9 @@ export async function registerEpubResourceRoutes(
                 asset.byte_length, asset.content_hash, asset.kind, asset.page_index
            from book_assets asset
            join library_books book on book.id = asset.book_id and book.user_id = asset.user_id
-          where asset.id = $1 and asset.book_id = $2 and asset.user_id = $3
-            and asset.kind in ('epub_resource', 'document_page') and asset.status = 'active'`,
+          where (asset.id = $1 or (asset.kind = 'source_part' and asset.content_hash = $1))
+            and asset.book_id = $2 and asset.user_id = $3
+            and asset.kind in ('epub_resource', 'document_page', 'source_part') and asset.status = 'active'`,
         [request.params.assetId, request.params.bookId, config.defaultUserId],
       );
       const resource = result.rows[0];

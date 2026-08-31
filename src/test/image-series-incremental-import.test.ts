@@ -148,7 +148,7 @@ describe('browser image-series incremental import', () => {
     expect((await reader.getNovel(bookId))?.activeContentRevisionId).toBe(revisionAfterAppend);
   });
 
-  it('retries concurrent delta appends so both chapters survive without leaking active pages', async () => {
+  it('serializes concurrent part staging so both chapters survive without leaking active pages', async () => {
     const bookId = 'local-image-series-concurrent-book';
     const initial = await archive([await release('local_series_release_1', 1)]);
     await runBrowserFixedDocumentImportPipeline(pipelineInput(initial, bookId));
@@ -162,26 +162,12 @@ describe('browser image-series incremental import', () => {
       archive([await release('local_series_release_3', 3)]),
     ]);
 
-    // Both append operations reach the fixed-document replacement boundary only
-    // after reading and merging the same active snapshot. One activation must
-    // therefore lose the CAS race and exercise the bounded retry path.
-    let fixedPasses = 0;
-    let releaseFirstPasses: (() => void) | undefined;
-    const firstPassesReady = new Promise<void>((resolve) => {
-      releaseFirstPasses = resolve;
-    });
-    const synchronizeFirstFixedPasses = async () => {
-      fixedPasses += 1;
-      if (fixedPasses === 2) releaseFirstPasses?.();
-      if (fixedPasses <= 2) await firstPassesReady;
-    };
     const append = async (delta: File) =>
       runBrowserFixedDocumentImportPipeline({
         ...pipelineInput(delta, bookId),
         importMode: 'append_image_series',
         baseActiveContentRevisionId: before.activeContentRevisionId,
         expectedSourceContentHash: integrityHash(new Uint8Array(await delta.arrayBuffer())),
-        yieldControl: synchronizeFirstFixedPasses,
       });
 
     await Promise.all([append(secondChapter), append(thirdChapter)]);
@@ -191,7 +177,6 @@ describe('browser image-series incremental import', () => {
     const exported = (await assets.exportSource(bookId))!;
     const manifest = await readSeriesImageArchiveManifest(exported.blob);
     const pages = await activeDocumentPages(bookId);
-    expect(fixedPasses).toBeGreaterThanOrEqual(3);
     expect(manifest?.chapters.map((chapter) => chapter.remoteId)).toEqual([
       'local_series_release_1',
       'local_series_release_2',

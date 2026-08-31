@@ -1966,7 +1966,8 @@ export default function App() {
         return;
       }
       try {
-        const source = await bookAssetRepository.exportSource(novel.id);
+        const { exportPortableBookSource } = await import('./repositories/comic-source-export');
+        const source = await exportPortableBookSource(bookAssetRepository, novel.id);
         if (!source) {
           showToast('보관된 원본 파일이 없습니다. 원본을 다시 가져와 보강하세요.', 'warning');
           return;
