@@ -288,18 +288,21 @@ export class BookWorkspaceController {
     await this.openChapterForNavigation(chapter, { restore, novel, position }, generation);
   };
 
-  readonly returnToChapters = (): void => {
-    this.beginNavigation();
+  readonly returnToChapters = async (): Promise<void> => {
+    const generation = this.beginNavigation();
     this.ports.transition.stopReaderTTS();
-    void this.ports.transition.flushReaderSession();
+    await this.ports.transition.flushReaderSession();
+    if (!this.navigationIsCurrent(generation)) return;
     this.updateState({ view: 'chapters' });
   };
 
-  readonly saveFixedDocumentPage = async (pageIndex: number): Promise<void> => {
-    const novel = this.state.selectedNovel;
-    const chapter = [...this.state.chapters].sort((left, right) => left.index - right.index)[pageIndex];
+  readonly saveFixedDocumentPage = async (
+    pageIndex: number,
+    chapter = [...this.state.chapters].sort((left, right) => left.index - right.index)[pageIndex],
+    novel = this.state.selectedNovel,
+  ): Promise<void> => {
     if (!novel || !chapter || !isFixedDocumentFormat(novel.format)) return;
-    const progress = (pageIndex + 1) / this.state.chapters.length;
+    const progress = (pageIndex + 1) / Math.max(1, novel.totalChapters);
     try {
       await this.ports.repository.saveReadingPosition({
         novelId: novel.id,
@@ -312,8 +315,14 @@ export class BookWorkspaceController {
         offsetInParagraph: 0,
       });
       const updatedAt = new Date().toISOString();
+      // A slow response from the previous book must not replace the new selection.
+      if (
+        this.state.selectedNovel?.id !== novel.id ||
+        this.state.selectedNovel.activeContentRevisionId !== novel.activeContentRevisionId
+      )
+        return;
       const updatedNovel: Novel = {
-        ...novel,
+        ...this.state.selectedNovel,
         lastReadChapterId: chapter.id,
         lastReadChapterIndex: chapter.index,
         lastReadOffset: pageIndex,
@@ -323,6 +332,7 @@ export class BookWorkspaceController {
       };
       this.updateState({
         currentChapter: chapter,
+        chapters: this.markReadChapters(chapter, updatedAt),
         localReadingPosition: {
           id: `reading_position_${novel.id}`,
           novelId: novel.id,
@@ -490,6 +500,7 @@ export class BookWorkspaceController {
           remoteReadingPosition: undefined,
           localReadingPosition: readingPosition,
           selectedNovel: freshNovel ?? novel,
+          chapters: this.state.chapters.map((chapter) => ({ ...chapter, documentSectionReadAt: undefined })),
         });
       }
       this.ports.environment.notify('읽은 위치와 진행률을 초기화했습니다.', 'success');
@@ -532,6 +543,7 @@ export class BookWorkspaceController {
           remoteReadingPosition: undefined,
           localReadingPosition: readingPosition,
           selectedNovel: freshNovel ?? novel,
+          chapters: this.markReadChapters(chapter, new Date().toISOString()),
         });
       }
       this.ports.environment.notify(successMessage, 'success');
@@ -609,6 +621,7 @@ export class BookWorkspaceController {
     };
     this.updateState({
       readerProgress: location.progress,
+      chapters: this.markReadChapters(chapter, updatedAt),
       localReadingPosition: position,
       selectedNovel: {
         ...novel,
@@ -631,6 +644,21 @@ export class BookWorkspaceController {
     }
     this.ports.environment.notify('읽기 위치를 저장하지 못했습니다.', 'warning');
   };
+
+  private markReadChapters(chapter: Chapter, readAt: string): Chapter[] {
+    if (this.state.chapters.find((candidate) => candidate.id === chapter.id)?.documentSectionReadAt) {
+      return this.state.chapters;
+    }
+    return this.state.chapters.map((candidate) =>
+      (
+        chapter.documentSectionId
+          ? candidate.documentSectionId === chapter.documentSectionId
+          : candidate.id === chapter.id
+      )
+        ? { ...candidate, documentSectionReadAt: candidate.documentSectionReadAt ?? readAt }
+        : candidate,
+    );
+  }
 
   readonly commitSessionTime = (novelId: string, deltaSeconds: number, readAt: string): void => {
     const applyReadingTime = (novel: Novel): Novel =>

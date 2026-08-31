@@ -139,6 +139,7 @@ export async function registerBookCatalogRoutes(
       sort?: 'recent' | 'title' | 'added';
       cursor?: string;
       limit?: string;
+      includeTrash?: string;
     };
   }>('/api/books', async (request, reply) => {
     const query = request.query ?? {};
@@ -151,7 +152,15 @@ export async function registerBookCatalogRoutes(
       return reply.code(400).send({ error: 'invalid library sort' });
     }
     const values: unknown[] = [config.defaultUserId];
-    const conditions = ['b.user_id = $1', 'b.deleted_at is null'];
+    const includeTrash = query.includeTrash === 'true';
+    const conditions = ['b.user_id = $1'];
+    if (!includeTrash) conditions.push('b.deleted_at is null');
+    // Cleanup callers need stable membership paging, not a progress-sorted offset
+    // that can skip existing books when earlier rows are removed between pages.
+    if (includeTrash && query.cursor) {
+      values.push(query.cursor);
+      conditions.push(`b.id > $${values.length}`);
+    }
     if (query.shelfId) {
       values.push(query.shelfId);
       conditions.push(
@@ -169,13 +178,14 @@ export async function registerBookCatalogRoutes(
     if (query.filter === 'reading') conditions.push(`rp.chapter_id is not null and (${catalogBookProgress}) < 0.995`);
     if (query.filter === 'finished') conditions.push(`(${catalogBookProgress}) >= 0.995`);
     if (query.filter === 'unread') conditions.push('rp.chapter_id is null');
-    const orderBy =
-      query.sort === 'title'
+    const orderBy = includeTrash
+      ? 'b.id'
+      : query.sort === 'title'
         ? 'lower(b.title), b.id'
         : query.sort === 'added'
           ? 'b.created_at desc, b.id'
           : 'greatest(b.updated_at, coalesce(rp.updated_at, b.updated_at)) desc, b.id';
-    values.push(limit + 1, cursor);
+    values.push(limit + 1, includeTrash ? 0 : cursor);
     const result = await pool.query(
       `${catalogSelect}
        where ${conditions.join(' and ')}
@@ -186,7 +196,8 @@ export async function registerBookCatalogRoutes(
     const hasMore = result.rows.length > limit;
     return {
       books: mapBookCatalogRows(result.rows.slice(0, limit)),
-      nextCursor: hasMore ? String(cursor + limit) : undefined,
+      nextCursor: hasMore ? (includeTrash ? String(result.rows[limit - 1].id) : String(cursor + limit)) : undefined,
+      ...(includeTrash ? { includesTrash: true } : {}),
     };
   });
 

@@ -3,6 +3,12 @@ import { buildBookWorkspaceProjection } from './book-workspace-projection';
 import { testChapter, testNovel, testPosition, testWorkspaceState } from './book-workspace-test-fixtures';
 
 describe('book workspace projection', () => {
+  it('does not display the parser default first chapter as an actual read', () => {
+    const chapters = [testChapter(1), testChapter(2)];
+    const selectedNovel = testNovel({ lastReadChapterId: chapters[0]!.id });
+    const projection = buildBookWorkspaceProjection(testWorkspaceState({ selectedNovel, chapters }), new Map());
+    expect(projection.chapterList.rows.every((row) => !row.isRead && !row.isCurrent)).toBe(true);
+  });
   it('projects library filters, chapter rows, and the persisted reading position from one state boundary', () => {
     const chapters = [testChapter(1), testChapter(2), testChapter(3)];
     const selectedNovel = testNovel({

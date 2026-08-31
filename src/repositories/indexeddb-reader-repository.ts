@@ -107,8 +107,8 @@ export class IndexedDbReaderRepository
     parsedNovelImport: 'snapshot',
   } as const;
 
-  listNovels(): Promise<Novel[]> {
-    return getNovels();
+  listNovels(options?: { includeTrash?: boolean }): Promise<Novel[]> {
+    return getNovels(options);
   }
 
   getNovel(id: string): Promise<Novel | undefined> {

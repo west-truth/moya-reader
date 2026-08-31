@@ -36,7 +36,7 @@ import type { ReaderSearchPage, ReaderSearchPageRequest } from './reader-query-c
 import type { ResourceMutationOptions } from '../domain/resource-revisions';
 
 export interface LibraryQueries {
-  listNovels(): Promise<Novel[]>;
+  listNovels(options?: { includeTrash?: boolean }): Promise<Novel[]>;
   getNovel(id: string): Promise<Novel | undefined>;
   listChapters(novelId: string): Promise<Chapter[]>;
 }

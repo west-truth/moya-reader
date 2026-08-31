@@ -1321,15 +1321,15 @@ export default function App() {
     state: externalSourceState,
     importService,
     assets: bookAssetRepository,
-    supportsExactDocumentSectionReadMarkers: readerRuntime.mode === 'remote',
     extensionRevision: extensionRevision + externalSourceBrokerRevision,
+    libraryRevision: cloudVaultMutationRevisions.library,
     getNovel: (id) => readerRepository.getNovel(id),
     listChapters: (novelId) => readerRepository.listChapters(novelId),
     openNovel: (novel, target) =>
       target?.documentSectionId
         ? bookWorkspace.openDocumentSection(novel, target.documentSectionId, target.documentSectionTitle)
         : bookWorkspace.openNovel(novel),
-    listNovels: () => readerRepository.listNovels(),
+    listNovels: (options) => readerRepository.listNovels(options),
     onLibraryChanged: async () => {
       await refreshNovels();
       await refreshAfterLocalMutation();

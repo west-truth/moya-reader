@@ -302,6 +302,7 @@ function VirtualizedReaderViewportComponent({
       screenHandle.getActions().locationCommitted(nextLocation, nextBookProgress, updatedAt),
     onPersistenceFailed: (error) => screenHandle.getActions().locationPersistenceFailed(error),
   });
+  const recordVisibleLocation = progress.handleScroll;
 
   const scrollToParagraphIndex = useCallback(
     async (index: number, align: 'start' | 'center' | 'end' = 'center', behavior: ScrollBehavior = 'smooth') => {
@@ -515,7 +516,11 @@ function VirtualizedReaderViewportComponent({
   apiRef.current = {
     flow: 'scroll',
     resetContent: pages.reset,
-    flushPosition: progress.flush,
+    flushPosition: async () => {
+      // Opening a chapter is read activity even when no scroll event occurred.
+      if (isActive) recordVisibleLocation();
+      await progress.flush();
+    },
     scrollToParagraph,
     scrollToParagraphIndex,
     scrubTo,
@@ -645,6 +650,7 @@ function VirtualizedReaderViewportComponent({
     const acknowledgeOpen = () => {
       appliedOpenSequenceRef.current = openRequest.sequence;
       screenHandle.acknowledgeOpen(openRequest.sequence);
+      if (isActive) recordVisibleLocation();
     };
     const restore = async () => {
       const explicitParagraph = openRequest.targetParagraphId
@@ -682,7 +688,16 @@ function VirtualizedReaderViewportComponent({
       cancelled = true;
       window.clearTimeout(timer);
     };
-  }, [chapter, loadParagraphIndexes, openRequest, repository, screenHandle, virtualizer]);
+  }, [
+    chapter,
+    loadParagraphIndexes,
+    openRequest,
+    repository,
+    screenHandle,
+    virtualizer,
+    isActive,
+    recordVisibleLocation,
+  ]);
 
   const failedRows = new Set<number>();
   const failedPages = new Set<number>();

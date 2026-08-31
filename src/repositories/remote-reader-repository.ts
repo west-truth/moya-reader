@@ -153,8 +153,8 @@ export class RemoteReaderRepository implements ReaderRepository {
     private readonly deviceId: string = DEFAULT_REMOTE_DEVICE_ID,
   ) {}
 
-  async listNovels(): Promise<Novel[]> {
-    const response = await this.client.listBooks();
+  async listNovels(options?: { includeTrash?: boolean }): Promise<Novel[]> {
+    const response = await this.client.listBooks(options);
     return response.books.map(mapServerBook);
   }
 

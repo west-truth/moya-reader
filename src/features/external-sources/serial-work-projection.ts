@@ -8,11 +8,6 @@ import { parseSerialReleaseName } from '../../domain/serial-release-name';
 
 export type SerialReleaseReadingState = 'current' | 'read' | 'unread';
 
-export interface SerialReleaseReadingStateOptions {
-  /** Local archives have no durable section-state store and retain the legacy ordered fallback. */
-  readonly allowSequentialFallback?: boolean;
-}
-
 function normalizedSectionTitle(value: string): string {
   return value.normalize('NFKC').replace(/\s+/gu, ' ').trim().toLocaleLowerCase();
 }
@@ -72,17 +67,22 @@ export function projectLocalSeriesReadingStates(
   novel: Novel,
   chapters: readonly Chapter[],
   remoteItems: readonly ExternalItemSummary[] = [],
-  options: SerialReleaseReadingStateOptions = {},
 ): ReadonlyMap<string, SerialReleaseReadingState> {
   const orderedChapters = [...chapters].sort((left, right) => left.index - right.index);
   const hasDocumentSections = orderedChapters.some((chapter) => Boolean(chapter.documentSectionId));
   const legacySectionId = `local-legacy:${novel.id}`;
   const remoteIds = remoteSectionIdsByTitle(remoteItems);
   const sectionId = (chapter: Chapter): string | undefined => {
-    if (chapter.documentSectionId) return chapter.documentSectionId;
+    if (chapter.documentSectionId && !chapter.documentSectionId.startsWith(`local-section:${novel.id}:`)) {
+      return chapter.documentSectionId;
+    }
     const legacyTitle = chapter.documentSectionTitle ?? legacyFixedDocumentSectionTitle(chapter.title);
     if (legacyTitle) {
-      return remoteIds.get(normalizedSectionTitle(legacyTitle)) ?? legacyLocalSectionId(novel.id, chapter, legacyTitle);
+      return (
+        remoteIds.get(normalizedSectionTitle(legacyTitle)) ??
+        chapter.documentSectionId ??
+        legacyLocalSectionId(novel.id, chapter, legacyTitle)
+      );
     }
     return !hasDocumentSections && novel.format === 'image_archive' ? legacySectionId : undefined;
   };
@@ -99,7 +99,6 @@ export function projectLocalSeriesReadingStates(
   if (sectionIds.length === 0) return new Map();
 
   const hasReadActivity = Boolean(
-    novel.lastReadChapterId ||
     novel.lastReadChapterIndex !== undefined ||
     novel.lastReadProgress > 0 ||
     novel.lastReadAt,
@@ -109,16 +108,8 @@ export function projectLocalSeriesReadingStates(
       orderedChapters.find((chapter) => chapter.index === novel.lastReadChapterIndex))
     : undefined;
   const currentSectionId = currentChapter ? sectionId(currentChapter) : undefined;
-  const hasDurableSectionMarkers = [...sectionReadAt.values()].some(Boolean);
-  const currentSectionIndex = currentSectionId ? sectionIds.indexOf(currentSectionId) : -1;
   return new Map(
-    sectionIds.map((sectionId, index) => {
-      if (options.allowSequentialFallback !== false && !hasDurableSectionMarkers && currentSectionIndex >= 0) {
-        return [
-          sectionId,
-          index < currentSectionIndex ? 'read' : index === currentSectionIndex ? 'current' : 'unread',
-        ] as const;
-      }
+    sectionIds.map((sectionId) => {
       return [
         sectionId,
         sectionId === currentSectionId ? 'current' : sectionReadAt.get(sectionId) ? 'read' : 'unread',

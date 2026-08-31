@@ -60,7 +60,9 @@ type BookWorkspaceReadingState = Pick<BookWorkspaceState, 'chapters' | 'localRea
 
 export function buildBookWorkspaceReadingProjection(state: BookWorkspaceReadingState): BookWorkspaceReadingProjection {
   const { chapters, localReadingPosition, selectedNovel } = state;
-  const readChapterId = localReadingPosition?.chapterId ?? selectedNovel?.lastReadChapterId;
+  const readChapterId =
+    localReadingPosition?.chapterId ??
+    (selectedNovel && hasNovelReadActivity(selectedNovel) ? selectedNovel.lastReadChapterId : undefined);
   const readChapter = readChapterId ? chapters.find((chapter) => chapter.id === readChapterId) : undefined;
   const readChapterProgress =
     selectedNovel && readChapter
@@ -85,13 +87,9 @@ export function buildBookWorkspaceReadingProjection(state: BookWorkspaceReadingS
       ? readChapter
       : sortedChapters[0]
     : undefined;
-  const firstUnreadChapter = !selectedNovel
-    ? undefined
-    : !hasNovelReadActivity(selectedNovel) || !readChapter
-      ? sortedChapters[0]
-      : readChapterProgress < 0.995
-        ? readChapter
-        : sortedChapters.find((chapter) => chapter.index > readChapter.index);
+  const firstUnreadChapter = selectedNovel
+    ? sortedChapters.find((chapter) => !chapter.documentSectionReadAt)
+    : undefined;
 
   return {
     readChapter,

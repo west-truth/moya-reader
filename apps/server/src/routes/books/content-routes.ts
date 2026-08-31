@@ -71,7 +71,7 @@ export async function registerBookContentRoutes(
         left join fixed_document_section_read_states section_state
           on section_state.book_id = c.book_id
          and section_state.user_id = $2
-         and section_state.document_section_id = c.document_section_id
+         and section_state.document_section_id = coalesce(c.document_section_id, c.id)
         where c.book_id = $1
         order by c.chapter_index asc
       `,
@@ -93,7 +93,7 @@ export async function registerBookContentRoutes(
         left join fixed_document_section_read_states section_state
           on section_state.book_id = c.book_id
          and section_state.user_id = b.user_id
-         and section_state.document_section_id = c.document_section_id
+         and section_state.document_section_id = coalesce(c.document_section_id, c.id)
         where c.id = $1 and b.user_id = $2 and b.deleted_at is null
       `,
       [request.params.chapterId, config.defaultUserId],

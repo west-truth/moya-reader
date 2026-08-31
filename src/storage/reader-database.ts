@@ -32,7 +32,8 @@ import { READER_PAGE_MAP_STORE, upgradeReaderPageMapStore } from './reader-page-
 import { BOOK_ENRICHMENT_STORES, upgradeBookEnrichmentStores } from './book-enrichment-schema';
 
 export const READER_DB_NAME = 'noveldesk-reader';
-export const READER_DB_VERSION = 38;
+// Keep the additive schema shipped before rollback: IndexedDB cannot open a lower version.
+export const READER_DB_VERSION = 39;
 
 export type ReaderStoreName =
   | 'novels'
@@ -215,6 +216,11 @@ function upgrade(db: IDBDatabase, transaction: IDBTransaction, oldVersion: numbe
     const store = createStore(db, 'chapters');
     store.createIndex('novelId', 'novelId');
   }
+  ensureIndex(transaction.objectStore('chapters'), 'novelId_documentSectionId', ['novelId', 'documentSectionId']);
+  ensureIndex(transaction.objectStore('chapters'), 'novelId_documentSectionReadAt', [
+    'novelId',
+    'documentSectionReadAt',
+  ]);
   if (!db.objectStoreNames.contains('paragraphs')) {
     const store = createStore(db, 'paragraphs');
     store.createIndex('novelId', 'novelId');

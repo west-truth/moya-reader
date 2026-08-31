@@ -1,3 +1,4 @@
+import 'fake-indexeddb/auto';
 import { act, create, type ReactTestRenderer } from 'react-test-renderer';
 import { describe, expect, it, vi } from 'vitest';
 import { BlobWriter, Uint8ArrayReader, ZipWriter } from '@zip.js/zip.js';
@@ -11,6 +12,11 @@ import type {
   ExternalSourceDefaultFolder,
   ExternalSourceLocalState,
   ExternalSourceSubscriptionRecord,
+} from '../../external-sources/local-state';
+import {
+  ExternalSourceLocalStateStore,
+  externalSourceSubscriptionId,
+  resetExternalSourceLocalStateForTests,
 } from '../../external-sources/local-state';
 import type { ImportService } from '../../services/import/import-service';
 import type { BookAssetRepository } from '../../repositories/book-asset-repository';
@@ -74,11 +80,12 @@ async function createHarness(input: {
   downloadedFile?: File;
   downloadGate?: Promise<void>;
   assets?: BookAssetRepository;
-  supportsExactDocumentSectionReadMarkers?: boolean;
   supportsIncrementalImageSeriesAppend?: boolean;
   supportsExpectedSourceContentHash?: boolean;
   novelOverrides?: Partial<Novel>;
   initialLinkOverrides?: Partial<ExternalSourceLink>;
+  libraryBooks?: () => Promise<Novel[]>;
+  sourceState?: ExternalSourceLocalState;
 }) {
   const oldContent = '기존 원격 원문';
   const oldHash = await sha256(oldContent);
@@ -224,20 +231,20 @@ async function createHarness(input: {
   const openNovel = vi.fn();
   const onLibraryChanged = vi.fn(async () => undefined);
   let controller!: ExternalSourceController;
-  function Harness() {
+  function Harness({ libraryRevision = 0 }: { libraryRevision?: number }) {
     controller = useExternalSourceController({
       registry,
       hostContext: { brokers: { get: () => undefined } },
-      state,
+      state: input.sourceState ?? state,
       importService: {
         importFile,
         supportsIncrementalImageSeriesAppend: input.supportsIncrementalImageSeriesAppend,
         supportsExpectedSourceContentHash: input.supportsExpectedSourceContentHash,
       },
       assets: input.assets,
-      supportsExactDocumentSectionReadMarkers: input.supportsExactDocumentSectionReadMarkers,
       extensionRevision: 0,
-      listNovels: async () => (input.localBookMissing ? [] : [currentNovel]),
+      libraryRevision,
+      listNovels: input.libraryBooks ?? (async () => (input.localBookMissing ? [] : [currentNovel])),
       listChapters: async () => input.chapters ?? [],
       getNovel: async (id) => {
         if (input.getNovelErrorAfterImport && latestImportedNovel?.id === id) {
@@ -286,6 +293,9 @@ async function createHarness(input: {
       return catalogPreference;
     },
     renderer,
+    refreshLibrary: async (libraryRevision: number) => {
+      await act(async () => renderer.update(<Harness libraryRevision={libraryRevision} />));
+    },
     oldHash,
   };
 }
@@ -303,6 +313,105 @@ async function singlePageComicFile(): Promise<File> {
 }
 
 describe('useExternalSourceController remote updates', () => {
+  it('updates Library cards after purge without a reload, and does not clean up on a failed catalog read', async () => {
+    await resetExternalSourceLocalStateForTests();
+    const sourceState = new ExternalSourceLocalStateStore();
+    const book = novel();
+    let books = [book];
+    let unavailable = false;
+    const savedLink: ExternalSourceLink = {
+      id: 'persisted-link',
+      source: ITEM_KEY,
+      localBookId: book.id,
+      collectionRemoteId: 'manga:1',
+      linkedAt: new Date().toISOString(),
+    };
+    const subscription: ExternalSourceSubscriptionRecord = {
+      id: externalSourceSubscriptionId(SOURCE_ID, ITEM_KEY.accountConnectionId, 'manga:1'),
+      connectorId: SOURCE_ID,
+      accountConnectionId: ITEM_KEY.accountConnectionId,
+      collectionRemoteId: 'manga:1',
+      navigationRef: 'manga:1',
+      title: 'Fixture',
+      knownReleaseIds: ['work-1'],
+      newReleaseIds: [],
+      availableReleaseCount: 1,
+      lastCheckedAt: savedLink.linkedAt,
+      createdAt: savedLink.linkedAt,
+      updatedAt: savedLink.linkedAt,
+      schemaVersion: 1,
+    };
+    await sourceState.saveLink(savedLink);
+    await sourceState.saveSubscription(subscription);
+    const harness = await createHarness({
+      serial: true,
+      sourceState,
+      downloadedContent: '',
+      libraryBooks: async () => {
+        if (unavailable) throw new Error('fixture server offline');
+        return books;
+      },
+    });
+    expect(harness.controller.libraryWorks).toHaveLength(1);
+    books = [{ ...book, deletedAt: '2026-08-31' }];
+    await harness.refreshLibrary(1);
+    await vi.waitFor(() => expect(harness.controller.libraryWorks).toHaveLength(0));
+    expect(await sourceState.listLinks()).toEqual([savedLink]);
+    books = [book];
+    await harness.refreshLibrary(2);
+    await vi.waitFor(() => expect(harness.controller.libraryWorks).toHaveLength(1));
+    books = [];
+    unavailable = true;
+    await harness.refreshLibrary(3);
+    expect(await sourceState.listLinks()).toEqual([savedLink]);
+    expect(await sourceState.listSubscriptions()).toEqual([subscription]);
+    unavailable = false;
+    await harness.refreshLibrary(4);
+    await vi.waitFor(() => expect(harness.controller.libraryWorks).toHaveLength(0));
+    expect(harness.controller.items[0]?.importState).toBe('available');
+    expect(await sourceState.listLinks()).toEqual([]);
+    expect(await sourceState.listSubscriptions()).toEqual([]);
+    await act(async () => harness.renderer.unmount());
+  });
+
+  it('downloads the same comic bytes again when the old linked book was permanently deleted', async () => {
+    const file = await singlePageComicFile();
+    const harness = await createHarness({
+      serial: true,
+      localBookMissing: true,
+      downloadedContent: '',
+      downloadedFile: file,
+      initialLinkOverrides: {
+        collectionRemoteId: 'series-1',
+        importedSourceContentHash: await sha256(await file.arrayBuffer()),
+      },
+    });
+    expect(harness.controller.items[0]?.importState).toBe('available');
+    await act(async () => harness.controller.importSelected());
+    expect(harness.importFile).toHaveBeenCalledOnce();
+    const request = harness.importFile.mock.calls[0]![0];
+    expect(request.importMode).toBeUndefined();
+    expect((await readSeriesImageArchiveManifest(request.file))?.chapters).toHaveLength(1);
+    expect(harness.notify).toHaveBeenCalledWith(expect.stringContaining('1개 회차'), 'success');
+    await act(async () => harness.renderer.unmount());
+  });
+
+  it('keeps a trashed comic linked for restore without silently importing into it', async () => {
+    const harness = await createHarness({
+      serial: true,
+      downloadedContent: '',
+      downloadedFile: await singlePageComicFile(),
+      novelOverrides: { deletedAt: '2026-08-31T00:00:00.000Z' },
+    });
+    expect(harness.controller.items[0]?.importState).toBe('available');
+    await act(async () => harness.controller.importSelected());
+    expect(harness.importFile).not.toHaveBeenCalled();
+    expect(harness.registry.downloadExternalSource).not.toHaveBeenCalled();
+    expect(harness.notify).toHaveBeenCalledWith(expect.stringContaining('휴지통에 있는 작품'), 'warning');
+    expect(harness.saveLink).not.toHaveBeenCalled();
+    await act(async () => harness.renderer.unmount());
+  });
+
   it('applies extension filters through SEARCH even when the search query is empty', async () => {
     const harness = await createHarness({
       downloadedContent: '기존 원격 원문',
@@ -539,15 +648,13 @@ describe('useExternalSourceController remote updates', () => {
   it.each([
     {
       label: 'local IndexedDB without exact markers',
-      supportsExactDocumentSectionReadMarkers: false,
-      expected: ['read', 'current', 'unread'],
+      expected: ['unread', 'current', 'unread'],
     },
     {
       label: 'self-host with exact markers',
-      supportsExactDocumentSectionReadMarkers: true,
       expected: ['unread', 'current', 'unread'],
     },
-  ])('uses the reader capability for serialized read-state fallback: $label', async (input) => {
+  ])('uses exact recorded reads: $label', async (input) => {
     const chapters = [1, 2, 3].map((index) =>
       testChapter(index, {
         documentSectionId: `local:${index}`,
@@ -566,7 +673,6 @@ describe('useExternalSourceController remote updates', () => {
     const harness = await createHarness({
       downloadedContent: '기존 원격 원문',
       chapters,
-      supportsExactDocumentSectionReadMarkers: input.supportsExactDocumentSectionReadMarkers,
       novelOverrides,
     });
 

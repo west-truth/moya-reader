@@ -713,8 +713,8 @@ export class RemoteApiClient {
     return this.syncTransport.getSyncCapabilities();
   }
 
-  listBooks(): Promise<{ books: JsonRecord[] }> {
-    return this.bookTransport.listBooks();
+  listBooks(options?: { includeTrash?: boolean }): Promise<{ books: JsonRecord[] }> {
+    return this.bookTransport.listBooks(undefined, options);
   }
 
   listTrashBooks(): Promise<{ books: JsonRecord[] }> {

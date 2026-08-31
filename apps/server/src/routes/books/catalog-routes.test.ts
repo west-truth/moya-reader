@@ -5,6 +5,23 @@ import { appWithBooks } from './books-route-test-harness.js';
 describe('book catalog routes', () => {
   afterEach(() => vi.restoreAllMocks());
 
+  it('opts into a trash-inclusive owner-scoped catalog with stable ID paging for link cleanup', async () => {
+    const query = vi.fn(async (_sql: string, _values?: unknown[]) => ({ rows: [{ id: 'book-1' }, { id: 'book-2' }] }));
+    const app = await appWithBooks({ query } as unknown as pg.Pool);
+    const first = await app.inject({ method: 'GET', url: '/api/books?includeTrash=true&limit=1' });
+    expect(first.statusCode).toBe(200);
+    expect(first.json()).toMatchObject({ includesTrash: true, nextCursor: 'book-1' });
+    expect(query.mock.calls[0]![0]).toContain('b.user_id = $1');
+    expect(query.mock.calls[0]![0]).not.toContain('b.deleted_at is null');
+    const next = await app.inject({ method: 'GET', url: '/api/books?includeTrash=true&limit=1&cursor=book-1' });
+    expect(next.statusCode).toBe(200);
+    expect(query.mock.calls[1]![0]).toContain('b.id > $2');
+    expect(query.mock.calls[1]![1]).toEqual(['user_test', 'book-1', 2, 0]);
+    await app.inject({ method: 'GET', url: '/api/books' });
+    expect(query.mock.calls[2]![0]).toContain('b.deleted_at is null');
+    await app.close();
+  });
+
   it('atomically patches only requested metadata fields and emits the final snapshot', async () => {
     const queries: Array<{ sql: string; params?: unknown[] }> = [];
     const client = {
