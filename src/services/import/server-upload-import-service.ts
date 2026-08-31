@@ -405,6 +405,19 @@ export class ServerUploadImportService implements ImportService {
         await this.client.cancelUpload(uploadSession.uploadId).catch(() => undefined);
         this.uploadSessionStore.remove(uploadSession.sessionKey);
       }
+      if (error instanceof RemoteApiError && error.status === 413) {
+        const limit = (error.payload as { maxUploadBytes?: unknown } | undefined)?.maxUploadBytes;
+        const limitLabel =
+          typeof limit === 'number' && Number.isFinite(limit) && limit > 0
+            ? `${Math.floor(limit / 1024 / 1024)}MiB`
+            : '서버에서 허용하는 용량';
+        throw Object.assign(
+          new Error(
+            `이 파일은 1회 업로드 한도(${limitLabel})를 초과합니다. 더 작은 회차 파일을 선택하거나 서버의 업로드 한도를 조정해 주세요.`,
+          ),
+          { cause: error },
+        );
+      }
       throw error;
     }
   }

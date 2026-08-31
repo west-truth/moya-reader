@@ -5,6 +5,9 @@ Last updated: 2026-08-31
 
 ## 만화 회차별 원본
 
+- 누적 작품 목록 한도 확대가 대용량 복원까지 지원한다는 뜻은 아니다. 현재 복원용 portable package는
+  모든 part를 한 번에 materialize하므로 원본 합계 1GiB까지만 지원한다. 앱 전체 백업의 별도 용량/항목
+  한도도 남아 있다. 이 경계의 스트리밍 복원은 별도 checkpoint다.
 - 만화 회차 추가로 만든 작은 manifest 원본과 immutable 회차 CBZ를 별도로 전송한다. 본문 소유권에
   속하는 `sourcePartObjects`는 제목/표지 metadata clock과 섞지 않는다. 소설의 원본 전송은 바꾸지 않는다.
 - 원본은 기존 content hash 기반 경로에 저장한다. 이전 완료 목록에 있는 part는 재업로드하지 않고,

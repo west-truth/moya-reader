@@ -77,6 +77,7 @@ async function createHarness(input: {
   catalogPreference?: ExternalSourceCatalogPreference;
   browse?: ExternalSourceBrowseState;
   serial?: boolean;
+  serialCount?: number;
   downloadedFile?: File;
   downloadGate?: Promise<void>;
   assets?: BookAssetRepository;
@@ -183,18 +184,16 @@ async function createHarness(input: {
       }
       return {
         items: input.serial
-          ? [
-              {
-                key: ITEM_KEY,
-                kind: 'file' as const,
-                title: '1화',
-                mimeType: 'application/vnd.comicbook+zip',
-                remoteRevision: 'remote-r2',
-                collection: { remoteId: 'manga:1', title: '연동 작품' },
-                release: { title: '1화', chapterNumber: 1 },
-                importability: 'supported' as const,
-              },
-            ]
+          ? Array.from({ length: input.serialCount ?? 1 }, (_, index) => ({
+              key: { ...ITEM_KEY, remoteId: `work-${index + 1}` },
+              kind: 'file' as const,
+              title: `${index + 1}화`,
+              mimeType: 'application/vnd.comicbook+zip',
+              remoteRevision: 'remote-r2',
+              collection: { remoteId: 'manga:1', title: '연동 작품' },
+              release: { title: `${index + 1}화`, chapterNumber: index + 1 },
+              importability: 'supported' as const,
+            }))
           : [
               {
                 key: ITEM_KEY,
@@ -313,6 +312,77 @@ async function singlePageComicFile(): Promise<File> {
 }
 
 describe('useExternalSourceController remote updates', () => {
+  it.each(['success', 'failure', 'cancel'] as const)(
+    'imports selected serial chapters sequentially with safe %s handling',
+    async (mode) => {
+      await resetExternalSourceLocalStateForTests();
+      const state = new ExternalSourceLocalStateStore();
+      let current: Novel | undefined;
+      const count = mode === 'success' ? 101 : 3;
+      const harness = await createHarness({
+        downloadedContent: '',
+        downloadedFile: await singlePageComicFile(),
+        serial: true,
+        serialCount: count,
+        localBookMissing: true,
+        supportsIncrementalImageSeriesAppend: true,
+        supportsExpectedSourceContentHash: true,
+        sourceState: state,
+        libraryBooks: async () => (current ? [current] : []),
+      });
+      let attempted = 0;
+      let saved = 0;
+      harness.importFile.mockImplementation((request) => ({
+        jobId: `job-${++attempted}`,
+        cancel: vi.fn(),
+        promise: (async () => {
+          expect((await readSeriesImageArchiveManifest(request.file))?.chapters).toHaveLength(1);
+          if (attempted === 2 && mode !== 'success') {
+            if (mode === 'cancel') {
+              harness.controller.cancel();
+              throw new DOMException('Cancelled', 'AbortError');
+            }
+            throw new Error('fixture second chapter failed');
+          }
+          expect(request.baseActiveContentRevisionId).toBe(current?.activeContentRevisionId);
+          expect(request.importMode).toBe(saved ? 'append_image_series' : undefined);
+          saved++;
+          current = novel({
+            id: request.clientBookId,
+            format: 'image_archive',
+            documentSectionCount: saved,
+            sourceAssetId: 'source',
+            sourceContentHash: await sha256(await request.file.arrayBuffer()),
+            activeContentRevisionId: `revision-${saved}`,
+          });
+          return { novel: current };
+        })(),
+      }));
+      const download = vi.mocked(harness.registry.downloadExternalSource);
+      download.mockImplementation(async () => {
+        // No later release is downloaded until the previous one has committed.
+        expect(download.mock.calls.length).toBe(attempted + 1);
+        return { file: await singlePageComicFile(), remoteRevision: 'remote-r2' };
+      });
+      try {
+        await act(async () => harness.controller.selectAllSupported(true));
+        await act(async () => harness.controller.importSelected());
+        if (mode !== 'success') {
+          expect(saved).toBe(1);
+          expect(await state.listLinks(SOURCE_ID)).toHaveLength(1);
+          expect(harness.notify).toHaveBeenCalledWith(expect.stringContaining('1개 회차는 저장되었습니다'), 'warning');
+          await act(async () => harness.controller.importSelected());
+        }
+        expect(saved).toBe(count);
+        expect(await state.listLinks(SOURCE_ID)).toHaveLength(count);
+        expect((await state.listLinks(SOURCE_ID)).every((link) => !link.pendingImport)).toBe(true);
+        expect(new Set(harness.importFile.mock.calls.map(([input]) => input.clientBookId)).size).toBe(1);
+      } finally {
+        await act(async () => harness.renderer.unmount());
+      }
+    },
+    30_000,
+  );
   it('updates Library cards after purge without a reload, and does not clean up on a failed catalog read', async () => {
     await resetExternalSourceLocalStateForTests();
     const sourceState = new ExternalSourceLocalStateStore();

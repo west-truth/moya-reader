@@ -352,24 +352,35 @@ export async function buildLocalSeriesImportFile(
   plan: LocalSeriesImportPlan,
   signal: AbortSignal,
   archivePassword?: string,
+  onlyReleaseId?: string,
 ): Promise<File | undefined> {
   const additions = plan.releases.filter((release) => release.disposition === 'add');
   if (!additions.length) return undefined;
   const workKey = plan.inspection.normalizedWorkKey;
-  const chapters: SeriesImageChapterInput[] = additions.map((release, index) => ({
-    remoteId:
-      plan.incrementalAppend && plan.targetNovel
-        ? stableId('local_series_release', `${plan.targetNovel.id}:${release.releaseKey}`, 20)
-        : release.id,
-    release: {
-      title: release.parsed.releaseTitle,
-      chapterNumber: release.parsed.chapterNumber,
-      sourceOrder: releaseSourceOrder(release.parsed, index + 1),
-    },
-    sourceContentHash: release.contentHash,
-    file: release.file,
-    archivePassword,
-  }));
+  const chapters: SeriesImageChapterInput[] = additions.flatMap((release) =>
+    onlyReleaseId && release.id !== onlyReleaseId
+      ? []
+      : [
+          {
+            remoteId:
+              plan.incrementalAppend && plan.targetNovel
+                ? stableId('local_series_release', `${plan.targetNovel.id}:${release.releaseKey}`, 20)
+                : release.id,
+            release: {
+              title: release.parsed.releaseTitle,
+              chapterNumber: release.parsed.chapterNumber,
+              sourceOrder: releaseSourceOrder(
+                release.parsed,
+                plan.inspection.releases.findIndex((entry) => entry.id === release.id) + 1,
+              ),
+            },
+            sourceContentHash: release.contentHash,
+            file: release.file,
+            archivePassword,
+          },
+        ],
+  );
+  if (!chapters.length) return undefined;
   const existingLegacyChapter =
     plan.targetNovel && plan.targetSource && !plan.existingManifest
       ? (() => {

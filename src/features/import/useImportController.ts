@@ -1,12 +1,17 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { Chapter, ChapterSplitMode, EncodingMode, Novel } from '../../domain/types';
 import type { ImportProgress, ImportService } from '../../services/import/import-service';
-import { hashBlobInChunks } from '../../services/import/chunked-file-reader';
 import type { PlatformDocumentIo } from '../../platform/document-io';
 import type { StoredUploadSessionEntry } from '../../services/import/server-upload-import-service';
 import type { ToastTone } from '../../shared/ui/ToastHost';
 import type { BookAssetRepository } from '../../repositories/book-asset-repository';
-import { type ImportBatchState, ImportRunCancellation, runImportBatch } from './import-controller';
+import {
+  type ImportBatchState,
+  type ImportBatchCallbacks,
+  ImportRunCancellation,
+  runImportBatch,
+} from './import-controller';
+import { runLocalSeriesImport } from './local-series-import-runner';
 import {
   importFileKey,
   inspectImportDuplicates,
@@ -19,7 +24,6 @@ import { type ImportDropTarget, useImportDropTarget } from './useImportDropTarge
 import { type ImportPreviewFactory, type ImportPreviewState, useImportPreview } from './useImportPreview';
 import { useImportUploadSessions } from './useImportUploadSessions';
 import {
-  buildLocalSeriesImportFile,
   inspectLocalSeriesImport,
   planLocalSeriesImport,
   type LocalSeriesImportInspection,
@@ -477,42 +481,7 @@ export function useImportController(options: UseImportControllerOptions): Import
       let resetDelay = 400;
       lastImportFailedRef.current = false;
       try {
-        if (queuedSeriesPlan) {
-          const abort = new AbortController();
-          seriesBuildAbortRef.current = abort;
-          setProgress({
-            jobId: 'local-series-build',
-            status: 'writing',
-            subphase: 'staging_chapters',
-            bytesRead: 0,
-            totalBytes: Math.max(
-              1,
-              supportedFiles.reduce((sum, file) => sum + file.size, 0),
-            ),
-            chaptersDetected: queuedSeriesPlan.addCount,
-            paragraphsWritten: 0,
-            message: `새 회차 ${queuedSeriesPlan.addCount}개를 작품으로 구성하고 있습니다.`,
-          });
-          const aggregate = await buildLocalSeriesImportFile(
-            queuedSeriesPlan,
-            abort.signal,
-            archivePassword || undefined,
-          );
-          seriesBuildAbortRef.current = undefined;
-          if (!aggregate) throw new Error('추가할 새 회차가 없습니다.');
-          const expectedSourceContentHash = queuedSeriesPlan.incrementalAppend
-            ? await hashBlobInChunks(aggregate, { shouldCancel: () => abort.signal.aborted })
-            : undefined;
-          preparedFiles.push({
-            file: aggregate,
-            clientBookId: queuedSeriesPlan.targetNovel?.id,
-            importMode: queuedSeriesPlan.incrementalAppend ? 'append_image_series' : undefined,
-            baseActiveContentRevisionId: queuedSeriesPlan.incrementalAppend
-              ? queuedSeriesPlan.targetNovel?.activeContentRevisionId
-              : undefined,
-            expectedSourceContentHash,
-          });
-        } else if (queuedDocumentSeriesPlan) {
+        if (queuedDocumentSeriesPlan) {
           const abort = new AbortController();
           seriesBuildAbortRef.current = abort;
           setProgress({
@@ -533,53 +502,92 @@ export function useImportController(options: UseImportControllerOptions): Import
           if (!aggregate) throw new Error('추가할 새 회차가 없습니다.');
           preparedFiles.push({ file: aggregate, clientBookId: queuedDocumentSeriesPlan.targetNovel?.id });
         }
-        const outcome = await runImportBatch(
-          {
-            files: preparedFiles,
-            skipped,
-            encoding,
-            chapterSplitMode,
-            archivePassword,
-            importService: optionsRef.current.importService,
-            getNovel: (id) => optionsRef.current.getNovel(id),
+        const batchInput = {
+          skipped,
+          encoding,
+          chapterSplitMode,
+          archivePassword,
+          importService: optionsRef.current.importService,
+          getNovel: (id: string) => optionsRef.current.getNovel(id),
+        };
+        const callbacks: ImportBatchCallbacks = {
+          onBatchChange: (state) => {
+            if (runGenerationRef.current === generation) setBatch(state);
           },
-          cancellationRef.current,
-          {
-            onBatchChange: (state) => {
-              if (runGenerationRef.current === generation) setBatch(state);
-            },
-            onProgress: (nextProgress) => {
-              if (runGenerationRef.current === generation) setProgress(nextProgress);
-            },
-            onFileFailed: (file, error) => {
-              if (runGenerationRef.current !== generation) return;
-              const detail = importFailureMessage(file.name, error);
-              setProgress((current) =>
-                current
-                  ? {
-                      ...current,
-                      status: 'failed',
-                      message: detail,
-                    }
-                  : current,
-              );
-              optionsRef.current.notify(detail, 'danger');
-            },
-            onCancelled: () => {
-              if (runGenerationRef.current !== generation) return;
-              setProgress((current) =>
-                current
-                  ? {
-                      ...current,
-                      status: 'failed',
-                      message: '가져오기를 취소했습니다.',
-                    }
-                  : current,
-              );
-            },
+          onProgress: (nextProgress) => {
+            if (runGenerationRef.current === generation) setProgress(nextProgress);
           },
-        );
+          onFileFailed: (file, error) => {
+            if (runGenerationRef.current !== generation) return;
+            const detail = importFailureMessage(file.name, error);
+            setProgress((current) =>
+              current
+                ? {
+                    ...current,
+                    status: 'failed',
+                    message: detail,
+                  }
+                : current,
+            );
+            optionsRef.current.notify(detail, 'danger');
+          },
+          onCancelled: () => {
+            if (runGenerationRef.current !== generation) return;
+            setProgress((current) =>
+              current
+                ? {
+                    ...current,
+                    status: 'failed',
+                    message: '가져오기를 취소했습니다.',
+                  }
+                : current,
+            );
+          },
+        };
+        const abort = new AbortController();
+        if (queuedSeriesPlan) seriesBuildAbortRef.current = abort;
+        const outcome = queuedSeriesPlan
+          ? await runLocalSeriesImport(
+              {
+                ...batchInput,
+                plan: queuedSeriesPlan,
+                signal: abort.signal,
+                replan: (novel) => planLocalSeriesForRuntime(queuedSeriesPlan.inspection, novel, optionsRef.current),
+                onCommitted: (novel, releaseId) => {
+                  if (!mountedRef.current || runGenerationRef.current !== generation) return;
+                  // Retain the target and completed releases even if the next request
+                  // fails, so retry cannot accidentally create another Library book.
+                  explicitSeriesTargetRef.current = novel;
+                  setSeriesTargetNovelId(novel.id);
+                  setSeriesPlan((current) =>
+                    current
+                      ? {
+                          ...current,
+                          targetNovel: novel,
+                          releases: current.releases.map((release) =>
+                            release.id === releaseId ? { ...release, disposition: 'duplicate' as const } : release,
+                          ),
+                          addCount: Math.max(0, current.addCount - 1),
+                          duplicateCount: current.duplicateCount + 1,
+                        }
+                      : current,
+                  );
+                },
+              },
+              cancellationRef.current,
+              callbacks,
+            )
+          : await runImportBatch({ ...batchInput, files: preparedFiles }, cancellationRef.current, callbacks);
         if (!mountedRef.current || runGenerationRef.current !== generation) return;
+
+        if (queuedSeriesPlan && outcome.lastImportedNovel && (outcome.aborted || outcome.failed > 0)) {
+          const updatedPlan = await planLocalSeriesForRuntime(
+            queuedSeriesPlan.inspection,
+            outcome.lastImportedNovel,
+            optionsRef.current,
+          ).catch(() => undefined);
+          if (updatedPlan) setSeriesPlan(updatedPlan);
+        }
 
         await optionsRef.current.onImportCommitted(outcome.lastImportedNovel ?? openExisting);
         if (!mountedRef.current || runGenerationRef.current !== generation) return;
@@ -590,6 +598,11 @@ export function useImportController(options: UseImportControllerOptions): Import
               ? `“${queuedMergePlan.targetNovel.title}”에 새 회차 ${queuedMergePlan.addCount}개를 추가했습니다.`
               : `“${queuedMergePlan.inspection.workTitle}”을(를) ${queuedMergePlan.addCount}개 회차로 추가했습니다.`,
             'success',
+          );
+        } else if (queuedSeriesPlan && outcome.completed > 0) {
+          optionsRef.current.notify(
+            `${outcome.completed}개 회차를 저장했습니다. ${outcome.aborted ? '취소한' : '실패한'} 회차부터 다시 추가할 수 있습니다.`,
+            'warning',
           );
         } else {
           const completionNotice = completedImportNotice(outcome, supportedFiles);
@@ -650,6 +663,11 @@ export function useImportController(options: UseImportControllerOptions): Import
     await importFiles(files);
     if (!mountedRef.current) return;
     if (!lastImportFailedRef.current) {
+      // The target is only retained for retry, not for the next unrelated drop.
+      if (seriesPlan) {
+        explicitSeriesTargetRef.current = undefined;
+        setSeriesTargetNovelId(undefined);
+      }
       setPendingFiles([]);
       setArchivePasswordState('');
       clearPreview();

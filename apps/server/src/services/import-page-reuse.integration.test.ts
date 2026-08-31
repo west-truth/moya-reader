@@ -41,6 +41,55 @@ async function assertActiveObjects(pool: pg.Pool, fixture: ImportPageFixture) {
 }
 
 describe.skipIf(!harness || Boolean(benchmark))('append page reuse with real PostgreSQL and S3 transport', () => {
+  test('crosses 100 chapters and 6,000 pages, then reads only the manifest and writes one new page', async () => {
+    await withPostgresSchema(harness!, 'comic_large_work', async (pool) => {
+      await withImportPageFixture(pool, async (fixture) => {
+        const chapters = Array.from({ length: 100 }, (_, index) => ({
+          number: index + 1,
+          pages: Array.from({ length: 60 }, (_, page) => fixturePng(index * 60 + page + 1, 1)),
+        }));
+        // Each individual archive stays below the unchanged 5,000-page decoding limit.
+        await fixture.import(await fixtureSeries(chapters.slice(0, 83)));
+        const firstPage = (await pages(pool))[0]!;
+        await fixture.import(await fixtureSeries(chapters.slice(83), 'book_fixture'), true);
+        expect(await pages(pool)).toHaveLength(6000);
+        expect(fixture.profiles.at(-1)).toMatchObject({ reusedPages: 4980, writtenPages: 1020 });
+        fixture.gets.length = 0;
+        fixture.puts.length = 0;
+        await fixture.import(
+          await fixtureSeries([{ number: 101, pages: [fixturePng(6001, 1)] }], 'book_fixture'),
+          true,
+        );
+        expect(fixture.gets).toHaveLength(1);
+        expect(fixture.gets[0]!.bytes).toBeLessThan(8 * 1024 * 1024);
+        expect(fixture.profiles.at(-1)).toMatchObject({ reusedPages: 6000, writtenPages: 1 });
+        const finalPages = await pages(pool);
+        expect(finalPages).toHaveLength(6001);
+        expect(finalPages[0]).toEqual(firstPage);
+        const sourceKey = (
+          await pool.query(
+            'select storage_key from book_objects where id = (select object_id from library_books where id = $1)',
+            ['book_fixture'],
+          )
+        ).rows[0].storage_key;
+        const manifest = await readComicSourceManifest(
+          new Blob([new Uint8Array(fixture.objects.get(sourceKey)!.bytes)]),
+        );
+        expect(manifest?.chapters).toHaveLength(101);
+        const app = Fastify();
+        await registerEpubResourceRoutes(app, pool, fixture.config);
+        try {
+          for (const page of [finalPages[0]!, finalPages.at(-1)!]) {
+            const response = await app.inject(`/api/books/book_fixture/resources/${encodeURIComponent(page.id)}`);
+            expect(response.statusCode, response.body).toBe(200);
+            expect(integrityHash(response.rawPayload)).toBe(page.content_hash);
+          }
+        } finally {
+          await app.close();
+        }
+      });
+    });
+  }, 180_000);
   test('keeps part originals through subsequent append, source download, backup copy and portable reimport', async () => {
     await withPostgresSchema(harness!, 'comic_parts', async (pool) => {
       await withImportPageFixture(pool, async (fixture) => {

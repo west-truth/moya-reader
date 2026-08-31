@@ -58,7 +58,7 @@
     "check:book-enrichment-ui": "node scripts/book-enrichment-ui-smoke.mjs",
     "check:reader-performance": "node scripts/performance/reader-performance-gate.mjs",
     "test": "vitest run",
-    "test:import-pages": "vitest run apps/server/src/services/import-page-reuse.test.ts apps/server/src/services/import-measurements.test.ts apps/server/src/services/object-storage.test.ts apps/server/src/services/import-page-reuse.integration.test.ts src/services/import/comic-source.test.ts src/test/comic-source-roundtrip.test.ts src/test/image-series-incremental-import.test.ts src/storage/indexeddb-backup-repository.test.ts src/cloud-vault/content-transfer.test.ts src/cloud-vault/merge.test.ts src/cloud-vault/service.test.ts --maxWorkers=2",
+    "test:import-pages": "vitest run apps/server/src/services/import-page-reuse.test.ts apps/server/src/services/import-measurements.test.ts apps/server/src/services/object-storage.test.ts apps/server/src/services/import-page-reuse.integration.test.ts src/services/import/comic-source.test.ts src/features/import/local-series-import.test.ts src/features/import/useImportController.test.tsx src/features/import/local-series-sequential.test.tsx src/test/comic-source-roundtrip.test.ts src/test/image-series-incremental-import.test.ts src/storage/indexeddb-backup-repository.test.ts src/cloud-vault/content-transfer.test.ts src/cloud-vault/merge.test.ts src/cloud-vault/service.test.ts --maxWorkers=2",
     "tauri:dev": "tauri dev",
     "collector:bundle": "node scripts/build-webnovel-metadata-collector-sidecar.mjs",
     "tauri:build": "tauri build",

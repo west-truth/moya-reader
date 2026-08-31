@@ -1,6 +1,7 @@
 import { BlobReader, BlobWriter, TextReader, ZipReader, ZipWriter } from '@zip.js/zip.js';
 import type { ParsedNovelImport, ParsedNovelImportAsset } from '@noveldesk/contracts';
 import { integrityHash, persistentId128 } from '@noveldesk/text-core/hash';
+import { MAX_COMIC_SOURCE_MANIFEST_BYTES, MAX_COMIC_SOURCE_PAGES, MAX_COMIC_SOURCE_PARTS } from './comic-source-limits';
 import {
   inspectSeriesArchiveManifest,
   isSeriesImageArchiveManifest,
@@ -81,12 +82,16 @@ export function assertComicSourceManifest(value: unknown): asserts value is Comi
     !Array.isArray(candidate.sourceParts) ||
     !Array.isArray(candidate.sourcePages) ||
     !candidate.sourceParts.length ||
-    candidate.sourceParts.length > MAX_PAGES ||
-    !candidate.sourcePages.length ||
-    candidate.sourcePages.length > MAX_PAGES
+    !candidate.sourcePages.length
   ) {
     throw new Error('지원하지 않는 만화 회차 원본 목록입니다.');
   }
+  if (candidate.sourcePages.length > MAX_COMIC_SOURCE_PAGES)
+    throw new Error(`작품당 ${MAX_COMIC_SOURCE_PAGES.toLocaleString('ko-KR')}페이지까지 저장할 수 있습니다.`);
+  if (candidate.sourceParts.length > MAX_COMIC_SOURCE_PARTS || value.chapters.length > MAX_COMIC_SOURCE_PARTS)
+    throw new Error(
+      `작품당 회차와 원본 파일은 각각 ${MAX_COMIC_SOURCE_PARTS.toLocaleString('ko-KR')}개까지 저장할 수 있습니다.`,
+    );
   const parts = new Map<string, ComicSourcePart>();
   let totalBytes = 0;
   for (const part of candidate.sourceParts) {
@@ -107,7 +112,7 @@ export function assertComicSourceManifest(value: unknown): asserts value is Comi
     totalBytes += part.byteLength;
     parts.set(part.contentHash, part);
   }
-  if (totalBytes > MAX_BYTES) throw new Error('만화 회차 원본의 전체 크기가 안전 한도를 초과했습니다.');
+  if (!Number.isSafeInteger(totalBytes)) throw new Error('만화 회차 원본의 크기가 올바르지 않습니다.');
   const pageNames = new Set<string>();
   const referencedParts = new Set<string>();
   for (const page of candidate.sourcePages) {
@@ -158,8 +163,8 @@ export async function readComicSourceManifest(source: Blob): Promise<ComicSource
 async function writeManifest(manifest: ComicSourceManifest): Promise<Blob> {
   assertComicSourceManifest(manifest);
   const json = JSON.stringify(manifest);
-  if (new TextEncoder().encode(json).byteLength > 4 * 1024 * 1024)
-    throw new Error('만화 회차 원본 목록이 안전 한도를 초과했습니다.');
+  if (new TextEncoder().encode(json).byteLength > MAX_COMIC_SOURCE_MANIFEST_BYTES)
+    throw new Error('작품의 회차·페이지 목록은 8MiB까지 저장할 수 있습니다.');
   const writer = new ZipWriter(new BlobWriter(COMIC_SOURCE_CONTENT_TYPE));
   await writer.add('moya-series.json', new TextReader(json), ZIP_OPTIONS);
   return writer.close();
@@ -476,6 +481,10 @@ export async function packageComicSource(
 ): Promise<Blob> {
   const manifest = await readComicSourceManifest(source);
   if (!manifest) return source;
+  // Portable restore still materializes all parts. Do not silently relax that
+  // memory guard just because the active, reference-only index can be larger.
+  if (manifest.sourceParts.reduce((sum, part) => sum + part.byteLength, 0) > MAX_BYTES)
+    throw new Error('만화 원본 패키지 내보내기·복원은 원본 합계 1GiB까지 지원합니다.');
   const writer = new ZipWriter(new BlobWriter('application/vnd.comicbook+zip'));
   try {
     await writer.add(PACKAGE_ROOT, new BlobReader(source), ZIP_OPTIONS);
@@ -499,9 +508,11 @@ export async function unpackComicSource(
     const entries = await reader.getEntries();
     const root = entries.find((entry) => !entry.directory && entry.filename === PACKAGE_ROOT);
     if (!root || root.directory || !root.getData) return undefined;
+    if (entries.reduce((sum, entry) => sum + (entry === root ? 0 : entry.uncompressedSize), 0) > MAX_BYTES)
+      throw new Error('만화 원본 패키지 복원은 원본 합계 1GiB까지 지원합니다.');
     if (
-      entries.length > MAX_PAGES + 1 ||
-      root.uncompressedSize > 4 * 1024 * 1024 ||
+      entries.length > MAX_COMIC_SOURCE_PARTS + 1 ||
+      root.uncompressedSize > MAX_COMIC_SOURCE_MANIFEST_BYTES + 64 * 1024 ||
       entries.some(
         (entry) =>
           entry.encrypted ||

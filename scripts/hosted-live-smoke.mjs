@@ -342,13 +342,15 @@ async function run() {
     return;
   }
 
+  // Compose marks web "started" before nginx is necessarily listening. Wait on
+  // the retrying readiness probe before making the first one-shot request.
+  const ready = await waitForReadiness();
   const webResponse = await fetch(joinUrl(webBaseUrl, '/'));
   assert(webResponse.ok, `web root returned ${webResponse.status}`);
   const html = await webResponse.text();
   assert(html.includes('<div id="root"></div>'), 'web root did not look like the Vite app shell');
   console.log('ok web root served app shell');
 
-  const ready = await waitForReadiness();
   assert(ready.ok === true, 'readiness endpoint did not return ok=true');
   assert(ready.components?.database?.ok === true, 'readiness database check failed');
   assert(ready.components?.queue?.ok === true, 'readiness queue check failed');

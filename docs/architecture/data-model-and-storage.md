@@ -5,6 +5,10 @@ Last verified: 2026-08-31
 
 ## Comic chapter originals (2026-08-31)
 
+- Work indexes have separate limits (20,000 page references, 2,000 chapters/parts, 8MiB JSON); cumulative source
+  references may exceed 1GiB. Per-archive decoding guards remain unchanged. Selections commit one chapter at a time
+  and retain completed chapters on cancellation/failure. Eager portable-package restore still has a 1GiB memory
+  guard; large backup/restore is deferred. No further migration or storage-version change is required.
 - Only comic chapter additions use immutable chapter CBZs plus a small hash-exact manifest ZIP. Ordinary first
   imports and TXT/EPUB/PDF keep their existing paths. Existing books are not converted at startup.
 - The first addition preserves the complete old CBZ as a legacy part. Hosted stores its already-read bytes once

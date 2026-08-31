@@ -1,4 +1,4 @@
-import { BlobWriter, Uint8ArrayReader, ZipWriter } from '@zip.js/zip.js';
+import { BlobWriter, TextReader, Uint8ArrayReader, ZipWriter } from '@zip.js/zip.js';
 import { describe, expect, it } from 'vitest';
 import { integrityHash } from '@noveldesk/text-core/hash';
 import { materializeStreamingImageArchiveImport, openImageArchiveStream } from '@noveldesk/fixed-document-core';
@@ -12,6 +12,7 @@ import {
   planComicSourceAppend,
   readComicSourceManifest,
   unpackComicSource,
+  type ComicSourceManifest,
 } from '@noveldesk/fixed-document-core/comic-source';
 
 const PNG = Uint8Array.from(
@@ -49,7 +50,113 @@ async function append(existing: Blob, delta: Blob) {
   });
 }
 
+function largeManifest(chapters = 100, pagesPerChapter = 60): ComicSourceManifest {
+  const sourceParts = Array.from({ length: chapters }, (_, index) => ({
+    contentHash: `sha256:${(index + 1).toString(16).padStart(64, '0')}`,
+    byteLength: 20 * 1024 * 1024,
+    fileName: `${index + 1}.cbz`,
+    contentType: 'application/vnd.comicbook+zip',
+  }));
+  const sourcePages = sourceParts.flatMap((part) =>
+    Array.from({ length: pagesPerChapter }, (_, index) => ({
+      partHash: part.contentHash,
+      entryName: `${index + 1}.png`,
+      sourcePageIndex: index,
+      contentType: 'image/png',
+    })),
+  );
+  return {
+    schemaVersion: 1,
+    storageVersion: 1,
+    collection: { remoteId: 'work', title: '작품' },
+    sourceParts,
+    sourcePages,
+    chapters: sourceParts.map((part, index) => ({
+      remoteId: `chapter:${index + 1}`,
+      title: `${index + 1}화`,
+      chapterNumber: index + 1,
+      sourceContentHash: part.contentHash,
+      pageCount: pagesPerChapter,
+      entryNames: sourcePages
+        .slice(index * pagesPerChapter, (index + 1) * pagesPerChapter)
+        .map((page) => `${page.partHash.slice(7)}/${page.entryName}`),
+    })),
+  };
+}
+
+async function manifestZip(manifest: unknown) {
+  const writer = new ZipWriter(new BlobWriter(), { level: 0 });
+  await writer.add('moya-series.json', new TextReader(JSON.stringify(manifest)));
+  return writer.close();
+}
+
 describe('comic source manifests', () => {
+  it('appends to 100 chapters / 6,000 pages / 2GiB of references without reading any old part', async () => {
+    const manifest = largeManifest();
+    expect(() => assertComicSourceManifest(manifest)).not.toThrow();
+    const plan = await append(await manifestZip(manifest), await archive(101));
+    expect(plan.manifest.chapters).toHaveLength(101);
+    expect(plan.manifest.sourcePages).toHaveLength(6001);
+    expect(plan.newParts.size).toBe(1);
+    expect(plan.retainedPartIds).toHaveLength(100);
+    expect(await readComicSourceManifest(plan.source)).toEqual(plan.manifest);
+    const parsed = await materializeComicSource({
+      manifest: plan.manifest,
+      sourceContentHash: plan.sourceContentHash,
+      fileName: 'work.cbz',
+      bookId: 'book',
+      partsToStore: plan.newParts,
+      pagePartsToRead: plan.newParts,
+    });
+    let writtenPages = 0;
+    for await (const asset of parsed.consumeEmbeddedAssets!()) if (asset.kind === 'document_page') writtenPages++;
+    expect(writtenPages).toBe(1);
+  });
+
+  it('bounds work indexes independently while retaining single-part and page-index safety limits', () => {
+    expect(() => assertComicSourceManifest(largeManifest(2000, 10))).not.toThrow();
+    expect(() => assertComicSourceManifest(largeManifest(2000, 11))).toThrow('20,000페이지');
+    expect(() => assertComicSourceManifest(largeManifest(2001, 1))).toThrow('2,000개');
+    const manifest = largeManifest(1, 1);
+    expect(() =>
+      assertComicSourceManifest({
+        ...manifest,
+        sourceParts: [{ ...manifest.sourceParts[0], byteLength: 1024 ** 3 + 1 }],
+      }),
+    ).toThrow('원본 참조');
+    expect(() =>
+      assertComicSourceManifest({ ...manifest, sourcePages: [{ ...manifest.sourcePages[0], sourcePageIndex: 5000 }] }),
+    ).toThrow('페이지 참조');
+  });
+
+  it('retains the eager portable-package guard before fetching a multi-GiB work', async () => {
+    const source = await manifestZip(largeManifest());
+    let reads = 0;
+    await expect(
+      packageComicSource(source, async () => {
+        reads++;
+        return new Blob();
+      }),
+    ).rejects.toThrow('1GiB');
+    expect(reads).toBe(0);
+  });
+
+  it('allows a reference manifest over 4MiB but rejects over 8MiB before loading parts', async () => {
+    const manifest = largeManifest(1, 1);
+    const large = { ...manifest, collection: { ...manifest.collection, description: 'x'.repeat(4 * 1024 * 1024) } };
+    expect(await readComicSourceManifest(await manifestZip(large))).toEqual(large);
+    await expect(readComicSourceManifest(await manifestZip({ ...large, storageVersion: undefined }))).rejects.toThrow(
+      '크기',
+    );
+    await expect(
+      readComicSourceManifest(
+        await manifestZip({
+          ...manifest,
+          collection: { ...manifest.collection, description: 'x'.repeat(8 * 1024 * 1024) },
+        }),
+      ),
+    ).rejects.toThrow('크기');
+  });
   it('stores a multi-chapter upload as independent chapter originals', async () => {
     const delta = await buildSeriesImageArchive({
       collection: { remoteId: 'work', title: '작품' },

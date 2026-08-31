@@ -765,6 +765,12 @@ check(
 );
 check('hosted live smoke waits for full readiness', includes(files.liveSmoke, 'waitForReadiness'));
 check(
+  'hosted live smoke waits before requesting the web shell',
+  files.liveSmoke.indexOf('const ready = await waitForReadiness();') >= 0 &&
+    files.liveSmoke.indexOf('const ready = await waitForReadiness();') <
+      files.liveSmoke.indexOf("const webResponse = await fetch(joinUrl(webBaseUrl, '/'));"),
+);
+check(
   'hosted e2e can include AI workflow smoke script',
   includes(files.hostedE2E, "'scripts/hosted-ai-workflow-smoke.mjs'") &&
     includes(files.hostedE2E, '--include-ai-workflow') &&
