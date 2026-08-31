@@ -99,9 +99,7 @@ export function projectLocalSeriesReadingStates(
   if (sectionIds.length === 0) return new Map();
 
   const hasReadActivity = Boolean(
-    novel.lastReadChapterIndex !== undefined ||
-    novel.lastReadProgress > 0 ||
-    novel.lastReadAt,
+    novel.lastReadChapterIndex !== undefined || novel.lastReadProgress > 0 || novel.lastReadAt,
   );
   const currentChapter = hasReadActivity
     ? (orderedChapters.find((chapter) => chapter.id === novel.lastReadChapterId) ??
