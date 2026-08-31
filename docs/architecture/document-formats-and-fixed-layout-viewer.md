@@ -170,6 +170,9 @@ PDF도 1~5,000페이지 범위만 받는다. PDF.js와 이미지 page cache는 l
 
 ## 백업과 플랫폼
 
+- 로컬 백업은 생성·복원 모두 ZIP 500항목/압축 전 256MiB 한도를 검사한다. manifest JSON도
+  항목 수와 UTF-8 bytes에 포함하며, 복원 한도를 넘는 백업은 ZIP 생성 전에 중단한다. 대용량 백업이나
+  형식·크기별 선택/분할 백업은 아직 지원하지 않는다.
 - Local exact backup은 기존 `book_assets` 순회로 source, cover와 `document_page`를 보존한다.
 - Hosted backup/restore는 active `document_page` object를 포함하고 copy/replace 시 book/asset ID를 다시 연결한다.
 - Android SAF picker allowlist에는 PDF, ZIP, CBZ MIME과 확장자가 연결됐다. 실제 content URI import 완료와

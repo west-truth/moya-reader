@@ -35,6 +35,15 @@ const APP_VERSION = '0.1.0';
 const MAX_ARCHIVE_ENTRIES = 500;
 const MAX_UNCOMPRESSED_BYTES = 256 * 1024 * 1024;
 
+function assertBackupLimits(entryCount: number, uncompressedBytes: number): void {
+  if (entryCount === 0 || entryCount > MAX_ARCHIVE_ENTRIES) {
+    throw new Error('백업의 파일 수가 지원 범위를 벗어났습니다. 현재 로컬 백업은 최대 500개 파일을 지원합니다.');
+  }
+  if (uncompressedBytes > MAX_UNCOMPRESSED_BYTES) {
+    throw new Error('백업 용량이 너무 큽니다. 현재 로컬 백업은 압축 전 총 256MiB까지 지원합니다.');
+  }
+}
+
 const BACKUP_JSON_STORES: readonly ReaderStoreName[] = [
   'novels',
   'book_content_revisions',
@@ -298,23 +307,28 @@ export class IndexedDbBackupRepository implements BackupRepository {
   private readonly archiveCache = new WeakMap<Blob, Promise<ParsedBackupArchive>>();
 
   async exportBackup(): Promise<{ blob: Blob; manifest: BackupManifestV1 }> {
-    const { BlobReader, BlobWriter, TextReader, ZipWriter } = await import('@zip.js/zip.js');
     const snapshot = await readAllBackupStores();
+    // Count the manifest too, and reject obvious overflow before reading or hashing asset bytes.
+    const entryCount = snapshot.stores.size + snapshot.blobs.length + 1;
+    let uncompressedBytes = snapshot.blobs.reduce((total, stored) => total + stored.blob.size, 0);
+    assertBackupLimits(entryCount, uncompressedBytes);
+    const jsonEntries = Array.from(snapshot.stores, ([storeName, records]) => {
+      const text = JSON.stringify(records);
+      const byteLength = new Blob([text]).size;
+      uncompressedBytes += byteLength;
+      assertBackupLimits(entryCount, uncompressedBytes);
+      return { path: zipStorePath(storeName), text, byteLength };
+    });
     const entries: BackupManifestEntry[] = [];
     const assetBlobs: BackupManifestAssetBlob[] = [];
-    const writer = new BlobWriter('application/zip');
-    const zip = new ZipWriter(writer, { bufferedWrite: true });
 
-    for (const [storeName, records] of snapshot.stores) {
-      const path = zipStorePath(storeName);
-      const text = JSON.stringify(records);
+    for (const { path, text, byteLength } of jsonEntries) {
       entries.push({
         path,
         contentHash: await hashText(text),
-        byteLength: new Blob([text]).size,
+        byteLength,
         contentType: 'application/json',
       });
-      await zip.add(path, new TextReader(text));
     }
 
     for (const stored of snapshot.blobs) {
@@ -334,7 +348,6 @@ export class IndexedDbBackupRepository implements BackupRepository {
         contentType: stored.contentType,
         createdAt: stored.createdAt,
       });
-      await zip.add(path, new BlobReader(stored.blob));
     }
 
     const novels = (snapshot.stores.get('novels') ?? []) as unknown as Novel[];
@@ -352,7 +365,19 @@ export class IndexedDbBackupRepository implements BackupRepository {
       entries,
       assetBlobs,
     };
-    await zip.add('manifest.json', new TextReader(JSON.stringify(manifest, null, 2)));
+    const manifestText = JSON.stringify(manifest, null, 2);
+    assertBackupLimits(entryCount, uncompressedBytes + new Blob([manifestText]).size);
+
+    const { BlobReader, BlobWriter, TextReader, ZipWriter } = await import('@zip.js/zip.js');
+    const writer = new BlobWriter('application/zip');
+    const zip = new ZipWriter(writer, { bufferedWrite: true });
+    for (const { path, text } of jsonEntries) {
+      await zip.add(path, new TextReader(text));
+    }
+    for (const stored of snapshot.blobs) {
+      await zip.add(assetEntryPath(stored.id), new BlobReader(stored.blob));
+    }
+    await zip.add('manifest.json', new TextReader(manifestText));
     await zip.close();
     return { blob: await writer.getData(), manifest };
   }
@@ -540,9 +565,7 @@ export class IndexedDbBackupRepository implements BackupRepository {
     const reader = new ZipReader(new BlobReader(archive));
     try {
       const entries = (await reader.getEntries()).filter((entry) => !entry.directory);
-      if (entries.length === 0 || entries.length > MAX_ARCHIVE_ENTRIES) {
-        throw new Error('Backup archive entry count is outside the supported range');
-      }
+      assertBackupLimits(entries.length, 0);
       const paths = new Set<string>();
       let totalUncompressedBytes = 0;
       for (const entry of entries) {
@@ -552,9 +575,7 @@ export class IndexedDbBackupRepository implements BackupRepository {
         paths.add(entry.filename);
         totalUncompressedBytes += Number(entry.uncompressedSize ?? 0);
       }
-      if (totalUncompressedBytes > MAX_UNCOMPRESSED_BYTES) {
-        throw new Error('Backup archive is too large after extraction');
-      }
+      assertBackupLimits(entries.length, totalUncompressedBytes);
       const manifestEntry = entries.find((entry) => entry.filename === 'manifest.json');
       if (!manifestEntry?.getData) throw new Error('Backup manifest is missing');
       const manifest = validateManifest(JSON.parse(await manifestEntry.getData(new TextWriter())));

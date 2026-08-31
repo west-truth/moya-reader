@@ -71,8 +71,7 @@ DRM이 적용된 EPUB/PDF는 지원하지 않습니다. 일반 가져오기는 �
 만화 여러 화 선택은 한 화씩 저장하므로 1회 업로드 기본 한도(500MiB)를 전체 선택 용량에 적용하지 않습니다.
 누적 작품은 20,000페이지·2,000회차/원본까지 지원하며, 개별 압축파일 안전 제한은 유지합니다.
 대용량 백업/기기 간 전체 복원에는 별도 제한이 남아 있습니다. 자세한 한도는
-[만화 저장 및 복원 제한](docs/architecture/document-formats-and-fixed-layout-viewer.md)을 확인하세요.
-[저장 방식과 업그레이드 주의사항](docs/architecture/document-formats-and-fixed-layout-viewer.md)을 확인하세요.
+[저장·복원 제한과 업그레이드 주의사항](docs/architecture/document-formats-and-fixed-layout-viewer.md)을 확인하세요.
 
 ## 플랫폼별 현재 상태
 
