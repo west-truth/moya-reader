@@ -1,4 +1,4 @@
-import { integrityHash, isIntegrityHash, persistentId128, persistentIdVersion } from '../domain/id-hash-contract';
+import { integrityHash, isIntegrityHash, persistentId128, persistentIdVersion } from '@noveldesk/text-core/hash';
 import { aggregateSyncEntityId, syncPayloadIntegrityHash } from '../domain/identity/sync-identities';
 import { SyncContractError, resolveSyncContract } from './contract';
 import { syncPageHashForContract } from './event-contract-translation';

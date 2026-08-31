@@ -1,6 +1,12 @@
 import { sha256 as sha256Digest } from '@noble/hashes/sha2.js';
 import { bytesToHex } from '@noble/hashes/utils.js';
 import type { Novel } from '../domain/types';
+import {
+  comicPartAssetId,
+  packageComicSource,
+  readComicSourceManifest,
+} from '@noveldesk/fixed-document-core/comic-source';
+import { readComicSourcePart } from '../repositories/comic-source-export';
 import type { BookAssetRepository, ExportedBookCover, ExportedBookSource } from '../repositories/book-asset-repository';
 import type { ReaderRepository } from '../repositories/reader-repository';
 import type { ImportService } from '../services/import/import-service';
@@ -151,8 +157,16 @@ export class CloudVaultContentTransferService {
     snapshot: CloudVaultSnapshotV1,
     provider: CloudVaultContentProvider,
     localSnapshot?: CloudVaultSnapshotV1,
+    remoteSnapshot?: CloudVaultSnapshotV1,
   ): Promise<{ snapshot: CloudVaultSnapshotV1; report: CloudVaultContentTransferReport }> {
     if (!snapshot.scope.sourceFiles) return { snapshot, report: EMPTY_REPORT };
+    const previouslyUploaded = new Map(
+      (remoteSnapshot?.books ?? []).flatMap((book) =>
+        [...(book.sourcePartObjects ?? []), ...(book.sourceObject ? [book.sourceObject] : [])].map(
+          (object) => [object.contentHash, object] as const,
+        ),
+      ),
+    );
     const novels = await this.repository.listNovels();
     const novelById = new Map(novels.map((novel) => [novel.id, novel]));
     const novelByHash = new Map(novels.map((novel) => [novel.normalizedTextHash, novel]));
@@ -180,6 +194,7 @@ export class CloudVaultContentTransferService {
         continue;
       }
       let sourceObject = book.sourceObject;
+      let sourcePartObjects = book.sourcePartObjects;
       let coverObject = book.coverObject;
       const localMatchesSelectedBody = novel.normalizedTextHash === book.identity.normalizedTextHash;
       const maySupplySource =
@@ -190,6 +205,27 @@ export class CloudVaultContentTransferService {
           const exported = await this.assets.exportSource(novel.id);
           if (exported) {
             const nextObject = descriptor('source', exported, novel);
+            const manifest =
+              exported.metadata.contentType === 'application/vnd.moya.comic-manifest+zip'
+                ? await readComicSourceManifest(exported.blob)
+                : undefined;
+            const nextParts: CloudVaultContentObjectV1[] = [];
+            for (const part of manifest?.sourceParts ?? []) {
+              const nextPart: CloudVaultContentObjectV1 = {
+                ...part,
+                kind: 'source_part',
+                objectKey: cloudVaultContentObjectKey(part.contentHash),
+              };
+              const known =
+                sourcePartObjects?.find((old) => old.contentHash === part.contentHash) ??
+                previouslyUploaded.get(part.contentHash);
+              if (!known || known.byteLength !== part.byteLength || known.objectKey !== nextPart.objectKey) {
+                const blob = await readComicSourcePart(this.assets, novel.id, part);
+                const uploaded = await uploadObject(provider, nextPart, blob);
+                uploadedContentBytes += uploaded.bytes;
+              }
+              nextParts.push(nextPart);
+            }
             if (
               sourceObject?.contentHash !== nextObject.contentHash ||
               sourceObject.byteLength !== nextObject.byteLength
@@ -199,6 +235,7 @@ export class CloudVaultContentTransferService {
               uploadedContentBytes += uploaded.bytes;
             }
             sourceObject = nextObject;
+            sourcePartObjects = manifest ? nextParts : undefined;
           }
         } catch (error) {
           contentFailures.push(`${novel.title}: ${error instanceof Error ? error.message : '원본 업로드 실패'}`);
@@ -223,7 +260,7 @@ export class CloudVaultContentTransferService {
           contentFailures.push(`${novel.title}: ${error instanceof Error ? error.message : '표지 업로드 실패'}`);
         }
       }
-      books.push({ ...book, sourceObject, coverObject });
+      books.push({ ...book, sourceObject, sourcePartObjects, coverObject });
     }
 
     return {
@@ -275,7 +312,44 @@ export class CloudVaultContentTransferService {
           const stored = await provider.getObject(book.sourceObject.objectKey);
           if (!stored) throw new Error('클라우드에 원본 파일이 없습니다.');
           await validateDownloadedObject(stored.blob, book.sourceObject);
-          const file = new File([stored.blob], book.sourceObject.fileName, {
+          const comicManifest =
+            book.sourceObject.contentType === 'application/vnd.moya.comic-manifest+zip'
+              ? await readComicSourceManifest(stored.blob)
+              : undefined;
+          const importBlob = comicManifest
+            ? await packageComicSource(stored.blob, async (part) => {
+                const partObject = book.sourcePartObjects?.find(
+                  (candidate) => candidate.kind === 'source_part' && candidate.contentHash === part.contentHash,
+                );
+                if (
+                  !partObject ||
+                  partObject.byteLength !== part.byteLength ||
+                  partObject.objectKey !== cloudVaultContentObjectKey(part.contentHash)
+                ) {
+                  throw new Error('Cloud Vault에 만화 회차 원본 목록이 없습니다.');
+                }
+                const localPart = localNovel
+                  ? this.assets.getComicSourcePart
+                    ? await this.assets.getComicSourcePart(localNovel.id, part.contentHash)
+                    : await this.assets.getEmbeddedResource(
+                        localNovel.id,
+                        comicPartAssetId(localNovel.id, part.contentHash),
+                      )
+                  : undefined;
+                if (
+                  localPart?.metadata.kind === 'source_part' &&
+                  localPart.metadata.contentHash === part.contentHash &&
+                  localPart.blob.size === part.byteLength
+                )
+                  return localPart.blob;
+                const remotePart = await provider.getObject(partObject.objectKey);
+                if (!remotePart) throw new Error('Cloud Vault에 만화 회차 원본이 없습니다.');
+                await validateDownloadedObject(remotePart.blob, partObject);
+                downloadedContentBytes += remotePart.blob.size;
+                return remotePart.blob;
+              })
+            : stored.blob;
+          const file = new File([importBlob], book.sourceObject.fileName, {
             type: book.sourceObject.contentType,
             lastModified: Date.now(),
           });

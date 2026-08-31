@@ -6,16 +6,18 @@ import { integrityHash, persistentId128 } from '@noveldesk/text-core/hash';
 import { paragraphPageId, parsedChapterId, parsedParagraphId } from '@noveldesk/text-core/identity/parser';
 import type { ParagraphPage, ParsedNovel, ParsedNovelImport } from '@noveldesk/contracts';
 import { readSeriesImageArchiveManifest } from '@noveldesk/fixed-document-core/series-image-archive';
+import { openImageArchiveStream } from '@noveldesk/fixed-document-core';
 import type { ServerConfig } from '../config.js';
 import { BlobWriter, TextReader, Uint8ArrayReader, ZipWriter } from '@zip.js/zip.js';
 
 vi.mock('./object-storage.js', () => ({
   createS3Client: vi.fn(() => ({})),
   getObjectBuffer: vi.fn(),
+  inspectStoredObject: vi.fn(),
   putRawBookObject: vi.fn(async () => undefined),
 }));
 
-import { getObjectBuffer, putRawBookObject } from './object-storage.js';
+import { getObjectBuffer, inspectStoredObject, putRawBookObject } from './object-storage.js';
 
 import {
   arrayBufferFromBuffer,
@@ -277,6 +279,25 @@ async function seriesComicArchive(
     ),
   );
   return Buffer.from(await (await writer.close()).arrayBuffer());
+}
+
+async function seriesStoredPages(base: Buffer) {
+  const document = await openImageArchiveStream(new Blob([new Uint8Array(base)]), { fileName: 'base.cbz' });
+  const rows = [];
+  for await (const page of document.consumePages()) {
+    rows.push({
+      id: `existing_page_${rows.length}`,
+      kind: 'document_page',
+      provenance: 'archive_embedded',
+      file_name: page.fileName,
+      content_type: page.contentType,
+      content_hash: page.contentHash,
+      byte_length: page.bytes.length,
+      storage_key: 'user_test/book_series_1/old/001.png',
+      page_index: rows.length,
+    });
+  }
+  return rows;
 }
 
 describe('server import service', () => {
@@ -694,6 +715,7 @@ describe('server import service', () => {
 
     const appendClient = {
       query: vi.fn(async (sql: string) => {
+        if (sql.startsWith('select id, kind, content_hash, page_index from book_assets')) return { rows: [] };
         if (sql.includes('select pg_advisory_lock') || sql.includes('select pg_advisory_unlock')) {
           return { rows: [{ locked: true }], rowCount: 1 };
         }
@@ -706,6 +728,7 @@ describe('server import service', () => {
                 active_content_revision_id: 'content_revision_7',
                 source_file_name: '연재 작품.cbz',
                 storage_key: 'user_test/sources/series.cbz',
+                raw_text_hash: integrityHash(base),
                 content_type: 'application/vnd.comicbook+zip',
                 total_chapters: 1,
               },
@@ -790,6 +813,7 @@ describe('server import service', () => {
     const delta = await seriesComicArchive([
       { remoteId: 'chapter:101', title: '1화 이전', sourceContentHash: 'hash-old' },
     ]);
+    const basePages = await seriesStoredPages(base);
     const uploadDir = path.join(tempDir, 'uploads', 'upload_series_stale_replacement');
     const chunkPath = path.join(uploadDir, '00000000.part');
     await mkdir(uploadDir, { recursive: true });
@@ -804,6 +828,7 @@ describe('server import service', () => {
 
     const appendClient = {
       query: vi.fn(async (sql: string) => {
+        if (sql.startsWith('select id, kind, content_hash, page_index from book_assets')) return { rows: basePages };
         if (sql.includes('select pg_advisory_lock') || sql.includes('select pg_advisory_unlock')) {
           return { rows: [{ locked: true }], rowCount: 1 };
         }
@@ -816,6 +841,7 @@ describe('server import service', () => {
                 active_content_revision_id: 'content_revision_7',
                 source_file_name: '연재 작품.cbz',
                 storage_key: 'user_test/sources/series.cbz',
+                raw_text_hash: integrityHash(base),
                 content_type: 'application/vnd.comicbook+zip',
                 total_chapters: 1,
               },
@@ -881,6 +907,7 @@ describe('server import service', () => {
       { remoteId: 'chapter:101', title: '1화 수정', sourceContentHash: 'hash-1-revised' },
       { remoteId: 'chapter:102', title: '2화', sourceContentHash: 'hash-2' },
     ]);
+    const basePages = await seriesStoredPages(base);
     const uploadDir = path.join(tempDir, 'uploads', 'upload_series_append');
     const chunkPath = path.join(uploadDir, '00000000.part');
     await mkdir(uploadDir, { recursive: true });
@@ -900,6 +927,7 @@ describe('server import service', () => {
     const appendClient = {
       query: vi.fn(async (sql: string, params?: unknown[]) => {
         queries.push({ sql, params });
+        if (sql.startsWith('select id, kind, content_hash, page_index from book_assets')) return { rows: basePages };
         if (sql.includes('select pg_advisory_lock') || sql.includes('select pg_advisory_unlock')) {
           return { rows: [{ locked: true }], rowCount: 1 };
         }
@@ -912,6 +940,7 @@ describe('server import service', () => {
                 active_content_revision_id: 'content_revision_7',
                 source_file_name: '연재 작품.cbz',
                 storage_key: 'user_test/sources/series.cbz',
+                raw_text_hash: integrityHash(base),
                 content_type: 'application/vnd.comicbook+zip',
                 total_chapters: 1,
               },
@@ -950,7 +979,7 @@ describe('server import service', () => {
         if (sql.includes('asset.provenance')) {
           return { rows: [{ id: 'cover_existing', provenance: 'archive_embedded' }], rowCount: 1 };
         }
-        if (sql.includes("kind in ('epub_resource', 'document_page')")) {
+        if (sql.includes("kind in ('epub_resource', 'document_page', 'source_part')")) {
           return { rows: [{ storage_key: 'user_test/book_series_1/old/001.png' }], rowCount: 1 };
         }
         if (sql === 'select id, storage_key from book_assets where id = any($1::text[])') {
@@ -1048,7 +1077,7 @@ describe('server import service', () => {
     expect(chapterInsertParams).toHaveLength(30);
     expect(chapterInsertParams?.slice(9, 13)).toEqual(['chapter:101', '1화 수정', 1, 1]);
     expect(chapterInsertParams?.slice(24, 28)).toEqual(['chapter:102', '2화', 2, 1]);
-    expect(insertedAssetKinds).toEqual(['document_page', 'document_page']);
+    expect(insertedAssetKinds).toEqual(['source_part', 'source_part', 'document_page', 'document_page']);
     expect(queries.some(({ sql }) => sql.includes("kind = 'cover' and status = 'active'"))).toBe(false);
     expect(queries.some(({ sql }) => sql.includes('set cover_asset_id = $1'))).toBe(false);
     expect(queries.some(({ sql }) => sql.includes('insert into reading_positions'))).toBe(true);
@@ -1062,20 +1091,22 @@ describe('server import service', () => {
       )
       .flatMap(({ params }) => (Array.isArray(params?.[0]) ? params[0] : []));
     expect(replacedKeys).toEqual(
-      expect.arrayContaining([
-        'user_test/sources/series.cbz',
-        'user_test/book_series_1/old/001.png',
-        expect.stringMatching(/\/staged\/job_series_append\/legacy\/attempt-1\/[^/]+\/.+\/00001\.png$/),
-      ]),
+      expect.arrayContaining(['user_test/sources/series.cbz', 'user_test/book_series_1/old/001.png']),
     );
+    expect(replacedKeys.some((key) => String(key).includes('/staged/job_series_append/'))).toBe(false);
     expect(uploadDirectoryRemoved).toBe(true);
     expect(appendClient.release).toHaveBeenCalledTimes(1);
   });
 
-  it('rebases a stale new-chapter delta and activates its archive cover when no active cover exists', async () => {
+  it('rebases a stale new-chapter delta without turning a chapter page into a missing cover', async () => {
     const tempDir = await mkdtemp(path.join(os.tmpdir(), 'moya-import-series-stale-add-'));
     const base = await seriesComicArchive([{ remoteId: 'chapter:101', title: '1화', sourceContentHash: 'hash-1' }]);
     const delta = await seriesComicArchive([{ remoteId: 'chapter:102', title: '2화', sourceContentHash: 'hash-2' }]);
+    const basePages = await seriesStoredPages(base);
+    vi.mocked(inspectStoredObject).mockResolvedValue({
+      byteLength: basePages[0]!.byte_length,
+      contentType: 'image/png',
+    });
     const uploadDir = path.join(tempDir, 'uploads', 'upload_series_stale_add');
     const chunkPath = path.join(uploadDir, '00000000.part');
     await mkdir(uploadDir, { recursive: true });
@@ -1092,6 +1123,8 @@ describe('server import service', () => {
     const appendClient = {
       query: vi.fn(async (sql: string, params?: unknown[]) => {
         queries.push({ sql, params });
+        if (sql.startsWith('select id, kind, content_hash, page_index from book_assets')) return { rows: basePages };
+        if (sql.startsWith('select id, kind, provenance, file_name')) return { rows: basePages };
         if (sql.includes('select pg_advisory_lock') || sql.includes('select pg_advisory_unlock')) {
           return { rows: [{ locked: true }], rowCount: 1 };
         }
@@ -1104,6 +1137,7 @@ describe('server import service', () => {
                 active_content_revision_id: 'content_revision_7',
                 source_file_name: '연재 작품.cbz',
                 storage_key: 'user_test/sources/series.cbz',
+                raw_text_hash: integrityHash(base),
                 content_type: 'application/vnd.comicbook+zip',
                 total_chapters: 1,
               },
@@ -1142,7 +1176,7 @@ describe('server import service', () => {
         if (sql.includes('asset.provenance')) {
           return { rows: [{ id: null, provenance: null }], rowCount: 1 };
         }
-        if (sql.includes("kind in ('epub_resource', 'document_page')")) {
+        if (sql.includes("kind in ('epub_resource', 'document_page', 'source_part')")) {
           return { rows: [{ storage_key: 'user_test/book_series_1/old/001.png' }], rowCount: 1 };
         }
         if (sql === 'select id, storage_key from book_assets where id = any($1::text[])') {
@@ -1233,8 +1267,10 @@ describe('server import service', () => {
           params?.[2] === 'content_revision_7',
       ),
     ).toBe(true);
-    expect(insertedAssetKinds).toEqual(expect.arrayContaining(['cover', 'document_page']));
-    expect(queries.some(({ sql }) => sql.includes('set cover_asset_id = $1'))).toBe(true);
+    expect(insertedAssetKinds.filter((kind) => kind === 'source_part')).toHaveLength(2);
+    expect(insertedAssetKinds.filter((kind) => kind === 'document_page')).toHaveLength(2);
+    expect(insertedAssetKinds).not.toContain('cover');
+    expect(queries.some(({ sql }) => sql.includes('set cover_asset_id = $1'))).toBe(false);
     expect(uploadDirectoryRemoved).toBe(true);
     expect(appendClient.release).toHaveBeenCalledTimes(1);
   });

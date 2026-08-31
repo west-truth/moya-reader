@@ -3,6 +3,25 @@
 Status: current
 Last verified: 2026-08-31
 
+## Comic chapter originals (2026-08-31)
+
+- Only comic chapter additions use immutable chapter CBZs plus a small hash-exact manifest ZIP. Ordinary first
+  imports and TXT/EPUB/PDF keep their existing paths. Existing books are not converted at startup.
+- The first addition preserves the complete old CBZ as a legacy part. Hosted stores its already-read bytes once
+  under an attempt-owned asset key so another import of identical bytes cannot replace and collect its reference.
+  Later additions write only new/changed chapter originals and pages; unchanged page objects stay reusable.
+- `book_assets.kind = source_part` uses existing ownership, activation and cleanup boundaries. Migration 0042 only
+  extends the asset-kind constraint. There is no new table or replacement lifecycle, and cover/metadata/exact reading
+  state remain outside the manifest.
+- Existing revision CAS and per-book serialization protect activation. Retained-object HEAD checks and chapter/page
+  metadata replacement still scale with total page count; the database path is not fully incremental.
+- Backup includes the manifest and parts; copy restore and portable package import preserve resolvable originals.
+  Cloud Vault transfers parts separately and refreshes reused page indexes when restoring an updated package.
+- The raw source endpoint returns the actual manifest bytes for this format. Explicit file export reconstructs an
+  ordinary CBZ. ComicInfo author/summary/tags are currently omitted from that export; Library metadata is unaffected.
+- Back up before upgrading and update Web/API/worker together. After adding chapters in the new format, downgrading
+  container images alone is not a complete rollback; old readers cannot append/export/restore the manifest format.
+
 ## Rollback-compatible exact chapter reads (2026-08-31)
 
 - Keep IndexedDB reader version 39 and external-source version 6, including their additive schema, so an already

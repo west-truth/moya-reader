@@ -57,7 +57,7 @@ export class CloudVaultService {
           : { snapshot: remoteCore, report: EMPTY_AI_TTS_TRANSFER_REPORT };
       let merged = mergeCloudVaultSnapshots(local, hydratedAi.snapshot);
       if (contentProvider && this.content && input.scope.sourceFiles) {
-        const prepared = await this.content.uploadLocalContent(merged, contentProvider, local);
+        const prepared = await this.content.uploadLocalContent(merged, contentProvider, local, remoteCore);
         merged = prepared.snapshot;
         uploadedContent = prepared.report;
       }

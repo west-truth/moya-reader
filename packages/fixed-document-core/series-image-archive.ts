@@ -246,7 +246,7 @@ export async function readSeriesImageArchiveManifest(blob: Blob): Promise<Series
   }
 }
 
-async function inspectSeriesArchiveManifest(
+export async function inspectSeriesArchiveManifest(
   blob: Blob,
   signal: AbortSignal,
   label: '기존 aggregate' | 'delta archive',

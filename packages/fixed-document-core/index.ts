@@ -1130,7 +1130,7 @@ export function imageArchiveContentType(fileName: string): string {
   return 'application/vnd.comicbook+zip';
 }
 
-function materializeFixedImport(input: {
+export function materializeFixedImport(input: {
   format: Extract<BookFormat, 'pdf' | 'image_archive'>;
   fileName: string;
   sourceBytes?: Uint8Array;

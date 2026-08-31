@@ -1177,7 +1177,9 @@ export function useExternalSourceController(options: UseExternalSourceController
         );
         const existingSource =
           existingLocalBookId && !incrementalSeriesAppend
-            ? await optionsRef.current.assets?.exportSource(existingLocalBookId)
+            ? await (
+                await import('../../repositories/comic-source-export')
+              ).exportPortableBookSource(optionsRef.current.assets, existingLocalBookId)
             : undefined;
         if (existingLocalBookId && !incrementalSeriesAppend && !existingSource) {
           throw new Error('기존 연재 작품의 원본을 찾지 못해 회차를 안전하게 합칠 수 없습니다.');

@@ -49,7 +49,7 @@ export const DEFAULT_CLOUD_VAULT_SCOPE: CloudVaultSyncScope = {
   ttsAudio: false,
 };
 
-export type CloudVaultContentKind = 'source' | 'cover';
+export type CloudVaultContentKind = 'source' | 'source_part' | 'cover';
 
 export interface CloudVaultContentObjectV1 {
   readonly kind: CloudVaultContentKind;
@@ -164,6 +164,8 @@ export interface CloudVaultBookV1 {
   readonly corrections: readonly UserCorrection[];
   /** Added to v1 snapshots additively. Older clients safely ignore it. */
   readonly sourceObject?: CloudVaultContentObjectV1;
+  /** Immutable comic originals. Selected together with sourceObject, never with metadata ownership. */
+  readonly sourcePartObjects?: readonly CloudVaultContentObjectV1[];
   /** Added to v1 snapshots additively. Older clients safely ignore it. */
   readonly coverObject?: CloudVaultContentObjectV1;
   /** Latest per-book encrypted AI/TTS artifact sidecar. */

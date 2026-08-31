@@ -153,6 +153,7 @@ describe('CloudVaultService', () => {
       }),
       provider,
       local,
+      remote,
     );
     await expect(decryptCloudVault(stored, passphrase)).resolves.toMatchObject({
       books: [

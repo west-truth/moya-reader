@@ -65,7 +65,9 @@
 | RAR / CBR         | 만화 Viewer      | 단일 볼륨 RAR4/RAR5 이미지 archive            |
 | 7z / CB7          | 만화 Viewer      | 단일 볼륨 이미지 archive                      |
 
-DRM이 적용된 EPUB/PDF는 지원하지 않습니다. 가져온 원본은 변환하거나 다시 압축하지 않고 그대로 보관합니다.
+DRM이 적용된 EPUB/PDF는 지원하지 않습니다. 일반 가져오기는 원본을 그대로 보관합니다. 만화 회차 추가는
+회차별 원본과 목록으로 저장하고 파일 내보내기 시 일반 CBZ로 구성합니다.
+[저장 방식과 업그레이드 주의사항](docs/architecture/document-formats-and-fixed-layout-viewer.md)을 확인하세요.
 
 ## 플랫폼별 현재 상태
 

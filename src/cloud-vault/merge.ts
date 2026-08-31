@@ -185,6 +185,7 @@ function mergeBook(left: CloudVaultBookV1, right: CloudVaultBookV1): CloudVaultB
     // Raw source ownership follows the content clock even when normalized text
     // is unchanged. A loser's old container must not describe the winner.
     sourceObject: contentBook.sourceObject,
+    sourcePartObjects: contentBook.sourcePartObjects,
     coverObject: coverFromLeft ? (left.coverObject ?? right.coverObject) : (right.coverObject ?? left.coverObject),
     aiTtsObject: aiFromLeft ? (left.aiTtsObject ?? right.aiTtsObject) : (right.aiTtsObject ?? left.aiTtsObject),
   };

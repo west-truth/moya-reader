@@ -19,10 +19,10 @@ import { appWithBooks } from './books-route-test-harness.js';
 
 const resourceBytes = Buffer.from([0, 255, 137, 80, 78, 71, 13, 10, 26, 10]);
 
-function resourcePool(kind: 'epub_resource' | 'document_page') {
+function resourcePool(kind: 'epub_resource' | 'document_page' | 'source_part') {
   return {
     query: vi.fn(async (sql: string) => {
-      if (sql.includes("asset.kind in ('epub_resource', 'document_page')")) {
+      if (sql.includes("asset.kind in ('epub_resource', 'document_page', 'source_part')")) {
         return {
           rows: [
             {
@@ -47,7 +47,7 @@ function resourcePool(kind: 'epub_resource' | 'document_page') {
 describe('hosted embedded document resources', () => {
   afterEach(() => vi.clearAllMocks());
 
-  it.each(['epub_resource', 'document_page'] as const)(
+  it.each(['epub_resource', 'document_page', 'source_part'] as const)(
     'returns the exact stored bytes for an active %s asset',
     async (kind) => {
       storage.getObjectStream.mockResolvedValue({

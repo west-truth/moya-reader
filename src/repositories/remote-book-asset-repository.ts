@@ -292,16 +292,17 @@ export class RemoteBookAssetRepository implements BookAssetRepository {
       const pageIndexHeader = result.headers.get('x-page-index');
       return {
         metadata: {
-          id: assetId,
+          id: result.headers.get('x-asset-id') || assetId,
           bookId,
           kind:
-            result.headers.get('x-asset-kind') === 'document_page'
-              ? ('document_page' as const)
-              : ('epub_resource' as const),
-          provenance:
-            result.headers.get('x-asset-kind') === 'document_page'
-              ? ('archive_embedded' as const)
-              : ('epub_embedded' as const),
+            result.headers.get('x-asset-kind') === 'source_part'
+              ? ('source_part' as const)
+              : result.headers.get('x-asset-kind') === 'document_page'
+                ? ('document_page' as const)
+                : ('epub_resource' as const),
+          provenance: ['document_page', 'source_part'].includes(result.headers.get('x-asset-kind') ?? '')
+            ? ('archive_embedded' as const)
+            : ('epub_embedded' as const),
           status: 'active' as const,
           storageKey: assetId,
           fileName: decodeURIComponent(result.headers.get('x-asset-file-name') ?? 'resource'),
@@ -319,5 +320,10 @@ export class RemoteBookAssetRepository implements BookAssetRepository {
       }
       throw error;
     }
+  }
+
+  getComicSourcePart(bookId: string, contentHash: string) {
+    if (!/^sha256:[a-f0-9]{64}$/u.test(contentHash)) throw new Error('만화 회차 원본 식별자가 올바르지 않습니다.');
+    return this.getEmbeddedResource(bookId, contentHash);
   }
 }

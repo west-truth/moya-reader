@@ -274,7 +274,10 @@ export async function planLocalSeriesImport(
   options: PlanLocalSeriesImportOptions = {},
 ): Promise<LocalSeriesImportPlan> {
   const incrementalAppend = Boolean(targetNovel && options.incrementalAppend);
-  const targetSource = targetNovel && !incrementalAppend ? await assets?.exportSource(targetNovel.id) : undefined;
+  const targetSource =
+    targetNovel && !incrementalAppend
+      ? await (await import('../../repositories/comic-source-export')).exportPortableBookSource(assets, targetNovel.id)
+      : undefined;
   if (targetNovel && !incrementalAppend && !targetSource) {
     throw new Error('기존 작품의 원본을 찾지 못해 회차를 안전하게 추가할 수 없습니다.');
   }

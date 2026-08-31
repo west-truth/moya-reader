@@ -22,6 +22,9 @@ export interface SaveImportedNovelOptions {
   preserveExistingEmbeddedAssets?: boolean;
   /** Keep only the active cover while replacing obsolete embedded document resources. */
   preserveExistingCover?: boolean;
+  /** Exact existing comic assets referenced by the new manifest; activation checks book ownership. */
+  retainedEmbeddedAssetIds?: readonly string[];
+  embeddedAssetPageIndexes?: Readonly<Record<string, number>>;
   onProgress?: (progress: SaveImportedNovelProgress) => void | Promise<void>;
   shouldCancel?: () => boolean;
   sourceAsset?: {

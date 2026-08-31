@@ -457,6 +457,7 @@ async function activateStagedContentRevision(input: {
   shouldCancel?: () => boolean;
   sourceAssetId?: string;
   embeddedAssetIds?: readonly string[];
+  embeddedAssetPageIndexes?: Readonly<Record<string, number>>;
   preserveExistingEmbeddedAssets?: boolean;
   preserveExistingCover?: boolean;
 }): Promise<void> {
@@ -468,6 +469,7 @@ async function activateStagedContentRevision(input: {
     shouldCancel: input.shouldCancel,
     sourceAssetId: input.sourceAssetId,
     embeddedAssetIds: input.embeddedAssetIds,
+    embeddedAssetPageIndexes: input.embeddedAssetPageIndexes,
     preserveExistingEmbeddedAssets: input.preserveExistingEmbeddedAssets,
     preserveExistingCover: input.preserveExistingCover,
     queueBookImported: input.emitBookImported
@@ -1841,7 +1843,8 @@ async function stageAndActivateImportedNovel(input: {
           readerPlan,
           shouldCancel: input.options.shouldCancel,
           sourceAssetId: stagedSourceAssetId,
-          embeddedAssetIds: stagedEmbeddedAssetIds,
+          embeddedAssetIds: [...stagedEmbeddedAssetIds, ...(input.options.retainedEmbeddedAssetIds ?? [])],
+          embeddedAssetPageIndexes: input.options.embeddedAssetPageIndexes,
           preserveExistingEmbeddedAssets: Boolean(appendDelta) || input.options.preserveExistingEmbeddedAssets,
           preserveExistingCover: input.options.preserveExistingCover,
         }),

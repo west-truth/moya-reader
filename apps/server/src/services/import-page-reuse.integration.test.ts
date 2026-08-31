@@ -6,6 +6,9 @@ import { registerBookCatalogRoutes } from '../routes/books/catalog-routes.js';
 import { registerBookContentRoutes } from '../routes/books/content-routes.js';
 import { registerReaderStateRoutes } from '../routes/books/reader-state-routes.js';
 import { drainObjectDeleteOutbox } from './object-delete-outbox.js';
+import { exportHostedBackup, restoreHostedBackup } from './hosted-backup-service.js';
+import { registerEpubResourceRoutes } from '../routes/books/epub-resource-routes.js';
+import { readComicSourceManifest, packageComicSource } from '@noveldesk/fixed-document-core/comic-source';
 import { startPostgresIntegrationHarness, withPostgresSchema } from './id-v2-migration/postgres-integration-harness.js';
 import {
   fixturePng,
@@ -38,6 +41,122 @@ async function assertActiveObjects(pool: pg.Pool, fixture: ImportPageFixture) {
 }
 
 describe.skipIf(!harness || Boolean(benchmark))('append page reuse with real PostgreSQL and S3 transport', () => {
+  test('keeps part originals through subsequent append, source download, backup copy and portable reimport', async () => {
+    await withPostgresSchema(harness!, 'comic_parts', async (pool) => {
+      await withImportPageFixture(pool, async (fixture) => {
+        await fixture.import(await fixtureSeries([{ number: 2, pages: [fixturePng(2)] }]));
+        const originalKey = (await pool.query('select storage_key from book_objects')).rows[0].storage_key;
+        // Historical ZIP imports may have a generic MIME; the owned part must remain readable after conversion.
+        await pool.query("update book_objects set content_type = 'application/zip'");
+        await pool.query("update library_books set source_file_name = 'legacy.zip'");
+        fixture.objects.get(originalKey)!.type = 'application/zip';
+        await fixture.import(await fixtureSeries([{ number: 1, pages: [fixturePng(1)] }], 'book_fixture'), true);
+        await drainObjectDeleteOutbox(pool, fixture.config, 1000);
+        expect(fixture.objects.has(originalKey)).toBe(false);
+        fixture.gets.length = 0;
+        fixture.puts.length = 0;
+        await fixture.import(await fixtureSeries([{ number: 3, pages: [fixturePng(3)] }], 'book_fixture'), true);
+        expect(fixture.gets).toHaveLength(1);
+        expect(fixture.gets[0]!.bytes).toBeLessThan(20_000);
+        expect(fixture.profiles.at(-1)).toMatchObject({ reusedPages: 2, writtenPages: 1 });
+        await drainObjectDeleteOutbox(pool, fixture.config, 1000);
+        await assertActiveObjects(pool, fixture);
+        const app = Fastify();
+        await registerBookCatalogRoutes(app, pool, fixture.config);
+        await registerEpubResourceRoutes(app, pool, fixture.config);
+        try {
+          const response = await app.inject('/api/books/book_fixture/source');
+          expect(response.statusCode, response.body).toBe(200);
+          const source = new Blob([new Uint8Array(response.rawPayload)]);
+          const manifest = await readComicSourceManifest(source);
+          expect(manifest?.sourceParts).toHaveLength(3);
+          const packageBlob = await packageComicSource(source, async (part) => {
+            const resource = await app.inject(
+              `/api/books/book_fixture/resources/${encodeURIComponent(part.contentHash)}`,
+            );
+            expect(resource.statusCode, resource.body).toBe(200);
+            expect(resource.headers['x-asset-kind']).toBe('source_part');
+            return new Blob([new Uint8Array(resource.rawPayload)]);
+          });
+          const backup = await exportHostedBackup(pool, fixture.config);
+          const backupBytes = new Uint8Array(
+            await new Response(backup.readable as ReadableStream<Uint8Array<ArrayBuffer>>).arrayBuffer(),
+          );
+          await backup.completion;
+          await restoreHostedBackup(pool, fixture.config, backupBytes, { defaultConflictResolution: 'copy' });
+          const copied = (await pool.query("select id from library_books where id <> 'book_fixture'")).rows[0].id;
+          await fixture.import(await fixtureSeries([{ number: 4, pages: [fixturePng(4)] }], copied), true, copied);
+          expect(
+            (await pool.query('select total_chapters from library_books where id = $1', [copied])).rows[0]
+              .total_chapters,
+          ).toBe(4);
+          expect(
+            (await pool.query("select total_chapters from library_books where id = 'book_fixture'")).rows[0]
+              .total_chapters,
+          ).toBe(3);
+          await fixture.import(Buffer.from(await packageBlob.arrayBuffer()), false, 'portable_copy');
+          expect(
+            (
+              await pool.query(
+                "select count(*)::int as count from book_assets where book_id = 'portable_copy' and kind = 'source_part'",
+              )
+            ).rows[0].count,
+          ).toBe(3);
+          await drainObjectDeleteOutbox(pool, fixture.config, 1000);
+          await assertActiveObjects(pool, fixture);
+        } finally {
+          await app.close();
+        }
+      });
+    });
+  }, 30_000);
+  test('keeps an owned legacy part when another import replaces and collects the shared source during append', async () => {
+    await withPostgresSchema(harness!, 'comic_part_source_race', async (pool) => {
+      await withImportPageFixture(pool, async (fixture) => {
+        const base = await fixtureSeries([{ number: 1, pages: [fixturePng(1)] }]);
+        await fixture.import(base);
+        const sourceSql =
+          "select o.storage_key, b.active_content_revision_id from book_objects o join library_books b on b.object_id = o.id where b.id = 'book_fixture'";
+        const original = (await pool.query(sourceSql)).rows[0];
+        let interleaved = false;
+        fixture.onPut = async (key) => {
+          if (!key.includes('/sources/')) return;
+          fixture.onPut = undefined;
+          interleaved = true;
+          await fixture.import(base, false, 'duplicate_book');
+          const shared = (await pool.query(sourceSql)).rows[0];
+          expect(shared.active_content_revision_id).toBe(original.active_content_revision_id);
+          expect(shared.storage_key).not.toBe(original.storage_key);
+          expect((await drainObjectDeleteOutbox(pool, fixture.config, 1000)).failed).toBe(0);
+          expect(fixture.objects.has(original.storage_key)).toBe(false);
+        };
+        const append = await fixture.import(
+          await fixtureSeries([{ number: 2, pages: [fixturePng(2)] }], 'book_fixture'),
+          true,
+        );
+        expect(interleaved).toBe(true);
+        expect((await pool.query('select status from import_jobs where id = $1', [append.jobId])).rows[0].status).toBe(
+          'done',
+        );
+        const part = (
+          await pool.query(
+            "select storage_key from book_assets where book_id = 'book_fixture' and kind = 'source_part' and content_hash = $1 and status = 'active'",
+            [integrityHash(base)],
+          )
+        ).rows[0];
+        expect(part.storage_key).not.toBe(original.storage_key);
+        await drainObjectDeleteOutbox(pool, fixture.config, 1000);
+        await assertActiveObjects(pool, fixture);
+        await fixture.import(await fixtureSeries([{ number: 3, pages: [fixturePng(3)] }], 'book_fixture'), true);
+        await drainObjectDeleteOutbox(pool, fixture.config, 1000);
+        await assertActiveObjects(pool, fixture);
+        expect(
+          (await pool.query("select total_chapters from library_books where id = 'book_fixture'")).rows[0]
+            .total_chapters,
+        ).toBe(3);
+      });
+    });
+  }, 30_000);
   test('preserves covers, exact reads, chapter anchors and page bytes through append, GC, restore and purge', async () => {
     await withPostgresSchema(harness!, 'page_lifecycle', async (pool) => {
       await withImportPageFixture(pool, async (fixture) => {
@@ -266,6 +385,31 @@ describe.skipIf(!harness || !benchmark)('worker page write benchmark (real Postg
               profile: fixture.profiles.at(-1),
             }) + '\n',
           );
+          if (benchmark === 'parts') {
+            const next = await fixtureSeries(
+              [{ number: 3, pages: Array.from({ length: 65 }, (_, i) => fixturePng(i + 20001, 256)) }],
+              'book_fixture',
+            );
+            fixture.puts.length = 0;
+            fixture.gets.length = 0;
+            fixture.heads.length = 0;
+            const warm = await fixture.import(next, true);
+            expect(fixture.gets).toHaveLength(1);
+            expect(fixture.gets[0]!.bytes).toBeLessThan(1024 * 1024);
+            expect(fixture.profiles.at(-1)).toMatchObject({ writtenPages: 65 });
+            process.stdout.write(
+              JSON.stringify({
+                benchmark: 'parts-steady',
+                existingPages: pageCount + 65,
+                addedPages: 65,
+                durationMs: Math.round(warm.durationMs),
+                objectPutBytes: fixture.puts.reduce((sum, put) => sum + put.bytes, 0),
+                objectGetBytes: fixture.gets.reduce((sum, get) => sum + get.bytes, 0),
+                headRequests: fixture.heads.length,
+                profile: fixture.profiles.at(-1),
+              }) + '\n',
+            );
+          }
         });
       });
     },

@@ -105,4 +105,5 @@ export interface BookAssetRepository {
   saveGeneratedCover?(bookId: string, input: GeneratedBookCoverInput): Promise<BookAssetMetadata | undefined>;
   removeCover(bookId: string, expectedMetadataRevision?: number): Promise<void>;
   getEmbeddedResource(bookId: string, assetId: string): Promise<ExportedBookResource | undefined>;
+  getComicSourcePart?(bookId: string, contentHash: string): Promise<ExportedBookResource | undefined>;
 }

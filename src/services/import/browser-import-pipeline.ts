@@ -3,10 +3,18 @@ import { sha256 } from '../../domain/hash';
 import type { ChapterSplitMode, EncodingMode } from '../../domain/types';
 import pdfWorkerUrl from 'pdfjs-dist/legacy/build/pdf.worker.min.mjs?url';
 import { saveParsedNovelImport } from '../../storage/db';
-import { getActiveBookSourceSnapshot } from '../../storage/book-asset-store';
+import { getActiveBookSourceSnapshot, getActiveComicAssetMetadata } from '../../storage/book-asset-store';
 import { ContentRevisionConflictError } from '../../storage/content-revisions';
 import { hashBlobInChunks } from './chunked-file-reader';
-import { mergeSeriesImageArchiveDelta } from './series-image-archive';
+import {
+  COMIC_SOURCE_CONTENT_TYPE,
+  comicPageAssetId,
+  materializeComicSource,
+  planComicSourceAppend,
+  unpackComicSource,
+} from '@noveldesk/fixed-document-core/comic-source';
+import { persistentId128 } from '@noveldesk/text-core/hash';
+import { withComicAppendLock } from './comic-append-lock';
 import {
   parseDecodedNovelTextForImportCooperatively,
   type CooperativeImportParseProgress,
@@ -101,13 +109,16 @@ async function runBrowserImageSeriesAppendPipeline(input: BrowserImportPipelineI
           if (input.shouldCancel?.()) mergeController.abort();
         }, 50)
       : undefined;
-    let merged: Awaited<ReturnType<typeof mergeSeriesImageArchiveDelta>>;
+    let merged: Awaited<ReturnType<typeof planComicSourceAppend>>;
     try {
-      merged = await mergeSeriesImageArchiveDelta({
-        existingArchive: snapshot.blob,
-        deltaArchive,
-        targetBookId: bookId,
+      merged = await planComicSourceAppend({
+        existingSource: snapshot.blob,
+        existingSourceHash: snapshot.metadata.contentHash,
+        delta: deltaArchive,
+        deltaHash,
+        bookId,
         signal: mergeController.signal,
+        existingAssets: await getActiveComicAssetMetadata(bookId),
       });
     } finally {
       if (cancelPoll !== undefined) clearInterval(cancelPoll);
@@ -140,17 +151,46 @@ async function runBrowserImageSeriesAppendPipeline(input: BrowserImportPipelineI
       continue;
     }
     try {
-      return await runBrowserFixedDocumentImportPipeline({
-        ...input,
-        fileName: snapshot.metadata.fileName ?? snapshot.novel.sourceFileName,
-        buffer: new ArrayBuffer(0),
-        sourceBlob: merged.file,
-        totalBytes: merged.file.size,
-        importMode: 'replace_book',
-        expectedSourceContentHash: undefined,
+      const fileName = snapshot.metadata.fileName ?? snapshot.novel.sourceFileName;
+      const parsed = await materializeComicSource({
+        manifest: merged.manifest,
+        sourceContentHash: merged.sourceContentHash,
+        fileName,
+        bookId,
+        partsToStore: merged.newParts,
+        pagePartsToRead: new Map([...merged.newParts].filter(([hash]) => hash !== snapshot.metadata.contentHash)),
+        signal: mergeController.signal,
+        pageAssetIds: merged.pageAssetIds,
+      });
+      await saveParsedNovelImport(parsed, {
+        batchPageCount: BROWSER_IMPORT_WRITE_BATCH_PAGES,
+        shouldCancel: input.shouldCancel,
         expectedBaseActiveContentRevisionId: snapshot.novel.activeContentRevisionId,
         preserveExistingCover: true,
+        retainedEmbeddedAssetIds: [...merged.retainedPageIds, ...merged.retainedPartIds],
+        embeddedAssetPageIndexes: Object.fromEntries(merged.pageAssetIds.map((id, index) => [id, index])),
+        sourceAsset: {
+          blob: merged.source,
+          fileName,
+          contentType: COMIC_SOURCE_CONTENT_TYPE,
+          contentHash: merged.sourceContentHash,
+        },
+        onProgress: (progress) =>
+          input.onProgress(
+            pipelineProgress(input, input.totalBytes, 'writing', progress.phase, {
+              chaptersDetected: parsed.chapters.length,
+              paragraphsWritten: progress.paragraphsWritten,
+              message:
+                progress.phase === 'activating_revision'
+                  ? '회차 목록을 적용하는 중입니다.'
+                  : '새 회차를 저장하는 중입니다.',
+            }),
+          ),
       });
+      input.onProgress(
+        pipelineProgress(input, input.totalBytes, 'ready', 'complete', { message: '회차를 추가했습니다.' }),
+      );
+      return { novel: parsed.novel };
     } catch (error) {
       if (!(error instanceof ContentRevisionConflictError)) throw error;
       lastConflict = error;
@@ -359,10 +399,13 @@ export async function runBrowserEpubImportPipeline(input: BrowserImportPipelineI
 }
 
 export async function runBrowserFixedDocumentImportPipeline(input: BrowserImportPipelineInput): Promise<ImportResult> {
-  if (input.importMode === 'append_image_series') return runBrowserImageSeriesAppendPipeline(input);
+  if (input.importMode === 'append_image_series')
+    return withComicAppendLock(input.clientBookId ?? '', () => runBrowserImageSeriesAppendPipeline(input));
   const bytes = new Uint8Array(input.buffer);
   const isPdf = /\.pdf$/i.test(input.fileName);
-  const sourceBlob = input.sourceBlob;
+  let sourceBlob = input.sourceBlob;
+  const comicPackage =
+    sourceBlob && /\.(zip|cbz)$/i.test(input.fileName) ? await unpackComicSource(sourceBlob) : undefined;
   const { DOCUMENT_SERIES_CONTENT_TYPE, hasDocumentSeriesManifest, materializeDocumentSeriesArchive } =
     await import('@noveldesk/document-series-core');
   const isDocumentSeries = Boolean(
@@ -395,82 +438,92 @@ export async function runBrowserFixedDocumentImportPipeline(input: BrowserImport
     openImageArchiveStream,
     parseImageArchive,
   } = await import('@noveldesk/fixed-document-core');
-  const parsed = isDocumentSeries
-    ? await (async () => {
-        const sourceContentHash = await hashBlobInChunks(sourceBlob!, {
-          shouldCancel: input.shouldCancel,
-          onProgress: ({ bytesRead }) =>
-            input.onProgress(
-              pipelineProgress(input, bytesRead, 'decoding', 'hashing_source', {
-                message: `연재 문서 원본을 확인하는 중입니다. ${bytesRead.toLocaleString()} / ${input.totalBytes.toLocaleString()} 바이트`,
-              }),
-            ),
-        });
-        return materializeDocumentSeriesArchive(sourceBlob!, {
-          fileName: input.fileName,
-          clientBookId: input.clientBookId,
-          sourceContentHash,
-        });
-      })()
-    : streamsArchiveEntries
+  const parsed = comicPackage
+    ? await materializeComicSource({
+        manifest: comicPackage.manifest,
+        sourceContentHash: await hashBlobInChunks(comicPackage.source, { shouldCancel: input.shouldCancel }),
+        fileName: input.fileName,
+        bookId: input.clientBookId || persistentId128('comic_book', [await hashBlobInChunks(comicPackage.source)]),
+        partsToStore: comicPackage.parts,
+        pagePartsToRead: comicPackage.parts,
+      })
+    : isDocumentSeries
       ? await (async () => {
-          const archiveBlob = input.sourceBlob!;
-          const sourceContentHash = await hashBlobInChunks(archiveBlob, {
+          const sourceContentHash = await hashBlobInChunks(sourceBlob!, {
             shouldCancel: input.shouldCancel,
             onProgress: ({ bytesRead }) =>
               input.onProgress(
                 pipelineProgress(input, bytesRead, 'decoding', 'hashing_source', {
-                  message: `압축 원본을 확인하는 중입니다. ${bytesRead.toLocaleString()} / ${input.totalBytes.toLocaleString()} 바이트`,
+                  message: `연재 문서 원본을 확인하는 중입니다. ${bytesRead.toLocaleString()} / ${input.totalBytes.toLocaleString()} 바이트`,
                 }),
               ),
           });
-          const document = await openImageArchiveStream(archiveBlob, {
+          return materializeDocumentSeriesArchive(sourceBlob!, {
             fileName: input.fileName,
-            password: input.archivePassword,
-          });
-          let pagesPrepared = 0;
-          return materializeStreamingImageArchiveImport({
-            fileName: input.fileName,
-            sourceContentHash,
             clientBookId: input.clientBookId,
-            document: {
-              pages: document.pages,
-              comicInfo: document.comicInfo,
-              moyaSeries: document.moyaSeries,
-              async *consumePages() {
-                for await (const page of document.consumePages()) {
-                  throwIfCancelled(input);
-                  pagesPrepared += 1;
-                  input.onProgress(
-                    pipelineProgress(input, input.totalBytes, 'writing', 'staging_chapters', {
-                      chaptersDetected: document.pages.length,
-                      paragraphsWritten: pagesPrepared,
-                      message: `이미지 페이지를 저장하는 중입니다. ${pagesPrepared.toLocaleString()} / ${document.pages.length.toLocaleString()}개`,
-                    }),
-                  );
-                  yield page;
-                }
-              },
-            },
+            sourceContentHash,
           });
         })()
-      : isPdf
-        ? await materializePdfImport({
-            fileName: input.fileName,
-            sourceBytes: bytes,
-            clientBookId: input.clientBookId,
-            workerSrc: pdfWorkerUrl,
-          })
-        : materializeImageArchiveImport({
-            fileName: input.fileName,
-            sourceBytes: bytes,
-            document: await parseImageArchive(new Blob([bytes]), {
+      : streamsArchiveEntries
+        ? await (async () => {
+            const archiveBlob = input.sourceBlob!;
+            const sourceContentHash = await hashBlobInChunks(archiveBlob, {
+              shouldCancel: input.shouldCancel,
+              onProgress: ({ bytesRead }) =>
+                input.onProgress(
+                  pipelineProgress(input, bytesRead, 'decoding', 'hashing_source', {
+                    message: `압축 원본을 확인하는 중입니다. ${bytesRead.toLocaleString()} / ${input.totalBytes.toLocaleString()} 바이트`,
+                  }),
+                ),
+            });
+            const document = await openImageArchiveStream(archiveBlob, {
               fileName: input.fileName,
               password: input.archivePassword,
-            }),
-            clientBookId: input.clientBookId,
-          });
+            });
+            let pagesPrepared = 0;
+            return materializeStreamingImageArchiveImport({
+              fileName: input.fileName,
+              sourceContentHash,
+              clientBookId: input.clientBookId,
+              document: {
+                pages: document.pages,
+                comicInfo: document.comicInfo,
+                moyaSeries: document.moyaSeries,
+                async *consumePages() {
+                  for await (const page of document.consumePages()) {
+                    throwIfCancelled(input);
+                    pagesPrepared += 1;
+                    input.onProgress(
+                      pipelineProgress(input, input.totalBytes, 'writing', 'staging_chapters', {
+                        chaptersDetected: document.pages.length,
+                        paragraphsWritten: pagesPrepared,
+                        message: `이미지 페이지를 저장하는 중입니다. ${pagesPrepared.toLocaleString()} / ${document.pages.length.toLocaleString()}개`,
+                      }),
+                    );
+                    yield page;
+                  }
+                },
+              },
+            });
+          })()
+        : isPdf
+          ? await materializePdfImport({
+              fileName: input.fileName,
+              sourceBytes: bytes,
+              clientBookId: input.clientBookId,
+              workerSrc: pdfWorkerUrl,
+            })
+          : materializeImageArchiveImport({
+              fileName: input.fileName,
+              sourceBytes: bytes,
+              document: await parseImageArchive(new Blob([bytes]), {
+                fileName: input.fileName,
+                password: input.archivePassword,
+              }),
+              clientBookId: input.clientBookId,
+            });
   throwIfCancelled(input);
+  if (comicPackage) sourceBlob = comicPackage.source;
   assertExpectedSourceContentHash(input, parsed.novel.rawTextHash);
   assertExpectedNormalizedTextHash(input, parsed.novel.normalizedTextHash);
   input.buffer = new ArrayBuffer(0);
@@ -487,19 +540,28 @@ export async function runBrowserFixedDocumentImportPipeline(input: BrowserImport
   await saveParsedNovelImport(parsed, {
     batchPageCount: BROWSER_IMPORT_WRITE_BATCH_PAGES,
     allowAppendDelta: isDocumentSeries,
+    // Reused immutable pages may move when a synced package adds earlier chapters.
+    // Publish their new positions with the revision, just like the append path.
+    embeddedAssetPageIndexes: comicPackage
+      ? Object.fromEntries(
+          comicPackage.manifest.sourcePages.map((page, index) => [comicPageAssetId(parsed.novel.id, page), index]),
+        )
+      : undefined,
     expectedBaseActiveContentRevisionId: input.expectedBaseActiveContentRevisionId,
     preserveExistingEmbeddedAssets: input.preserveExistingEmbeddedAssets,
     preserveExistingCover: input.preserveExistingCover,
     shouldCancel: input.shouldCancel,
-    sourceAsset: input.sourceBlob
+    sourceAsset: sourceBlob
       ? {
-          blob: input.sourceBlob,
+          blob: sourceBlob,
           fileName: input.fileName,
-          contentType: isPdf
-            ? 'application/pdf'
-            : isDocumentSeries
-              ? DOCUMENT_SERIES_CONTENT_TYPE
-              : imageArchiveContentType(input.fileName),
+          contentType: comicPackage
+            ? COMIC_SOURCE_CONTENT_TYPE
+            : isPdf
+              ? 'application/pdf'
+              : isDocumentSeries
+                ? DOCUMENT_SERIES_CONTENT_TYPE
+                : imageArchiveContentType(input.fileName),
           contentHash: parsed.novel.rawTextHash,
         }
       : undefined,

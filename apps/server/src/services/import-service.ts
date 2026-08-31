@@ -37,8 +37,16 @@ import {
   releaseObjectDeletionReservations,
   reserveObjectDeletions,
 } from './object-delete-outbox.js';
-import { mergeSeriesImageArchiveDelta } from '@noveldesk/fixed-document-core/series-image-archive';
+import {
+  COMIC_SOURCE_CONTENT_TYPE,
+  comicPageAssetId,
+  materializeComicSource,
+  planComicSourceAppend,
+  unpackComicSource,
+  type ComicSourceAppendPlan,
+} from '@noveldesk/fixed-document-core/comic-source';
 import { loadImportPageReuse } from './import-page-reuse.js';
+import { retainComicAssets } from './comic-source-retention.js';
 import { ImportMeasurements } from './import-measurements.js';
 import type { StructuredLogger } from '../observability/logger.js';
 
@@ -79,6 +87,7 @@ interface ImageSeriesAppendBaseRow {
   readonly storage_key: string;
   readonly content_type: string;
   readonly total_chapters: number | string;
+  readonly raw_text_hash: string;
 }
 
 interface UploadChunkRow {
@@ -661,7 +670,7 @@ async function loadImageSeriesAppendBase(
 ): Promise<ImageSeriesAppendBaseRow> {
   const result = await queryable.query<ImageSeriesAppendBaseRow>(
     `select book.id, book.format, book.active_content_revision_id, book.source_file_name,
-            object.storage_key, object.content_type, book.total_chapters
+            object.storage_key, object.content_type, object.raw_text_hash, book.total_chapters
        from library_books book
        join book_objects object on object.id = book.object_id
       where book.id = $1 and book.user_id = $2 and book.deleted_at is null`,
@@ -793,6 +802,10 @@ export async function processImportJob(
     let appendNoopTotalChapters = 0;
     const importMode = session.import_mode ?? 'replace_book';
     const incrementalImageSeriesAppend = importMode === 'append_image_series';
+    let comicPlan: ComicSourceAppendPlan | undefined;
+    let preparedComic: ParsedNovelImport | undefined;
+    const comicPagePartsToRead = new Map<string, Blob>();
+    const comicPageIdsToRead = new Set<string>();
     measurements.counts.incrementalAppend = incrementalImageSeriesAppend;
     if (incrementalImageSeriesAppend) {
       const bookId = session.client_book_id?.trim();
@@ -808,15 +821,31 @@ export async function processImportJob(
       const s3Client = createS3Client(config);
       const existingObject = await getObjectBuffer(s3Client, config, appendBase.storage_key);
       measurements.counts.baseBytes = existingObject.body.length;
-      const merged = await mergeSeriesImageArchiveDelta({
-        existingArchive: new Blob([arrayBufferFromBuffer(existingObject.body)], {
+      const existingAssets = await appendLockClient.query<{
+        id: string;
+        kind: string;
+        content_hash: string;
+        page_index: number | null;
+      }>(
+        "select id, kind, content_hash, page_index from book_assets where user_id = $1 and book_id = $2 and status = 'active' and kind in ('document_page', 'source_part')",
+        [session.user_id, bookId],
+      );
+      const merged = await planComicSourceAppend({
+        existingSource: new Blob([arrayBufferFromBuffer(existingObject.body)], {
           type: appendBase.content_type || 'application/vnd.comicbook+zip',
         }),
-        deltaArchive: new Blob([arrayBufferFromBuffer(buffer)], {
+        existingSourceHash: appendBase.raw_text_hash,
+        delta: new Blob([arrayBufferFromBuffer(buffer)], {
           type: session.content_type || 'application/vnd.comicbook+zip',
         }),
-        targetBookId: bookId,
+        deltaHash: uploadedSourceContentHash,
+        bookId,
         signal: importAbort.signal,
+        existingAssets: existingAssets.rows.map((asset) => ({
+          ...asset,
+          contentHash: asset.content_hash,
+          pageIndex: asset.page_index ?? undefined,
+        })),
       });
       if (
         session.base_active_content_revision_id !== appendBaseContentRevisionId &&
@@ -843,10 +872,30 @@ export async function processImportJob(
         await removeUploadDirectory(config, uploadId);
         return;
       }
-      buffer = Buffer.from(await merged.file.arrayBuffer());
-      sourceContentHash = integrityHash(buffer);
-      canonicalFileName = appendBase.source_file_name || merged.file.name;
-      canonicalContentType = appendBase.content_type || merged.file.type || 'application/vnd.comicbook+zip';
+      comicPlan = merged;
+      canonicalFileName = appendBase.source_file_name || session.file_name;
+      for (const [hash, blob] of merged.newParts)
+        if (hash !== appendBase.raw_text_hash) comicPagePartsToRead.set(hash, blob);
+      merged.manifest.sourcePages
+        .filter((page) => comicPagePartsToRead.has(page.partHash))
+        .forEach((page) => comicPageIdsToRead.add(comicPageAssetId(bookId, page)));
+      preparedComic = await materializeComicSource({
+        manifest: merged.manifest,
+        sourceContentHash: merged.sourceContentHash,
+        fileName: canonicalFileName,
+        bookId,
+        // First conversion stores the already-read legacy CBZ as an attempt-owned part.
+        // Its shared book_objects key can be replaced and collected by another import.
+        // Later appends only contain the new parts; existing pages still stay untouched.
+        partsToStore: merged.newParts,
+        pagePartsToRead: comicPagePartsToRead,
+        pageAssetIdsToRead: comicPageIdsToRead,
+        pageAssetIds: merged.pageAssetIds,
+        signal: importAbort.signal,
+      });
+      buffer = Buffer.from(await merged.source.arrayBuffer());
+      sourceContentHash = merged.sourceContentHash;
+      canonicalContentType = COMIC_SOURCE_CONTENT_TYPE;
       await updateImportJobProgress(
         pool,
         jobId,
@@ -876,8 +925,27 @@ export async function processImportJob(
     measurements.start('parse_archive');
     let arrayBuffer: ArrayBuffer | undefined = arrayBufferFromBuffer(buffer);
     let parsed: ParsedNovelImport;
-    const sourceBlob = new Blob([arrayBuffer]);
-    if (/\.zip$/i.test(canonicalFileName) && (await hasDocumentSeriesManifest(sourceBlob))) {
+    let sourceBlob = new Blob([arrayBuffer]);
+    const comicPackage =
+      !preparedComic && /\.(zip|cbz)$/i.test(canonicalFileName) ? await unpackComicSource(sourceBlob) : undefined;
+    if (comicPackage) {
+      sourceBlob = comicPackage.source;
+      buffer = Buffer.from(await sourceBlob.arrayBuffer());
+      sourceContentHash = integrityHash(buffer);
+      canonicalContentType = COMIC_SOURCE_CONTENT_TYPE;
+      preparedComic = await materializeComicSource({
+        manifest: comicPackage.manifest,
+        sourceContentHash,
+        fileName: canonicalFileName,
+        bookId: session.client_book_id?.trim() || persistentId128('comic_book', [sourceContentHash]),
+        partsToStore: comicPackage.parts,
+        pagePartsToRead: comicPackage.parts,
+        signal: importAbort.signal,
+      });
+    }
+    if (preparedComic) {
+      parsed = preparedComic;
+    } else if (/\.zip$/i.test(canonicalFileName) && (await hasDocumentSeriesManifest(sourceBlob))) {
       parsed = await materializeDocumentSeriesArchive(sourceBlob, {
         fileName: canonicalFileName,
         clientBookId: session.client_book_id ?? undefined,
@@ -949,6 +1017,23 @@ export async function processImportJob(
           )
         : undefined;
     const storedAssets: Array<Omit<ParsedNovelImportAsset, 'bytes'> & { byteLength: number; storageKey: string }> = [];
+    if (comicPlan && appendLockClient) {
+      const retained = await retainComicAssets({
+        client: appendLockClient,
+        userId: session.user_id,
+        bookId: parsed.novel.id,
+        plan: comicPlan,
+        pageParts: comicPagePartsToRead,
+        pageIds: comicPageIdsToRead,
+        inspect: (key) => inspectStoredObject(s3Client, config, key),
+        read: async (key) => new Blob([arrayBufferFromBuffer((await getObjectBuffer(s3Client, config, key)).body)]),
+      });
+      storedAssets.push(...retained);
+      measurements.counts.reusedPages += retained.filter((asset) => asset.kind === 'document_page').length;
+      measurements.counts.reusedPageBytes += retained
+        .filter((asset) => asset.kind === 'document_page')
+        .reduce((sum, asset) => sum + asset.byteLength, 0);
+    }
     const eagerAssets = (parsed.embeddedAssets ?? []).map((asset) => ({
       asset,
       storageKey: `${session.user_id}/${parsed.novel.id}/staged/${jobId}/${attempt.executionId ?? 'legacy'}/attempt-${attempt.attemptNumber}/${asset.id}/${asset.fileName}`,
@@ -1199,14 +1284,17 @@ export async function processImportJob(
         activeCover.rows[0]?.provenance === 'approved_enrichment';
       const removedAssets = await client.query<{ storage_key: string }>(
         `delete from book_assets
-          where book_id = $1 and user_id = $2 and kind in ('epub_resource', 'document_page') and status = 'active'
+          where book_id = $1 and user_id = $2 and kind in ('epub_resource', 'document_page', 'source_part') and status = 'active'
             and not (id = any($3::text[]))
           returning storage_key`,
         [
           parsed.novel.id,
           session.user_id,
           storedAssets
-            .filter((asset) => asset.kind === 'epub_resource' || asset.kind === 'document_page')
+            .filter(
+              (asset) =>
+                asset.kind === 'epub_resource' || asset.kind === 'document_page' || asset.kind === 'source_part',
+            )
             .map((asset) => asset.id),
         ],
       );

@@ -1,5 +1,5 @@
 import type { Character, LabeledSegment, SegmentType } from '../domain/types';
-import { matchesIntegrityHash } from '../domain/id-hash-contract';
+import { matchesIntegrityHash } from '@noveldesk/text-core/hash';
 import type { ChapterLabelingResult, LabelChapterSegmentsInput } from './ai';
 import { CONTROLLED_TTS_EMOTIONS } from './chapter-labeling-contract';
 

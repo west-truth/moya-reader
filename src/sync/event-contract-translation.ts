@@ -1,5 +1,5 @@
-import { hashSync } from '../domain/hash';
-import { integrityHash, persistentId128 } from '../domain/id-hash-contract';
+import { hashSync } from '@noveldesk/text-core/legacy-hash';
+import { integrityHash, persistentId128 } from '@noveldesk/text-core/hash';
 import { aggregateSyncEntityId, syncPayloadIntegrityHash } from '../domain/identity/sync-identities';
 import { SYNC_CONTRACT_V1, SYNC_CONTRACT_V2 } from './contract';
 import type { JsonValue, ResolvedSyncContract, SyncEntityType, SyncEvent, SyncEventType } from './types';

@@ -4,6 +4,7 @@ import {
   getActiveBookCover,
   exportEmbeddedBookAsset,
   getActiveSourceAsset,
+  getComicSourcePart,
   reconstructCanonicalBookSource,
   removeBookCover,
   reselectOriginalBookSource,
@@ -14,6 +15,9 @@ import {
 } from '../storage/book-asset-store';
 
 export class IndexedDbBookAssetRepository implements BookAssetRepository {
+  getComicSourcePart(bookId: string, contentHash: string) {
+    return getComicSourcePart(bookId, contentHash);
+  }
   getActiveSource(bookId: string) {
     return getActiveSourceAsset(bookId);
   }

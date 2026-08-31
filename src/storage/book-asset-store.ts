@@ -101,6 +101,31 @@ export async function cleanupStagedBookAsset(id: string): Promise<void> {
   await done;
 }
 
+export async function getComicSourcePart(bookId: string, contentHash: string) {
+  const db = await openReaderDb();
+  const tx = db.transaction([BOOK_ASSET_STORES.assets, BOOK_ASSET_STORES.blobs], 'readonly');
+  const rows = await requestToPromise<StoredBookAsset[]>(
+    tx.objectStore(BOOK_ASSET_STORES.assets).index('bookId_kind_status').getAll([bookId, 'source_part', 'active']),
+  );
+  const metadata = rows.find((asset) => asset.contentHash === contentHash);
+  if (!metadata) return undefined;
+  const blob = await requestToPromise<StoredBookAssetBlob | undefined>(
+    tx.objectStore(BOOK_ASSET_STORES.blobs).get(metadata.storageKey),
+  );
+  return blob ? { metadata, blob: blob.blob } : undefined;
+}
+
+export async function getActiveComicAssetMetadata(bookId: string): Promise<BookAssetMetadata[]> {
+  const db = await openReaderDb();
+  const tx = db.transaction(BOOK_ASSET_STORES.assets, 'readonly');
+  const store = tx.objectStore(BOOK_ASSET_STORES.assets).index('bookId_kind_status');
+  const [pages, parts] = await Promise.all([
+    requestToPromise<StoredBookAsset[]>(store.getAll([bookId, 'document_page', 'active'])),
+    requestToPromise<StoredBookAsset[]>(store.getAll([bookId, 'source_part', 'active'])),
+  ]);
+  return [...pages, ...parts];
+}
+
 export async function stageEmbeddedBookAssets(
   bookId: string,
   contentRevisionId: string,
@@ -184,7 +209,12 @@ export async function exportEmbeddedBookAsset(
     : undefined;
   await transactionDone(tx);
   if (!metadata || metadata.status !== 'active' || !stored) return undefined;
-  if (metadata.kind !== 'cover' && metadata.kind !== 'epub_resource' && metadata.kind !== 'document_page') {
+  if (
+    metadata.kind !== 'cover' &&
+    metadata.kind !== 'epub_resource' &&
+    metadata.kind !== 'document_page' &&
+    metadata.kind !== 'source_part'
+  ) {
     return undefined;
   }
   return { metadata, blob: stored.blob };

@@ -14,7 +14,13 @@ import { BACKUP_RESTORE_RUNS_STORE, type BackupRestoreRunRecord } from './backup
 import { BOOK_ASSET_STORES, type StoredBookAssetBlob } from './book-asset-schema';
 import { BOOK_DATA_STORES, bookDataIndexName } from './book-data-cleanup';
 import { READER_PERSONALIZATION_STORES } from './reader-personalization-schema';
-import { putParagraphSearchRowsForPage, type RevisionParagraphPageRow } from './content-revision-store';
+import {
+  contentDomainHeadId,
+  putParagraphSearchRowsForPage,
+  type RevisionParagraphPageRow,
+} from './content-revision-store';
+import { revisionScopedStorageId } from './content-revisions';
+import { CONTENT_REVISION_STORES } from './content-revision-migration';
 import { requestToPromise, transactionDone } from './indexeddb-transaction';
 import { openReaderDb, type ReaderStoreName } from './reader-database';
 import { SPEAKER_ATTRIBUTION_STORES } from './speaker-attribution-schema';
@@ -164,7 +170,35 @@ function copyIdMap(
       .filter((record) => recordBookIdForStore(storeName, record) === bookId)
       .forEach((record) => collectRecordIds(record, ids));
   }
-  return new Map(Array.from(ids, (id) => [id, `${id}__copy_${suffix}`]));
+  const mapped = new Map(Array.from(ids, (id) => [id, `${id}__copy_${suffix}`]));
+  for (const [storeName, records] of recordsByStore) {
+    for (const record of records) {
+      if (recordBookIdForStore(storeName, record) !== bookId) continue;
+      // Lookup keys are derived from the copied identities, not an arbitrary suffix on the old key.
+      if (
+        typeof record.storageId === 'string' &&
+        typeof record.contentRevisionId === 'string' &&
+        typeof record.id === 'string'
+      ) {
+        mapped.set(
+          record.storageId,
+          revisionScopedStorageId(
+            mapped.get(record.contentRevisionId) ?? record.contentRevisionId,
+            mapped.get(record.id) ?? record.id,
+          ),
+        );
+      }
+      if (
+        storeName === CONTENT_REVISION_STORES.heads &&
+        typeof record.id === 'string' &&
+        typeof record.domainId === 'string' &&
+        (record.entityType === 'chapter' || record.entityType === 'paragraph')
+      ) {
+        mapped.set(record.id, contentDomainHeadId(record.entityType, mapped.get(record.domainId) ?? record.domainId));
+      }
+    }
+  }
+  return mapped;
 }
 
 function isRecordArray(value: unknown): value is Record<string, unknown>[] {
