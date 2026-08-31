@@ -8,6 +8,31 @@ import {
 } from './serial-work-projection';
 
 describe('projectLocalSeries', () => {
+  it('matches migrated legacy read ids to source releases only for a unique title', () => {
+    const novel = testNovel({ format: 'image_archive' });
+    const id = `local-section:${novel.id}:1`;
+    const chapters = [
+      testChapter(1, {
+        documentSectionId: id,
+        documentSectionTitle: '1화',
+        documentSectionReadAt: '2026-08-31T00:00:00Z',
+      }),
+    ];
+    const remote: ExternalItemSummary = {
+      key: { connectorId: 'moya.external.suwayomi', remoteId: 'chapter:101' },
+      kind: 'file',
+      title: '1화',
+      release: { title: '1화' },
+      importability: 'supported',
+    };
+    expect([...projectLocalSeriesReadingStates(novel, chapters, [remote])]).toEqual([['chapter:101', 'read']]);
+    expect([
+      ...projectLocalSeriesReadingStates(novel, chapters, [
+        remote,
+        { ...remote, key: { ...remote.key, remoteId: 'chapter:102' } },
+      ]),
+    ]).toEqual([[id, 'read']]);
+  });
   it('does not treat Suwayomi page-count cache fill as a chapter update', () => {
     const item = {
       key: { connectorId: 'moya.external.suwayomi', remoteId: 'chapter:73' },
@@ -127,13 +152,13 @@ describe('projectLocalSeries', () => {
       { title: '1화', subtitle: '2페이지', release: { sourceOrder: 1 } },
       { title: '2화', subtitle: '1페이지', release: { sourceOrder: 2 } },
     ]);
-    expect([...projectLocalSeriesReadingStates(novel, chapters, [], { allowSequentialFallback: false })]).toEqual([
+    expect([...projectLocalSeriesReadingStates(novel, chapters)]).toEqual([
       [`local-section:${novel.id}:1`, 'unread'],
       [`local-section:${novel.id}:2`, 'current'],
     ]);
   });
 
-  it('keeps the legacy sequential projection for local archives without durable section markers', () => {
+  it('never infers earlier reads even for local archives without markers', () => {
     const novel = testNovel({
       format: 'image_archive',
       lastReadChapterId: 'chapter-3',
@@ -148,7 +173,7 @@ describe('projectLocalSeries', () => {
     ];
 
     expect([...projectLocalSeriesReadingStates(novel, chapters)]).toEqual([
-      ['local:1', 'read'],
+      ['local:1', 'unread'],
       ['local:2', 'current'],
       ['local:3', 'unread'],
     ]);

@@ -9,6 +9,36 @@ import {
 } from './book-workspace-test-fixtures';
 
 describe('BookWorkspaceController commands', () => {
+  it('updates only the saved reading unit before a detail refresh and ignores an old book response', async () => {
+    const novel = testNovel({ format: 'image_archive', totalChapters: 6 });
+    const chapters = Array.from({ length: 6 }, (_, i) => testChapter(i + 1, { documentSectionId: `chapter:${i + 1}` }));
+    const harness = createBookWorkspaceTestHarness({ novel, chapters });
+    const controller = new BookWorkspaceController(
+      harness.ports,
+      testWorkspaceState({ selectedNovel: novel, novels: [novel], chapters }),
+    );
+    await controller.saveFixedDocumentPage(5);
+    expect(controller.getSnapshot().chapters.map((chapter) => Boolean(chapter.documentSectionReadAt))).toEqual([
+      false,
+      false,
+      false,
+      false,
+      false,
+      true,
+    ]);
+    let finish!: () => void;
+    harness.ports.repository.saveReadingPosition = () =>
+      new Promise<void>((resolve) => {
+        finish = resolve;
+      });
+    const pending = controller.saveFixedDocumentPage(0);
+    const other = testNovel({ id: 'other-book' });
+    controller.replaceSelection({ selectedNovel: other, chapters: [] });
+    finish();
+    await pending;
+    expect(controller.getSnapshot().selectedNovel).toBe(other);
+    expect(controller.getSnapshot().chapters).toEqual([]);
+  });
   it('keeps favorite and title persistence ahead of catalog and sync refreshes', async () => {
     const novel = testNovel();
     const favoriteHarness = createBookWorkspaceTestHarness({ novel });

@@ -1,7 +1,20 @@
 # 데이터 모델과 저장소
 
 Status: current
-Last verified: 2026-08-04
+Last verified: 2026-08-31
+
+## Rollback-compatible exact chapter reads (2026-08-31)
+
+- Keep IndexedDB reader version 39 and external-source version 6, including their additive schema, so an already
+  upgraded browser can reopen without deleting user data. Retaining the unused purge-intent store does not restore
+  the reverted purge runtime.
+- Preserve deployed PostgreSQL migrations 0037–0040 byte-for-byte. Additive 0041 supplies missing legacy comic
+  section identifiers and retains only the proven last reading location; source bytes and chapter offsets are unchanged.
+- Reuse local chapter read fields and Hosted `fixed_document_section_read_states`: comic section ID or text chapter ID
+  is the exact read unit. Earlier chapter indexes never imply read status. Delayed saves may record another visited
+  chapter without rewinding the latest resume position, and a newer reading reset fences older delayed saves.
+- Historical activity that was never recorded cannot be reconstructed. Cloud Vault cross-device exact-history merge
+  is not included in this patch.
 
 ## Hosted original-source download boundary (2026-08-04)
 

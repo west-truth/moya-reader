@@ -235,7 +235,7 @@ export interface Chapter {
   /** Original release bytes identity used for local duplicate/conflict checks. */
   documentSectionSourceContentHash?: string;
   documentSectionRemoteRevision?: string;
-  /** Last time this exact logical fixed-document section was opened by the current user. */
+  /** Exact read timestamp: comic section or individual text chapter. Historical field name retained for storage/wire compatibility. */
   documentSectionReadAt?: string;
   createdAt: string;
   updatedAt: string;

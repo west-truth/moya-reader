@@ -102,7 +102,7 @@ export function buildChapterListModel(input: BuildChapterListInput): ChapterList
   const query = input.query.trim().toLocaleLowerCase();
   const rows = input.chapters
     .filter((chapter) => {
-      const isRead = input.currentChapter !== undefined && chapter.index < input.currentChapter.index;
+      const isRead = Boolean(chapter.documentSectionReadAt);
       if (input.readFilter === 'read' && !isRead) return false;
       if (input.readFilter === 'unread' && isRead) return false;
       if (!query) return true;
@@ -116,7 +116,7 @@ export function buildChapterListModel(input: BuildChapterListInput): ChapterList
       paragraphCountLabel: `${formatCount(chapter.paragraphCount)}문단`,
       ttsDuration: projectChapterTtsDuration(chapter.characterCount, input.actualTtsDurationSeconds?.get(chapter.id)),
       isCurrent: input.currentChapter?.id === chapter.id,
-      isRead: input.currentChapter !== undefined && chapter.index < input.currentChapter.index,
+      isRead: Boolean(chapter.documentSectionReadAt),
       annotationCounts: input.annotationCounts.get(chapter.id),
     }));
 

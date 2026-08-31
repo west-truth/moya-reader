@@ -208,9 +208,9 @@ export interface UseExternalSourceControllerOptions {
   readonly importService: ImportService;
   readonly assets?: BookAssetRepository;
   /** The backing reader persists exact fixed-document section read markers. */
-  readonly supportsExactDocumentSectionReadMarkers?: boolean;
   readonly extensionRevision: number;
-  listNovels(): Promise<Novel[]>;
+  readonly libraryRevision?: number;
+  listNovels(options?: { includeTrash?: boolean }): Promise<Novel[]>;
   listChapters(novelId: string): Promise<Chapter[]>;
   getNovel(id: string): Promise<Novel | undefined>;
   openNovel(
@@ -220,6 +220,17 @@ export interface UseExternalSourceControllerOptions {
   onLibraryChanged(): Promise<void>;
   notify(message: string, tone?: ToastTone): void;
   confirm(message: string): boolean;
+}
+
+async function loadSourceLibrary(options: UseExternalSourceControllerOptions, sourceId?: string) {
+  // Read links first: a catalog snapshot taken before a new link must never prune it.
+  const links = await options.state.listLinks(sourceId);
+  const novels = await options.listNovels({ includeTrash: true });
+  const reconciled = await reconcilePendingExternalSourceLinks(options.state, links, novels, Date.now(), {
+    catalogIncludesTrash: true,
+    resolveImporterApplied: (staged, novel) => importerResolvedSeriesIsActive(options.assets, staged, novel),
+  });
+  return { links: reconciled, novels, subscriptions: await options.state.listSubscriptions() };
 }
 
 function cachePageId(
@@ -476,33 +487,18 @@ export function useExternalSourceController(options: UseExternalSourceController
 
   useEffect(() => {
     let current = true;
-    void Promise.all([
-      optionsRef.current.state.listSubscriptions(),
-      optionsRef.current.state.listLinks(),
-      optionsRef.current.listNovels(),
-    ])
-      .then(async ([records, nextLinks, nextNovels]) => {
+    void loadSourceLibrary(optionsRef.current)
+      .then(({ links, novels, subscriptions }) => {
         if (!current || !mountedRef.current) return;
-        const reconciledLinks = await reconcilePendingExternalSourceLinks(
-          optionsRef.current.state,
-          nextLinks,
-          nextNovels,
-          Date.now(),
-          {
-            resolveImporterApplied: (staged, novel) =>
-              importerResolvedSeriesIsActive(optionsRef.current.assets, staged, novel),
-          },
-        ).catch(() => nextLinks);
-        if (!current || !mountedRef.current) return;
-        setSubscriptions(records);
-        setLinks(reconciledLinks);
-        setNovels(nextNovels);
+        setSubscriptions(subscriptions);
+        setLinks(links);
+        setNovels(novels);
       })
       .catch(() => undefined);
     return () => {
       current = false;
     };
-  }, [options.extensionRevision]);
+  }, [options.extensionRevision, options.libraryRevision]);
 
   useEffect(() => {
     if (sources.length === 0) {
@@ -526,24 +522,18 @@ export function useExternalSourceController(options: UseExternalSourceController
   const currentParentRef = breadcrumbs.at(-1)?.parentRef;
 
   const refreshLocalProjection = useCallback(async (sourceId: string) => {
-    const [nextLinks, nextNovels] = await Promise.all([
-      optionsRef.current.state.listLinks(sourceId),
-      optionsRef.current.listNovels(),
-    ]);
-    if (!mountedRef.current) return;
-    const reconciledLinks = await reconcilePendingExternalSourceLinks(
-      optionsRef.current.state,
-      nextLinks,
-      nextNovels,
-      Date.now(),
-      {
-        resolveImporterApplied: (staged, novel) =>
-          importerResolvedSeriesIsActive(optionsRef.current.assets, staged, novel),
-      },
-    ).catch(() => nextLinks);
-    if (!mountedRef.current) return;
-    setLinks(reconciledLinks);
-    setNovels(nextNovels);
+    try {
+      const next = await loadSourceLibrary(optionsRef.current, sourceId);
+      if (!mountedRef.current) return;
+      setLinks(next.links);
+      setNovels(next.novels);
+      setSubscriptions(next.subscriptions);
+    } catch (error) {
+      optionsRef.current.notify(
+        error instanceof Error ? error.message : '라이브러리를 확인하지 못했습니다. 다시 시도해 주세요.',
+        'warning',
+      );
+    }
   }, []);
 
   const replaceSubscription = useCallback((next: ExternalSourceSubscriptionRecord) => {
@@ -830,6 +820,8 @@ export function useExternalSourceController(options: UseExternalSourceController
       ]);
       if (!mountedRef.current) return;
       const relatedLinks = allLinks.filter((link) => link.localBookId === novel.id && link.collectionRemoteId);
+      // The caller may hold the pre-reader render snapshot. Prefer the just-loaded progress.
+      novel = nextNovels.find((candidate) => candidate.id === novel.id) ?? novel;
       const sourceId = relatedLinks[0]?.source.connectorId as ExtensionContributionId | undefined;
       const collectionRemoteId = relatedLinks[0]?.collectionRemoteId;
       const sourceLinks = sourceId ? allLinks.filter((link) => link.source.connectorId === sourceId) : relatedLinks;
@@ -837,11 +829,7 @@ export function useExternalSourceController(options: UseExternalSourceController
       setLocalSeriesBookId(novel.id);
       setLocalSeriesSeedNovel(novel);
       setLocalSeriesSourceId(sourceId);
-      setLocalSeriesReadingStates(
-        projectLocalSeriesReadingStates(novel, chapters, [], {
-          allowSequentialFallback: !optionsRef.current.supportsExactDocumentSectionReadMarkers,
-        }),
-      );
+      setLocalSeriesReadingStates(projectLocalSeriesReadingStates(novel, chapters));
       setLocalSeriesChapters(chapters);
       setNovels([...nextNovels.filter((candidate) => candidate.id !== novel.id), novel]);
       setLinks(local.links);
@@ -978,25 +966,16 @@ export function useExternalSourceController(options: UseExternalSourceController
     if (!localSeriesBookId) return localSeriesReadingStates;
     const localNovel = novelById.get(localSeriesBookId) ?? localSeriesSeedNovel;
     return localNovel
-      ? projectLocalSeriesReadingStates(localNovel, localSeriesChapters, rawItems, {
-          allowSequentialFallback: !options.supportsExactDocumentSectionReadMarkers,
-        })
+      ? projectLocalSeriesReadingStates(localNovel, localSeriesChapters, rawItems)
       : localSeriesReadingStates;
-  }, [
-    localSeriesBookId,
-    localSeriesChapters,
-    localSeriesReadingStates,
-    localSeriesSeedNovel,
-    options.supportsExactDocumentSectionReadMarkers,
-    novelById,
-    rawItems,
-  ]);
+  }, [localSeriesBookId, localSeriesChapters, localSeriesReadingStates, localSeriesSeedNovel, novelById, rawItems]);
   const items = useMemo<readonly ExternalSourceItemView[]>(
     () =>
       rawItems.map((item) => {
         const key = externalItemKeyId(item.key);
         const link = linkByKey.get(key);
-        const localNovel = link ? novelById.get(link.localBookId) : undefined;
+        const linkedNovel = link ? novelById.get(link.localBookId) : undefined;
+        const localNovel = linkedNovel?.deletedAt ? undefined : linkedNovel;
         const unsupported = item.kind === 'folder' || item.importability === 'unsupported';
         const changed = Boolean(link && externalReleaseRevisionChanged(item, link.importedRemoteRevision));
         return {
@@ -1033,17 +1012,27 @@ export function useExternalSourceController(options: UseExternalSourceController
 
   const libraryWorks = useMemo<readonly ExternalSourceLibraryWork[]>(() => {
     const knownNovelIds = new Set(novels.filter((novel) => !novel.deletedAt).map((novel) => novel.id));
-    return subscriptions.map((subscription) => {
-      const related = links.find(
-        (link) =>
-          link.source.connectorId === subscription.connectorId &&
-          (link.source.accountConnectionId ?? '') === (subscription.accountConnectionId ?? '') &&
-          link.collectionRemoteId === subscription.collectionRemoteId &&
-          knownNovelIds.has(link.localBookId),
-      );
-      return related ? { ...subscription, localBookId: related.localBookId } : subscription;
-    });
-  }, [links, novels, subscriptions]);
+    return subscriptions
+      .filter((subscription) => {
+        const related = links.filter(
+          (link) =>
+            link.source.connectorId === subscription.connectorId &&
+            (link.source.accountConnectionId ?? '') === (subscription.accountConnectionId ?? '') &&
+            link.collectionRemoteId === subscription.collectionRemoteId,
+        );
+        return related.length === 0 || !related.every((link) => novelById.get(link.localBookId)?.deletedAt);
+      })
+      .map((subscription) => {
+        const related = links.find(
+          (link) =>
+            link.source.connectorId === subscription.connectorId &&
+            (link.source.accountConnectionId ?? '') === (subscription.accountConnectionId ?? '') &&
+            link.collectionRemoteId === subscription.collectionRemoteId &&
+            knownNovelIds.has(link.localBookId),
+        );
+        return related ? { ...subscription, localBookId: related.localBookId } : subscription;
+      });
+  }, [links, novels, novelById, subscriptions]);
 
   const isWorkInLibrary = useCallback(
     (item: ExternalSourceItemView) => {
@@ -1149,10 +1138,7 @@ export function useExternalSourceController(options: UseExternalSourceController
       let previousLinks: readonly ExternalSourceLink[] = [];
       let contentApplied = false;
       try {
-        const [knownNovels, knownLinks] = await Promise.all([
-          optionsRef.current.listNovels(),
-          optionsRef.current.state.listLinks(sourceId),
-        ]);
+        const { novels: knownNovels, links: knownLinks } = await loadSourceLibrary(optionsRef.current, sourceId);
         const sameConnection = (link: ExternalSourceLink) =>
           link.source.connectorId === importable[0]!.key.connectorId &&
           (link.source.accountConnectionId ?? '') === (importable[0]!.key.accountConnectionId ?? '');
@@ -1180,6 +1166,8 @@ export function useExternalSourceController(options: UseExternalSourceController
         const existingNovel = existingLocalBookId
           ? knownNovels.find((novel) => novel.id === existingLocalBookId)
           : undefined;
+        if (existingNovel?.deletedAt)
+          throw new Error('휴지통에 있는 작품입니다. 복원하거나 영구 삭제한 뒤 다시 가져와 주세요.');
         const incrementalSeriesAppend = Boolean(
           optionsRef.current.importService.supportsIncrementalImageSeriesAppend &&
           existingNovel?.format === 'image_archive' &&
@@ -1257,7 +1245,10 @@ export function useExternalSourceController(options: UseExternalSourceController
               }),
             ) ?? '';
           const existingLink = knownLinks.find(
-            (link) => externalItemKeyId(link.source) === externalItemKeyId(item.key),
+            (link) =>
+              existingNovel &&
+              link.localBookId === existingNovel.id &&
+              externalItemKeyId(link.source) === externalItemKeyId(item.key),
           );
           checked.set(externalItemKeyId(item.key), {
             item,
@@ -1511,11 +1502,9 @@ export function useExternalSourceController(options: UseExternalSourceController
       let cancelled = false;
       let firstFailureMessage: string | undefined;
       setProgress({ current: 0, total: importable.length, completed, failed, linkedExisting });
-      const knownNovels = await optionsRef.current.listNovels();
-      const knownLinks = new Map(
-        (await optionsRef.current.state.listLinks(sourceId)).map((link) => [externalItemKeyId(link.source), link]),
-      );
       try {
+        const { novels: knownNovels, links } = await loadSourceLibrary(optionsRef.current, sourceId);
+        const knownLinks = new Map(links.map((link) => [externalItemKeyId(link.source), link]));
         for (const [index, item] of importable.entries()) {
           if (!mountedRef.current) break;
           const abort = new AbortController();
@@ -1562,11 +1551,14 @@ export function useExternalSourceController(options: UseExternalSourceController
               ) ?? '';
             const existingLink = knownLinks.get(externalItemKeyId(item.key));
             let target = existingLink ? knownNovels.find((novel) => novel.id === existingLink.localBookId) : undefined;
+            if (target?.deletedAt)
+              throw new Error('휴지통에 있는 작품입니다. 복원하거나 영구 삭제한 뒤 다시 가져와 주세요.');
             if (!target) {
               target = knownNovels.find(
                 (novel) =>
-                  normalizedHash(novel.sourceContentHash) === normalizedHash(sourceHash) ||
-                  normalizedHash(novel.rawTextHash) === normalizedHash(sourceHash),
+                  !novel.deletedAt &&
+                  (normalizedHash(novel.sourceContentHash) === normalizedHash(sourceHash) ||
+                    normalizedHash(novel.rawTextHash) === normalizedHash(sourceHash)),
               );
             }
             let importedNovel = target;
@@ -1720,6 +1712,11 @@ export function useExternalSourceController(options: UseExternalSourceController
               : successMessage || '선택한 작품에 적용할 변경 사항이 없습니다.',
           cancelled || failed > 0 || linkRepairPending > 0 ? 'warning' : 'success',
         );
+      } catch (error) {
+        optionsRef.current.notify(
+          error instanceof Error ? error.message : '라이브러리를 확인하지 못했습니다. 다시 시도해 주세요.',
+          'warning',
+        );
       } finally {
         downloadAbortRef.current = undefined;
         importRef.current = undefined;
@@ -1749,7 +1746,7 @@ export function useExternalSourceController(options: UseExternalSourceController
       );
       if (!link) return;
       const novel = await optionsRef.current.getNovel(link.localBookId);
-      if (!novel) return;
+      if (!novel || novel.deletedAt) return;
       setLocalSeriesBookId(novel.id);
       setLocalSeriesSeedNovel(novel);
       setLocalSeriesSourceId(item.key.connectorId as ExtensionContributionId);
@@ -1771,8 +1768,9 @@ export function useExternalSourceController(options: UseExternalSourceController
     async (item: ExternalSourceItemView) => {
       if (busy || item.importState !== 'imported' || !item.localBookId) return;
       const novel = await optionsRef.current.getNovel(item.localBookId);
-      if (!novel) {
-        optionsRef.current.notify('연결된 책장 작품을 찾지 못했습니다. 소스 목록을 새로고침해 주세요.', 'warning');
+      if (!novel || novel.deletedAt) {
+        await refreshLocalProjection(item.key.connectorId);
+        optionsRef.current.notify('작품의 보관 상태가 변경되어 목록을 갱신했습니다.', 'warning');
         return;
       }
       if (item.release) {
@@ -1795,7 +1793,7 @@ export function useExternalSourceController(options: UseExternalSourceController
         });
       else await optionsRef.current.openNovel(novel);
     },
-    [busy],
+    [busy, refreshLocalProjection],
   );
 
   const cancel = useCallback(() => {

@@ -12,6 +12,7 @@ import {
 } from './indexeddb-transaction';
 import { openReaderDb } from './reader-database';
 import { getChapter } from './reader-query-store';
+import { clearExactDocumentSectionReadState, markExactChapterReadState } from './exact-section-read-state';
 import { jsonValue, LOCAL_DEVICE_ID, nowIso, queueSyncEventInTransaction, tombstoneEntity } from './sync-event-store';
 import type { ReadingPosition } from '../sync/types';
 import {
@@ -73,7 +74,19 @@ export async function saveReadingPosition(input: SaveReadingPositionInput): Prom
   };
 
   const db = await openReaderDb();
-  const tx = db.transaction(['novels', 'reading_positions', 'devices', 'sync_outbox', 'sync_state'], 'readwrite');
+  const tx = db.transaction(
+    [
+      'novels',
+      'reading_positions',
+      'devices',
+      'sync_outbox',
+      'sync_state',
+      'chapters',
+      'book_content_chapters',
+      'book_content_revisions',
+    ],
+    'readwrite',
+  );
   const done = transactionDone(tx);
   const novelStore = tx.objectStore('novels');
   const novel = await requestToPromise<Novel | undefined>(novelStore.get(input.novelId));
@@ -100,6 +113,7 @@ export async function saveReadingPosition(input: SaveReadingPositionInput): Prom
     }),
   );
   tx.objectStore('reading_positions').put(position);
+  if (chapter?.novelId === novel.id) await markExactChapterReadState(tx, novel, chapter, position.updatedAt);
   await queueSyncEventInTransaction(tx, 'reading_position_updated', jsonValue({ position }), {
     novelId: input.novelId,
     entityId: position.id,
@@ -116,7 +130,17 @@ export async function clearReadingPosition(novelId: string): Promise<void> {
   const positionId = `reading_position_${novelId}`;
   const db = await openReaderDb();
   const tx = db.transaction(
-    ['novels', 'reading_positions', 'sync_tombstones', 'devices', 'sync_outbox', 'sync_state'],
+    [
+      'novels',
+      'reading_positions',
+      'sync_tombstones',
+      'devices',
+      'sync_outbox',
+      'sync_state',
+      'chapters',
+      'book_content_chapters',
+      'book_content_revisions',
+    ],
     'readwrite',
   );
   const done = transactionDone(tx);
@@ -138,6 +162,7 @@ export async function clearReadingPosition(novelId: string): Promise<void> {
     }),
   );
   deleteByIndexInTransaction(tx, 'reading_positions', 'novelId', novelId);
+  await clearExactDocumentSectionReadState(tx, novel);
   tx.objectStore('sync_tombstones').put(tombstoneEntity('reading_position', positionId, deletedAt, novelId));
   await queueSyncEventInTransaction(tx, 'reading_position_deleted', jsonValue({ id: positionId, deletedAt }), {
     novelId,

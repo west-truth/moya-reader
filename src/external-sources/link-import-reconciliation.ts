@@ -6,6 +6,8 @@ export const EXTERNAL_SOURCE_PENDING_INTENT_LEASE_MS = 30 * 60_000;
 const EXTERNAL_SOURCE_PENDING_CLOCK_SKEW_MS = 5 * 60_000;
 
 export interface PendingExternalSourceLinkReconciliationOptions {
+  /** Only complete, authoritative catalogs may prove permanent deletion. */
+  readonly catalogIncludesTrash?: boolean;
   readonly resolveImporterApplied?: (
     staged: readonly ExternalSourceLink[],
     novel: Novel,
@@ -171,7 +173,6 @@ export async function reconcilePendingExternalSourceLinks(
     group.push(link);
     groups.set(operationId, group);
   }
-  if (groups.size === 0) return [...links];
   const projected = new Map(links.map((link) => [link.id, link]));
 
   for (const staged of groups.values()) {
@@ -229,5 +230,12 @@ export async function reconcilePendingExternalSourceLinks(
       });
     }
   }
-  return typeof state.listLinks === 'function' ? state.listLinks() : [...projected.values()];
+  const reconciled = [...projected.values()];
+  if (options.catalogIncludesTrash && state.removeMissingBookLinks) {
+    await state.removeMissingBookLinks(
+      reconciled.filter((link) => !link.pendingImport && !novelById.has(link.localBookId)),
+    );
+    return state.listLinks();
+  }
+  return groups.size > 0 && typeof state.listLinks === 'function' ? state.listLinks() : reconciled;
 }

@@ -28,6 +28,7 @@ import {
   X,
 } from 'lucide-react';
 import { persistentId128 } from '@noveldesk/text-core/hash';
+import { useFixedDocumentProgress } from './use-fixed-document-progress';
 import {
   type CSSProperties,
   type PointerEvent as ReactPointerEvent,
@@ -181,7 +182,7 @@ export interface FixedDocumentScreenProps {
   readonly repository: ReaderRepository;
   readonly assets: BookAssetRepository;
   readonly onBack: () => void;
-  readonly onPageSettled: (pageIndex: number) => void | Promise<void>;
+  readonly onPageSettled: (pageIndex: number, chapter: Chapter, novel: Novel) => void | Promise<void>;
   readonly onGeneratedCover?: (cover: BookAssetMetadata) => void;
   readonly onStartListening?: (pageIndex: number, blockId?: string, startOffset?: number) => void | Promise<void>;
   readonly onPrepareListening?: (startPageIndex: number, endPageIndex: number) => void | Promise<void>;
@@ -1724,10 +1725,7 @@ export default function FixedDocumentScreen({
     [reanchorTargetId, reloadDocumentAnnotations],
   );
 
-  useEffect(() => {
-    const timer = window.setTimeout(() => void onPageSettled(pageIndex), 350);
-    return () => window.clearTimeout(timer);
-  }, [onPageSettled, pageIndex]);
+  const flushReadingProgress = useFixedDocumentProgress(pageIndex, sortedChapters[pageIndex], novel, onPageSettled);
 
   useEffect(() => {
     const anchor = listeningPosition?.anchor;
@@ -2377,7 +2375,12 @@ export default function FixedDocumentScreen({
     <main className={`fixed-doc-screen${immersive ? ' is-immersive' : ''}`}>
       <header className="fixed-doc-header">
         <div className="fixed-doc-title-group">
-          <button type="button" className="fixed-doc-icon-button" onClick={onBack} aria-label="라이브러리로 돌아가기">
+          <button
+            type="button"
+            className="fixed-doc-icon-button"
+            onClick={() => void flushReadingProgress().then(onBack)}
+            aria-label="라이브러리로 돌아가기"
+          >
             <ArrowLeft size={19} />
           </button>
           <div>

@@ -29,11 +29,15 @@ export async function registerReaderStateRoutes(
       const updatedAt = body.updatedAt;
       const positionResult = await pool.query(
         `
-          insert into reading_positions (
+          with position_write as (insert into reading_positions (
             book_id, user_id, chapter_id, paragraph_id, paragraph_index, offset_in_paragraph,
             chapter_progress, scroll_top, device_id, updated_at
           )
-          values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+          select $1, $2, $3, $4, $5, $6, $7, $8, $9, $10::timestamptz
+          where not exists (
+            select 1 from sync_events e where e.book_id = $1 and e.user_id = $2
+              and e.type = 'reading_position_deleted' and e.created_at >= $10::timestamptz
+          )
           on conflict (book_id, user_id) do update
             set chapter_id = excluded.chapter_id,
                 paragraph_id = excluded.paragraph_id,
@@ -44,7 +48,23 @@ export async function registerReaderStateRoutes(
                 device_id = excluded.device_id,
                 updated_at = excluded.updated_at
             where reading_positions.updated_at <= excluded.updated_at
-          returning updated_at
+          returning updated_at),
+          read_write as (
+            insert into fixed_document_section_read_states (book_id, user_id, document_section_id, last_read_at)
+            select c.book_id, $2, coalesce(c.document_section_id, c.id), $10::timestamptz
+              from chapters c
+             where c.book_id = $1 and c.id = $3
+               and not exists (
+                 select 1 from sync_events e where e.book_id = $1 and e.user_id = $2
+                   and e.type = 'reading_position_deleted' and e.created_at >= $10::timestamptz
+               )
+            on conflict (book_id, user_id, document_section_id) do update
+              set last_read_at = excluded.last_read_at
+              where fixed_document_section_read_states.last_read_at < excluded.last_read_at
+            returning document_section_id
+          )
+          select exists(select 1 from position_write) as applied,
+                 exists(select 1 from read_write) as read_applied
         `,
         [
           request.params.bookId,
@@ -59,22 +79,9 @@ export async function registerReaderStateRoutes(
           updatedAt,
         ],
       );
-      if ((positionResult.rowCount ?? 0) === 0) {
+      const applied = positionResult.rows[0]?.applied === true;
+      if (!applied && !positionResult.rows[0]?.read_applied) {
         return { ok: true, applied: false };
-      }
-
-      if (body.documentSectionId) {
-        await pool.query(
-          `
-            insert into fixed_document_section_read_states (
-              book_id, user_id, document_section_id, last_read_at
-            ) values ($1, $2, $3, $4)
-            on conflict (book_id, user_id, document_section_id) do update
-              set last_read_at = excluded.last_read_at
-              where fixed_document_section_read_states.last_read_at <= excluded.last_read_at
-          `,
-          [request.params.bookId, config.defaultUserId, body.documentSectionId, updatedAt],
-        );
       }
 
       const positionId = `reading_position_${request.params.bookId}`;
@@ -96,7 +103,7 @@ export async function registerReaderStateRoutes(
         createdAt: updatedAt,
       });
 
-      return { ok: true, applied: true };
+      return { ok: true, applied };
     },
   );
 

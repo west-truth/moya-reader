@@ -10,21 +10,29 @@ import type { RemoteRequest } from './remote-api-contracts';
 export class RemoteBookTransport {
   constructor(private readonly request: RemoteRequest) {}
 
-  async listBooks(signal?: AbortSignal): Promise<{ books: Record<string, unknown>[] }> {
+  async listBooks(
+    signal?: AbortSignal,
+    options?: { includeTrash?: boolean },
+  ): Promise<{ books: Record<string, unknown>[] }> {
     const books: Record<string, unknown>[] = [];
     const seenCursors = new Set<string>();
-    let path = '/books';
+    const includeTrash = options?.includeTrash === true;
+    let path = includeTrash ? '/books?includeTrash=true' : '/books';
     while (true) {
       const page = await this.request<{
         books: Record<string, unknown>[];
         nextCursor?: string;
+        includesTrash?: boolean;
       }>(path, { signal });
+      if (includeTrash && page.includesTrash !== true) {
+        throw new Error('서버를 업데이트한 뒤 소스 목록을 새로고침해 주세요.');
+      }
       books.push(...page.books);
       const cursor = page.nextCursor?.trim();
       if (!cursor) return { books };
       if (seenCursors.has(cursor)) throw new Error('The server repeated a library cursor.');
       seenCursors.add(cursor);
-      path = `/books?limit=1000&cursor=${encodeURIComponent(cursor)}`;
+      path = `/books?limit=1000&cursor=${encodeURIComponent(cursor)}${includeTrash ? '&includeTrash=true' : ''}`;
     }
   }
 

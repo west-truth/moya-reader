@@ -1,7 +1,22 @@
 # 외부 작품 소스 아키텍처
 
 상태: Phase 3B Source Hub, Dropbox·Google Drive live, Suwayomi serial-comic과 self-host Docker profile 구현
-기준일: 2026-08-29
+기준일: 2026-08-31
+
+## 삭제 후 연결 복구와 회차 상태
+
+- 연결의 저장된 해시만으로 다운로드를 생략하지 않는다. 대상 작품이 실제로 있을 때만 중복/append 판정에
+  사용한다. 원본·표지·증분 업로드 경계는 그대로 유지한다.
+- 연결 정리용 조회만 휴지통을 포함한다. Hosted는 `GET /books?includeTrash=true`의 owner-scoped ID cursor와
+  `includesTrash` 응답 확인을 사용한다. 기본 Library 목록은 바뀌지 않는다. 구버전 API나 실패/불완전한
+  조회를 작품 삭제로 취급하지 않는다.
+- 조회 전의 link snapshot과 아직 같은, 실제로 없는 작품의 완료된 link만 source IndexedDB transaction에서
+  지운다. 마지막 연결의 subscription도 함께 정리하되 휴지통·진행 중 import·다른 작품의 연결·다운로드 전
+  작품 등록은 보존한다. 새로운 purge/generation 실행 계층이나 polling은 추가하지 않는다.
+- Library 변경 및 기존 소스 진입/새로고침 경계에서 상태를 갱신한다. 휴지통 작품에는 새 회차를 덮어쓰지 않고
+  복원/영구 삭제를 안내한다.
+- 읽음 상태는 만화 section ID, 소설 chapter ID에 저장된 기록으로 판단한다. 현재 회차보다 앞이라는 이유만으로
+  읽음 처리하지 않는다. Reader에서 상세로 돌아가기 전 저장을 기다린다.
 
 ## 사용자 흐름
 

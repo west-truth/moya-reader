@@ -32,9 +32,11 @@ import { getAllByIndex, getAllRecords, getByIndex, getItem } from './indexeddb-t
 import { openReaderDb } from './reader-database';
 export { searchBookParagraphs, searchParagraphPage, searchParagraphs } from './reader-search-query-store';
 
-export async function getNovels(): Promise<Novel[]> {
+export async function getNovels(options?: { includeTrash?: boolean }): Promise<Novel[]> {
   const novels = await getAllRecords<Novel>('novels');
-  return novels.filter((novel) => !novel.deletedAt).sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+  return novels
+    .filter((novel) => options?.includeTrash || !novel.deletedAt)
+    .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
 }
 
 export async function getTrashedNovels(): Promise<Novel[]> {

@@ -17,6 +17,26 @@ function jsonResponse(body: unknown): Response {
 }
 
 describe('RemoteApiClient auth headers', () => {
+  it('requires a trash-inclusive response on every page before using a catalog for link cleanup', async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(jsonResponse({ books: [{ id: 'active' }], nextCursor: '1000', includesTrash: true }))
+      .mockResolvedValueOnce(
+        jsonResponse({ books: [{ id: 'trashed', deleted_at: '2026-08-31' }], includesTrash: true }),
+      );
+    vi.stubGlobal('fetch', fetchMock);
+    const client = new RemoteApiClient('/api');
+    expect((await client.listBooks({ includeTrash: true })).books).toHaveLength(2);
+    expect(fetchMock).toHaveBeenNthCalledWith(1, '/api/books?includeTrash=true', expect.any(Object));
+    expect(fetchMock).toHaveBeenNthCalledWith(
+      2,
+      '/api/books?limit=1000&cursor=1000&includeTrash=true',
+      expect.any(Object),
+    );
+    fetchMock.mockResolvedValueOnce(jsonResponse({ books: [] }));
+    await expect(client.listBooks({ includeTrash: true })).rejects.toThrow('서버를 업데이트');
+  });
+
   afterEach(() => {
     vi.unstubAllGlobals();
   });

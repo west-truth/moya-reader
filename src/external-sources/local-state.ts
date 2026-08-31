@@ -10,7 +10,8 @@ import type {
 import { createExternalSourceCredentialKey } from './device-credential-crypto';
 
 const DB_NAME = 'noveldesk-external-sources';
-const DB_VERSION = 5;
+// v6 was already shipped. Retain its additive store without re-enabling the reverted purge workflow.
+const DB_VERSION = 6;
 const MAX_CACHE_PAGES_PER_CONNECTION = 24;
 const CREDENTIAL_KEY_ID = 'external-source-credentials-v1';
 
@@ -54,6 +55,9 @@ function openExternalSourceDb(): Promise<IDBDatabase> {
       }
       if (!db.objectStoreNames.contains('credentialKeys')) {
         db.createObjectStore('credentialKeys', { keyPath: 'id' });
+      }
+      if (!db.objectStoreNames.contains('associationPurgeIntents')) {
+        db.createObjectStore('associationPurgeIntents', { keyPath: 'id' });
       }
       if (!db.objectStoreNames.contains('browsePreferences')) {
         const store = db.createObjectStore('browsePreferences', { keyPath: 'id' });
@@ -160,6 +164,8 @@ export interface ExternalSourceLocalState {
   saveLink(link: ExternalSourceLink): Promise<void>;
   saveLinks?(links: readonly ExternalSourceLink[]): Promise<void>;
   deleteLinks?(ids: readonly string[]): Promise<void>;
+  /** Delete only unchanged links whose books were absent from a successful, trash-inclusive catalog read. */
+  removeMissingBookLinks?(expected: readonly ExternalSourceLink[]): Promise<void>;
   replaceLinks?(links: readonly ExternalSourceLink[], deleteIds: readonly string[]): Promise<void>;
   acquirePendingLinks?(links: readonly ExternalSourceLink[]): Promise<boolean>;
   compareAndSwapPendingLinks?(
@@ -314,6 +320,38 @@ export class ExternalSourceLocalStateStore implements ExternalSourceLocalState {
     links.forEach((link) => store.put(link));
     deleteIds.forEach((id) => store.delete(id));
     await transactionDone(tx);
+  }
+
+  async removeMissingBookLinks(expected: readonly ExternalSourceLink[]): Promise<void> {
+    if (expected.length === 0) return;
+    const db = await openExternalSourceDb();
+    const tx = db.transaction(['links', 'subscriptions'], 'readwrite');
+    const done = transactionDone(tx);
+    const store = tx.objectStore('links');
+    const current = await Promise.all(
+      expected.map((link) => requestToPromise<ExternalSourceLink | undefined>(store.get(link.id))),
+    );
+    const removed = expected.filter(
+      (link, index) => !link.pendingImport && JSON.stringify(current[index]) === JSON.stringify(link),
+    );
+    removed.forEach((link) => store.delete(link.id));
+    // Subscription-only works have no link and must stay in the Library. Remove a
+    // subscription only when its last downloaded-book association was just removed.
+    const collectionKey = (link: ExternalSourceLink) =>
+      link.collectionRemoteId
+        ? externalSourceSubscriptionId(
+            link.source.connectorId,
+            link.source.accountConnectionId,
+            link.collectionRemoteId,
+          )
+        : undefined;
+    const affected = new Set(removed.map(collectionKey).filter((id): id is string => Boolean(id)));
+    if (affected.size > 0) {
+      const remaining = await requestToPromise<ExternalSourceLink[]>(store.getAll());
+      remaining.forEach((link) => affected.delete(collectionKey(link) ?? ''));
+      affected.forEach((id) => tx.objectStore('subscriptions').delete(id));
+    }
+    await done;
   }
 
   async acquirePendingLinks(links: readonly ExternalSourceLink[]): Promise<boolean> {

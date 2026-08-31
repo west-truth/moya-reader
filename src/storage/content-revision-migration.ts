@@ -40,6 +40,14 @@ export function upgradeContentRevisionStores(db: IDBDatabase, transaction: IDBTr
     store.createIndex('contentRevisionId_domainId', ['contentRevisionId', 'id'], { unique: true });
     store.createIndex('contentRevisionId_index', ['contentRevisionId', 'index'], { unique: true });
   }
+  ensureIndex(transaction.objectStore(CONTENT_REVISION_STORES.chapters), 'novelId_documentSectionId', [
+    'novelId',
+    'documentSectionId',
+  ]);
+  ensureIndex(transaction.objectStore(CONTENT_REVISION_STORES.chapters), 'novelId_documentSectionReadAt', [
+    'novelId',
+    'documentSectionReadAt',
+  ]);
   if (!db.objectStoreNames.contains(CONTENT_REVISION_STORES.paragraphs)) {
     const store = createRevisionScopedStore(db, CONTENT_REVISION_STORES.paragraphs);
     store.createIndex('contentRevisionId', 'contentRevisionId');

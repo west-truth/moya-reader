@@ -241,11 +241,11 @@ describe('BookWorkspaceController navigation', () => {
     expect(controller.getSnapshot().localReadingPosition).toBe(position);
   });
 
-  it('stops reader TTS and starts a non-blocking session flush before returning to chapters', () => {
+  it('flushes the last read position before returning to chapters', async () => {
     const harness = createBookWorkspaceTestHarness();
     const controller = new BookWorkspaceController(harness.ports, testWorkspaceState({ view: 'reader' }));
 
-    controller.returnToChapters();
+    await controller.returnToChapters();
 
     expect(harness.calls).toEqual(['transition.stopReaderTTS', 'transition.flushReaderSession']);
     expect(controller.getSnapshot().view).toBe('chapters');
