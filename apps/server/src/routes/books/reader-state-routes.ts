@@ -268,15 +268,24 @@ export async function registerReaderStateRoutes(
     }
     const settings = { ...parsed, revision: expectedRevision + 1, updatedAt: new Date().toISOString() };
     const result = await pool.query(
-      `insert into reader_settings (user_id, settings, updated_at)
-       select $1, jsonb_set($2::jsonb, '{_moyaIntegrations}', $3::jsonb, true), now()
-       where $4::bigint = 0
-       on conflict (user_id) do update
-          set settings = jsonb_set(reader_settings.settings, '{_moyaIntegrations}', $3::jsonb, true),
-              updated_at = excluded.updated_at
-         where ($4::bigint = 0 and reader_settings.settings -> '_moyaIntegrations' is null)
-            or coalesce(reader_settings.settings -> '_moyaIntegrations' ->> 'revision', '0') = $4::text
-       returning settings -> '_moyaIntegrations' as integration_settings`,
+      `with updated as (
+         update reader_settings
+            set settings = jsonb_set(reader_settings.settings, '{_moyaIntegrations}', $3::jsonb, true),
+                updated_at = now()
+          where user_id = $1
+            and coalesce(reader_settings.settings -> '_moyaIntegrations' ->> 'revision', '0') = $4::text
+        returning settings -> '_moyaIntegrations' as integration_settings
+       ), inserted as (
+         insert into reader_settings (user_id, settings, updated_at)
+         select $1, jsonb_set($2::jsonb, '{_moyaIntegrations}', $3::jsonb, true), now()
+          where $4::bigint = 0
+            and not exists (select 1 from reader_settings where user_id = $1)
+         on conflict (user_id) do nothing
+         returning settings -> '_moyaIntegrations' as integration_settings
+       )
+       select integration_settings from updated
+       union all
+       select integration_settings from inserted`,
       [config.defaultUserId, JSON.stringify(defaultSettings), JSON.stringify(settings), expectedRevision],
     );
     if (result.rows.length === 0) {
