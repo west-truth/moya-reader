@@ -71,6 +71,28 @@ describe('sync reader event routes', () => {
     ]);
   });
 
+  it('keeps the reserved integration document when a reader-settings sync event is materialized', async () => {
+    const client = {
+      query: vi.fn(async () => ({ rowCount: 1, rows: [] })),
+    } as unknown as pg.PoolClient;
+    const event: SyncEvent = {
+      id: 'event_settings_update',
+      type: 'settings_updated',
+      deviceId: 'device_a',
+      entityId: 'reader-settings',
+      payload: { settings: { id: 'reader-settings', theme: 'sepia' } },
+      createdAt: '2026-09-04T00:00:00.000Z',
+    };
+
+    await expect(persistReaderSyncEvent(client, 'user_test', event)).resolves.toBe(true);
+
+    expect(client.query).toHaveBeenCalledWith(expect.stringContaining("jsonb_build_object('_moyaIntegrations'"), [
+      'user_test',
+      JSON.stringify((event.payload as { settings: unknown }).settings),
+      event.createdAt,
+    ]);
+  });
+
   it('materializes fixed-document annotation updates and tombstones', async () => {
     const queries: Array<{ sql: string; params?: unknown[] }> = [];
     const client = {

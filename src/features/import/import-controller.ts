@@ -31,8 +31,11 @@ export interface ImportBatchOutcome {
 export interface ImportBatchCallbacks {
   onBatchChange(state: ImportBatchState): void;
   onProgress(progress: ImportProgress): void;
+  onFileStarted?(file: File): void;
+  onFileProgress?(file: File, progress: ImportProgress): void;
+  onFileCommitted?(file: File, novel: Novel): void | Promise<void>;
   onFileFailed(file: File, error: unknown): void;
-  onCancelled(): void;
+  onCancelled(file?: File): void;
 }
 
 export interface RunImportBatchInput {
@@ -116,6 +119,7 @@ export async function runImportBatch(
 
     let controller: ImportController | undefined;
     try {
+      callbacks.onFileStarted?.(file);
       controller = input.importService.importFile(
         {
           file,
@@ -127,16 +131,20 @@ export async function runImportBatch(
           expectedSourceContentHash,
           archivePassword: input.importService.supportsArchivePassword ? input.archivePassword : undefined,
         },
-        callbacks.onProgress,
+        (progress) => {
+          callbacks.onProgress(progress);
+          callbacks.onFileProgress?.(file, progress);
+        },
       );
       cancellation.bind(controller);
       const result = await controller.promise;
       lastImportedNovel = (await input.getNovel(result.novel.id)) ?? result.novel;
       completed += 1;
+      await callbacks.onFileCommitted?.(file, lastImportedNovel);
     } catch (error) {
       if (cancellation.isRequested || isAbortError(error)) {
         aborted = true;
-        callbacks.onCancelled();
+        callbacks.onCancelled(file);
         break;
       }
       failed += 1;

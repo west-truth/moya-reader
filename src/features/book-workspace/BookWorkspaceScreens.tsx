@@ -9,6 +9,7 @@ import type { LibraryManagementController } from '../library/useLibraryManagemen
 import type { BookEnrichmentController } from '../book-enrichment/useBookEnrichmentController';
 import type { ExternalSourceController } from '../external-sources/useExternalSourceController';
 import { useResponsiveLayoutMode } from './useResponsiveLayoutMode';
+import { importTaskIsActive, type ImportTaskView } from '../import/import-task-projection';
 
 const ChaptersScreen = lazy(() =>
   import('../chapters/ChaptersScreen').then((module) => ({ default: module.ChaptersScreen })),
@@ -25,6 +26,8 @@ export interface BookWorkspaceScreensProps {
     readonly importBusy: boolean;
     readonly actions: LibraryScreenActions['drag'];
   };
+  readonly importTasks: readonly ImportTaskView[];
+  readonly dismissImportTask: (taskId: string) => void;
   readonly bootstrap: {
     readonly status: 'loading' | 'ready' | 'failed';
     readonly message?: string;
@@ -58,6 +61,8 @@ export function BookWorkspaceScreens({
   state,
   projection,
   libraryDrop,
+  importTasks,
+  dismissImportTask,
   bootstrap,
   sync,
   annotationTotals,
@@ -144,6 +149,10 @@ export function BookWorkspaceScreens({
       },
     };
   }, [activeShelfBookIds, projection.libraryCollection, remoteLibraryWorks.length]);
+  const bookHasActiveImport = (bookId: string) =>
+    importTasks.some((task) => task.targetBookId === bookId && importTaskIsActive(task));
+  const externalWorkHasActiveImport = (workId: string) =>
+    importTasks.some((task) => task.externalWorkId === workId && importTaskIsActive(task));
 
   useEffect(() => {
     if (state.view !== 'library') return;
@@ -221,6 +230,7 @@ export function BookWorkspaceScreens({
     sort: state.librarySort,
     viewMode: state.libraryViewMode,
     collection: libraryCollection,
+    importTasks,
     presentation: {
       layoutMode,
       focusedBookId,
@@ -283,13 +293,15 @@ export function BookWorkspaceScreens({
     books: {
       open: openLibraryNovel,
       continueReading: controller.continueReading,
-      toggleFavorite: controller.toggleFavorite,
-      remove: controller.removeNovel,
-      restore: controller.restoreNovel,
-      purge: controller.purgeNovel,
+      toggleFavorite: (novel) => (bookHasActiveImport(novel.id) ? undefined : controller.toggleFavorite(novel)),
+      remove: (novel) => (bookHasActiveImport(novel.id) ? undefined : controller.removeNovel(novel)),
+      restore: (novel) => (bookHasActiveImport(novel.id) ? undefined : controller.restoreNovel(novel)),
+      purge: (novel) => (bookHasActiveImport(novel.id) ? undefined : controller.purgeNovel(novel)),
       downloadSource: exportSource,
       addSample,
-      editMetadata: libraryManagement.openMetadata,
+      editMetadata: (novel) => {
+        if (!bookHasActiveImport(novel.id)) libraryManagement.openMetadata(novel);
+      },
       toggleSelected: (novel) => libraryManagement.toggleSelected(novel.id),
       openExternal: async (workId) => {
         const work = externalSources.libraryWorks.find((candidate) => candidate.id === workId);
@@ -298,9 +310,27 @@ export function BookWorkspaceScreens({
         await externalSources.openSubscription(work);
       },
       removeExternal: async (workId) => {
+        if (externalWorkHasActiveImport(workId)) return;
         const work = externalSources.libraryWorks.find((candidate) => candidate.id === workId);
         if (work) await externalSources.removeLibraryWork(work);
       },
+    },
+    imports: {
+      open: (task) => {
+        if (task?.source !== 'external_source') {
+          openImport();
+          return;
+        }
+        const work = task.externalWorkId
+          ? externalSources.libraryWorks.find((candidate) => candidate.id === task.externalWorkId)
+          : undefined;
+        if (work) {
+          void externalSources.openSubscription(work);
+          return;
+        }
+        externalSources.show(externalSources.activeSourceId);
+      },
+      dismiss: dismissImportTask,
     },
   };
 

@@ -56,6 +56,7 @@ export async function runLocalSeriesImport(
         paragraphsWritten: 0,
         message: `${index + 1}/${additions.length}화 준비 중`,
       });
+      callbacks.onFileStarted?.(release.file);
       const file = await buildLocalSeriesImportFile(plan, input.signal, input.archivePassword, release.id);
       if (!file) throw new Error('추가할 회차를 확인하지 못했습니다.');
       const expectedSourceContentHash = plan.incrementalAppend
@@ -72,13 +73,17 @@ export async function runLocalSeriesImport(
           baseActiveContentRevisionId: plan.incrementalAppend ? plan.targetNovel?.activeContentRevisionId : undefined,
           expectedSourceContentHash,
         },
-        callbacks.onProgress,
+        (progress) => {
+          callbacks.onProgress(progress);
+          callbacks.onFileProgress?.(release.file, progress);
+        },
       );
       cancellation.bind(controller);
       const result = await controller.promise;
       outcome.lastImportedNovel = (await input.getNovel(result.novel.id).catch(() => undefined)) ?? result.novel;
       outcome.completed += 1;
       input.onCommitted(outcome.lastImportedNovel, release.id);
+      await callbacks.onFileCommitted?.(release.file, outcome.lastImportedNovel);
     } catch (error) {
       if (
         input.signal.aborted ||
@@ -86,7 +91,7 @@ export async function runLocalSeriesImport(
         (error instanceof DOMException && error.name === 'AbortError')
       ) {
         outcome.aborted = true;
-        callbacks.onCancelled();
+        callbacks.onCancelled(release.file);
       } else {
         outcome.failed += 1;
         callbacks.onFileFailed(release.file, error);

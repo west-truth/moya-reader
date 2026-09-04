@@ -36,6 +36,7 @@ import { formatBytes, formatCount } from '../../utils/format';
 import type { LibraryScreenProps } from '../library/library-screen-contract';
 import { LibraryMobileHeader, LibrarySidebar } from '../library/LibraryChrome';
 import { BookCover } from '../library/BookCover';
+import { importTaskIsActive, importTaskLabel } from '../import/import-task-projection';
 import type {
   ExternalSourceController,
   ExternalSourceImportProgress,
@@ -136,13 +137,41 @@ function ItemAction({
   controller: ExternalSourceController;
   releaseList?: boolean;
 }) {
+  const task = controller.tasks.find((candidate) => candidate.externalItemKey === externalItemKeyId(item.key));
   if (releaseList) {
+    if (task && importTaskIsActive(task)) {
+      return (
+        <button
+          className="icon-btn source-hub-release-action"
+          type="button"
+          disabled
+          title={importTaskLabel(task)}
+          aria-label={`${item.title} ${importTaskLabel(task)}`}
+        >
+          <LoaderCircle size={16} className={task.phase === 'queued' ? undefined : 'spin'} />
+        </button>
+      );
+    }
+    if (task?.phase === 'failed') {
+      return (
+        <button
+          className="icon-btn source-hub-release-action"
+          type="button"
+          disabled={controller.busy || controller.loading}
+          title="다시 시도"
+          aria-label={`${item.title} 다시 시도`}
+          onClick={() => void controller.importItem(item)}
+        >
+          <RotateCcw size={16} />
+        </button>
+      );
+    }
     if (item.importState === 'imported') {
       return (
         <button
           className="icon-btn source-hub-release-action"
           type="button"
-          disabled={controller.busy}
+          disabled={controller.blockingBusy}
           title="회차 보기"
           aria-label={`${item.title} 보기`}
           onClick={() => void controller.openImported(item)}
@@ -178,7 +207,7 @@ function ItemAction({
       <button
         className="ghost-btn source-hub-card-action"
         type="button"
-        disabled={controller.busy}
+        disabled={controller.blockingBusy}
         onClick={() => void controller.openImported(item)}
       >
         <BookOpen size={15} /> {releaseList ? '보기' : '라이브러리에서 보기'}
@@ -243,6 +272,7 @@ function SourceReleaseRow({
   controller: ExternalSourceController;
 }) {
   const itemId = externalItemKeyId(item.key);
+  const task = controller.tasks.find((candidate) => candidate.externalItemKey === itemId);
   const selectable = canSelectItem(item);
   const readingStateLabel = releaseReadingStateLabel(item);
   return (
@@ -251,7 +281,7 @@ function SourceReleaseRow({
       data-state={item.importState}
       data-reading-state={item.readingState}
       aria-current={item.readingState === 'current' ? 'location' : undefined}
-      aria-label={`${item.title}, ${readingStateLabel ?? importStateLabel(item.importState)}`}
+      aria-label={`${item.title}, ${task ? importTaskLabel(task) : (readingStateLabel ?? importStateLabel(item.importState))}`}
     >
       <label className="source-hub-release-select">
         {selectable ? (
@@ -281,13 +311,15 @@ function SourceReleaseRow({
         </div>
       </div>
       <span className="source-hub-release-updated">{updatedLabel(item.updatedAt) ?? '—'}</span>
-      <span className={`source-hub-state is-${item.readingState ?? item.importState}`}>
-        {item.readingState === 'current' ? (
+      <span className={`source-hub-state is-${task?.phase ?? item.readingState ?? item.importState}`}>
+        {task && importTaskIsActive(task) ? (
+          <LoaderCircle size={12} className={task.phase === 'queued' ? undefined : 'spin'} />
+        ) : item.readingState === 'current' ? (
           <Play size={11} fill="currentColor" />
         ) : item.readingState === 'read' || (!item.readingState && item.importState === 'imported') ? (
           <Check size={12} />
         ) : null}
-        {readingStateLabel ?? importStateLabel(item.importState)}
+        {task ? importTaskLabel(task) : (readingStateLabel ?? importStateLabel(item.importState))}
       </span>
       <ItemAction item={item} controller={controller} releaseList />
     </article>
@@ -313,7 +345,7 @@ function SourceItemCard({
         <button
           type="button"
           className="source-hub-card-open"
-          disabled={controller.busy || controller.loading}
+          disabled={controller.blockingBusy || controller.loading}
           aria-label={`${item.title} 작품 상세 열기`}
           onClick={() => void controller.openItem(item)}
         />
@@ -533,7 +565,7 @@ export default function SourceHubScreen({
 
   const submitSearch = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    if (!controller.busy) void controller.search();
+    if (!controller.blockingBusy) void controller.search();
   };
 
   useLayoutEffect(() => {
@@ -587,12 +619,12 @@ export default function SourceHubScreen({
                 <input
                   type="search"
                   value={controller.query}
-                  disabled={controller.busy}
+                  disabled={controller.blockingBusy}
                   placeholder="현재 소스 검색"
                   aria-label="외부 소스 검색"
                   onChange={(event) => controller.setQuery(event.target.value)}
                 />
-                <button className="ghost-btn" type="submit" disabled={controller.loading || controller.busy}>
+                <button className="ghost-btn" type="submit" disabled={controller.loading || controller.blockingBusy}>
                   검색
                 </button>
               </form>
@@ -607,7 +639,7 @@ export default function SourceHubScreen({
                 <button
                   className="ghost-btn"
                   type="button"
-                  disabled={controller.loading || controller.busy}
+                  disabled={controller.loading || controller.blockingBusy}
                   onClick={() => void controller.refresh()}
                 >
                   <RefreshCw size={16} className={controller.loading ? 'spin' : undefined} /> 새로고침
@@ -634,7 +666,7 @@ export default function SourceHubScreen({
                 <button
                   type="button"
                   className="detail-back-button"
-                  disabled={controller.busy && !seriesNovel}
+                  disabled={controller.blockingBusy && !seriesNovel}
                   onClick={() => void (seriesNovel ? controller.close() : controller.goBack())}
                 >
                   <ArrowLeft size={17} /> {seriesNovel ? '서재로' : '소스로'}
@@ -709,7 +741,7 @@ export default function SourceHubScreen({
                         <button
                           type="button"
                           className="primary-btn"
-                          disabled={controller.busy || controller.loading}
+                          disabled={controller.blockingBusy || controller.loading}
                           onClick={() => void library.actions.books.continueReading(seriesNovel)}
                         >
                           <Play size={16} fill="currentColor" />
@@ -879,7 +911,7 @@ export default function SourceHubScreen({
                       <button
                         type="button"
                         className="ghost-btn"
-                        disabled={controller.busy || controller.loading}
+                        disabled={controller.blockingBusy || controller.loading}
                         onClick={() => void controller.openSubscription(subscription)}
                       >
                         <BookOpen size={14} /> 회차 보기
@@ -925,7 +957,7 @@ export default function SourceHubScreen({
                   <button
                     type="button"
                     className="icon-btn"
-                    disabled={controller.busy}
+                    disabled={controller.blockingBusy}
                     aria-label="상위 폴더"
                     onClick={() => void controller.goBack()}
                   >
@@ -966,7 +998,7 @@ export default function SourceHubScreen({
                   <button
                     type="button"
                     className={controller.browse.activeMode === 'popular' ? 'is-active' : undefined}
-                    disabled={controller.busy || controller.loading}
+                    disabled={controller.blockingBusy || controller.loading}
                     onClick={() => void controller.setBrowseMode('popular')}
                   >
                     인기
@@ -975,7 +1007,7 @@ export default function SourceHubScreen({
                     <button
                       type="button"
                       className={controller.browse.activeMode === 'latest' ? 'is-active' : undefined}
-                      disabled={controller.busy || controller.loading}
+                      disabled={controller.blockingBusy || controller.loading}
                       onClick={() => void controller.setBrowseMode('latest')}
                     >
                       최신
@@ -1004,7 +1036,7 @@ export default function SourceHubScreen({
                       <button
                         type="button"
                         className="ghost-btn"
-                        disabled={controller.busy || controller.loading}
+                        disabled={controller.blockingBusy || controller.loading}
                         onClick={() => void controller.resetFilters()}
                       >
                         <RotateCcw size={14} /> 초기화
@@ -1012,7 +1044,7 @@ export default function SourceHubScreen({
                       <button
                         type="button"
                         className="primary-btn"
-                        disabled={controller.busy || controller.loading}
+                        disabled={controller.blockingBusy || controller.loading}
                         onClick={() => void controller.applyFilters()}
                       >
                         적용
@@ -1046,7 +1078,7 @@ export default function SourceHubScreen({
                     <button
                       key={externalItemKeyId(folder.key)}
                       type="button"
-                      disabled={controller.busy}
+                      disabled={controller.blockingBusy}
                       onClick={() => void controller.openFolder(folder)}
                     >
                       <Folder size={20} />
@@ -1131,7 +1163,7 @@ export default function SourceHubScreen({
                 <button
                   className="source-hub-load-more ghost-btn"
                   type="button"
-                  disabled={controller.loading || controller.busy}
+                  disabled={controller.loading || controller.blockingBusy}
                   onClick={() => void controller.loadMore()}
                 >
                   {controller.loading && <LoaderCircle size={15} className="spin" />} 더 보기

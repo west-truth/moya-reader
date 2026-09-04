@@ -49,6 +49,23 @@ describe('AppExtensionManager', () => {
     expect(restored.trustedExtensions.getAnalysisWorkflow(BOOK_AI_TTS_WORKFLOW_ID)).toBeUndefined();
   });
 
+  it('applies a shared enablement snapshot to persistence and live contributions', () => {
+    const storage = new MemoryStorage();
+    const runtime = createAppExtensionRuntime({ enablementStore: new ExtensionEnablementStore(storage) });
+
+    runtime.manager.applyEnablementSnapshot({
+      schemaVersion: 1,
+      enabledByExtensionId: { [MOYA_AI_EXTENSION_ID]: false },
+    });
+
+    expect(runtime.manager.isEnabled(MOYA_AI_EXTENSION_ID)).toBe(false);
+    expect(runtime.trustedExtensions.getReaderAddon(MOYA_AI_ADDON_ID)).toBeUndefined();
+    expect(runtime.manager.getEnablementSnapshot()).toEqual({
+      schemaVersion: 1,
+      enabledByExtensionId: expect.objectContaining({ [MOYA_AI_EXTENSION_ID]: false }),
+    });
+  });
+
   it('rejects unknown extension ids without publishing a revision', () => {
     const runtime = createAppExtensionRuntime({ enablementStore: new ExtensionEnablementStore(null) });
     const listener = vi.fn();

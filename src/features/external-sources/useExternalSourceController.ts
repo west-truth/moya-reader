@@ -51,6 +51,7 @@ import {
   projectLocalSeriesReadingStates,
   type SerialReleaseReadingState,
 } from './serial-work-projection';
+import { projectImportProgress, type ImportTaskView } from '../import/import-task-projection';
 
 const CACHE_TTL_MS = 15 * 60 * 1_000;
 const MAX_SOURCE_COVER_BYTES = 8 * 1024 * 1024;
@@ -139,6 +140,9 @@ export interface ExternalSourceController {
   readonly open: boolean;
   readonly loading: boolean;
   readonly busy: boolean;
+  readonly blockingBusy: boolean;
+  readonly importBusy: boolean;
+  readonly tasks: readonly ImportTaskView[];
   readonly sources: readonly ExternalSourceView[];
   readonly activeSourceId?: ExtensionContributionId;
   readonly items: readonly ExternalSourceItemView[];
@@ -184,6 +188,7 @@ export interface ExternalSourceController {
   importSelected(): Promise<void>;
   openImported(item: ExternalSourceItemView): Promise<void>;
   cancel(): void;
+  dismissTask(taskId: string): void;
   connect(input?: ExternalSourceConnectionInput): Promise<void>;
   disconnect(): Promise<void>;
   openItem(item: ExternalSourceItemView): Promise<void>;
@@ -218,6 +223,7 @@ export interface UseExternalSourceControllerOptions {
     target?: { readonly documentSectionId?: string; readonly documentSectionTitle?: string },
   ): void | Promise<void>;
   onLibraryChanged(): Promise<void>;
+  onLibraryItemCommitted?(novel: Novel): Promise<void>;
   notify(message: string, tone?: ToastTone): void;
   confirm(message: string): boolean;
 }
@@ -407,7 +413,10 @@ export function useExternalSourceController(options: UseExternalSourceController
   optionsRef.current = options;
   const [open, setOpen] = useState(false);
   const [loading, setLoading] = useState(false);
-  const [busy, setBusy] = useState(false);
+  const [blockingBusy, setBusy] = useState(false);
+  const [importBusy, setImportBusy] = useState(false);
+  const [tasks, setTasks] = useState<ImportTaskView[]>([]);
+  const busy = blockingBusy || importBusy;
   const [activeSourceId, setActiveSourceId] = useState<ExtensionContributionId>();
   const [rawItems, setRawItems] = useState<readonly ExternalItemSummary[]>([]);
   const [links, setLinks] = useState<readonly ExternalSourceLink[]>([]);
@@ -613,7 +622,7 @@ export function useExternalSourceController(options: UseExternalSourceController
       notifyFailure = true,
     ): Promise<boolean | undefined> => {
       const sourceId = sourceOverride ?? activeSourceId;
-      if (!sourceId || busy) return undefined;
+      if (!sourceId || blockingBusy) return undefined;
       const connection = optionsRef.current.registry.getExternalSourceStatus(sourceId, optionsRef.current.hostContext);
       if (connection.state !== 'connected') {
         setRawItems([]);
@@ -715,7 +724,7 @@ export function useExternalSourceController(options: UseExternalSourceController
         if (mountedRef.current && listAbortRef.current === abort) setLoading(false);
       }
     },
-    [activeSourceId, busy, rawItems, reconcileSubscriptionPage],
+    [activeSourceId, blockingBusy, rawItems, reconcileSubscriptionPage],
   );
 
   const loadSourceStart = useCallback(
@@ -765,9 +774,9 @@ export function useExternalSourceController(options: UseExternalSourceController
 
   const show = useCallback(
     (requestedSourceId?: ExtensionContributionId) => {
-      if (busy) {
-        if (requestedSourceId && requestedSourceId !== activeSourceId) return;
-        openRef.current = true;
+      if (blockingBusy) return;
+      if (importBusy && requestedSourceId && requestedSourceId !== activeSourceId) return;
+      if (importBusy && activeSourceId && (!requestedSourceId || requestedSourceId === activeSourceId)) {
         setOpen(true);
         return;
       }
@@ -791,7 +800,7 @@ export function useExternalSourceController(options: UseExternalSourceController
       setActiveSourceId(sourceId);
       void loadSourceStart(sourceId);
     },
-    [activeSourceId, busy, loadSourceStart, sources],
+    [activeSourceId, blockingBusy, importBusy, loadSourceStart, sources],
   );
 
   const close = useCallback(() => {
@@ -799,19 +808,19 @@ export function useExternalSourceController(options: UseExternalSourceController
     listAbortRef.current?.abort();
     openRef.current = false;
     setOpen(false);
-    if (!busy) {
+    if (!importBusy) {
       setLocalSeriesBookId(undefined);
       setLocalSeriesSeedNovel(undefined);
       setLocalSeriesSourceId(undefined);
       setLocalSeriesReadingStates(new Map());
       setLocalSeriesChapters([]);
     }
-    if (busy && wasOpen) optionsRef.current.notify('다운로드는 백그라운드에서 계속됩니다.');
-  }, [busy]);
+    if (importBusy && wasOpen) optionsRef.current.notify('다운로드는 백그라운드에서 계속됩니다.');
+  }, [importBusy]);
 
   const showLocalSeries = useCallback(
     async (novel: Novel) => {
-      if (busy) return;
+      if (blockingBusy) return;
       listAbortRef.current?.abort();
       const [allLinks, chapters, nextNovels] = await Promise.all([
         optionsRef.current.state.listLinks(),
@@ -853,11 +862,12 @@ export function useExternalSourceController(options: UseExternalSourceController
       if (loaded === false) setRawItems(local.items);
       setDetail((current) => current ?? localSeriesDetail(novel));
     },
-    [busy, loadPage, sources],
+    [blockingBusy, loadPage, sources],
   );
 
   const selectSource = useCallback(
     async (id: ExtensionContributionId) => {
+      if (importBusy && id !== activeSourceId) return;
       listAbortRef.current?.abort();
       setLocalSeriesBookId(undefined);
       setLocalSeriesSeedNovel(undefined);
@@ -867,7 +877,7 @@ export function useExternalSourceController(options: UseExternalSourceController
       setActiveSourceId(id);
       await loadSourceStart(id);
     },
-    [loadSourceStart],
+    [activeSourceId, importBusy, loadSourceStart],
   );
 
   const search = useCallback(async () => {
@@ -1128,7 +1138,32 @@ export function useExternalSourceController(options: UseExternalSourceController
         return true;
       }
 
-      setBusy(true);
+      const batchId = `external-series-${Date.now()}-${collection.remoteId}`;
+      const targetBookId = persistentId128('external_series', [serialCollectionKey(importable[0]!)]);
+      const taskIdByItemKey = new Map<string, string>();
+      const queuedTasks = importable.map((item, index) => {
+        const itemKey = externalItemKeyId(item.key);
+        const taskId = `${batchId}-${index}`;
+        taskIdByItemKey.set(itemKey, taskId);
+        return {
+          id: taskId,
+          batchId,
+          source: 'external_source' as const,
+          title: collection.title,
+          fileName: item.release.title,
+          targetBookId,
+          externalWorkId: currentSubscription?.id,
+          externalItemKey: itemKey,
+          phase: 'queued' as const,
+          current: index + 1,
+          total: importable.length,
+        };
+      });
+      setTasks((current) => [
+        ...current.filter((task) => !task.externalItemKey || !taskIdByItemKey.has(task.externalItemKey)),
+        ...queuedTasks,
+      ]);
+      setImportBusy(true);
       const abort = new AbortController();
       downloadAbortRef.current = abort;
       let importedNovel: Novel | undefined;
@@ -1139,12 +1174,16 @@ export function useExternalSourceController(options: UseExternalSourceController
       let contentApplied = false;
       let coverWarning: string | undefined;
       let coverAttempted = false;
+      let libraryProjectionPublished = false;
       const completedKeys = new Set<string>();
+      let activeTaskId: string | undefined;
       try {
         let { novels: knownNovels, links: knownLinks } = await loadSourceLibrary(optionsRef.current, sourceId);
         // Download/build/commit one chapter at a time. The selection is not one
         // growing upload, and completed chapters survive a later failure/cancel.
         for (const [batchIndex, selectedItem] of importable.entries()) {
+          const selectedItemKey = externalItemKeyId(selectedItem.key);
+          activeTaskId = taskIdByItemKey.get(selectedItemKey);
           stagedLinks = [];
           previousLinks = [];
           contentApplied = false;
@@ -1173,6 +1212,11 @@ export function useExternalSourceController(options: UseExternalSourceController
             );
           }
           const existingLocalBookId = [...targetIds][0];
+          if (existingLocalBookId) {
+            setTasks((current) =>
+              current.map((task) => (task.batchId === batchId ? { ...task, targetBookId: existingLocalBookId } : task)),
+            );
+          }
           const existingNovel = existingLocalBookId
             ? knownNovels.find((novel) => novel.id === existingLocalBookId)
             : undefined;
@@ -1228,6 +1272,15 @@ export function useExternalSourceController(options: UseExternalSourceController
           >();
           for (const item of [selectedItem]) {
             abort.signal.throwIfAborted();
+            if (activeTaskId) {
+              setTasks((current) =>
+                current.map((task) =>
+                  task.id === activeTaskId
+                    ? { ...task, phase: 'downloading', percent: undefined, error: undefined }
+                    : task,
+                ),
+              );
+            }
             setProgress({
               current: batchIndex + 1,
               total: importable.length,
@@ -1249,6 +1302,13 @@ export function useExternalSourceController(options: UseExternalSourceController
               },
               abort.signal,
             );
+            if (activeTaskId) {
+              setTasks((current) =>
+                current.map((task) =>
+                  task.id === activeTaskId ? { ...task, phase: 'verifying', percent: undefined } : task,
+                ),
+              );
+            }
             setProgress((current) => (current ? { ...current, phase: 'verifying' } : current));
             const sourceHash =
               normalizedHash(
@@ -1283,6 +1343,13 @@ export function useExternalSourceController(options: UseExternalSourceController
           }
 
           if (downloadedChapters.length > 0) {
+            if (activeTaskId) {
+              setTasks((current) =>
+                current.map((task) =>
+                  task.id === activeTaskId ? { ...task, phase: 'preparing', percent: undefined } : task,
+                ),
+              );
+            }
             setProgress({
               current: batchIndex + 1,
               total: importable.length,
@@ -1373,6 +1440,12 @@ export function useExternalSourceController(options: UseExternalSourceController
               },
               (progressDetail) => {
                 if (!mountedRef.current) return;
+                if (activeTaskId) {
+                  const projection = projectImportProgress(progressDetail);
+                  setTasks((current) =>
+                    current.map((task) => (task.id === activeTaskId ? { ...task, ...projection } : task)),
+                  );
+                }
                 setProgress({
                   current: batchIndex + 1,
                   total: importable.length,
@@ -1450,6 +1523,18 @@ export function useExternalSourceController(options: UseExternalSourceController
               coverWarning = error instanceof Error ? error.message : '원격 표지를 저장하지 못했습니다.';
             }
           }
+          setLinks(knownLinks);
+          setNovels(knownNovels);
+          setSelectedKeys((current) => new Set([...current].filter((key) => key !== selectedItemKey)));
+          if (importedNovel && !libraryProjectionPublished) {
+            const published = await optionsRef.current
+              .onLibraryItemCommitted?.(importedNovel)
+              .then(() => true)
+              .catch(() => false);
+            libraryProjectionPublished = published ?? true;
+          }
+          if (activeTaskId) setTasks((current) => current.filter((task) => task.id !== activeTaskId));
+          activeTaskId = undefined;
         }
         await optionsRef.current.onLibraryChanged();
         await refreshLocalProjection(sourceId);
@@ -1472,13 +1557,24 @@ export function useExternalSourceController(options: UseExternalSourceController
           await refreshLocalProjection(sourceId).catch(() => undefined);
           setSelectedKeys((current) => new Set([...current].filter((key) => !completedKeys.has(key))));
         }
+        const cancelled = isAbort(error);
+        const message = error instanceof Error ? error.message : '회차를 가져오지 못했습니다.';
+        setTasks((current) =>
+          cancelled
+            ? current.filter((task) => task.batchId !== batchId)
+            : current
+                .filter((task) => task.batchId !== batchId || task.id === activeTaskId)
+                .map((task) =>
+                  task.id === activeTaskId ? { ...task, phase: 'failed', percent: undefined, error: message } : task,
+                ),
+        );
         optionsRef.current.notify(
           (changedCount > 0 ? `${changedCount}개 회차는 저장되었습니다. ` : '') +
             (contentApplied
               ? `연재 본문 적용은 완료했으며 소스 연결은 다음 새로고침에서 복구합니다. ${
                   error instanceof Error ? error.message : String(error || '')
                 }`.trim()
-              : isAbort(error)
+              : cancelled
                 ? '가져오기를 취소했습니다. 기존 연재 작품과 연결은 유지됩니다.'
                 : `연재 작품을 적용하지 못해 기존 본문과 연결을 유지했습니다. ${
                     error instanceof Error ? error.message : String(error || '')
@@ -1489,7 +1585,8 @@ export function useExternalSourceController(options: UseExternalSourceController
         downloadAbortRef.current = undefined;
         importRef.current = undefined;
         if (mountedRef.current) {
-          setBusy(false);
+          if (!activeTaskId) setTasks((current) => current.filter((task) => task.batchId !== batchId));
+          setImportBusy(false);
           setProgress(undefined);
         }
       }
@@ -1516,7 +1613,7 @@ export function useExternalSourceController(options: UseExternalSourceController
       ) {
         return;
       }
-      setBusy(true);
+      setImportBusy(true);
       let completed = 0;
       let failed = 0;
       let linkedExisting = 0;
@@ -1745,7 +1842,7 @@ export function useExternalSourceController(options: UseExternalSourceController
         downloadAbortRef.current = undefined;
         importRef.current = undefined;
         if (mountedRef.current) {
-          setBusy(false);
+          setImportBusy(false);
           setProgress(undefined);
         }
       }
@@ -1790,7 +1887,7 @@ export function useExternalSourceController(options: UseExternalSourceController
 
   const openImported = useCallback(
     async (item: ExternalSourceItemView) => {
-      if (busy || item.importState !== 'imported' || !item.localBookId) return;
+      if (blockingBusy || item.importState !== 'imported' || !item.localBookId) return;
       const novel = await optionsRef.current.getNovel(item.localBookId);
       if (!novel || novel.deletedAt) {
         await refreshLocalProjection(item.key.connectorId);
@@ -1817,7 +1914,7 @@ export function useExternalSourceController(options: UseExternalSourceController
         });
       else await optionsRef.current.openNovel(novel);
     },
-    [busy, refreshLocalProjection],
+    [blockingBusy, refreshLocalProjection],
   );
 
   const cancel = useCallback(() => {
@@ -1825,6 +1922,12 @@ export function useExternalSourceController(options: UseExternalSourceController
     downloadAbortRef.current?.abort();
     subscriptionAbortRef.current?.abort();
     importRef.current?.cancel();
+  }, []);
+
+  const dismissTask = useCallback((taskId: string) => {
+    setTasks((current) =>
+      current.filter((task) => task.id !== taskId || (task.phase !== 'failed' && task.phase !== 'cancelling')),
+    );
   }, []);
 
   const connect = useCallback(
@@ -2304,8 +2407,8 @@ export function useExternalSourceController(options: UseExternalSourceController
 
   const openSubscription = useCallback(
     async (subscription: ExternalSourceSubscriptionRecord) => {
-      if (busy) return;
       const sourceId = subscription.connectorId as ExtensionContributionId;
+      if (blockingBusy || (importBusy && sourceId !== activeSourceId)) return;
       const source = sources.find((candidate) => candidate.id === sourceId);
       if (source?.connection.state !== 'connected') {
         optionsRef.current.notify('작품 소스에 다시 연결한 뒤 회차를 확인할 수 있습니다.', 'warning');
@@ -2330,7 +2433,7 @@ export function useExternalSourceController(options: UseExternalSourceController
       await refreshLocalProjection(sourceId);
       await loadPage({ parentRef: subscription.navigationRef }, false, sourceId);
     },
-    [busy, loadPage, refreshLocalProjection, sources],
+    [activeSourceId, blockingBusy, importBusy, loadPage, refreshLocalProjection, sources],
   );
 
   useEffect(() => {
@@ -2383,6 +2486,9 @@ export function useExternalSourceController(options: UseExternalSourceController
     open,
     loading,
     busy,
+    blockingBusy,
+    importBusy,
+    tasks,
     sources,
     activeSourceId,
     items,
@@ -2430,6 +2536,7 @@ export function useExternalSourceController(options: UseExternalSourceController
     importSelected,
     openImported,
     cancel,
+    dismissTask,
     connect,
     disconnect,
     openItem,

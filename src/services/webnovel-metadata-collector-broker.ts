@@ -32,6 +32,13 @@ export interface WebNovelMetadataCollectorSettingsDocumentV1 {
   readonly settings: WebNovelMetadataCollectorSettings;
 }
 
+export interface SharedWebNovelMetadataCollectorSettingsV1 {
+  readonly schemaVersion: 1;
+  readonly includeAdult: boolean;
+  readonly automaticLookup: boolean;
+  readonly automaticApply: WebNovelMetadataCollectorAutomaticApply;
+}
+
 export interface WebNovelMetadataCollectorSettingsStorage {
   getItem(key: string): string | null;
   setItem(key: string, value: string): void;
@@ -226,6 +233,23 @@ export class WebNovelMetadataCollectorBroker {
 
   getSettings(): WebNovelMetadataCollectorSettings {
     return this.settings;
+  }
+
+  getSharedSettings(): SharedWebNovelMetadataCollectorSettingsV1 {
+    return {
+      schemaVersion: 1,
+      includeAdult: this.settings.includeAdult,
+      automaticLookup: this.settings.automaticLookup,
+      automaticApply: this.settings.automaticApply,
+    };
+  }
+
+  applySharedSettings(settings: SharedWebNovelMetadataCollectorSettingsV1): void {
+    this.updateSettings({
+      includeAdult: settings.includeAdult,
+      automaticLookup: settings.automaticLookup,
+      automaticApply: settings.automaticApply,
+    });
   }
 
   get connectionMode(): 'managed' | 'external' {

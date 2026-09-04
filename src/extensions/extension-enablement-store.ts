@@ -91,6 +91,19 @@ export class ExtensionEnablementStore {
     }
   }
 
+  replaceSnapshot(snapshot: ExtensionEnablementDocumentV1): void {
+    const next = parseDocument(JSON.stringify(snapshot));
+    this.document = {
+      schemaVersion: next.schemaVersion,
+      enabledByExtensionId: { ...next.enabledByExtensionId },
+    };
+    try {
+      this.storage?.setItem(EXTENSION_ENABLEMENT_STORAGE_KEY, JSON.stringify(this.document));
+    } catch {
+      // Privacy-restricted and quota-limited browsers keep the server snapshot for this app session.
+    }
+  }
+
   getSnapshot(): ExtensionEnablementDocumentV1 {
     const current = this.load();
     return {

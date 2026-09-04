@@ -67,6 +67,7 @@ import { resolveTrustedBookAITTSWorkflow, selectManagedBookWorkflow } from './ex
 import { READER_INFO_ADDON_ID } from './extensions/builtin/reader-info-extension';
 import { MOYA_AI_ADDON_ID, MOYA_AI_EXTENSION_ID } from './extensions/builtin/moya-ai-extension';
 import { useReaderSettingsDraft } from './features/reader-settings/useReaderSettingsDraft';
+import { useSelfHostIntegrationSettings } from './integration-settings/use-self-host-integration-settings';
 import type { SettingsTab } from './features/reader-settings/ReaderSettingsPanel';
 import { useReaderBasicsScreenModel } from './features/reader-settings/useReaderBasicsScreenModel';
 import { useActiveReaderFont } from './features/reader-settings/useActiveReaderFont';
@@ -1159,6 +1160,16 @@ export default function App() {
     notify: showToast,
   });
   const webNovelMetadataCollector = extensionRuntime.webNovelMetadataCollector;
+  useSelfHostIntegrationSettings({
+    enabled: readerRuntime.mode === 'remote',
+    client: remoteApiClient,
+    extensionManager: extensionRuntime.manager,
+    metadataCollector: webNovelMetadataCollector,
+    externalSourceState,
+    suwayomi: suwayomiExternalSourceBroker,
+    onApplied: () => setExternalSourceBrokerRevision((value) => value + 1),
+    notify: showToast,
+  });
   const webNovelMetadataCollectorSnapshot = useSyncExternalStore(
     webNovelMetadataCollector.subscribe,
     webNovelMetadataCollector.getSnapshot,
@@ -1289,16 +1300,18 @@ export default function App() {
     getNovel: (id) => readerRepository.getNovel(id),
     listNovels: () => readerRepository.listNovels(),
     listChapters: (novelId) => readerRepository.listChapters(novelId),
-    onImportCommitted: async (novel) => {
+    onImportCommitted: async () => {
       await refreshNovels();
+    },
+    onImportSettled: async () => {
       await refreshAfterLocalMutation();
-      if (novel) {
-        const fresh = (await readerRepository.getNovel(novel.id)) ?? novel;
-        if (fresh.format === 'image_archive' && (fresh.documentSectionCount ?? 0) > 0) {
-          await openImportedSeriesRef.current?.(fresh);
-        } else {
-          await bookWorkspace.openNovel(fresh);
-        }
+    },
+    onOpenRequested: async (novel) => {
+      const fresh = (await readerRepository.getNovel(novel.id)) ?? novel;
+      if (fresh.format === 'image_archive' && (fresh.documentSectionCount ?? 0) > 0) {
+        await openImportedSeriesRef.current?.(fresh);
+      } else {
+        await bookWorkspace.openNovel(fresh);
       }
     },
     notify: showToast,
@@ -1330,6 +1343,9 @@ export default function App() {
         ? bookWorkspace.openDocumentSection(novel, target.documentSectionId, target.documentSectionTitle)
         : bookWorkspace.openNovel(novel),
     listNovels: (options) => readerRepository.listNovels(options),
+    onLibraryItemCommitted: async () => {
+      await refreshNovels();
+    },
     onLibraryChanged: async () => {
       await refreshNovels();
       await refreshAfterLocalMutation();
@@ -5940,6 +5956,11 @@ export default function App() {
         state={bookWorkspaceState}
         projection={bookWorkspaceProjection}
         libraryDrop={{ ...importFeature.libraryDrop, importBusy }}
+        importTasks={[...importFeature.tasks, ...externalSourceFeature.tasks]}
+        dismissImportTask={(taskId) => {
+          importFeature.dismissTask(taskId);
+          externalSourceFeature.dismissTask(taskId);
+        }}
         bootstrap={{ ...bootstrapState, retry: retryAppBootstrap }}
         sync={{ label: syncLabel, tone: syncTone }}
         annotationTotals={{ bookmarks: bookmarks.length, highlights: highlights.length, notes: notes.length }}

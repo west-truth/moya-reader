@@ -8,10 +8,14 @@ import type {
   ExternalSourceSelectionRecord,
 } from './contracts';
 import { createExternalSourceCredentialKey } from './device-credential-crypto';
+import type {
+  ExternalSourceSharedConnectionV1,
+  ExternalSourceSharedStateV1,
+} from '../integration-settings/self-host-integration-settings';
 
 const DB_NAME = 'noveldesk-external-sources';
 // v6 was already shipped. Retain its additive store without re-enabling the reverted purge workflow.
-const DB_VERSION = 6;
+const DB_VERSION = 7;
 const MAX_CACHE_PAGES_PER_CONNECTION = 24;
 const CREDENTIAL_KEY_ID = 'external-source-credentials-v1';
 
@@ -71,6 +75,10 @@ function openExternalSourceDb(): Promise<IDBDatabase> {
       if (!db.objectStoreNames.contains('subscriptions')) {
         const store = db.createObjectStore('subscriptions', { keyPath: 'id' });
         store.createIndex('connectorId', 'connectorId');
+        store.createIndex('accountConnectionId', 'accountConnectionId');
+      }
+      if (!db.objectStoreNames.contains('sharedConnections')) {
+        const store = db.createObjectStore('sharedConnections', { keyPath: 'connectorId' });
         store.createIndex('accountConnectionId', 'accountConnectionId');
       }
     };
@@ -188,9 +196,23 @@ export interface ExternalSourceLocalState {
   listSelectedItems(connectorId: string, accountConnectionId: string): Promise<ExternalSourceSelectionRecord[]>;
   saveSelectedItem(record: ExternalSourceSelectionRecord): Promise<void>;
   deleteSelectedItem(id: string): Promise<void>;
+  getSharedConnection?(connectorId: string): Promise<ExternalSourceSharedConnectionV1 | undefined>;
+  saveSharedConnection?(connection: ExternalSourceSharedConnectionV1): Promise<void>;
+  deleteSharedConnection?(connectorId: string): Promise<void>;
 }
 
 export class ExternalSourceLocalStateStore implements ExternalSourceLocalState {
+  private readonly sharedChangeListeners = new Set<() => void>();
+
+  subscribeSharedChanges(listener: () => void): () => void {
+    this.sharedChangeListeners.add(listener);
+    return () => this.sharedChangeListeners.delete(listener);
+  }
+
+  private publishSharedChange(): void {
+    for (const listener of this.sharedChangeListeners) listener();
+  }
+
   async getOrCreateCredentialKey(): Promise<CryptoKey> {
     if (credentialKeyPromise) return credentialKeyPromise;
     credentialKeyPromise = this.loadOrCreateCredentialKey().catch((error) => {
@@ -292,6 +314,7 @@ export class ExternalSourceLocalStateStore implements ExternalSourceLocalState {
     const tx = db.transaction('links', 'readwrite');
     tx.objectStore('links').put(link);
     await transactionDone(tx);
+    if (!link.pendingImport) this.publishSharedChange();
   }
 
   async saveLinks(links: readonly ExternalSourceLink[]): Promise<void> {
@@ -301,6 +324,7 @@ export class ExternalSourceLocalStateStore implements ExternalSourceLocalState {
     const store = tx.objectStore('links');
     links.forEach((link) => store.put(link));
     await transactionDone(tx);
+    if (links.some((link) => !link.pendingImport)) this.publishSharedChange();
   }
 
   async deleteLinks(ids: readonly string[]): Promise<void> {
@@ -310,6 +334,7 @@ export class ExternalSourceLocalStateStore implements ExternalSourceLocalState {
     const store = tx.objectStore('links');
     ids.forEach((id) => store.delete(id));
     await transactionDone(tx);
+    this.publishSharedChange();
   }
 
   async replaceLinks(links: readonly ExternalSourceLink[], deleteIds: readonly string[]): Promise<void> {
@@ -320,6 +345,7 @@ export class ExternalSourceLocalStateStore implements ExternalSourceLocalState {
     links.forEach((link) => store.put(link));
     deleteIds.forEach((id) => store.delete(id));
     await transactionDone(tx);
+    if (deleteIds.length > 0 || links.some((link) => !link.pendingImport)) this.publishSharedChange();
   }
 
   async removeMissingBookLinks(expected: readonly ExternalSourceLink[]): Promise<void> {
@@ -352,6 +378,7 @@ export class ExternalSourceLocalStateStore implements ExternalSourceLocalState {
       affected.forEach((id) => tx.objectStore('subscriptions').delete(id));
     }
     await done;
+    if (removed.length > 0) this.publishSharedChange();
   }
 
   async acquirePendingLinks(links: readonly ExternalSourceLink[]): Promise<boolean> {
@@ -412,6 +439,7 @@ export class ExternalSourceLocalStateStore implements ExternalSourceLocalState {
     links.forEach((link) => store.put(link));
     deleteIds.forEach((id) => store.delete(id));
     await done;
+    if (deleteIds.length > 0 || links.some((link) => !link.pendingImport)) this.publishSharedChange();
     return true;
   }
 
@@ -483,6 +511,7 @@ export class ExternalSourceLocalStateStore implements ExternalSourceLocalState {
     const tx = db.transaction('subscriptions', 'readwrite');
     tx.objectStore('subscriptions').put(subscription);
     await transactionDone(tx);
+    this.publishSharedChange();
   }
 
   async deleteSubscription(id: string): Promise<void> {
@@ -490,6 +519,7 @@ export class ExternalSourceLocalStateStore implements ExternalSourceLocalState {
     const tx = db.transaction('subscriptions', 'readwrite');
     tx.objectStore('subscriptions').delete(id);
     await transactionDone(tx);
+    this.publishSharedChange();
   }
 
   async listSelectedItems(connectorId: string, accountConnectionId: string): Promise<ExternalSourceSelectionRecord[]> {
@@ -514,6 +544,67 @@ export class ExternalSourceLocalStateStore implements ExternalSourceLocalState {
     const db = await openExternalSourceDb();
     const tx = db.transaction('selectedItems', 'readwrite');
     tx.objectStore('selectedItems').delete(id);
+    await transactionDone(tx);
+  }
+
+  async getSharedConnection(connectorId: string): Promise<ExternalSourceSharedConnectionV1 | undefined> {
+    const db = await openExternalSourceDb();
+    const tx = db.transaction('sharedConnections', 'readonly');
+    return requestToPromise<ExternalSourceSharedConnectionV1 | undefined>(
+      tx.objectStore('sharedConnections').get(connectorId),
+    );
+  }
+
+  async saveSharedConnection(connection: ExternalSourceSharedConnectionV1): Promise<void> {
+    const db = await openExternalSourceDb();
+    const tx = db.transaction('sharedConnections', 'readwrite');
+    tx.objectStore('sharedConnections').put(connection);
+    await transactionDone(tx);
+    this.publishSharedChange();
+  }
+
+  async deleteSharedConnection(connectorId: string): Promise<void> {
+    const db = await openExternalSourceDb();
+    const tx = db.transaction('sharedConnections', 'readwrite');
+    tx.objectStore('sharedConnections').delete(connectorId);
+    await transactionDone(tx);
+    this.publishSharedChange();
+  }
+
+  async exportSharedState(): Promise<ExternalSourceSharedStateV1> {
+    const db = await openExternalSourceDb();
+    const tx = db.transaction(['sharedConnections', 'links', 'subscriptions'], 'readonly');
+    const [connections, links, subscriptions] = await Promise.all([
+      requestToPromise<ExternalSourceSharedConnectionV1[]>(tx.objectStore('sharedConnections').getAll()),
+      requestToPromise<ExternalSourceLink[]>(tx.objectStore('links').getAll()),
+      requestToPromise<ExternalSourceSubscriptionRecord[]>(tx.objectStore('subscriptions').getAll()),
+    ]);
+    return {
+      schemaVersion: 1,
+      connections: connections.sort((left, right) => left.connectorId.localeCompare(right.connectorId)),
+      links: links.filter((link) => !link.pendingImport).sort((left, right) => left.id.localeCompare(right.id)),
+      subscriptions: subscriptions
+        .map(({ thumbnailUrl: _deviceResolvedThumbnail, ...subscription }) => subscription)
+        .sort((left, right) => left.id.localeCompare(right.id)),
+    };
+  }
+
+  async replaceSharedState(snapshot: ExternalSourceSharedStateV1): Promise<void> {
+    const db = await openExternalSourceDb();
+    const tx = db.transaction(['sharedConnections', 'links', 'subscriptions'], 'readwrite');
+    const linkStore = tx.objectStore('links');
+    const pendingLinks = (await requestToPromise<ExternalSourceLink[]>(linkStore.getAll())).filter(
+      (link) => link.pendingImport,
+    );
+    const connectionStore = tx.objectStore('sharedConnections');
+    const subscriptionStore = tx.objectStore('subscriptions');
+    connectionStore.clear();
+    linkStore.clear();
+    subscriptionStore.clear();
+    snapshot.connections.forEach((connection) => connectionStore.put(connection));
+    snapshot.links.forEach((link) => linkStore.put(link));
+    pendingLinks.forEach((link) => linkStore.put(link));
+    snapshot.subscriptions.forEach((subscription) => subscriptionStore.put(subscription));
     await transactionDone(tx);
   }
 }

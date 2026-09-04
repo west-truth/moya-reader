@@ -95,9 +95,11 @@ function importStatus(job: RemoteImportJob): ImportProgress['status'] {
 }
 
 function importProgressFromJob(localJobId: string, fileSize: number, job: RemoteImportJob): ImportProgress {
+  const status = importStatus(job);
   return {
     jobId: localJobId,
-    status: importStatus(job),
+    status,
+    subphase: status === 'ready' ? 'complete' : 'server_processing',
     bytesRead: numberValue(job.bytes_read, fileSize),
     totalBytes: numberValue(job.total_bytes, fileSize),
     chaptersDetected: numberValue(job.chapters_detected),
@@ -308,6 +310,7 @@ export class ServerUploadImportService implements ImportService {
             onProgress({
               jobId: localJobId,
               status: 'reading',
+              subphase: 'hashing_source',
               bytesRead,
               totalBytes: input.file.size,
               chaptersDetected: 0,
@@ -338,6 +341,7 @@ export class ServerUploadImportService implements ImportService {
       onProgress({
         jobId: localJobId,
         status: 'writing',
+        subphase: 'server_processing',
         bytesRead: input.file.size,
         totalBytes: input.file.size,
         chaptersDetected: 0,
@@ -477,6 +481,7 @@ export class ServerUploadImportService implements ImportService {
             onProgress({
               jobId: localJobId,
               status: 'reading',
+              subphase: 'uploading_chunks',
               bytesRead: numberValue(status.uploadedBytes),
               totalBytes: input.file.size,
               chaptersDetected: 0,
@@ -490,6 +495,7 @@ export class ServerUploadImportService implements ImportService {
             onProgress({
               jobId: localJobId,
               status: 'writing',
+              subphase: 'server_processing',
               bytesRead: input.file.size,
               totalBytes: input.file.size,
               chaptersDetected: 0,
@@ -667,6 +673,7 @@ export class ServerUploadImportService implements ImportService {
         onProgress({
           jobId: localJobId,
           status: 'reading',
+          subphase: 'uploading_chunks',
           bytesRead: numberValue(status?.uploadedBytes, start),
           totalBytes: input.file.size,
           chaptersDetected: 0,
@@ -739,6 +746,7 @@ export class ServerUploadImportService implements ImportService {
           reportUploadProgress({
             jobId: localJobId,
             status: 'reading',
+            subphase: 'uploading_chunks',
             bytesRead: uploadedBytes(),
             totalBytes: input.file.size,
             chaptersDetected: 0,

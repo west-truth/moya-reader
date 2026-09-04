@@ -5,6 +5,7 @@ import type { LibraryCollectionModel, LibraryFilter, LibrarySort, LibraryViewMod
 import type { Shelf } from '../../domain/types';
 import type { BatchLibraryCommand, BatchLibraryReceipt } from '../../repositories/library-catalog-repository';
 import type { ResponsiveLayoutMode } from '../book-workspace/useResponsiveLayoutMode';
+import type { ImportTaskView } from '../import/import-task-projection';
 
 type MaybePromise = void | Promise<void>;
 
@@ -50,6 +51,7 @@ export interface LibraryScreenModel {
   sort: LibrarySort;
   viewMode: LibraryViewMode;
   collection: LibraryCollectionModel;
+  importTasks: readonly ImportTaskView[];
   presentation: {
     layoutMode: ResponsiveLayoutMode;
     focusedBookId?: string;
@@ -117,6 +119,10 @@ export interface LibraryScreenActions {
     toggleSelected(novel: Novel): void;
     openExternal(workId: string): MaybePromise;
     removeExternal(workId: string): MaybePromise;
+  };
+  imports: {
+    open(task?: ImportTaskView): void;
+    dismiss(taskId: string): void;
   };
 }
 

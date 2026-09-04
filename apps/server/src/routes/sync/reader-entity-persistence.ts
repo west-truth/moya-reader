@@ -134,7 +134,11 @@ export async function persistReaderSyncEvent(
         insert into reader_settings (user_id, settings, updated_at)
         values ($1, $2, $3)
         on conflict (user_id) do update
-          set settings = excluded.settings,
+          set settings = excluded.settings || case
+                when reader_settings.settings ? '_moyaIntegrations'
+                  then jsonb_build_object('_moyaIntegrations', reader_settings.settings -> '_moyaIntegrations')
+                else '{}'::jsonb
+              end,
               updated_at = excluded.updated_at
       `,
       [userId, JSON.stringify(settings), event.createdAt],

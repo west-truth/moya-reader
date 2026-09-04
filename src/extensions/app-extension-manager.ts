@@ -1,5 +1,5 @@
 import type { ExtensionContributionId, ExtensionManifestV1, ExtensionPermission } from '@noveldesk/extension-contracts';
-import { ExtensionEnablementStore } from './extension-enablement-store';
+import { ExtensionEnablementStore, type ExtensionEnablementDocumentV1 } from './extension-enablement-store';
 import type {
   ExtensionLifecycleState,
   TrustedExtensionDefinition,
@@ -147,6 +147,30 @@ export class AppExtensionManager<TReaderAddonContext, TAnalysisWorkflowContext> 
     this.enablement.setEnabled(extensionId, enabled);
     if (changed) this.publish();
     return true;
+  }
+
+  getEnablementSnapshot(): ExtensionEnablementDocumentV1 {
+    return this.enablement.getSnapshot();
+  }
+
+  applyEnablementSnapshot(snapshot: ExtensionEnablementDocumentV1): void {
+    this.enablement.replaceSnapshot(snapshot);
+    for (const [extensionId, registration] of this.registrations) {
+      const requested = Object.prototype.hasOwnProperty.call(snapshot.enabledByExtensionId, extensionId)
+        ? snapshot.enabledByExtensionId[extensionId]!
+        : registration.defaultEnabled;
+      const enabled = registration.trustLevel === 'sandboxed' ? false : registration.canDisable ? requested : true;
+      const accepted = enabled ? this.registry.activate(extensionId) : this.registry.disable(extensionId);
+      if (!accepted) {
+        this.rememberActivationError(extensionId);
+        this.enablement.setEnabled(extensionId, false);
+        this.registry.disable(extensionId);
+      } else {
+        this.activationErrors.delete(extensionId);
+        this.enablement.setEnabled(extensionId, enabled);
+      }
+    }
+    this.publish();
   }
 
   list(): readonly AppExtensionSnapshot[] {

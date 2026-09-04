@@ -18,7 +18,8 @@ function collectHostElements(node: ReactNode): HostElement[] {
     if (
       Component.name === 'LibraryMobileHeader' ||
       Component.name === 'LibraryInspector' ||
-      Component.name === 'ActiveLibraryBatchBar'
+      Component.name === 'ActiveLibraryBatchBar' ||
+      Component.name === 'BookCover'
     )
       return [];
     return collectHostElements(Component(element.props));
@@ -119,6 +120,10 @@ function actions(): LibraryScreenActions {
       openExternal: vi.fn(),
       removeExternal: vi.fn(),
     },
+    imports: {
+      open: vi.fn(),
+      dismiss: vi.fn(),
+    },
   };
 }
 
@@ -129,6 +134,7 @@ function model(novels: Novel[], overrides: Partial<LibraryScreenModel> = {}): Li
     query: '',
     sync: { label: '연결 안 됨', tone: 'local' },
     externalSources: { active: false, busy: false, sources: [] },
+    importTasks: [],
     filter: 'all',
     sort: 'recent',
     viewMode: 'grid',
@@ -254,6 +260,32 @@ describe('LibraryScreen', () => {
     expect(markup).toContain('샘플 추가');
     expect(markup).not.toContain('class="books-grid"');
     expect(markup).not.toContain('class="books-list"');
+  });
+
+  it('replaces the empty state with a temporary progress card while a book is importing', () => {
+    const markup = renderToStaticMarkup(
+      <LibraryScreen
+        model={model([], {
+          importTasks: [
+            {
+              id: 'task-1',
+              batchId: 'batch-1',
+              source: 'local_file',
+              title: '가져오는 작품',
+              fileName: '가져오는 작품.epub',
+              phase: 'uploading',
+              percent: 42,
+            },
+          ],
+        })}
+        actions={actions()}
+      />,
+    );
+
+    expect(markup).toContain('가져오는 작품');
+    expect(markup).toContain('업로드 42%');
+    expect(markup).toContain('class="books-grid"');
+    expect(markup).not.toContain('읽을 파일을 책장에 추가하세요');
   });
 
   it('distinguishes loading and failed bootstrap states from an empty library', () => {
