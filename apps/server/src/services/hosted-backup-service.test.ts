@@ -168,7 +168,38 @@ describe('hosted backup restore', () => {
               id: 'page_1',
               book_id: 'book_1',
               chapter_id: 'chapter_1',
-              paragraphs: [{ id: 'paragraph_1', novelId: 'book_1', chapterId: 'chapter_1', text: 'line' }],
+              page_index: 0,
+              start_paragraph_index: 0,
+              end_paragraph_index: 0,
+              text_hash: 'sha256:page',
+              paragraphs: [
+                {
+                  id: 'paragraph_1',
+                  novelId: 'book_1',
+                  chapterId: 'chapter_1',
+                  index: 0,
+                  text: 'Line',
+                  startOffsetInChapter: 0,
+                  endOffsetInChapter: 4,
+                  textHash: 'sha256:paragraph',
+                },
+              ],
+            },
+          ],
+        ],
+        [
+          'chapters',
+          [
+            {
+              id: 'chapter_1',
+              book_id: 'book_1',
+              chapter_index: 0,
+              title: 'Chapter',
+              text_hash: 'sha256:chapter',
+              raw_start_offset: 0,
+              raw_end_offset: 4,
+              character_count: 4,
+              paragraph_count: 1,
             },
           ],
         ],
@@ -238,6 +269,7 @@ describe('hosted backup restore', () => {
       query: vi.fn(async (sql: string, values?: unknown[]) => {
         calls.push({ sql, values });
         if (sql.includes('select id, title from library_books')) return { rows: [{ id: 'book_1', title: 'Existing' }] };
+        if (sql.includes('select count(*)::text as count from paragraph_search')) return { rows: [{ count: '1' }] };
         return { rows: [] };
       }),
       release: vi.fn(),
@@ -255,6 +287,18 @@ describe('hosted backup restore', () => {
     expect(serializedValues).not.toContain('"paragraph_1"');
     expect(serializedValues).toContain('paragraph_1__copy_');
     expect(serializedValues).toContain('book_1__copy_');
+    const paragraphSearchInsert = calls.find((call) => call.sql.includes('insert into paragraph_search'));
+    expect(paragraphSearchInsert?.values).toEqual([
+      expect.any(String),
+      expect.stringMatching(/^paragraph_1__copy_/),
+      expect.stringMatching(/^book_1__copy_/),
+      expect.stringMatching(/^chapter_1__copy_/),
+      0,
+      0,
+      'Line',
+      'line',
+      expect.stringContaining('paragraph_1__copy_'),
+    ]);
     const sectionReadStateInsert = calls.find((call) =>
       call.sql.includes('insert into "fixed_document_section_read_states"'),
     );
@@ -265,5 +309,91 @@ describe('hosted backup restore', () => {
       '2026-08-30T01:06:00.000Z',
     ]);
     expect(calls.some((call) => call.sql.includes('insert into "voice_casting_states"'))).toBe(false);
+  });
+
+  it('rolls back instead of reporting success when the rebuilt paragraph search index is incomplete', async () => {
+    const paragraph = {
+      id: 'paragraph_1',
+      novelId: 'book_1',
+      chapterId: 'chapter_1',
+      index: 0,
+      text: 'Searchable line',
+      startOffsetInChapter: 0,
+      endOffsetInChapter: 15,
+      textHash: 'sha256:paragraph',
+    };
+    const snapshot: HostedBackupSnapshot = {
+      tables: new Map([
+        [
+          'library_books',
+          [
+            {
+              id: 'book_1',
+              user_id: 'old_user',
+              object_id: null,
+              title: 'Book',
+              active_content_revision_id: null,
+            },
+          ],
+        ],
+        [
+          'chapters',
+          [
+            {
+              id: 'chapter_1',
+              book_id: 'book_1',
+              chapter_index: 0,
+              title: 'Chapter',
+              text_hash: 'sha256:chapter',
+              raw_start_offset: 0,
+              raw_end_offset: 15,
+              character_count: 15,
+              paragraph_count: 1,
+            },
+          ],
+        ],
+        [
+          'paragraph_pages',
+          [
+            {
+              id: 'page_1',
+              book_id: 'book_1',
+              chapter_id: 'chapter_1',
+              page_index: 0,
+              start_paragraph_index: 0,
+              end_paragraph_index: 0,
+              paragraphs: [paragraph],
+              text_hash: 'sha256:page',
+            },
+          ],
+        ],
+        ['reader_settings', []],
+      ]),
+      objects: [],
+      books: [{ id: 'book_1', format: 'txt', title: 'Book' }],
+      exportedAt: '2026-07-13T00:00:00.000Z',
+      appVersion: '0.1.0',
+    };
+    const streamed = createHostedBackupStream(snapshot, async () => Buffer.alloc(0));
+    const [archive] = await Promise.all([collect(streamed.readable), streamed.completion]);
+    const calls: string[] = [];
+    const client = {
+      query: vi.fn(async (sql: string) => {
+        calls.push(sql);
+        if (sql.includes('select id, title from library_books')) return { rows: [] };
+        if (sql.includes('select count(*)::text as count from paragraph_search')) return { rows: [{ count: '0' }] };
+        return { rows: [] };
+      }),
+      release: vi.fn(),
+    };
+    const pool = { connect: vi.fn(async () => client) } as unknown as pg.Pool;
+
+    await expect(
+      restoreHostedBackup(pool, { defaultUserId: 'user_1', s3: {} } as ServerConfig, archive, {
+        defaultConflictResolution: 'replace',
+      }),
+    ).rejects.toThrow('Backup paragraph search index could not be restored completely');
+    expect(calls).toContain('rollback');
+    expect(calls).not.toContain('commit');
   });
 });

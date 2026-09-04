@@ -364,6 +364,26 @@ async function failAndRequeueProviderJob(pool: pg.Pool, jobId: string): Promise<
 const harness = await startPostgresHarness();
 const describeWithPostgres = harness ? describe : describe.skip;
 
+async function paragraphSearchIndexNames(pool: pg.Pool) {
+  const result = await pool.query<{ indexname: string }>(
+    `select indexname from pg_indexes
+     where schemaname = current_schema() and tablename = 'paragraph_search'
+     order by indexname`,
+  );
+  return result.rows.map((row) => row.indexname);
+}
+
+function expectParagraphSearchScopeIndexes(indexNames: string[]) {
+  expect(indexNames).toEqual(
+    expect.arrayContaining([
+      'idx_paragraph_search_book_order',
+      'idx_paragraph_search_chapter_order',
+      'idx_paragraph_search_paragraph_id',
+    ]),
+  );
+  expect(indexNames).not.toContain('idx_paragraph_search_text_trgm');
+}
+
 describeWithPostgres('versioned PostgreSQL migrations', () => {
   const postgres = harness as PostgresHarness;
 
@@ -385,6 +405,7 @@ describeWithPostgres('versioned PostgreSQL migrations', () => {
       const tables = await pool.query<{ tablename: string }>(
         'select tablename from pg_tables where schemaname = current_schema()',
       );
+      const paragraphSearchIndexes = await paragraphSearchIndexNames(pool);
 
       expect(result.applied.map((migration) => migration.fileName)).toEqual(
         expected.map((migration) => migration.fileName),
@@ -396,6 +417,7 @@ describeWithPostgres('versioned PostgreSQL migrations', () => {
       expect(tables.rows.map((row) => row.tablename)).toEqual(
         expect.arrayContaining(['users', 'provider_jobs', 'provider_job_attempts', 'provider_job_outbox']),
       );
+      expectParagraphSearchScopeIndexes(paragraphSearchIndexes);
       expect(messages).toHaveLength(expected.length);
     });
   }, 30_000);
@@ -420,12 +442,14 @@ describeWithPostgres('versioned PostgreSQL migrations', () => {
         const metadata = await pool.query(
           `select status, activated_at from identity_contract_metadata where contract_name = 'persistent_identity'`,
         );
+        const paragraphSearchIndexes = await paragraphSearchIndexNames(pool);
         expect(result.applied.map((migration) => migration.version)).toEqual(
           expected.map((migration) => migration.version),
         );
         expect(legacyJob.rows).toEqual([{ id: 'legacy-job', attempt_count: 0, current_attempt_id: null }]);
         expect(ledger.rows).toEqual(expected.map((migration) => ({ version: migration.version })));
         expect(metadata.rows).toEqual([{ status: 'expanded', activated_at: null }]);
+        expectParagraphSearchScopeIndexes(paragraphSearchIndexes);
       });
     },
     30_000,

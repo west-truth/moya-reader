@@ -44,6 +44,9 @@ const files = {
   selfHostAuthRoutes: read('apps/server/src/routes/auth.ts'),
   selfHostAuthService: read('apps/server/src/services/self-host-auth-service.ts'),
   selfHostAuthMigration: read('apps/server/src/db/migrations/0032_self_host_account_sessions.sql'),
+  paragraphSearchGinRemovalMigration: read(
+    'apps/server/src/db/migrations/0043_remove_paragraph_search_trigram_index.sql',
+  ),
   serverQueue: read('apps/server/src/queue.ts'),
   serverUploadImport: read('src/services/import/server-upload-import-service.ts'),
   composeGuideKo: read('docs/operations/docker-compose-guide-ko.md'),
@@ -689,10 +692,17 @@ check(
   includes(files.serverSchema, 'on conflict (id) do nothing'),
 );
 check(
-  'server schema enables pg_trgm for paragraph search',
+  'server schema retains pg_trgm compatibility for legacy migration adoption',
   includes(files.serverSchema, 'create extension if not exists pg_trgm'),
 );
-check('server schema indexes paragraph_search text', includes(files.serverSchema, 'idx_paragraph_search_text_trgm'));
+check(
+  'server schema omits the paragraph_search trigram index',
+  !includes(files.serverSchema, 'idx_paragraph_search_text_trgm'),
+);
+check(
+  'server migration removes the paragraph_search trigram index',
+  includes(files.paragraphSearchGinRemovalMigration, 'drop index if exists idx_paragraph_search_text_trgm'),
+);
 check(
   'server schema stores upload chapter split mode',
   includes(files.serverSchema, 'chapter_split_mode text not null default'),

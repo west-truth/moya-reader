@@ -41,6 +41,115 @@ async function assertActiveObjects(pool: pg.Pool, fixture: ImportPageFixture) {
 }
 
 describe.skipIf(!harness || Boolean(benchmark))('append page reuse with real PostgreSQL and S3 transport', () => {
+  test('rebuilds paragraph search rows during a hosted replace restore', async () => {
+    await withPostgresSchema(harness!, 'hosted_search_restore', async (pool) => {
+      await withImportPageFixture(pool, async (fixture) => {
+        await fixture.import(
+          await fixtureSeries([
+            { number: 1, pages: [fixturePng(1), fixturePng(2)] },
+            { number: 2, pages: [fixturePng(3)] },
+          ]),
+        );
+        const before = (
+          await pool.query<{ count: number }>(
+            `select count(*)::int as count
+             from paragraph_search
+             where book_id = 'book_fixture'`,
+          )
+        ).rows[0]!.count;
+        const paragraphId = (
+          await pool.query<{ paragraph_id: string }>(
+            `select paragraph_id from paragraph_search
+             where book_id = 'book_fixture'
+             order by page_index, paragraph_index
+             limit 1`,
+          )
+        ).rows[0]!.paragraph_id;
+        expect(before).toBeGreaterThan(0);
+
+        const backup = await exportHostedBackup(pool, fixture.config);
+        const backupBytes = new Uint8Array(
+          await new Response(backup.readable as ReadableStream<Uint8Array<ArrayBuffer>>).arrayBuffer(),
+        );
+        await backup.completion;
+        await restoreHostedBackup(pool, fixture.config, backupBytes, { defaultConflictResolution: 'replace' });
+
+        const after = (
+          await pool.query<{ count: number }>(
+            `select count(*)::int as count
+             from paragraph_search
+             where book_id = 'book_fixture'`,
+          )
+        ).rows[0]!.count;
+        expect(after).toBe(before);
+
+        const app = Fastify();
+        await registerBookContentRoutes(app, pool, fixture.config);
+        try {
+          const response = await app.inject(`/api/paragraphs/${encodeURIComponent(paragraphId)}`);
+          expect(response.statusCode, response.body).toBe(200);
+        } finally {
+          await app.close();
+        }
+      });
+    });
+  }, 30_000);
+
+  test('rolls back a hosted replace restore when paragraph search rebuilding fails', async () => {
+    await withPostgresSchema(harness!, 'hosted_search_restore_failure', async (pool) => {
+      await withImportPageFixture(pool, async (fixture) => {
+        await fixture.import(await fixtureSeries([{ number: 1, pages: [fixturePng(1), fixturePng(2)] }]));
+        const beforeBook = (
+          await pool.query(
+            `select id, active_content_revision_id, object_id, title, total_chapters, total_paragraphs
+             from library_books where id = 'book_fixture'`,
+          )
+        ).rows;
+        const beforeSearch = (
+          await pool.query(
+            `select id, paragraph_id, chapter_id, page_index, paragraph_index, text, text_lower, paragraph
+             from paragraph_search where book_id = 'book_fixture'
+             order by page_index, paragraph_index`,
+          )
+        ).rows;
+        const backup = await exportHostedBackup(pool, fixture.config);
+        const backupBytes = new Uint8Array(
+          await new Response(backup.readable as ReadableStream<Uint8Array<ArrayBuffer>>).arrayBuffer(),
+        );
+        await backup.completion;
+        await pool.query(`
+          create function fail_restored_paragraph_search() returns trigger language plpgsql as $$
+          begin raise exception 'fixture paragraph search failure'; end; $$;
+          create trigger fail_restored_paragraph_search before insert on paragraph_search
+          for each statement execute function fail_restored_paragraph_search()
+        `);
+
+        await expect(
+          restoreHostedBackup(pool, fixture.config, backupBytes, { defaultConflictResolution: 'replace' }),
+        ).rejects.toThrow('fixture paragraph search failure');
+        await pool.query('drop trigger fail_restored_paragraph_search on paragraph_search');
+
+        expect(
+          (
+            await pool.query(
+              `select id, active_content_revision_id, object_id, title, total_chapters, total_paragraphs
+               from library_books where id = 'book_fixture'`,
+            )
+          ).rows,
+        ).toEqual(beforeBook);
+        expect(
+          (
+            await pool.query(
+              `select id, paragraph_id, chapter_id, page_index, paragraph_index, text, text_lower, paragraph
+               from paragraph_search where book_id = 'book_fixture'
+               order by page_index, paragraph_index`,
+            )
+          ).rows,
+        ).toEqual(beforeSearch);
+      });
+    });
+  }, 30_000);
+
   test('crosses 100 chapters and 6,000 pages, then reads only the manifest and writes one new page', async () => {
     await withPostgresSchema(harness!, 'comic_large_work', async (pool) => {
       await withImportPageFixture(pool, async (fixture) => {

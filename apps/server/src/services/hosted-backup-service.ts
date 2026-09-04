@@ -20,6 +20,7 @@ import {
   type HostedBookObjectRow,
   parseHostedBackupArchive,
 } from './hosted-backup-archive.js';
+import { rebuildParagraphSearchFromStoredPages } from './paragraph-search-persistence.js';
 
 export type HostedBackupConflictResolution = 'skip' | 'replace' | 'copy';
 
@@ -615,6 +616,7 @@ export async function restoreHostedBackup(
     );
     const activeContentRevisions = new Map<string, string>();
     const activeCoverAssets = new Map<string, string>();
+    const restoredParagraphPages: Record<string, unknown>[] = [];
     let restoredEntries = 0;
 
     for (const table of HOSTED_BACKUP_TABLES) {
@@ -668,6 +670,7 @@ export async function restoreHostedBackup(
           transformed.source_review_artifact_id = null;
         }
         await insertRow(client, table, transformed);
+        if (table === 'paragraph_pages') restoredParagraphPages.push(transformed);
         if (table === 'library_books') {
           // The normal book-insert trigger creates a fresh initial revision. Restore has its own
           // complete revision rows; remove only this just-created default before inserting them.
@@ -680,6 +683,7 @@ export async function restoreHostedBackup(
         restoredEntries += 1;
       }
     }
+    await rebuildParagraphSearchFromStoredPages(client, restoredParagraphPages);
     for (const [bookId, revisionId] of activeContentRevisions) {
       await client.query(
         `update library_books set active_content_revision_id = $1, updated_at = now()

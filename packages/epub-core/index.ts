@@ -96,6 +96,23 @@ interface ArchiveEntry {
   readonly path: string;
 }
 
+interface ArchiveIndex {
+  readonly ordered: readonly ArchiveEntry[];
+  readonly byPath: ReadonlyMap<string, readonly ArchiveEntry[]>;
+}
+
+interface RecoveredImageBinding {
+  readonly item: ManifestItem;
+  readonly entry: ArchiveEntry;
+  readonly logicalHref: string;
+}
+
+interface DuplicateImageRecovery {
+  readonly ordered: readonly RecoveredImageBinding[];
+  readonly byManifestId: ReadonlyMap<string, RecoveredImageBinding>;
+  readonly byLogicalHref: ReadonlyMap<string, RecoveredImageBinding>;
+}
+
 function localName(node: XmlNode): string {
   return (node.localName || node.nodeName.split(':').at(-1) || '').toLowerCase();
 }
@@ -220,11 +237,12 @@ function resolvedLinkHref(base: string, href: string): string | undefined {
   return resolvedHref(base, trimmed);
 }
 
-function archiveEntries(entries: readonly Entry[]): Map<string, ArchiveEntry> {
+function archiveEntries(entries: readonly Entry[]): ArchiveIndex {
   if (entries.length > MAX_ENTRY_COUNT) {
     throw new EpubImportError('EPUB archive 항목 수가 안전 한도를 초과했습니다.', 'invalid_archive');
   }
-  const result = new Map<string, ArchiveEntry>();
+  const ordered: ArchiveEntry[] = [];
+  const byPath = new Map<string, ArchiveEntry[]>();
   let expandedBytes = 0;
   for (const entry of entries) {
     if (entry.directory) continue;
@@ -244,10 +262,13 @@ function archiveEntries(entries: readonly Entry[]): Map<string, ArchiveEntry> {
       throw new EpubImportError('EPUB 해제 크기가 안전 한도를 초과했습니다.', 'invalid_archive');
     }
     const key = path.toLowerCase();
-    if (result.has(key)) throw new EpubImportError('EPUB에 중복 archive 경로가 있습니다.', 'invalid_archive');
-    result.set(key, { entry: entry as FileEntry, path });
+    const record = { entry: entry as FileEntry, path };
+    ordered.push(record);
+    const occurrences = byPath.get(key) ?? [];
+    occurrences.push(record);
+    byPath.set(key, occurrences);
   }
-  return result;
+  return { ordered, byPath };
 }
 
 async function entryBytes(record: ArchiveEntry): Promise<Uint8Array> {
@@ -266,10 +287,11 @@ async function entryText(record: ArchiveEntry): Promise<string> {
   return new TextDecoder('utf-8', { fatal: false }).decode(bytes);
 }
 
-function findEntry(entries: Map<string, ArchiveEntry>, path: string): ArchiveEntry {
-  const found = entries.get(path.toLowerCase());
-  if (!found) throw new EpubImportError(`EPUB 필수 항목을 찾을 수 없습니다: ${path}`, 'invalid_package');
-  return found;
+function findEntry(entries: ArchiveIndex, path: string): ArchiveEntry {
+  const found = entries.byPath.get(path.toLowerCase());
+  if (!found?.length) throw new EpubImportError(`EPUB 필수 항목을 찾을 수 없습니다: ${path}`, 'invalid_package');
+  if (found.length !== 1) throw new EpubImportError('EPUB에 중복 archive 경로가 있습니다.', 'invalid_archive');
+  return found[0];
 }
 
 function packageMetadata(opf: XmlDocument): {
@@ -298,6 +320,7 @@ function packageManifest(opf: XmlDocument, opfPath: string): Map<string, Manifes
     const href = item.getAttribute('href')?.trim();
     const mediaType = item.getAttribute('media-type')?.split(';', 1)[0].trim().toLowerCase();
     if (!id || !href || !mediaType) continue;
+    if (result.has(id)) throw new EpubImportError('EPUB manifest에 중복 ID가 있습니다.', 'invalid_package');
     result.set(id, {
       id,
       href: normalizedArchivePath(href, opfPath),
@@ -308,13 +331,65 @@ function packageManifest(opf: XmlDocument, opfPath: string): Map<string, Manifes
   return result;
 }
 
+function duplicateImageRecovery(
+  entries: ArchiveIndex,
+  manifest: Map<string, ManifestItem>,
+): DuplicateImageRecovery | undefined {
+  const duplicates = [...entries.byPath.entries()].filter(([, occurrences]) => occurrences.length > 1);
+  if (duplicates.length === 0) return undefined;
+
+  const imageItems = [...manifest.values()].filter((item) => EPUB_IMAGE_TYPES.has(item.mediaType));
+  const imageItemsByPath = new Map<string, ManifestItem[]>();
+  for (const item of imageItems) {
+    const key = item.href.toLowerCase();
+    const matches = imageItemsByPath.get(key) ?? [];
+    matches.push(item);
+    imageItemsByPath.set(key, matches);
+  }
+  for (const [path, occurrences] of duplicates) {
+    const items = imageItemsByPath.get(path);
+    if (!items || items.length !== occurrences.length) {
+      throw new EpubImportError('EPUB에 중복 archive 경로가 있습니다.', 'invalid_archive');
+    }
+  }
+
+  const manifestPaths = new Set(imageItems.map((item) => item.href.toLowerCase()));
+  const archiveImages = entries.ordered.filter((entry) => manifestPaths.has(entry.path.toLowerCase()));
+  if (
+    archiveImages.length !== imageItems.length ||
+    imageItems.some((item, index) => archiveImages[index]?.path.toLowerCase() !== item.href.toLowerCase())
+  ) {
+    throw new EpubImportError('중복 EPUB 이미지의 manifest와 archive 순서가 일치하지 않습니다.', 'invalid_archive');
+  }
+
+  const duplicatePaths = new Set(duplicates.map(([path]) => path));
+  const ordered = imageItems.map((item, index): RecoveredImageBinding => {
+    const path = item.href.toLowerCase();
+    if (!duplicatePaths.has(path)) return { item, entry: archiveImages[index], logicalHref: item.href };
+    const separator = item.href.lastIndexOf('/');
+    const directory = separator >= 0 ? item.href.slice(0, separator + 1) : '';
+    const fileName = separator >= 0 ? item.href.slice(separator + 1) : item.href;
+    const identity = persistentId128('epub_recovered_resource', [item.id, item.href, String(index)]);
+    return {
+      item,
+      entry: archiveImages[index],
+      logicalHref: `${directory}.moya-recovered/${identity}/${fileName}`,
+    };
+  });
+  return {
+    ordered,
+    byManifestId: new Map(ordered.map((binding) => [binding.item.id, binding])),
+    byLogicalHref: new Map(ordered.map((binding) => [binding.logicalHref, binding])),
+  };
+}
+
 function manifestItemByHref(manifest: Map<string, ManifestItem>, href: string | undefined): ManifestItem | undefined {
   const normalized = href?.split('#', 1)[0];
   return normalized ? [...manifest.values()].find((item) => item.href === normalized) : undefined;
 }
 
 async function imageFromCoverDocument(
-  entries: Map<string, ArchiveEntry>,
+  entries: ArchiveIndex,
   coverDocument: ManifestItem,
   manifest: Map<string, ManifestItem>,
 ): Promise<ManifestItem | undefined> {
@@ -331,7 +406,7 @@ async function imageFromCoverDocument(
 }
 
 async function packageCoverItem(
-  entries: Map<string, ArchiveEntry>,
+  entries: ArchiveIndex,
   opf: XmlDocument,
   opfPath: string,
   manifest: Map<string, ManifestItem>,
@@ -382,14 +457,14 @@ function packageSpine(opf: XmlDocument, manifest: Map<string, ManifestItem>): Ma
   for (const itemref of elementChildren(spine)) {
     if (localName(itemref) !== 'itemref' || itemref.getAttribute('linear') === 'no') continue;
     const item = manifest.get(itemref.getAttribute('idref') ?? '');
-    if (item && EPUB_TEXT_TYPES.has(item.mediaType)) result.push(item);
+    if (item && EPUB_TEXT_TYPES.has(item.mediaType) && !item.properties.has('nav')) result.push(item);
   }
   if (result.length === 0) throw new EpubImportError('EPUB에 읽을 수 있는 spine 본문이 없습니다.', 'invalid_package');
   return result;
 }
 
 async function navigationTitles(
-  entries: Map<string, ArchiveEntry>,
+  entries: ArchiveIndex,
   opf: XmlDocument,
   manifest: Map<string, ManifestItem>,
 ): Promise<Map<string, string>> {
@@ -643,6 +718,39 @@ function sectionTitle(document: XmlDocument, fallback: string): string {
   return text(heading) || fallback;
 }
 
+function imageReferenceMatchesManifest(referenceHref: string, manifestHref: string, opfPath: string): boolean {
+  if (referenceHref.toLowerCase() === manifestHref.toLowerCase()) return true;
+  const fileName = referenceHref.split('/').at(-1);
+  return Boolean(fileName && normalizedArchivePath(fileName, opfPath).toLowerCase() === manifestHref.toLowerCase());
+}
+
+function applyDuplicateImageRecovery(
+  sections: readonly EpubSection[],
+  recovery: DuplicateImageRecovery,
+  opfPath: string,
+): EpubSection[] {
+  const references = sections.flatMap((section) => section.blocks.filter((block) => block.resourceHref));
+  if (references.length !== recovery.ordered.length) {
+    throw new EpubImportError('중복 EPUB 이미지의 본문 참조 수가 manifest와 일치하지 않습니다.', 'invalid_archive');
+  }
+  let referenceIndex = 0;
+  return sections.map((section) => ({
+    ...section,
+    blocks: section.blocks.map((block) => {
+      if (!block.resourceHref) return block;
+      const binding = recovery.ordered[referenceIndex];
+      referenceIndex += 1;
+      if (!binding || !imageReferenceMatchesManifest(block.resourceHref, binding.item.href, opfPath)) {
+        throw new EpubImportError(
+          '중복 EPUB 이미지의 본문 참조 순서가 manifest와 일치하지 않습니다.',
+          'invalid_archive',
+        );
+      }
+      return { ...block, resourceHref: binding.logicalHref };
+    }),
+  }));
+}
+
 export async function parseEpub(blob: Blob): Promise<EpubDocument> {
   let reader: ZipReader<Blob> | undefined;
   try {
@@ -657,9 +765,10 @@ export async function parseEpub(blob: Blob): Promise<EpubDocument> {
     assertReflowable(opf);
     const metadata = packageMetadata(opf);
     const manifest = packageManifest(opf, normalizedOpfPath);
+    const imageRecovery = duplicateImageRecovery(entries, manifest);
     const spine = packageSpine(opf, manifest);
     const tocTitles = await navigationTitles(entries, opf, manifest);
-    const sections: EpubSection[] = [];
+    let sections: EpubSection[] = [];
     for (let index = 0; index < spine.length; index += 1) {
       const item = spine[index];
       const document = parseContentDocument(await entryText(findEntry(entries, item.href)), item.href);
@@ -674,20 +783,24 @@ export async function parseEpub(blob: Blob): Promise<EpubDocument> {
     }
     if (sections.length === 0)
       throw new EpubImportError('EPUB 본문에 읽을 수 있는 내용이 없습니다.', 'invalid_package');
+    if (imageRecovery) sections = applyDuplicateImageRecovery(sections, imageRecovery, normalizedOpfPath);
 
     const referenced = new Set(
       sections.flatMap((section) => section.blocks.map((block) => block.resourceHref).filter(Boolean) as string[]),
     );
     const coverItem = await packageCoverItem(entries, opf, normalizedOpfPath, manifest);
-    if (coverItem) referenced.add(coverItem.href);
+    const coverBinding = coverItem ? imageRecovery?.byManifestId.get(coverItem.id) : undefined;
+    const coverHref = coverBinding?.logicalHref ?? coverItem?.href;
+    if (coverHref) referenced.add(coverHref);
     const resources: EpubResource[] = [];
     for (const href of referenced) {
-      const item = [...manifest.values()].find((candidate) => candidate.href === href);
+      const recovered = imageRecovery?.byLogicalHref.get(href);
+      const item = recovered?.item ?? [...manifest.values()].find((candidate) => candidate.href === href);
       if (!item || !EPUB_IMAGE_TYPES.has(item.mediaType)) continue;
-      const bytes = await entryBytes(findEntry(entries, href));
+      const bytes = await entryBytes(recovered?.entry ?? findEntry(entries, href));
       resources.push({ href, mediaType: item.mediaType, contentHash: `sha256:${bytesToHex(sha256(bytes))}`, bytes });
     }
-    return { ...metadata, coverHref: coverItem?.href, sections, resources };
+    return { ...metadata, coverHref, sections, resources };
   } catch (error) {
     if (error instanceof EpubImportError) throw error;
     throw new EpubImportError(
