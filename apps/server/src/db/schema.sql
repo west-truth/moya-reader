@@ -836,7 +836,6 @@ create index if not exists idx_paragraph_pages_book_chapter_page on paragraph_pa
 create index if not exists idx_paragraph_search_paragraph_id on paragraph_search(paragraph_id);
 create index if not exists idx_paragraph_search_book_order on paragraph_search(book_id, chapter_id, paragraph_index);
 create index if not exists idx_paragraph_search_chapter_order on paragraph_search(chapter_id, paragraph_index);
-create index if not exists idx_paragraph_search_text_trgm on paragraph_search using gin (text_lower gin_trgm_ops);
 create index if not exists idx_bookmarks_active_book_created on bookmarks(book_id, user_id, created_at desc) where deleted_at is null;
 create index if not exists idx_highlights_active_book_updated on highlights(book_id, user_id, updated_at desc) where deleted_at is null;
 create index if not exists idx_notes_active_book_updated on notes(book_id, user_id, updated_at desc) where deleted_at is null;

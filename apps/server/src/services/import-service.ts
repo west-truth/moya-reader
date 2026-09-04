@@ -49,6 +49,8 @@ import { loadImportPageReuse } from './import-page-reuse.js';
 import { retainComicAssets } from './comic-source-retention.js';
 import { ImportMeasurements } from './import-measurements.js';
 import type { StructuredLogger } from '../observability/logger.js';
+import { insertParagraphSearchBatch } from './paragraph-search-persistence.js';
+import { createImportProgressUpdateThrottle } from './import-progress-throttle.js';
 
 const PARAGRAPHS_PER_PAGE = 120;
 const SERVER_IMPORT_CHAPTER_BATCH_SIZE = 100;
@@ -535,53 +537,6 @@ export async function insertParagraphPageBatch(client: pg.PoolClient, pages: Par
   await insertParagraphSearchBatch(client, pages);
 
   return pages.reduce((sum, page) => sum + page.paragraphs.length, 0);
-}
-
-async function insertParagraphSearchBatch(client: pg.PoolClient, pages: ParagraphPage[]): Promise<void> {
-  const paragraphs = pages.flatMap((page) =>
-    page.paragraphs.map((paragraph) => ({
-      page,
-      paragraph,
-    })),
-  );
-  if (!paragraphs.length) return;
-
-  const values: unknown[] = [];
-  const rows = paragraphs.map(({ page, paragraph }) => {
-    const offset = values.length;
-    values.push(
-      persistentId128('paragraph_search', [page.novelId, page.chapterId, paragraph.id]),
-      paragraph.id,
-      page.novelId,
-      page.chapterId,
-      page.pageIndex,
-      paragraph.index,
-      paragraph.text,
-      paragraph.text.toLowerCase(),
-      JSON.stringify(paragraph),
-    );
-    return `($${offset + 1}, $${offset + 2}, $${offset + 3}, $${offset + 4}, $${offset + 5}, $${offset + 6}, $${offset + 7}, $${offset + 8}, $${offset + 9})`;
-  });
-
-  await client.query(
-    `
-      insert into paragraph_search (
-        id, paragraph_id, book_id, chapter_id, page_index, paragraph_index, text, text_lower, paragraph
-      )
-      values ${rows.join(', ')}
-      on conflict (id) do update
-        set paragraph_id = excluded.paragraph_id,
-            book_id = excluded.book_id,
-            chapter_id = excluded.chapter_id,
-            page_index = excluded.page_index,
-            paragraph_index = excluded.paragraph_index,
-            text = excluded.text,
-            text_lower = excluded.text_lower,
-            paragraph = excluded.paragraph,
-            updated_at = now()
-    `,
-    values,
-  );
 }
 
 export async function replaceParsedBookContent(client: CommandQueryable, bookId: string): Promise<void> {
@@ -1375,8 +1330,10 @@ export async function processImportJob(
         await insertChapterBatch(client, chapterBatch);
       }
       let paragraphsWritten = 0;
+      const shouldUpdateParagraphProgress = createImportProgressUpdateThrottle();
       for await (const pageBatch of iterateImportParagraphPageBatchesAsync(parsed, SERVER_IMPORT_PAGE_BATCH_SIZE)) {
         paragraphsWritten += await insertParagraphPageBatch(client, pageBatch);
+        if (!shouldUpdateParagraphProgress()) continue;
         const progressUpdated = await updateImportJobProgress(
           pool,
           jobId,

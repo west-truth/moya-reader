@@ -14,6 +14,24 @@ interface FixtureOptions {
   readonly extraEntries?: ReadonlyArray<{ path: string; text?: string; bytes?: Uint8Array }>;
 }
 
+async function renameFixtureArchiveEntry(blob: Blob, from: string, to: string): Promise<Blob> {
+  const fromBytes = new TextEncoder().encode(from);
+  const toBytes = new TextEncoder().encode(to);
+  if (fromBytes.length !== toBytes.length) throw new Error('Fixture archive names must have the same byte length.');
+  const bytes = new Uint8Array(await blob.arrayBuffer());
+  let replacements = 0;
+  for (let offset = 0; offset <= bytes.length - fromBytes.length; offset += 1) {
+    if (fromBytes.every((value, index) => bytes[offset + index] === value)) {
+      bytes.set(toBytes, offset);
+      replacements += 1;
+      offset += fromBytes.length - 1;
+    }
+  }
+  // A normal ZIP repeats a file name in its local header and central directory.
+  if (replacements !== 2) throw new Error(`Expected two ZIP name occurrences, received ${replacements}.`);
+  return new Blob([bytes], { type: 'application/epub+zip' });
+}
+
 function utf16Le(value: string): Uint8Array {
   const bytes = new Uint8Array(2 + value.length * 2);
   bytes.set([0xff, 0xfe]);
@@ -90,6 +108,53 @@ async function epubFixture(options: FixtureOptions = {}): Promise<Blob> {
   return writer.close();
 }
 
+async function duplicateImageRecoveryFixture(options: { secondReference?: string } = {}): Promise<Blob> {
+  const writer = new ZipWriter(new BlobWriter('application/epub+zip'));
+  await writer.add('mimetype', new TextReader('application/epub+zip'), { level: 0 });
+  await writer.add(
+    'META-INF/container.xml',
+    new TextReader(
+      '<?xml version="1.0"?><container><rootfiles><rootfile full-path="OEBPS/content.opf" media-type="application/oebps-package+xml"/></rootfiles></container>',
+    ),
+  );
+  await writer.add(
+    'OEBPS/content.opf',
+    new TextReader(`<?xml version="1.0"?>
+      <package version="3.0" unique-identifier="id">
+        <metadata xmlns:dc="http://purl.org/dc/elements/1.1/"><dc:title>복구 EPUB</dc:title></metadata>
+        <manifest>
+          <item id="image_0" href="image_0000.png" media-type="image/png"/>
+          <item id="image_1" href="image_0000.png" media-type="image/png"/>
+          <item id="chapter_0" href="chapter-1.xhtml" media-type="application/xhtml+xml"/>
+          <item id="chapter_1" href="chapter-2.xhtml" media-type="application/xhtml+xml"/>
+          <item id="nav" href="nav.xhtml" media-type="application/xhtml+xml" properties="nav"/>
+        </manifest>
+        <spine><itemref idref="nav"/><itemref idref="chapter_0"/><itemref idref="chapter_1"/></spine>
+      </package>`),
+  );
+  await writer.add('OEBPS/image_0000.png', new Uint8ArrayReader(new Uint8Array([1, 2, 3, 4])));
+  await writer.add('OEBPS/image_9999.png', new Uint8ArrayReader(new Uint8Array([5, 6, 7, 8])));
+  await writer.add(
+    'OEBPS/chapter-1.xhtml',
+    new TextReader(
+      '<html xmlns="http://www.w3.org/1999/xhtml"><head><title>첫 화</title></head><body><h1>첫 화</h1><img src="images/image_0000.png"/></body></html>',
+    ),
+  );
+  await writer.add(
+    'OEBPS/chapter-2.xhtml',
+    new TextReader(
+      `<html xmlns="http://www.w3.org/1999/xhtml"><head><title>두 번째 화</title></head><body><h1>두 번째 화</h1><img src="${options.secondReference ?? 'images/image_0000.png'}"/></body></html>`,
+    ),
+  );
+  await writer.add(
+    'OEBPS/nav.xhtml',
+    new TextReader(
+      '<html xmlns="http://www.w3.org/1999/xhtml"><head><title>목차</title></head><body><h2>목차</h2><nav><ol><li><a href="chapter-1.xhtml">목차 첫 화</a></li><li><a href="chapter-2.xhtml">목차 두 번째 화</a></li></ol></nav></body></html>',
+    ),
+  );
+  return renameFixtureArchiveEntry(await writer.close(), 'OEBPS/image_9999.png', 'OEBPS/image_0000.png');
+}
+
 describe('EPUB import engine', () => {
   it('keeps deterministic cover seeds inside the PostgreSQL signed integer range', () => {
     expect(stableEpubCoverSeed('sha256:00000000ffffffff')).toBe(2_147_483_647);
@@ -161,6 +226,66 @@ describe('EPUB import engine', () => {
     expect(illustrationAsset?.bytes.byteLength).toBe(illustration.byteLength);
     expect(image?.assetId).toBe(illustrationAsset?.id);
     expect(parsed.embeddedAssets?.map((asset) => asset.kind)).toEqual(['epub_resource', 'epub_resource', 'cover']);
+  });
+
+  it('recovers ordered duplicate images with unique manifest ids and excludes a nav-only spine item', async () => {
+    const source = await duplicateImageRecoveryFixture();
+    const document = await parseEpub(source);
+
+    expect(document.sections.map((section) => section.title)).toEqual(['목차 첫 화', '목차 두 번째 화']);
+    expect(document.resources).toHaveLength(2);
+    expect(new Set(document.resources.map((resource) => resource.href)).size).toBe(2);
+    expect(document.resources.map((resource) => [...resource.bytes])).toEqual([
+      [1, 2, 3, 4],
+      [5, 6, 7, 8],
+    ]);
+    const imageHrefs = document.sections.flatMap((section) =>
+      section.blocks.filter((block) => block.kind === 'image').map((block) => block.resourceHref),
+    );
+    expect(imageHrefs).toEqual(document.resources.map((resource) => resource.href));
+
+    const parsed = materializeEpubImport(document, {
+      fileName: 'recovered.epub',
+      sourceBytes: new Uint8Array(await source.arrayBuffer()),
+      now: '2026-09-01T00:00:00.000Z',
+    });
+    const imageAssets = parsed.embeddedAssets?.filter((asset) => asset.kind === 'epub_resource') ?? [];
+    expect(parsed.novel.totalChapters).toBe(2);
+    expect(imageAssets).toHaveLength(2);
+    expect(new Set(imageAssets.map((asset) => asset.id)).size).toBe(2);
+  });
+
+  it('rejects duplicate image recovery when body references do not exactly follow the manifest order', async () => {
+    await expect(
+      parseEpub(await duplicateImageRecoveryFixture({ secondReference: 'images/image_0001.png' })),
+    ).rejects.toMatchObject({
+      code: 'invalid_archive',
+      message: expect.stringContaining('본문 참조 순서'),
+    });
+  });
+
+  it('continues to reject duplicate non-image archive paths', async () => {
+    const writer = new ZipWriter(new BlobWriter('application/epub+zip'));
+    await writer.add('mimetype', new TextReader('application/epub+zip'), { level: 0 });
+    await writer.add(
+      'META-INF/container.xml',
+      new TextReader(
+        '<?xml version="1.0"?><container><rootfiles><rootfile full-path="OEBPS/content.opf"/></rootfiles></container>',
+      ),
+    );
+    await writer.add(
+      'OEBPS/content.opf',
+      new TextReader(
+        '<package><metadata/><manifest><item id="chapter" href="chapter.xhtml" media-type="application/xhtml+xml"/></manifest><spine><itemref idref="chapter"/></spine></package>',
+      ),
+    );
+    await writer.add('OEBPS/chapter.xhtml', new TextReader('<html><body><p>첫 본문</p></body></html>'));
+    await writer.add('OEBPS/chaptfr.xhtml', new TextReader('<html><body><p>중복 본문</p></body></html>'));
+    const source = await renameFixtureArchiveEntry(await writer.close(), 'OEBPS/chaptfr.xhtml', 'OEBPS/chapter.xhtml');
+    await expect(parseEpub(source)).rejects.toMatchObject({
+      code: 'invalid_archive',
+      message: expect.stringContaining('중복 archive 경로'),
+    });
   });
 
   it('accepts an EPUB2 package with an NCX manifest item and uses spine order', async () => {
