@@ -6,7 +6,9 @@ import { appWithBooks } from './books-route-test-harness.js';
 const updatedAt = '2026-09-04T00:00:00.000Z';
 const integrationSettings = {
   schemaVersion: 1,
+  revision: 4,
   updatedAt,
+  legacyImportCompleted: true,
   extensionEnablement: { schemaVersion: 1, enabledByExtensionId: { 'moya.extension.metadata': true } },
   webNovelMetadata: {
     schemaVersion: 1,
@@ -32,10 +34,7 @@ describe('self-host integration settings routes', () => {
     const integrations = await app.inject({ method: 'GET', url: '/api/integration-settings' });
     expect(integrations.statusCode).toBe(200);
     expect(integrations.json()).toEqual({ settings: integrationSettings });
-    expect(query).toHaveBeenCalledWith(expect.stringContaining("->> 'updatedAt' is distinct from $2"), [
-      'user_test',
-      null,
-    ]);
+    expect(query).toHaveBeenCalledWith(expect.stringContaining("->> 'revision', '0'"), ['user_test', null]);
 
     const reader = await app.inject({ method: 'GET', url: '/api/settings' });
     expect(reader.statusCode).toBe(200);
@@ -44,7 +43,9 @@ describe('self-host integration settings routes', () => {
   });
 
   it('rejects secrets and preserves the reserved document in ordinary settings upserts', async () => {
-    const query = vi.fn(async (_sql: string, _params?: unknown[]) => ({ rows: [] }));
+    const query = vi.fn(async (sql: string, _params?: unknown[]) => ({
+      rows: sql.includes('returning settings') ? [{ integration_settings: integrationSettings }] : [],
+    }));
     const app = await appWithBooks({ query } as unknown as pg.Pool);
     const withSecret = {
       ...integrationSettings,
@@ -63,16 +64,21 @@ describe('self-host integration settings routes', () => {
         ],
       },
     };
-    const rejected = await app.inject({ method: 'PUT', url: '/api/integration-settings', payload: withSecret });
+    const rejected = await app.inject({
+      method: 'PUT',
+      url: '/api/integration-settings',
+      payload: { settings: withSecret, expectedRevision: 4 },
+    });
     expect(rejected.statusCode).toBe(400);
     expect(query).not.toHaveBeenCalled();
 
     const accepted = await app.inject({
       method: 'PUT',
       url: '/api/integration-settings',
-      payload: integrationSettings,
+      payload: { settings: integrationSettings, expectedRevision: 4 },
     });
     expect(accepted.statusCode).toBe(200);
+    expect(accepted.json().settings.revision).toBe(5);
     expect(query.mock.calls.at(-1)?.[0]).toContain("jsonb_set(reader_settings.settings, '{_moyaIntegrations}'");
 
     await app.inject({ method: 'PUT', url: '/api/settings', payload: defaultSettings });
@@ -80,6 +86,25 @@ describe('self-host integration settings routes', () => {
       String(sql).includes("jsonb_build_object('_moyaIntegrations'"),
     );
     expect(readerSettingsUpsert).toBeDefined();
+    await app.close();
+  });
+
+  it('rejects a stale write and returns the current server document', async () => {
+    const query = vi
+      .fn()
+      .mockResolvedValueOnce({ rows: [] })
+      .mockResolvedValueOnce({ rows: [{ integration_settings: integrationSettings }] });
+    const app = await appWithBooks({ query } as unknown as pg.Pool);
+
+    const response = await app.inject({
+      method: 'PUT',
+      url: '/api/integration-settings',
+      payload: { settings: integrationSettings, expectedRevision: 3 },
+    });
+
+    expect(response.statusCode).toBe(409);
+    expect(response.json()).toEqual({ error: 'integration settings changed', settings: integrationSettings });
+    expect(query.mock.calls[0]?.[0]).toContain("->> 'revision', '0'");
     await app.close();
   });
 });

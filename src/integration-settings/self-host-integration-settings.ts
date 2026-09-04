@@ -35,7 +35,11 @@ export interface ExternalSourceSharedStateV1 {
 
 export interface SelfHostIntegrationSettingsV1 {
   readonly schemaVersion: typeof SELF_HOST_INTEGRATION_SETTINGS_SCHEMA_VERSION;
+  /** Monotonic server-owned revision used to reject stale whole-document writes. */
+  readonly revision: number;
   readonly updatedAt: string;
+  /** True once legacy device-local settings have been considered for the one-time self-host migration. */
+  readonly legacyImportCompleted: boolean;
   readonly extensionEnablement: ExtensionEnablementDocumentV1;
   readonly webNovelMetadata: SharedWebNovelMetadataSettingsV1;
   readonly externalSources: ExternalSourceSharedStateV1;
@@ -284,13 +288,35 @@ export function normalizeSelfHostIntegrationSettings(value: unknown): SelfHostIn
   const enablement = extensionEnablement(input?.extensionEnablement);
   const metadata = webNovelMetadata(input?.webNovelMetadata);
   const sources = externalSources(input?.externalSources);
-  if (input?.schemaVersion !== 1 || !updatedAt || !enablement || !metadata || !sources) return undefined;
-  return {
-    schemaVersion: 1,
+  const revision = input?.revision === undefined ? 0 : input.revision;
+  if (
+    input?.schemaVersion !== 1 ||
+    typeof revision !== 'number' ||
+    !Number.isSafeInteger(revision) ||
+    revision < 0 ||
+    !updatedAt ||
+    !enablement ||
+    !metadata ||
+    !sources ||
+    (input.legacyImportCompleted !== undefined && typeof input.legacyImportCompleted !== 'boolean')
+  ) {
+    return undefined;
+  }
+  const normalized = {
+    schemaVersion: 1 as const,
+    revision,
     updatedAt,
+    legacyImportCompleted: false,
     extensionEnablement: enablement,
     webNovelMetadata: metadata,
     externalSources: sources,
+  };
+  return {
+    ...normalized,
+    // Any pre-marker document came from the pre-release sync implementation and is
+    // established server state. Treat even an empty document as authoritative so a
+    // deliberate deletion cannot be revived from a stale device cache.
+    legacyImportCompleted: typeof input.legacyImportCompleted === 'boolean' ? input.legacyImportCompleted : true,
   };
 }
 
@@ -312,6 +338,18 @@ function metadataIsDefault(settings: SharedWebNovelMetadataSettingsV1): boolean 
   return !settings.includeAdult && !settings.automaticLookup && settings.automaticApply === 'off';
 }
 
+export function hasMeaningfulSelfHostIntegrationState(
+  settings: Pick<SelfHostIntegrationSettingsV1, 'extensionEnablement' | 'webNovelMetadata' | 'externalSources'>,
+): boolean {
+  return (
+    Object.keys(settings.extensionEnablement.enabledByExtensionId).length > 0 ||
+    !metadataIsDefault(settings.webNovelMetadata) ||
+    settings.externalSources.connections.length > 0 ||
+    settings.externalSources.links.length > 0 ||
+    settings.externalSources.subscriptions.length > 0
+  );
+}
+
 /**
  * Keeps previously device-local data when a self-host is upgraded for the first time.
  * Existing server choices win; missing source associations and extension choices are filled from this device.
@@ -328,7 +366,9 @@ export function mergeInitialSelfHostIntegrationSettings(
   );
   return {
     schemaVersion: 1,
+    revision: remote.revision,
     updatedAt: remote.updatedAt,
+    legacyImportCompleted: true,
     extensionEnablement: {
       schemaVersion: 1,
       enabledByExtensionId: {

@@ -245,6 +245,15 @@ describe('ExternalSourceLocalStateStore', () => {
     expect(await store.getCredential(connectorId)).toEqual(credential);
     expect(await store.listLinks()).toEqual([pending]);
     expect(changes).toHaveLength(3);
+
+    const opened = await new Promise<IDBDatabase>((resolve, reject) => {
+      const request = indexedDB.open('noveldesk-external-sources');
+      request.onsuccess = () => resolve(request.result);
+      request.onerror = () => reject(request.error);
+    });
+    expect(opened.version).toBe(6);
+    expect(opened.objectStoreNames.contains('sharedConnections')).toBe(false);
+    opened.close();
   });
 
   it('allows only one pending operation to acquire the same existing link', async () => {
@@ -277,5 +286,35 @@ describe('ExternalSourceLocalStateStore', () => {
     expect(await store.acquirePendingLinks([staged('operation-b')])).toBe(false);
 
     expect((await store.listLinks())[0]?.pendingImport?.operationId).toBe('operation-a');
+  });
+
+  it('opens a profile touched by the pre-release v7 build without another schema change', async () => {
+    const preRelease = await new Promise<IDBDatabase>((resolve, reject) => {
+      const request = indexedDB.open('noveldesk-external-sources', 7);
+      request.onupgradeneeded = () => {
+        const db = request.result;
+        db.createObjectStore('links', { keyPath: 'id' });
+        db.createObjectStore('subscriptions', { keyPath: 'id' });
+      };
+      request.onsuccess = () => resolve(request.result);
+      request.onerror = () => reject(request.error);
+    });
+    preRelease.close();
+
+    const store = new ExternalSourceLocalStateStore();
+    expect(await store.exportSharedState()).toEqual({
+      schemaVersion: 1,
+      connections: [],
+      links: [],
+      subscriptions: [],
+    });
+
+    const reopened = await new Promise<IDBDatabase>((resolve, reject) => {
+      const request = indexedDB.open('noveldesk-external-sources');
+      request.onsuccess = () => resolve(request.result);
+      request.onerror = () => reject(request.error);
+    });
+    expect(reopened.version).toBe(7);
+    reopened.close();
   });
 });

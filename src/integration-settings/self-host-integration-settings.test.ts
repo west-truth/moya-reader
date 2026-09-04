@@ -9,7 +9,9 @@ const now = '2026-09-04T00:00:00.000Z';
 function validDocument() {
   return {
     schemaVersion: 1,
+    revision: 4,
     updatedAt: now,
+    legacyImportCompleted: true,
     extensionEnablement: {
       schemaVersion: 1,
       enabledByExtensionId: { 'moya.extension.metadata': true },
@@ -110,10 +112,32 @@ describe('self-host integration settings contract', () => {
     const merged = mergeInitialSelfHostIntegrationSettings(remote, local);
 
     expect(merged.externalSources).toEqual(local.externalSources);
+    expect(merged.legacyImportCompleted).toBe(true);
     expect(merged.webNovelMetadata).toEqual(local.webNovelMetadata);
     expect(merged.extensionEnablement.enabledByExtensionId).toEqual({
       'moya.extension.local-only': false,
       'moya.extension.metadata': true,
     });
+  });
+
+  it('treats an established pre-marker server document as already migrated', () => {
+    const { legacyImportCompleted: _completed, revision: _revision, ...legacy } = validDocument();
+
+    expect(normalizeSelfHostIntegrationSettings(legacy)?.legacyImportCompleted).toBe(true);
+    expect(normalizeSelfHostIntegrationSettings(legacy)?.revision).toBe(0);
+
+    expect(
+      normalizeSelfHostIntegrationSettings({
+        ...legacy,
+        extensionEnablement: { schemaVersion: 1, enabledByExtensionId: {} },
+        webNovelMetadata: {
+          schemaVersion: 1,
+          includeAdult: false,
+          automaticLookup: false,
+          automaticApply: 'off',
+        },
+        externalSources: { schemaVersion: 1, connections: [], links: [], subscriptions: [] },
+      })?.legacyImportCompleted,
+    ).toBe(true);
   });
 });

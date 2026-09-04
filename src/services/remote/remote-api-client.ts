@@ -985,15 +985,19 @@ export class RemoteApiClient {
     return this.request('/settings', { method: 'PUT', body: JSON.stringify({ ...defaultSettings, ...settings }) });
   }
 
-  getIntegrationSettings(since?: string): Promise<{ settings?: SelfHostIntegrationSettingsV1 }> {
-    const query = since ? `?since=${encodeURIComponent(since)}` : '';
+  getIntegrationSettings(revision?: number): Promise<{ settings?: SelfHostIntegrationSettingsV1 }> {
+    const query = revision === undefined ? '' : `?revision=${encodeURIComponent(String(revision))}`;
     return this.request(`/integration-settings${query}`);
   }
 
   saveIntegrationSettings(
     settings: SelfHostIntegrationSettingsV1,
+    expectedRevision: number,
   ): Promise<{ ok: true; settings: SelfHostIntegrationSettingsV1 }> {
-    return this.request('/integration-settings', { method: 'PUT', body: JSON.stringify(settings) });
+    return this.request('/integration-settings', {
+      method: 'PUT',
+      body: JSON.stringify({ settings, expectedRevision }),
+    });
   }
 
   patchBook(

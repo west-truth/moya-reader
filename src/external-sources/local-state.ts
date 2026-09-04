@@ -14,8 +14,9 @@ import type {
 } from '../integration-settings/self-host-integration-settings';
 
 const DB_NAME = 'noveldesk-external-sources';
-// v6 was already shipped. Retain its additive store without re-enabling the reverted purge workflow.
-const DB_VERSION = 7;
+// Keep this at the last shipped version. Shared connection hints are server-owned in self-host mode
+// and reconstructed from the encrypted device credential in local mode, so they need no new store.
+const DB_VERSION = 6;
 const MAX_CACHE_PAGES_PER_CONNECTION = 24;
 const CREDENTIAL_KEY_ID = 'external-source-credentials-v1';
 
@@ -77,13 +78,20 @@ function openExternalSourceDb(): Promise<IDBDatabase> {
         store.createIndex('connectorId', 'connectorId');
         store.createIndex('accountConnectionId', 'accountConnectionId');
       }
-      if (!db.objectStoreNames.contains('sharedConnections')) {
-        const store = db.createObjectStore('sharedConnections', { keyPath: 'connectorId' });
-        store.createIndex('accountConnectionId', 'accountConnectionId');
-      }
     };
     request.onsuccess = () => resolve(request.result);
     request.onerror = () => {
+      if (request.error?.name === 'VersionError') {
+        // A pre-release build briefly created v7. Open that database at its current
+        // version without advancing it again; clean installs remain on shipped v6.
+        const fallback = indexedDB.open(DB_NAME);
+        fallback.onsuccess = () => resolve(fallback.result);
+        fallback.onerror = () => {
+          if (dbPromise === opening) dbPromise = undefined;
+          reject(fallback.error);
+        };
+        return;
+      }
       if (dbPromise === opening) dbPromise = undefined;
       reject(request.error);
     };
@@ -203,6 +211,7 @@ export interface ExternalSourceLocalState {
 
 export class ExternalSourceLocalStateStore implements ExternalSourceLocalState {
   private readonly sharedChangeListeners = new Set<() => void>();
+  private readonly sharedConnections = new Map<string, ExternalSourceSharedConnectionV1>();
 
   subscribeSharedChanges(listener: () => void): () => void {
     this.sharedChangeListeners.add(listener);
@@ -548,40 +557,31 @@ export class ExternalSourceLocalStateStore implements ExternalSourceLocalState {
   }
 
   async getSharedConnection(connectorId: string): Promise<ExternalSourceSharedConnectionV1 | undefined> {
-    const db = await openExternalSourceDb();
-    const tx = db.transaction('sharedConnections', 'readonly');
-    return requestToPromise<ExternalSourceSharedConnectionV1 | undefined>(
-      tx.objectStore('sharedConnections').get(connectorId),
-    );
+    return this.sharedConnections.get(connectorId);
   }
 
   async saveSharedConnection(connection: ExternalSourceSharedConnectionV1): Promise<void> {
-    const db = await openExternalSourceDb();
-    const tx = db.transaction('sharedConnections', 'readwrite');
-    tx.objectStore('sharedConnections').put(connection);
-    await transactionDone(tx);
+    this.sharedConnections.set(connection.connectorId, connection);
     this.publishSharedChange();
   }
 
   async deleteSharedConnection(connectorId: string): Promise<void> {
-    const db = await openExternalSourceDb();
-    const tx = db.transaction('sharedConnections', 'readwrite');
-    tx.objectStore('sharedConnections').delete(connectorId);
-    await transactionDone(tx);
+    this.sharedConnections.delete(connectorId);
     this.publishSharedChange();
   }
 
   async exportSharedState(): Promise<ExternalSourceSharedStateV1> {
     const db = await openExternalSourceDb();
-    const tx = db.transaction(['sharedConnections', 'links', 'subscriptions'], 'readonly');
-    const [connections, links, subscriptions] = await Promise.all([
-      requestToPromise<ExternalSourceSharedConnectionV1[]>(tx.objectStore('sharedConnections').getAll()),
+    const tx = db.transaction(['links', 'subscriptions'], 'readonly');
+    const [links, subscriptions] = await Promise.all([
       requestToPromise<ExternalSourceLink[]>(tx.objectStore('links').getAll()),
       requestToPromise<ExternalSourceSubscriptionRecord[]>(tx.objectStore('subscriptions').getAll()),
     ]);
     return {
       schemaVersion: 1,
-      connections: connections.sort((left, right) => left.connectorId.localeCompare(right.connectorId)),
+      connections: [...this.sharedConnections.values()].sort((left, right) =>
+        left.connectorId.localeCompare(right.connectorId),
+      ),
       links: links.filter((link) => !link.pendingImport).sort((left, right) => left.id.localeCompare(right.id)),
       subscriptions: subscriptions
         .map(({ thumbnailUrl: _deviceResolvedThumbnail, ...subscription }) => subscription)
@@ -591,21 +591,20 @@ export class ExternalSourceLocalStateStore implements ExternalSourceLocalState {
 
   async replaceSharedState(snapshot: ExternalSourceSharedStateV1): Promise<void> {
     const db = await openExternalSourceDb();
-    const tx = db.transaction(['sharedConnections', 'links', 'subscriptions'], 'readwrite');
+    const tx = db.transaction(['links', 'subscriptions'], 'readwrite');
     const linkStore = tx.objectStore('links');
     const pendingLinks = (await requestToPromise<ExternalSourceLink[]>(linkStore.getAll())).filter(
       (link) => link.pendingImport,
     );
-    const connectionStore = tx.objectStore('sharedConnections');
     const subscriptionStore = tx.objectStore('subscriptions');
-    connectionStore.clear();
     linkStore.clear();
     subscriptionStore.clear();
-    snapshot.connections.forEach((connection) => connectionStore.put(connection));
     snapshot.links.forEach((link) => linkStore.put(link));
     pendingLinks.forEach((link) => linkStore.put(link));
     snapshot.subscriptions.forEach((subscription) => subscriptionStore.put(subscription));
     await transactionDone(tx);
+    this.sharedConnections.clear();
+    snapshot.connections.forEach((connection) => this.sharedConnections.set(connection.connectorId, connection));
   }
 }
 

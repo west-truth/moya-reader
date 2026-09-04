@@ -6,7 +6,9 @@ import type { WebNovelMetadataCollectorBroker } from '../services/webnovel-metad
 import type { ExternalSourceLocalStateStore } from '../external-sources/local-state';
 import type { SuwayomiSourceAccountBroker } from '../external-sources/suwayomi/suwayomi-source-account-broker';
 import type { RemoteApiClient } from '../services/remote/remote-api-client';
+import { RemoteApiError } from '../services/remote/remote-api-contracts';
 import {
+  hasMeaningfulSelfHostIntegrationState,
   mergeInitialSelfHostIntegrationSettings,
   type SelfHostIntegrationSettingsV1,
 } from './self-host-integration-settings';
@@ -28,7 +30,7 @@ export interface SelfHostIntegrationSettingsInput {
 }
 
 function comparable(settings: SelfHostIntegrationSettingsV1): string {
-  const { updatedAt: _updatedAt, ...content } = settings;
+  const { updatedAt: _updatedAt, revision: _revision, ...content } = settings;
   return JSON.stringify(content);
 }
 
@@ -42,18 +44,25 @@ export function useSelfHostIntegrationSettings(input: SelfHostIntegrationSetting
   const saveTimerRef = useRef<number>();
   const saveInFlightRef = useRef(false);
   const saveAgainRef = useRef(false);
-  const lastRemoteUpdatedAtRef = useRef<string>();
+  const lastRemoteRevisionRef = useRef(0);
   const lastSavedContentRef = useRef<string>();
+  const legacyImportCompletedRef = useRef(false);
   const errorNotifiedRef = useRef(false);
 
   const capture = useCallback(async (): Promise<SelfHostIntegrationSettingsV1> => {
     const current = inputRef.current;
-    return {
-      schemaVersion: 1,
+    const snapshot = {
+      schemaVersion: 1 as const,
+      revision: lastRemoteRevisionRef.current,
       updatedAt: new Date().toISOString(),
+      legacyImportCompleted: legacyImportCompletedRef.current,
       extensionEnablement: current.extensionManager.getEnablementSnapshot(),
       webNovelMetadata: current.metadataCollector.getSharedSettings(),
       externalSources: await current.externalSourceState.exportSharedState(),
+    };
+    return {
+      ...snapshot,
+      legacyImportCompleted: snapshot.legacyImportCompleted || hasMeaningfulSelfHostIntegrationState(snapshot),
     };
   }, []);
 
@@ -65,7 +74,8 @@ export function useSelfHostIntegrationSettings(input: SelfHostIntegrationSetting
       current.metadataCollector.applySharedSettings(settings.webNovelMetadata);
       await current.externalSourceState.replaceSharedState(settings.externalSources);
       await current.suwayomi.refreshSharedConfiguration();
-      lastRemoteUpdatedAtRef.current = settings.updatedAt;
+      legacyImportCompletedRef.current = settings.legacyImportCompleted;
+      lastRemoteRevisionRef.current = settings.revision;
       lastSavedContentRef.current = comparable(settings);
       current.onApplied();
     } finally {
@@ -85,11 +95,22 @@ export function useSelfHostIntegrationSettings(input: SelfHostIntegrationSetting
       const snapshot = await capture();
       const content = comparable(snapshot);
       if (content === lastSavedContentRef.current) return;
-      const response = await current.client.saveIntegrationSettings(snapshot);
-      lastRemoteUpdatedAtRef.current = response.settings.updatedAt;
+      const response = await current.client.saveIntegrationSettings(snapshot, lastRemoteRevisionRef.current);
+      legacyImportCompletedRef.current = response.settings.legacyImportCompleted;
+      lastRemoteRevisionRef.current = response.settings.revision;
       lastSavedContentRef.current = comparable(response.settings);
       errorNotifiedRef.current = false;
     } catch (error) {
+      if (error instanceof RemoteApiError && error.status === 409) {
+        try {
+          const latest = await current.client.getIntegrationSettings();
+          if (latest.settings) await apply(latest.settings);
+        } catch {
+          // The warning below still explains why the local snapshot was not written.
+        }
+        current.notify('다른 기기에서 설정이 바뀌어 최신 설정을 불러왔습니다. 변경을 다시 시도해 주세요.', 'warning');
+        return;
+      }
       if (!errorNotifiedRef.current) {
         errorNotifiedRef.current = true;
         current.notify(
@@ -106,7 +127,7 @@ export function useSelfHostIntegrationSettings(input: SelfHostIntegrationSetting
         void save();
       }
     }
-  }, [capture]);
+  }, [apply, capture]);
 
   const scheduleSave = useCallback(() => {
     if (!hydratedRef.current || applyingRef.current) return;
@@ -123,8 +144,9 @@ export function useSelfHostIntegrationSettings(input: SelfHostIntegrationSetting
       return;
     }
     hydratedRef.current = false;
-    lastRemoteUpdatedAtRef.current = undefined;
+    lastRemoteRevisionRef.current = 0;
     lastSavedContentRef.current = undefined;
+    legacyImportCompletedRef.current = false;
     let active = true;
 
     const hydrate = async () => {
@@ -134,20 +156,25 @@ export function useSelfHostIntegrationSettings(input: SelfHostIntegrationSetting
         const { settings } = await input.client!.getIntegrationSettings();
         if (!active) return;
         if (settings) {
-          const local = await capture();
-          const merged = mergeInitialSelfHostIntegrationSettings(settings, local);
-          if (comparable(merged) === comparable(settings)) {
+          if (settings.legacyImportCompleted) {
             await apply(settings);
           } else {
-            const response = await input.client!.saveIntegrationSettings(merged);
-            if (!active) return;
-            await apply(response.settings);
+            const local = await capture();
+            if (hasMeaningfulSelfHostIntegrationState(local)) {
+              const merged = mergeInitialSelfHostIntegrationSettings(settings, local);
+              const response = await input.client!.saveIntegrationSettings(merged, settings.revision);
+              if (!active) return;
+              await apply(response.settings);
+            } else {
+              await apply(settings);
+            }
           }
         } else {
           const local = await capture();
-          const response = await input.client!.saveIntegrationSettings(local);
+          const response = await input.client!.saveIntegrationSettings(local, 0);
           if (!active) return;
-          lastRemoteUpdatedAtRef.current = response.settings.updatedAt;
+          legacyImportCompletedRef.current = response.settings.legacyImportCompleted;
+          lastRemoteRevisionRef.current = response.settings.revision;
           lastSavedContentRef.current = comparable(response.settings);
           inputRef.current.onApplied();
         }
@@ -207,9 +234,9 @@ export function useSelfHostIntegrationSettings(input: SelfHostIntegrationSetting
         return;
       }
       void input
-        .client!.getIntegrationSettings(lastRemoteUpdatedAtRef.current)
+        .client!.getIntegrationSettings(lastRemoteRevisionRef.current)
         .then(({ settings }) => {
-          if (settings && settings.updatedAt !== lastRemoteUpdatedAtRef.current) return apply(settings);
+          if (settings && settings.revision !== lastRemoteRevisionRef.current) return apply(settings);
           return undefined;
         })
         .catch(() => undefined);

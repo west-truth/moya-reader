@@ -234,36 +234,61 @@ export async function registerReaderStateRoutes(
     return { ok: true, settings };
   });
 
-  app.get<{ Querystring: { since?: string } }>('/api/integration-settings', async (request) => {
-    const since =
-      typeof request.query.since === 'string' &&
-      request.query.since.length <= 64 &&
-      !Number.isNaN(Date.parse(request.query.since))
-        ? request.query.since
-        : null;
+  app.get<{ Querystring: { revision?: string } }>('/api/integration-settings', async (request) => {
+    const parsedRevision = request.query.revision === undefined ? null : Number(request.query.revision);
+    const revision =
+      parsedRevision === null || (Number.isSafeInteger(parsedRevision) && parsedRevision >= 0) ? parsedRevision : null;
     const result = await pool.query(
       `select settings -> '_moyaIntegrations' as integration_settings
        from reader_settings
        where user_id = $1
-         and ($2::text is null or settings -> '_moyaIntegrations' ->> 'updatedAt' is distinct from $2)`,
-      [config.defaultUserId, since],
+         and ($2::bigint is null
+           or coalesce(settings -> '_moyaIntegrations' ->> 'revision', '0') is distinct from $2::text)`,
+      [config.defaultUserId, revision],
     );
     const settings = normalizeSelfHostIntegrationSettings(result.rows[0]?.integration_settings);
     return settings ? { settings } : {};
   });
 
   app.put<{ Body: unknown }>('/api/integration-settings', async (request, reply) => {
-    const parsed = normalizeSelfHostIntegrationSettings(request.body);
-    if (!parsed) return reply.code(400).send({ error: 'integration settings are invalid' });
-    const settings = { ...parsed, updatedAt: new Date().toISOString() };
-    await pool.query(
+    const body =
+      request.body && typeof request.body === 'object' && !Array.isArray(request.body)
+        ? (request.body as Record<string, unknown>)
+        : undefined;
+    const parsed = normalizeSelfHostIntegrationSettings(body?.settings);
+    const expectedRevision = body?.expectedRevision;
+    if (
+      !parsed ||
+      typeof expectedRevision !== 'number' ||
+      !Number.isSafeInteger(expectedRevision) ||
+      expectedRevision < 0 ||
+      expectedRevision >= Number.MAX_SAFE_INTEGER
+    ) {
+      return reply.code(400).send({ error: 'integration settings are invalid' });
+    }
+    const settings = { ...parsed, revision: expectedRevision + 1, updatedAt: new Date().toISOString() };
+    const result = await pool.query(
       `insert into reader_settings (user_id, settings, updated_at)
-       values ($1, jsonb_set($2::jsonb, '{_moyaIntegrations}', $3::jsonb, true), now())
+       select $1, jsonb_set($2::jsonb, '{_moyaIntegrations}', $3::jsonb, true), now()
+       where $4::bigint = 0
        on conflict (user_id) do update
-         set settings = jsonb_set(reader_settings.settings, '{_moyaIntegrations}', $3::jsonb, true),
-             updated_at = excluded.updated_at`,
-      [config.defaultUserId, JSON.stringify(defaultSettings), JSON.stringify(settings)],
+          set settings = jsonb_set(reader_settings.settings, '{_moyaIntegrations}', $3::jsonb, true),
+              updated_at = excluded.updated_at
+         where ($4::bigint = 0 and reader_settings.settings -> '_moyaIntegrations' is null)
+            or coalesce(reader_settings.settings -> '_moyaIntegrations' ->> 'revision', '0') = $4::text
+       returning settings -> '_moyaIntegrations' as integration_settings`,
+      [config.defaultUserId, JSON.stringify(defaultSettings), JSON.stringify(settings), expectedRevision],
     );
+    if (result.rows.length === 0) {
+      const currentResult = await pool.query(
+        `select settings -> '_moyaIntegrations' as integration_settings
+         from reader_settings
+         where user_id = $1`,
+        [config.defaultUserId],
+      );
+      const current = normalizeSelfHostIntegrationSettings(currentResult.rows[0]?.integration_settings);
+      return reply.code(409).send({ error: 'integration settings changed', ...(current ? { settings: current } : {}) });
+    }
     return { ok: true, settings };
   });
 }
