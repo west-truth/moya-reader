@@ -757,6 +757,7 @@ describe('useExternalSourceController remote updates', () => {
       await vi.waitFor(() => expect(harness.onLibraryItemCommitted).toHaveBeenCalledOnce());
     });
 
+    expect(harness.controller.selectedBatchActive).toBe(true);
     const firstRelease = harness.controller.items[0]!;
     expect(firstRelease.importState).toBe('imported');
     expect(harness.controller.tasks).toMatchObject([
@@ -777,6 +778,7 @@ describe('useExternalSourceController remote updates', () => {
     ]);
     releaseSecond();
     await act(async () => importPromise);
+    expect(harness.controller.selectedBatchActive).toBe(false);
     await act(async () => harness.renderer.unmount());
   });
 
@@ -983,6 +985,13 @@ describe('useExternalSourceController remote updates', () => {
     });
     await act(async () => harness.controller.importItem(harness.controller.items[1]!));
 
+    expect(harness.controller.canQueueItem(harness.controller.items[1]!)).toBe(true);
+    expect(
+      harness.controller.canQueueItem({
+        ...harness.controller.items[1]!,
+        collection: { ...harness.controller.items[1]!.collection!, remoteId: 'manga:other' },
+      }),
+    ).toBe(false);
     expect(harness.controller.tasks).toMatchObject([
       { externalItemKey: 'fixture.source::fixture-account::work-1', phase: 'downloading', total: 2 },
       { externalItemKey: 'fixture.source::fixture-account::work-2', phase: 'queued', total: 2 },

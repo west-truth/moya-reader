@@ -154,6 +154,7 @@ export interface ExternalSourceController {
   readonly busy: boolean;
   readonly blockingBusy: boolean;
   readonly importBusy: boolean;
+  readonly selectedBatchActive: boolean;
   readonly tasks: readonly ImportTaskView[];
   readonly sources: readonly ExternalSourceView[];
   readonly activeSourceId?: ExtensionContributionId;
@@ -177,6 +178,7 @@ export interface ExternalSourceController {
   readonly activeSubscription?: ExternalSourceSubscriptionRecord;
   readonly checkingSubscriptions: boolean;
   readonly canSubscribeCurrentWork: boolean;
+  canQueueItem(item: ExternalSourceItemView): boolean;
   isWorkInLibrary(item: ExternalSourceItemView): boolean;
   addWorkToLibrary(item: ExternalSourceItemView): Promise<void>;
   addCurrentWorkToLibrary(): Promise<void>;
@@ -427,6 +429,7 @@ export function useExternalSourceController(options: UseExternalSourceController
   const [loading, setLoading] = useState(false);
   const [blockingBusy, setBusy] = useState(false);
   const [importBusy, setImportBusy] = useState(false);
+  const [selectedBatchActive, setSelectedBatchActive] = useState(false);
   const [tasks, setTasks] = useState<ImportTaskView[]>([]);
   const busy = blockingBusy || importBusy;
   const [activeSourceId, setActiveSourceId] = useState<ExtensionContributionId>();
@@ -1134,6 +1137,20 @@ export function useExternalSourceController(options: UseExternalSourceController
       );
     },
     [items],
+  );
+
+  const canQueueItem = useCallback(
+    (item: ExternalSourceItemView) => {
+      const queue = serialImportQueueRef.current;
+      return Boolean(
+        importBusy &&
+        queue?.accepting &&
+        queue.sourceId === activeSourceId &&
+        isSerialSourceItem(item) &&
+        serialCollectionKey(item) === queue.collectionKey,
+      );
+    },
+    [activeSourceId, importBusy],
   );
 
   const importSerialItems = useCallback(
@@ -1984,8 +2001,15 @@ export function useExternalSourceController(options: UseExternalSourceController
   );
 
   const importSelected = useCallback(async () => {
-    await importItems(items.filter((item) => item.selected));
-  }, [importItems, items]);
+    const selected = items.filter((item) => item.selected);
+    if (selected.length === 0 || importBusy) return;
+    setSelectedBatchActive(true);
+    try {
+      await importItems(selected);
+    } finally {
+      if (mountedRef.current) setSelectedBatchActive(false);
+    }
+  }, [importBusy, importItems, items]);
 
   const openImported = useCallback(
     async (item: ExternalSourceItemView) => {
@@ -2022,6 +2046,11 @@ export function useExternalSourceController(options: UseExternalSourceController
   );
 
   const cancel = useCallback(() => {
+    setTasks((current) =>
+      current.map((task) =>
+        task.phase !== 'complete' && task.phase !== 'failed' ? { ...task, phase: 'cancelling' } : task,
+      ),
+    );
     listAbortRef.current?.abort();
     downloadAbortRef.current?.abort();
     subscriptionAbortRef.current?.abort();
@@ -2603,6 +2632,7 @@ export function useExternalSourceController(options: UseExternalSourceController
     busy,
     blockingBusy,
     importBusy,
+    selectedBatchActive,
     tasks,
     sources,
     activeSourceId,
@@ -2628,6 +2658,7 @@ export function useExternalSourceController(options: UseExternalSourceController
     activeSubscription,
     checkingSubscriptions,
     canSubscribeCurrentWork,
+    canQueueItem,
     isWorkInLibrary,
     addWorkToLibrary,
     addCurrentWorkToLibrary,

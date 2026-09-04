@@ -125,13 +125,15 @@ function ItemAction({
   const task = controller.tasks.find((candidate) => candidate.externalItemKey === externalItemKeyId(item.key));
   if (releaseList) {
     if (task && importTaskIsActive(task)) {
+      const cancelling = task.phase === 'cancelling';
       return (
         <button
           className="icon-btn source-hub-release-action"
           type="button"
-          disabled
-          title={importTaskLabel(task)}
-          aria-label={`${item.title} ${importTaskLabel(task)}`}
+          disabled={cancelling}
+          title={cancelling ? '취소 중' : '다운로드 중단'}
+          aria-label={`${item.title} ${cancelling ? '취소 중' : '다운로드 중단'}`}
+          onClick={controller.cancel}
         >
           <LoaderCircle size={16} className="spin" />
         </button>
@@ -173,7 +175,8 @@ function ItemAction({
       );
     }
     const updating = item.importState === 'update_available';
-    const queueing = controller.importBusy && !updating;
+    const queueing = controller.canQueueItem(item);
+    const blockedByOtherWork = controller.importBusy && !queueing;
     const label = updating
       ? `${item.title} 업데이트`
       : queueing
@@ -183,8 +186,16 @@ function ItemAction({
       <button
         className="icon-btn source-hub-release-action"
         type="button"
-        disabled={controller.blockingBusy || controller.loading}
-        title={updating ? '업데이트' : queueing ? '다운로드 대기열에 추가' : '다운로드 후 보기'}
+        disabled={controller.blockingBusy || controller.loading || blockedByOtherWork}
+        title={
+          blockedByOtherWork
+            ? '다른 작품 다운로드 중'
+            : updating
+              ? '업데이트'
+              : queueing
+                ? '다운로드 대기열에 추가'
+                : '다운로드 후 보기'
+        }
         aria-label={label}
         onClick={() => void (updating || queueing ? controller.importItem(item) : controller.importAndOpen(item))}
       >
@@ -1171,7 +1182,22 @@ export default function SourceHubScreen({
         </section>
       </div>
 
-      {selectedCount > 0 && !controller.importBusy && (
+      {controller.selectedBatchActive && controller.importBusy ? (
+        <div className="source-hub-batch-bar is-progress" role="status" aria-live="polite">
+          <div>
+            <LoaderCircle size={17} className="spin" />
+            <strong>선택 회차 다운로드 중</strong>
+            {controller.progress && (
+              <span>
+                {formatCount(controller.progress.completed)}/{formatCount(controller.progress.total)} 완료
+              </span>
+            )}
+          </div>
+          <button className="ghost-btn" type="button" onClick={controller.cancel}>
+            <X size={16} /> 중단
+          </button>
+        </div>
+      ) : selectedCount > 0 && !controller.importBusy ? (
         <div className="source-hub-batch-bar">
           <div>
             <strong>{formatCount(selectedCount)}개 선택</strong>
@@ -1187,7 +1213,7 @@ export default function SourceHubScreen({
                 : '선택 항목 가져오기·업데이트'}
           </button>
         </div>
-      )}
+      ) : null}
     </main>
   );
 }
