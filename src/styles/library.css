@@ -774,6 +774,35 @@
   background: color-mix(in srgb, var(--danger) 36%, rgb(8 14 24 / 84%));
 }
 
+.book-import-overlay.is-compact {
+  inset: auto 7px 7px auto;
+  min-width: 34px;
+  min-height: 34px;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 6px 8px;
+  background: rgb(8 14 24 / 84%);
+  border: 1px solid rgb(255 255 255 / 14%);
+  border-radius: 999px;
+  backdrop-filter: blur(6px);
+}
+
+.book-import-overlay.is-compact.is-failed {
+  background: color-mix(in srgb, var(--danger) 42%, rgb(8 14 24 / 90%));
+}
+
+.book-import-overlay.is-compact strong,
+.book-import-overlay.is-compact small {
+  display: none;
+}
+
+.book-import-overlay.is-compact svg,
+.book-import-overlay.is-compact > span {
+  width: 18px;
+  height: 18px;
+}
+
 .book-import-overlay > span {
   width: 25px;
   height: 25px;

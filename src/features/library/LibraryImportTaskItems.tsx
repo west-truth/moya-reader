@@ -2,11 +2,17 @@ import { LoaderCircle, RotateCcw, X } from 'lucide-react';
 import { importTaskIsActive, importTaskLabel, type ImportTaskView } from '../import/import-task-projection';
 import type { LibraryScreenProps } from './library-screen-contract';
 
-export function LibraryImportTaskOverlay({ task }: { readonly task: ImportTaskView }) {
+export function LibraryImportTaskOverlay({
+  task,
+  compact = false,
+}: {
+  readonly task: ImportTaskView;
+  readonly compact?: boolean;
+}) {
   const active = importTaskIsActive(task);
   return (
     <div
-      className={`book-import-overlay${active ? '' : ' is-failed'}`}
+      className={`book-import-overlay${active ? '' : ' is-failed'}${compact ? ' is-compact' : ''}`}
       role="status"
       aria-label={importTaskLabel(task)}
     >

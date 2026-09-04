@@ -71,6 +71,16 @@ textarea::placeholder {
   border-radius: var(--radius-control);
 }
 
+.spin {
+  animation: app-spinner-rotate 800ms linear infinite;
+}
+
+@keyframes app-spinner-rotate {
+  to {
+    transform: rotate(1turn);
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
   *,
   *::before,

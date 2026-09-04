@@ -146,4 +146,115 @@ describeWithPostgres('exact chapter reads through hosted HTTP routes and real Po
     },
     30_000,
   );
+
+  test(
+    'keeps a reading-position write made while the same comic is being appended',
+    async () => {
+      await withPostgresSchema(harness!, 'append_read_position', async (pool) => {
+        await migrateDatabase(pool);
+        await pool.query(
+          "insert into users (id, email, display_name) values ('user_test', 'test@example.com', 'Test')",
+        );
+        await pool.query(
+          "insert into book_objects (id, raw_text_hash, storage_key, file_name, content_type, size_bytes) values ('object', 'source-hash', 'source', 'source.cbz', 'application/vnd.comicbook+zip', 100)",
+        );
+        await pool.query(
+          `insert into library_books (
+             id, user_id, object_id, title, source_file_name, source_encoding, format,
+             normalized_text_hash, total_chapters, total_characters, total_paragraphs
+           ) values (
+             'book', 'user_test', 'object', 'Comic', 'source.cbz', 'binary', 'image_archive',
+             'content-hash', 1, 0, 1
+           )`,
+        );
+        await pool.query(
+          `insert into chapters (
+             id, book_id, chapter_index, title, text_hash, raw_start_offset, raw_end_offset,
+             character_count, paragraph_count, document_section_id, document_section_title,
+             document_section_index, document_page_index_in_section
+           ) values (
+             'page-1', 'book', 1, '1화 · 1페이지', 'page-hash', 0, 1,
+             0, 1, 'chapter:1', '1화', 1, 1
+           )`,
+        );
+        await pool.query(
+          `insert into reading_positions (
+             book_id, user_id, chapter_id, chapter_progress, scroll_top, device_id, updated_at
+           ) values ('book', 'user_test', 'page-1', 0.1, 0, 'phone', '2026-09-04T00:00:00Z')`,
+        );
+
+        const config = { defaultUserId: 'user_test' } as ServerConfig;
+        const app = Fastify();
+        await registerReaderStateRoutes(app, pool, config);
+        const appendClient = await pool.connect();
+        try {
+          await appendClient.query('select pg_advisory_lock(hashtextextended($1, 7319))', ['book']);
+          let requestSettled = false;
+          const saveRequest = app
+            .inject({
+              method: 'PATCH',
+              url: '/api/books/book/reading-position',
+              payload: {
+                chapterId: 'page-1',
+                documentSectionId: 'chapter:1',
+                chapterProgress: 0.7,
+                scrollTop: 7,
+                deviceId: 'phone',
+                updatedAt: '2026-09-04T00:01:00Z',
+              },
+            })
+            .finally(() => {
+              requestSettled = true;
+            });
+
+          await new Promise((resolve) => setTimeout(resolve, 25));
+          expect(requestSettled).toBe(false);
+
+          // Model the generic replacement restore that used to overwrite a read made
+          // after the append snapshot with its older quarantined position.
+          await appendClient.query(
+            `insert into reading_positions (
+               book_id, user_id, chapter_id, chapter_progress, scroll_top, device_id, updated_at
+             ) values ('book', 'user_test', 'page-1', 0.1, 0, 'phone', '2026-09-04T00:00:00Z')
+             on conflict (book_id, user_id) do update
+               set chapter_id = excluded.chapter_id,
+                   chapter_progress = excluded.chapter_progress,
+                   scroll_top = excluded.scroll_top,
+                   device_id = excluded.device_id,
+                   updated_at = excluded.updated_at`,
+          );
+          await appendClient.query('select pg_advisory_unlock(hashtextextended($1, 7319))', ['book']);
+
+          const response = await saveRequest;
+          expect(response.statusCode, response.body).toBe(200);
+          expect(response.json()).toMatchObject({ ok: true, applied: true });
+          expect(
+            (
+              await pool.query(
+                `select chapter_id, chapter_progress::float8 as chapter_progress, scroll_top, updated_at
+                   from reading_positions where book_id = 'book' and user_id = 'user_test'`,
+              )
+            ).rows[0],
+          ).toMatchObject({
+            chapter_id: 'page-1',
+            chapter_progress: 0.7,
+            scroll_top: 7,
+          });
+          expect(
+            (
+              await pool.query(
+                `select document_section_id from fixed_document_section_read_states
+                  where book_id = 'book' and user_id = 'user_test'`,
+              )
+            ).rows,
+          ).toEqual([{ document_section_id: 'chapter:1' }]);
+        } finally {
+          await appendClient.query('select pg_advisory_unlock(hashtextextended($1, 7319))', ['book']);
+          appendClient.release();
+          await app.close();
+        }
+      });
+    },
+    30_000,
+  );
 });

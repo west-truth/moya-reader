@@ -407,11 +407,35 @@ describe('SourceHubScreen', () => {
     expect(selectedMarkup).toContain('선택한 작품.epub 선택 목록에서 제거');
   });
 
-  it('explains the remote download phase instead of presenting the current file as completed', () => {
+  it('uses per-release progress instead of a duplicate bottom download bar', () => {
     const markup = renderToStaticMarkup(
       <SourceHubScreen
         controller={controller({
           busy: true,
+          importBusy: true,
+          detail: { title: '연동 작품' },
+          items: [
+            {
+              key: { connectorId: 'fixture.source', remoteId: 'work-1' },
+              kind: 'file',
+              title: '1화',
+              collection: { remoteId: 'manga:1', title: '연동 작품' },
+              release: { title: '1화', chapterNumber: 1 },
+              importability: 'supported',
+              selected: true,
+              importState: 'available',
+            },
+          ],
+          tasks: [
+            {
+              id: 'task-1',
+              batchId: 'batch-1',
+              source: 'external_source',
+              title: '연동 작품',
+              externalItemKey: 'fixture.source::::work-1',
+              phase: 'downloading',
+            },
+          ],
           progress: {
             current: 1,
             total: 1,
@@ -427,11 +451,104 @@ describe('SourceHubScreen', () => {
       />,
     );
 
-    expect(markup).toContain('개발용 작품 소스에서 원문을 내려받는 중입니다');
-    expect(markup).toContain('큰 파일은 잠시 걸릴 수 있습니다');
-    expect(markup).toContain('aria-label="외부 작품 가져오기 진행률"');
-    expect(markup).toContain('value="0"');
+    expect(markup).toContain('다운로드 중');
+    expect(markup).toContain('spin');
+    expect(markup).not.toContain('source-hub-batch-bar');
+    expect(markup).not.toContain('외부 작품 가져오기 진행률');
     expect(markup).toContain('라이브러리</button>');
+  });
+
+  it('keeps a compact batch download action before the selected releases start', () => {
+    const markup = renderToStaticMarkup(
+      <SourceHubScreen
+        controller={controller({
+          detail: { title: '연동 작품' },
+          items: [
+            {
+              key: { connectorId: 'fixture.source', remoteId: 'work-1' },
+              kind: 'file',
+              title: '1화',
+              collection: { remoteId: 'manga:1', title: '연동 작품' },
+              release: { title: '1화', chapterNumber: 1 },
+              importability: 'supported',
+              selected: true,
+              importState: 'available',
+            },
+          ],
+        })}
+        library={library}
+        openSourceSettings={vi.fn()}
+      />,
+    );
+
+    expect(markup).toContain('source-hub-batch-bar');
+    expect(markup).toContain('1개 선택');
+    expect(markup).toContain('선택 회차 다운로드');
+  });
+
+  it('keeps existing source results visible with an explicit loading indicator', () => {
+    const markup = renderToStaticMarkup(
+      <SourceHubScreen controller={controller({ loading: true })} library={library} openSourceSettings={vi.fn()} />,
+    );
+
+    expect(markup).toContain('source-hub-loading-status');
+    expect(markup).toContain('목록을 불러오는 중');
+    expect(markup).toContain('spin');
+    expect(markup).toContain('외부 작품');
+  });
+
+  it('keeps a completed release openable while a later release is queued', () => {
+    const markup = renderToStaticMarkup(
+      <SourceHubScreen
+        controller={controller({
+          busy: true,
+          importBusy: true,
+          detail: { title: '연동 작품' },
+          items: [
+            {
+              key: { connectorId: 'fixture.source', accountConnectionId: 'fixture-account', remoteId: 'chapter:1' },
+              kind: 'file',
+              title: '1화',
+              collection: { remoteId: 'manga:1', title: '연동 작품' },
+              release: { title: '1화', chapterNumber: 1 },
+              importability: 'supported',
+              selected: false,
+              importState: 'imported',
+              localBookId: 'book-1',
+            },
+            {
+              key: { connectorId: 'fixture.source', accountConnectionId: 'fixture-account', remoteId: 'chapter:2' },
+              kind: 'file',
+              title: '2화',
+              collection: { remoteId: 'manga:1', title: '연동 작품' },
+              release: { title: '2화', chapterNumber: 2 },
+              importability: 'supported',
+              selected: true,
+              importState: 'available',
+            },
+          ],
+          tasks: [
+            {
+              id: 'task-2',
+              batchId: 'batch-1',
+              source: 'external_source',
+              title: '연동 작품',
+              externalItemKey: 'fixture.source::fixture-account::chapter:2',
+              phase: 'queued',
+              current: 2,
+              total: 2,
+            },
+          ],
+        })}
+        library={library}
+        openSourceSettings={vi.fn()}
+      />,
+    );
+
+    const completedAction = markup.match(/<button[^>]*aria-label="1화 보기"[^>]*>/u)?.[0];
+    expect(completedAction).toBeDefined();
+    expect(completedAction).not.toContain('disabled');
+    expect(markup).toMatch(/lucide-loader-circle[^>]*spin|spin[^>]*lucide-loader-circle/u);
   });
 
   it('renders nothing after the active source loses its connection', () => {

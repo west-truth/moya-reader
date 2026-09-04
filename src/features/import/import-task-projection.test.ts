@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { importTaskLabel, projectImportProgress } from './import-task-projection';
+import { importTaskIsActive, importTaskLabel, projectImportProgress } from './import-task-projection';
 
 describe('import task projection', () => {
   it('shows real byte progress only for measurable client work', () => {
@@ -49,5 +49,17 @@ describe('import task projection', () => {
         percent: projection.percent,
       }),
     ).toBe('저장 중');
+  });
+
+  it('treats a committed external release as complete and immediately usable', () => {
+    const task = {
+      id: 'task',
+      batchId: 'batch',
+      source: 'external_source' as const,
+      title: '작품',
+      phase: 'complete' as const,
+    };
+    expect(importTaskLabel(task)).toBe('완료');
+    expect(importTaskIsActive(task)).toBe(false);
   });
 });

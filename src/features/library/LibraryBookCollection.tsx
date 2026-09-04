@@ -273,7 +273,7 @@ function LibraryBookCard(props: LibraryBookItemProps) {
             <span className="book-format-overlay">{bookFormatLabel(book.novel)}</span>
           )}
         </BookCover>
-        {importTask && <LibraryImportTaskOverlay task={importTask} />}
+        {importTask && <LibraryImportTaskOverlay task={importTask} compact />}
       </div>
       <div className="book-info">
         <div className="book-title-line">
@@ -332,7 +332,7 @@ function LibraryBookListRow(props: LibraryBookItemProps) {
             <span className="book-format-overlay">{bookFormatLabel(book.novel)}</span>
           )}
         </BookCover>
-        {importTask && <LibraryImportTaskOverlay task={importTask} />}
+        {importTask && <LibraryImportTaskOverlay task={importTask} compact />}
       </div>
       <div className="book-list-main">
         <div className="book-list-title">
@@ -365,7 +365,9 @@ function LibraryBookListRow(props: LibraryBookItemProps) {
 export function LibraryBookCollection(props: LibraryScreenProps) {
   const collectionClass = props.model.viewMode === 'grid' ? 'books-grid' : 'books-list';
   const externalWorks = props.model.management.selectionMode ? [] : (props.model.externalSources.libraryWorks ?? []);
-  const tasks = props.model.management.selectionMode ? [] : props.model.importTasks;
+  const tasks = props.model.management.selectionMode
+    ? []
+    : props.model.importTasks.filter((task) => task.phase !== 'complete');
   const taskForBook = (bookId: string) => tasks.find((task) => task.targetBookId === bookId);
   const taskForExternalWork = (workId: string) => tasks.find((task) => task.externalWorkId === workId);
   const visibleBookIds = new Set(props.model.collection.visibleBooks.map((book) => book.novel.id));

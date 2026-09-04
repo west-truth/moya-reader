@@ -1,7 +1,16 @@
 import type { ImportProgress } from '../../services/import/import-service';
 
 export type ImportTaskPhase =
-  'queued' | 'preparing' | 'downloading' | 'verifying' | 'uploading' | 'analyzing' | 'saving' | 'cancelling' | 'failed';
+  | 'queued'
+  | 'preparing'
+  | 'downloading'
+  | 'verifying'
+  | 'uploading'
+  | 'analyzing'
+  | 'saving'
+  | 'complete'
+  | 'cancelling'
+  | 'failed';
 
 export interface ImportTaskView {
   readonly id: string;
@@ -62,6 +71,8 @@ export function importTaskLabel(task: ImportTaskView): string {
       return '분석 중';
     case 'saving':
       return '저장 중';
+    case 'complete':
+      return '완료';
     case 'cancelling':
       return '취소 중';
     case 'failed':
@@ -70,5 +81,5 @@ export function importTaskLabel(task: ImportTaskView): string {
 }
 
 export function importTaskIsActive(task: ImportTaskView): boolean {
-  return task.phase !== 'failed';
+  return task.phase !== 'failed' && task.phase !== 'complete';
 }
