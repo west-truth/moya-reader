@@ -7,6 +7,8 @@ export type ImportProgressSubphase =
   | 'queued'
   | 'reading_chunks'
   | 'hashing_source'
+  | 'uploading_chunks'
+  | 'server_processing'
   | 'decoding_text'
   | 'normalizing_text'
   | 'hashing_normalized_text'

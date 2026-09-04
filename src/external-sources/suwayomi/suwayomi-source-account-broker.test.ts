@@ -8,6 +8,7 @@ import type {
 } from '../contracts';
 import { createExternalSourceCredentialKey, unsealExternalSourceCredential } from '../device-credential-crypto';
 import type { ExternalSourceDefaultFolder, ExternalSourceLocalState } from '../local-state';
+import type { ExternalSourceSharedConnectionV1 } from '../../integration-settings/self-host-integration-settings';
 import { SuwayomiSourceAccountBroker } from './suwayomi-source-account-broker';
 
 const CONNECTOR_ID = 'moya.external.suwayomi.sources';
@@ -15,14 +16,17 @@ const SUWAYOMI_BASIC_HEADER = `Basic ${btoa('reader:session-password')}`;
 
 function memoryState(key: CryptoKey): ExternalSourceLocalState & {
   credential: () => ExternalSourceCredentialRecord | undefined;
+  sharedConnection: () => ExternalSourceSharedConnectionV1 | undefined;
 } {
   let credential: ExternalSourceCredentialRecord | undefined;
+  let sharedConnection: ExternalSourceSharedConnectionV1 | undefined;
   const cache = new Map<string, ExternalCatalogCachePage>();
   const links = new Map<string, ExternalSourceLink>();
   const folders = new Map<string, ExternalSourceDefaultFolder>();
   const selections = new Map<string, ExternalSourceSelectionRecord>();
   return {
     credential: () => credential,
+    sharedConnection: () => sharedConnection,
     getOrCreateCredentialKey: async () => key,
     getCredential: async () => credential,
     saveCredential: async (record) => {
@@ -30,6 +34,13 @@ function memoryState(key: CryptoKey): ExternalSourceLocalState & {
     },
     deleteCredential: async () => {
       credential = undefined;
+    },
+    getSharedConnection: async () => sharedConnection,
+    saveSharedConnection: async (connection) => {
+      sharedConnection = connection;
+    },
+    deleteSharedConnection: async () => {
+      sharedConnection = undefined;
     },
     getCachePage: async (id) => cache.get(id),
     saveCachePage: async (page) => {
@@ -142,6 +153,32 @@ describe('SuwayomiSourceAccountBroker', () => {
           defaultBaseUrl: 'https://suwayomi.example.test/mihon',
         }),
     ).toThrow('HTTP(S) origin');
+  });
+
+  it('reconnects a shared no-auth server without copying a credential envelope', async () => {
+    const state = memoryState(await createExternalSourceCredentialKey());
+    const fetchImpl = vi.fn(async (_input: string | URL | Request, init?: RequestInit) => {
+      const { query } = graphqlRequest(init);
+      if (query.includes('MoyaSuwayomiServerInfo')) {
+        return json({ data: { aboutServer: { name: 'Suwayomi', version: '2.0' } } });
+      }
+      if (query.includes('MoyaSuwayomiSources')) return json({ data: { sources: { nodes: [installedSource] } } });
+      return new Response(null, { status: 404 });
+    });
+    const first = new SuwayomiSourceAccountBroker(CONNECTOR_ID, state, fetchImpl as typeof fetch);
+    await first.connect({ baseUrl: 'https://suwayomi.example.test', authMode: 'none' });
+    const shared = state.sharedConnection();
+    expect(shared).toMatchObject({ endpoint: 'https://suwayomi.example.test', authMode: 'none' });
+    expect(JSON.stringify(shared)).not.toContain('credentialEnvelope');
+
+    await state.deleteCredential(CONNECTOR_ID);
+    const restored = new SuwayomiSourceAccountBroker(CONNECTOR_ID, state, fetchImpl as typeof fetch);
+    await restored.initialize();
+
+    expect(restored.status()).toMatchObject({ state: 'connected', accountConnectionId: shared!.accountConnectionId });
+    expect(restored.connectionForm().fields.find((field) => field.id === 'baseUrl')?.defaultValue).toBe(
+      'https://suwayomi.example.test',
+    );
   });
 
   it('browses installed sources, works and chapters and downloads the official chapter CBZ', async () => {
@@ -324,6 +361,12 @@ describe('SuwayomiSourceAccountBroker', () => {
     expect(decrypted).toMatchObject({ authMode: 'ui_login', accessToken: 'access-1', refreshToken: 'refresh-1' });
     expect(JSON.stringify(decrypted)).not.toContain('do-not-store-this');
     expect(JSON.stringify(decrypted)).not.toContain('reader');
+    expect(state.sharedConnection()).toMatchObject({
+      endpoint: 'http://127.0.0.1:4567',
+      authMode: 'ui_login',
+    });
+    expect(JSON.stringify(state.sharedConnection())).not.toContain('access-1');
+    expect(JSON.stringify(state.sharedConnection())).not.toContain('refresh-1');
 
     await expect(broker.list({}, new AbortController().signal)).resolves.toMatchObject({ items: [expect.anything()] });
     const refreshed = await unsealExternalSourceCredential<Record<string, unknown>>(

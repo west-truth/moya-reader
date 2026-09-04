@@ -70,6 +70,7 @@ import type { ReaderSearchPage, ReaderSearchPageRequest } from '../../repositori
 import type { BackupInspection, BackupRestoreOptions, BackupRestoreResult } from '../../repositories/backup-repository';
 import type { BookMetadataPatch } from '@noveldesk/text-core/library-metadata';
 import type { ExtensionContributionId } from '@noveldesk/extension-contracts';
+import type { SelfHostIntegrationSettingsV1 } from '../../integration-settings/self-host-integration-settings';
 import type {
   BatchLibraryCommand,
   BatchLibraryReceipt,
@@ -982,6 +983,21 @@ export class RemoteApiClient {
 
   saveSettings(settings: ReaderSettings): Promise<{ ok: true }> {
     return this.request('/settings', { method: 'PUT', body: JSON.stringify({ ...defaultSettings, ...settings }) });
+  }
+
+  getIntegrationSettings(revision?: number): Promise<{ settings?: SelfHostIntegrationSettingsV1 }> {
+    const query = revision === undefined ? '' : `?revision=${encodeURIComponent(String(revision))}`;
+    return this.request(`/integration-settings${query}`);
+  }
+
+  saveIntegrationSettings(
+    settings: SelfHostIntegrationSettingsV1,
+    expectedRevision: number,
+  ): Promise<{ ok: true; settings: SelfHostIntegrationSettingsV1 }> {
+    return this.request('/integration-settings', {
+      method: 'PUT',
+      body: JSON.stringify({ settings, expectedRevision }),
+    });
   }
 
   patchBook(

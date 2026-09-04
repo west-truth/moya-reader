@@ -173,6 +173,89 @@ describe('ExternalSourceLocalStateStore', () => {
     expect(await store.listLinks()).toEqual([finalized]);
   });
 
+  it('exports and replaces only cross-device source state while preserving credentials and pending work', async () => {
+    const store = new ExternalSourceLocalStateStore();
+    const changes: number[] = [];
+    store.subscribeSharedChanges(() => changes.push(changes.length + 1));
+    const connection = {
+      schemaVersion: 1 as const,
+      connectorId,
+      accountConnectionId: 'account-1',
+      endpoint: 'https://suwayomi.example.test',
+      authMode: 'none' as const,
+      label: 'Suwayomi',
+      updatedAt: '2026-09-04T00:00:00.000Z',
+    };
+    const finalized: ExternalSourceLink = {
+      id: 'external-link::final',
+      source: { connectorId, accountConnectionId: 'account-1', remoteId: 'chapter:1' },
+      localBookId: 'book-1',
+      linkedAt: '2026-09-04T00:00:00.000Z',
+    };
+    const pending: ExternalSourceLink = {
+      ...finalized,
+      id: 'external-link::pending',
+      source: { ...finalized.source, remoteId: 'chapter:2' },
+      pendingImport: {
+        operationId: 'operation-1',
+        stagedAt: '2026-09-04T00:01:00.000Z',
+        hadExistingLink: false,
+        expectedActiveSourceContentHash: 'sha256:pending',
+      },
+    };
+    const credential: ExternalSourceCredentialRecord = {
+      id: 'credential-1',
+      connectorId,
+      accountConnectionId: 'account-1',
+      label: 'Suwayomi',
+      credentialEnvelope: 'device-only',
+      createdAt: '2026-09-04T00:00:00.000Z',
+      updatedAt: '2026-09-04T00:00:00.000Z',
+    };
+    const subscription = {
+      id: externalSourceSubscriptionId(connectorId, 'account-1', 'manga:1'),
+      connectorId,
+      accountConnectionId: 'account-1',
+      collectionRemoteId: 'manga:1',
+      navigationRef: 'manga:1',
+      title: 'Shared series',
+      thumbnailUrl: 'https://suwayomi.example.test/cover?temporary-token=secret',
+      knownReleaseIds: ['chapter:1'],
+      newReleaseIds: [],
+      availableReleaseCount: 1,
+      lastCheckedAt: '2026-09-04T00:00:00.000Z',
+      createdAt: '2026-09-04T00:00:00.000Z',
+      updatedAt: '2026-09-04T00:00:00.000Z',
+      schemaVersion: 1 as const,
+    };
+    await store.saveCredential(credential);
+    await store.saveSharedConnection(connection);
+    await store.saveLink(finalized);
+    await store.saveLink(pending);
+    await store.saveSubscription(subscription);
+
+    const exported = await store.exportSharedState();
+    expect(exported).toMatchObject({ connections: [connection], links: [finalized] });
+    expect(exported.subscriptions[0]).not.toHaveProperty('thumbnailUrl');
+    expect(JSON.stringify(exported)).not.toContain('temporary-token');
+    expect(changes).toHaveLength(3);
+
+    await store.replaceSharedState({ schemaVersion: 1, connections: [], links: [], subscriptions: [] });
+
+    expect(await store.getCredential(connectorId)).toEqual(credential);
+    expect(await store.listLinks()).toEqual([pending]);
+    expect(changes).toHaveLength(3);
+
+    const opened = await new Promise<IDBDatabase>((resolve, reject) => {
+      const request = indexedDB.open('noveldesk-external-sources');
+      request.onsuccess = () => resolve(request.result);
+      request.onerror = () => reject(request.error);
+    });
+    expect(opened.version).toBe(6);
+    expect(opened.objectStoreNames.contains('sharedConnections')).toBe(false);
+    opened.close();
+  });
+
   it('allows only one pending operation to acquire the same existing link', async () => {
     const store = new ExternalSourceLocalStateStore();
     const source = { connectorId, accountConnectionId: 'account-1', remoteId: 'remote-acquire' };
@@ -203,5 +286,35 @@ describe('ExternalSourceLocalStateStore', () => {
     expect(await store.acquirePendingLinks([staged('operation-b')])).toBe(false);
 
     expect((await store.listLinks())[0]?.pendingImport?.operationId).toBe('operation-a');
+  });
+
+  it('opens a profile touched by the pre-release v7 build without another schema change', async () => {
+    const preRelease = await new Promise<IDBDatabase>((resolve, reject) => {
+      const request = indexedDB.open('noveldesk-external-sources', 7);
+      request.onupgradeneeded = () => {
+        const db = request.result;
+        db.createObjectStore('links', { keyPath: 'id' });
+        db.createObjectStore('subscriptions', { keyPath: 'id' });
+      };
+      request.onsuccess = () => resolve(request.result);
+      request.onerror = () => reject(request.error);
+    });
+    preRelease.close();
+
+    const store = new ExternalSourceLocalStateStore();
+    expect(await store.exportSharedState()).toEqual({
+      schemaVersion: 1,
+      connections: [],
+      links: [],
+      subscriptions: [],
+    });
+
+    const reopened = await new Promise<IDBDatabase>((resolve, reject) => {
+      const request = indexedDB.open('noveldesk-external-sources');
+      request.onsuccess = () => resolve(request.result);
+      request.onerror = () => reject(request.error);
+    });
+    expect(reopened.version).toBe(7);
+    reopened.close();
   });
 });

@@ -5,9 +5,17 @@ import type { LibraryBookView } from './library-screen-model';
 import type { LibraryExternalWorkView, LibraryScreenProps } from './library-screen-contract';
 import { LibraryReadingProgress } from './LibraryReadingProgress';
 import { BookCover } from './BookCover';
+import { importTaskIsActive, type ImportTaskView } from '../import/import-task-projection';
+import {
+  LibraryImportTaskActions,
+  LibraryImportTaskCard,
+  LibraryImportTaskListRow,
+  LibraryImportTaskOverlay,
+} from './LibraryImportTaskItems';
 
 interface LibraryBookItemProps extends LibraryScreenProps {
   readonly book: LibraryBookView;
+  readonly importTask?: ImportTaskView;
 }
 
 function classNames(...values: Array<string | false | undefined>): string {
@@ -37,10 +45,11 @@ function activateBook({ book, model, actions }: LibraryBookItemProps): void {
   void actions.books.open(book.novel);
 }
 
-function BookItemActions({ book, model, actions }: LibraryBookItemProps) {
+function BookItemActions({ book, model, actions, importTask }: LibraryBookItemProps) {
   if (model.management.selectionMode) return null;
   const { novel } = book;
   const trashed = Boolean(novel.deletedAt);
+  const importing = Boolean(importTask && importTaskIsActive(importTask));
 
   if (trashed) {
     return (
@@ -50,6 +59,7 @@ function BookItemActions({ book, model, actions }: LibraryBookItemProps) {
           className="mini-icon-btn"
           title="복원"
           aria-label={`${novel.title} 복원`}
+          disabled={importing}
           onClick={() => void actions.books.restore(novel)}
         >
           <RotateCcw size={15} />
@@ -59,6 +69,7 @@ function BookItemActions({ book, model, actions }: LibraryBookItemProps) {
           className="mini-icon-btn danger"
           title="영구 삭제"
           aria-label={`${novel.title} 영구 삭제`}
+          disabled={importing}
           onClick={() => void actions.books.purge(novel)}
         >
           <Trash2 size={15} />
@@ -74,6 +85,7 @@ function BookItemActions({ book, model, actions }: LibraryBookItemProps) {
         className="mini-icon-btn book-edit-action"
         title="작품 정보 편집"
         aria-label={`${novel.title} 정보 편집`}
+        disabled={importing}
         onClick={() => actions.books.editMetadata(novel)}
       >
         <Pencil size={15} />
@@ -84,6 +96,7 @@ function BookItemActions({ book, model, actions }: LibraryBookItemProps) {
         title={novel.favorite ? '즐겨찾기 해제' : '즐겨찾기'}
         aria-label={`${novel.title} ${novel.favorite ? '즐겨찾기 해제' : '즐겨찾기 추가'}`}
         aria-pressed={novel.favorite}
+        disabled={importing}
         onClick={() => void actions.books.toggleFavorite(novel)}
       >
         <Star size={15} fill={novel.favorite ? 'currentColor' : 'none'} />
@@ -103,6 +116,7 @@ function BookItemActions({ book, model, actions }: LibraryBookItemProps) {
         className="mini-icon-btn book-remove-action"
         title="휴지통으로 이동"
         aria-label={`${novel.title} 휴지통으로 이동`}
+        disabled={importing}
         onClick={() => void actions.books.remove(novel)}
       >
         <Trash2 size={15} />
@@ -136,7 +150,8 @@ function ExternalWorkCover({ work, thumbnail }: { work: LibraryExternalWorkView;
 function ExternalWorkActions({
   work,
   actions,
-}: Pick<LibraryScreenProps, 'actions'> & { work: LibraryExternalWorkView }) {
+  importTask,
+}: Pick<LibraryScreenProps, 'actions'> & { work: LibraryExternalWorkView; importTask?: ImportTaskView }) {
   return (
     <div className="card-actions">
       <button
@@ -144,6 +159,7 @@ function ExternalWorkActions({
         className="mini-icon-btn book-remove-action"
         title="라이브러리에서 제거"
         aria-label={`${work.title} 라이브러리에서 제거`}
+        disabled={Boolean(importTask && importTaskIsActive(importTask))}
         onClick={() => void actions.books.removeExternal(work.id)}
       >
         <Trash2 size={15} />
@@ -152,7 +168,11 @@ function ExternalWorkActions({
   );
 }
 
-function ExternalWorkCard({ work, actions }: Pick<LibraryScreenProps, 'actions'> & { work: LibraryExternalWorkView }) {
+function ExternalWorkCard({
+  work,
+  actions,
+  importTask,
+}: Pick<LibraryScreenProps, 'actions'> & { work: LibraryExternalWorkView; importTask?: ImportTaskView }) {
   return (
     <article className="book-card external-work-card" role="listitem">
       <button
@@ -163,6 +183,7 @@ function ExternalWorkCard({ work, actions }: Pick<LibraryScreenProps, 'actions'>
       />
       <div className="book-cover-wrap">
         <ExternalWorkCover work={work} thumbnail />
+        {importTask && <LibraryImportTaskOverlay task={importTask} />}
       </div>
       <div className="book-info">
         <div className="book-title-line">
@@ -172,7 +193,11 @@ function ExternalWorkCard({ work, actions }: Pick<LibraryScreenProps, 'actions'>
         <div className="card-row">
           <strong>{formatCount(work.availableReleaseCount)}화</strong>
           <span>{work.newReleaseCount > 0 ? `새 회차 ${work.newReleaseCount}개` : '새 회차 확인됨'}</span>
-          <ExternalWorkActions work={work} actions={actions} />
+          {importTask?.phase === 'failed' ? (
+            <LibraryImportTaskActions task={importTask} actions={actions} />
+          ) : (
+            <ExternalWorkActions work={work} actions={actions} importTask={importTask} />
+          )}
         </div>
       </div>
     </article>
@@ -182,7 +207,8 @@ function ExternalWorkCard({ work, actions }: Pick<LibraryScreenProps, 'actions'>
 function ExternalWorkListRow({
   work,
   actions,
-}: Pick<LibraryScreenProps, 'actions'> & { work: LibraryExternalWorkView }) {
+  importTask,
+}: Pick<LibraryScreenProps, 'actions'> & { work: LibraryExternalWorkView; importTask?: ImportTaskView }) {
   return (
     <article className="book-list-row external-work-list-row" role="listitem">
       <button
@@ -191,7 +217,10 @@ function ExternalWorkListRow({
         aria-label={`${work.title} 원격 회차 열기`}
         onClick={() => void actions.books.openExternal(work.id)}
       />
-      <ExternalWorkCover work={work} thumbnail={false} />
+      <div className="book-cover-wrap">
+        <ExternalWorkCover work={work} thumbnail={false} />
+        {importTask && <LibraryImportTaskOverlay task={importTask} />}
+      </div>
       <div className="book-list-main">
         <div className="book-list-title">
           <h3>{work.title}</h3>
@@ -206,13 +235,17 @@ function ExternalWorkListRow({
         <strong>{work.newReleaseCount > 0 ? `새 회차 ${work.newReleaseCount}` : '최신'}</strong>
         <span>Suwayomi 연결 작품</span>
       </div>
-      <ExternalWorkActions work={work} actions={actions} />
+      {importTask?.phase === 'failed' ? (
+        <LibraryImportTaskActions task={importTask} actions={actions} />
+      ) : (
+        <ExternalWorkActions work={work} actions={actions} importTask={importTask} />
+      )}
     </article>
   );
 }
 
 function LibraryBookCard(props: LibraryBookItemProps) {
-  const { book, model } = props;
+  const { book, model, importTask } = props;
   const { trashed, selected, focused } = useItemState(props);
 
   return (
@@ -240,6 +273,7 @@ function LibraryBookCard(props: LibraryBookItemProps) {
             <span className="book-format-overlay">{bookFormatLabel(book.novel)}</span>
           )}
         </BookCover>
+        {importTask && <LibraryImportTaskOverlay task={importTask} />}
       </div>
       <div className="book-info">
         <div className="book-title-line">
@@ -258,7 +292,11 @@ function LibraryBookCard(props: LibraryBookItemProps) {
         <div className="card-row">
           <strong>{trashed ? '휴지통' : formatProgress(book.bookProgress)}</strong>
           <span>{book.lastReadLabel}</span>
-          <BookItemActions {...props} />
+          {importTask?.phase === 'failed' ? (
+            <LibraryImportTaskActions task={importTask} actions={props.actions} />
+          ) : (
+            <BookItemActions {...props} />
+          )}
         </div>
       </div>
     </article>
@@ -266,7 +304,7 @@ function LibraryBookCard(props: LibraryBookItemProps) {
 }
 
 function LibraryBookListRow(props: LibraryBookItemProps) {
-  const { book, model } = props;
+  const { book, model, importTask } = props;
   const { trashed, selected, focused } = useItemState(props);
 
   return (
@@ -287,10 +325,15 @@ function LibraryBookListRow(props: LibraryBookItemProps) {
             : `${book.novel.title} ${isFixedDocumentFormat(book.novel.format) ? '문서 열기' : '작품 상세 열기'}`
         }
       />
-      <BookCover novel={book.novel} className={classNames('book-cover thumb', book.coverClass)}>
-        {model.management.selectionMode && <SelectionMark selected={selected} />}
-        {!model.management.selectionMode && <span className="book-format-overlay">{bookFormatLabel(book.novel)}</span>}
-      </BookCover>
+      <div className="book-cover-wrap">
+        <BookCover novel={book.novel} className={classNames('book-cover thumb', book.coverClass)}>
+          {model.management.selectionMode && <SelectionMark selected={selected} />}
+          {!model.management.selectionMode && (
+            <span className="book-format-overlay">{bookFormatLabel(book.novel)}</span>
+          )}
+        </BookCover>
+        {importTask && <LibraryImportTaskOverlay task={importTask} />}
+      </div>
       <div className="book-list-main">
         <div className="book-list-title">
           <h3>{book.novel.title}</h3>
@@ -310,7 +353,11 @@ function LibraryBookListRow(props: LibraryBookItemProps) {
         <strong>{trashed ? '휴지통' : formatProgress(book.bookProgress)}</strong>
         <span>{book.lastReadLabel}</span>
       </div>
-      <BookItemActions {...props} />
+      {importTask?.phase === 'failed' ? (
+        <LibraryImportTaskActions task={importTask} actions={props.actions} />
+      ) : (
+        <BookItemActions {...props} />
+      )}
     </article>
   );
 }
@@ -318,6 +365,29 @@ function LibraryBookListRow(props: LibraryBookItemProps) {
 export function LibraryBookCollection(props: LibraryScreenProps) {
   const collectionClass = props.model.viewMode === 'grid' ? 'books-grid' : 'books-list';
   const externalWorks = props.model.management.selectionMode ? [] : (props.model.externalSources.libraryWorks ?? []);
+  const tasks = props.model.management.selectionMode ? [] : props.model.importTasks;
+  const taskForBook = (bookId: string) => tasks.find((task) => task.targetBookId === bookId);
+  const taskForExternalWork = (workId: string) => tasks.find((task) => task.externalWorkId === workId);
+  const visibleBookIds = new Set(props.model.collection.visibleBooks.map((book) => book.novel.id));
+  const visibleExternalWorkIds = new Set(externalWorks.map((work) => work.id));
+  const boundTaskIds = new Set(
+    tasks
+      .filter(
+        (task) =>
+          Boolean(task.targetBookId && visibleBookIds.has(task.targetBookId)) ||
+          Boolean(task.externalWorkId && visibleExternalWorkIds.has(task.externalWorkId)),
+      )
+      .map((task) => task.id),
+  );
+  const query = props.model.query.trim().toLocaleLowerCase();
+  const standaloneTasks =
+    props.model.filter === 'all' && !props.model.management.activeShelfId
+      ? tasks.filter(
+          (task) =>
+            !boundTaskIds.has(task.id) &&
+            (!query || [task.title, task.fileName].some((value) => value?.toLocaleLowerCase().includes(query))),
+        )
+      : [];
   return (
     <>
       {props.model.management.selectionMode && (
@@ -333,18 +403,35 @@ export function LibraryBookCollection(props: LibraryScreenProps) {
             <span>작업</span>
           </div>
         )}
+        {standaloneTasks.map((task) =>
+          props.model.viewMode === 'grid' ? (
+            <LibraryImportTaskCard key={task.id} task={task} actions={props.actions} />
+          ) : (
+            <LibraryImportTaskListRow key={task.id} task={task} actions={props.actions} />
+          ),
+        )}
         {externalWorks.map((work) =>
           props.model.viewMode === 'grid' ? (
-            <ExternalWorkCard key={work.id} work={work} actions={props.actions} />
+            <ExternalWorkCard
+              key={work.id}
+              work={work}
+              actions={props.actions}
+              importTask={taskForExternalWork(work.id)}
+            />
           ) : (
-            <ExternalWorkListRow key={work.id} work={work} actions={props.actions} />
+            <ExternalWorkListRow
+              key={work.id}
+              work={work}
+              actions={props.actions}
+              importTask={taskForExternalWork(work.id)}
+            />
           ),
         )}
         {props.model.collection.visibleBooks.map((book) =>
           props.model.viewMode === 'grid' ? (
-            <LibraryBookCard key={book.novel.id} book={book} {...props} />
+            <LibraryBookCard key={book.novel.id} book={book} importTask={taskForBook(book.novel.id)} {...props} />
           ) : (
-            <LibraryBookListRow key={book.novel.id} book={book} {...props} />
+            <LibraryBookListRow key={book.novel.id} book={book} importTask={taskForBook(book.novel.id)} {...props} />
           ),
         )}
       </div>

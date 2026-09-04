@@ -34,6 +34,8 @@ const expectedRoutes = [
   ['DELETE', '/api/books/:bookId/reading-position'],
   ['GET', '/api/settings'],
   ['PUT', '/api/settings'],
+  ['GET', '/api/integration-settings'],
+  ['PUT', '/api/integration-settings'],
   ['GET', '/api/books/:bookId/bookmarks'],
   ['POST', '/api/books/:bookId/bookmarks'],
   ['DELETE', '/api/bookmarks/:bookmarkId'],

@@ -36,7 +36,6 @@ export function ImportDialog({ controller }: ImportDialogProps) {
       open={controller.isOpen}
       title="책 가져오기"
       onClose={controller.close}
-      closeDisabled={controller.busy}
       closeLabel="가져오기 닫기"
       className="import-dialog"
     >

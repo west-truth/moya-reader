@@ -2,6 +2,7 @@ import type { FastifyInstance } from 'fastify';
 import pg from 'pg';
 import type { ServerConfig } from '../../config.js';
 import { defaultSettings } from '../../../../../src/repositories/reader-defaults';
+import { normalizeSelfHostIntegrationSettings } from '../../../../../src/integration-settings/self-host-integration-settings.js';
 import { hasBookChapterAccess } from './book-access-query.js';
 import {
   validateReadingPositionBody,
@@ -180,7 +181,8 @@ export async function registerReaderStateRoutes(
 
   app.get('/api/settings', async () => {
     const result = await pool.query('select settings from reader_settings where user_id = $1', [config.defaultUserId]);
-    const stored = result.rows[0]?.settings ?? {};
+    const { _moyaIntegrations: _reservedIntegrations, ...stored } = result.rows[0]?.settings ?? {};
+    void _reservedIntegrations;
     return {
       settings: {
         ...defaultSettings,
@@ -205,7 +207,11 @@ export async function registerReaderStateRoutes(
         insert into reader_settings (user_id, settings, updated_at)
         values ($1, $2, now())
         on conflict (user_id) do update
-          set settings = excluded.settings,
+          set settings = excluded.settings || case
+                when reader_settings.settings ? '_moyaIntegrations'
+                  then jsonb_build_object('_moyaIntegrations', reader_settings.settings -> '_moyaIntegrations')
+                else '{}'::jsonb
+              end,
               updated_at = excluded.updated_at
       `,
       [config.defaultUserId, JSON.stringify(settings)],
@@ -225,6 +231,73 @@ export async function registerReaderStateRoutes(
       }),
       createdAt: updatedAt,
     });
+    return { ok: true, settings };
+  });
+
+  app.get<{ Querystring: { revision?: string } }>('/api/integration-settings', async (request) => {
+    const parsedRevision = request.query.revision === undefined ? null : Number(request.query.revision);
+    const revision =
+      parsedRevision === null || (Number.isSafeInteger(parsedRevision) && parsedRevision >= 0) ? parsedRevision : null;
+    const result = await pool.query(
+      `select settings -> '_moyaIntegrations' as integration_settings
+       from reader_settings
+       where user_id = $1
+         and ($2::bigint is null
+           or coalesce(settings -> '_moyaIntegrations' ->> 'revision', '0') is distinct from $2::text)`,
+      [config.defaultUserId, revision],
+    );
+    const settings = normalizeSelfHostIntegrationSettings(result.rows[0]?.integration_settings);
+    return settings ? { settings } : {};
+  });
+
+  app.put<{ Body: unknown }>('/api/integration-settings', async (request, reply) => {
+    const body =
+      request.body && typeof request.body === 'object' && !Array.isArray(request.body)
+        ? (request.body as Record<string, unknown>)
+        : undefined;
+    const parsed = normalizeSelfHostIntegrationSettings(body?.settings);
+    const expectedRevision = body?.expectedRevision;
+    if (
+      !parsed ||
+      typeof expectedRevision !== 'number' ||
+      !Number.isSafeInteger(expectedRevision) ||
+      expectedRevision < 0 ||
+      expectedRevision >= Number.MAX_SAFE_INTEGER
+    ) {
+      return reply.code(400).send({ error: 'integration settings are invalid' });
+    }
+    const settings = { ...parsed, revision: expectedRevision + 1, updatedAt: new Date().toISOString() };
+    const result = await pool.query(
+      `with updated as (
+         update reader_settings
+            set settings = jsonb_set(reader_settings.settings, '{_moyaIntegrations}', $3::jsonb, true),
+                updated_at = now()
+          where user_id = $1
+            and coalesce(reader_settings.settings -> '_moyaIntegrations' ->> 'revision', '0') = $4::text
+        returning settings -> '_moyaIntegrations' as integration_settings
+       ), inserted as (
+         insert into reader_settings (user_id, settings, updated_at)
+         select $1, jsonb_set($2::jsonb, '{_moyaIntegrations}', $3::jsonb, true), now()
+          where $4::bigint = 0
+            and not exists (select 1 from reader_settings where user_id = $1)
+         on conflict (user_id) do nothing
+         returning settings -> '_moyaIntegrations' as integration_settings
+       )
+       select integration_settings from updated
+       union all
+       select integration_settings from inserted`,
+      [config.defaultUserId, JSON.stringify(defaultSettings), JSON.stringify(settings), expectedRevision],
+    );
+    if (result.rows.length === 0) {
+      const currentResult = await pool.query(
+        `select settings -> '_moyaIntegrations' as integration_settings
+         from reader_settings
+         where user_id = $1`,
+        [config.defaultUserId],
+      );
+      const current = normalizeSelfHostIntegrationSettings(currentResult.rows[0]?.integration_settings);
+      return reply.code(409).send({ error: 'integration settings changed', ...(current ? { settings: current } : {}) });
+    }
     return { ok: true, settings };
   });
 }

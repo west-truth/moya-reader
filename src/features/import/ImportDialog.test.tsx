@@ -7,6 +7,7 @@ function controller(overrides: Partial<ImportFeatureController> = {}): ImportFea
   return {
     isOpen: true,
     busy: false,
+    tasks: [],
     pendingFiles: [],
     duplicateBusy: false,
     duplicateConflicts: [],
@@ -37,6 +38,7 @@ function controller(overrides: Partial<ImportFeatureController> = {}): ImportFea
     startPendingImport: vi.fn(),
     previewPendingImport: vi.fn(),
     cancelImport: vi.fn(),
+    dismissTask: vi.fn(),
     setEncoding: vi.fn(),
     setChapterSplitMode: vi.fn(),
     setDuplicatePolicy: vi.fn(),

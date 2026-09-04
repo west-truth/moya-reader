@@ -136,6 +136,31 @@ describe('WebNovelMetadataCollectorBroker', () => {
     expect(() => broker.updateSettings({ endpoint: 'http://remote.example' })).toThrow('설정이 올바르지');
   });
 
+  it('shares automation preferences without replacing the device-specific endpoint', () => {
+    const broker = new WebNovelMetadataCollectorBroker({ storage: null });
+    broker.updateSettings({ endpoint: 'https://device-only.example', includeAdult: false });
+
+    broker.applySharedSettings({
+      schemaVersion: 1,
+      includeAdult: true,
+      automaticLookup: true,
+      automaticApply: 'missing_fields',
+    });
+
+    expect(broker.getSettings()).toEqual({
+      endpoint: 'https://device-only.example',
+      includeAdult: true,
+      automaticLookup: true,
+      automaticApply: 'missing_fields',
+    });
+    expect(broker.getSharedSettings()).toEqual({
+      schemaVersion: 1,
+      includeAdult: true,
+      automaticLookup: true,
+      automaticApply: 'missing_fields',
+    });
+  });
+
   it('publishes stable connection health and manual adult-auth state for extension detail UI', async () => {
     const client = clientPort();
     const broker = new WebNovelMetadataCollectorBroker({

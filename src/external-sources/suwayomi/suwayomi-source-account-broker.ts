@@ -24,6 +24,7 @@ import {
   type SuwayomiClientAuth,
 } from './suwayomi-graphql-client';
 import { DEFAULT_SUWAYOMI_BASE_URL } from '../../config/public-runtime-config';
+import type { ExternalSourceSharedConnectionV1 } from '../../integration-settings/self-host-integration-settings';
 
 export { DEFAULT_SUWAYOMI_BASE_URL } from '../../config/public-runtime-config';
 const MAX_DIRECT_DOWNLOAD_BYTES = 1024 * 1024 * 1024;
@@ -354,6 +355,7 @@ function statusLabel(status: string | undefined): string | undefined {
 /** Hosts installed Mihon-compatible sources through a user-owned Suwayomi Server. */
 export class SuwayomiSourceAccountBroker implements ExternalSourceBroker {
   private record?: ExternalSourceCredentialRecord;
+  private sharedConnection?: ExternalSourceSharedConnectionV1;
   private credential?: SuwayomiCredential;
   private credentialKey?: CryptoKey;
   private client?: SuwayomiGraphqlClient;
@@ -386,7 +388,7 @@ export class SuwayomiSourceAccountBroker implements ExternalSourceBroker {
           label: '서버 주소',
           type: 'text',
           required: true,
-          defaultValue: this.credential?.baseUrl ?? this.defaultBaseUrl,
+          defaultValue: this.credential?.baseUrl ?? this.sharedConnection?.endpoint ?? this.defaultBaseUrl,
           placeholder: this.defaultBaseUrl,
           help: '이 브라우저에서 접근 가능한 Suwayomi Server 주소를 입력하세요.',
         },
@@ -394,7 +396,7 @@ export class SuwayomiSourceAccountBroker implements ExternalSourceBroker {
           id: 'authMode',
           label: '인증 방식',
           type: 'select',
-          defaultValue: 'auto',
+          defaultValue: this.sharedConnection?.authMode ?? 'auto',
           options: [
             { value: 'auto', label: '자동 감지' },
             { value: 'none', label: '인증 없음' },
@@ -415,8 +417,31 @@ export class SuwayomiSourceAccountBroker implements ExternalSourceBroker {
   }
 
   async initialize(): Promise<void> {
-    this.record = await this.state.getCredential(this.connectorId);
-    if (!this.record) return;
+    const [record, sharedConnection] = await Promise.all([
+      this.state.getCredential(this.connectorId),
+      this.state.getSharedConnection?.(this.connectorId) ?? Promise.resolve(undefined),
+    ]);
+    this.sharedConnection = sharedConnection;
+    this.record =
+      record && (!sharedConnection || record.accountConnectionId === sharedConnection.accountConnectionId)
+        ? record
+        : undefined;
+    this.credential = undefined;
+    this.client = undefined;
+    this.basicAuthorization = undefined;
+    this.connectionReason = undefined;
+    this.reauthorizationRequired = Boolean(sharedConnection);
+    if (!this.record) {
+      if (sharedConnection?.authMode === 'none') {
+        try {
+          await this.connect({ baseUrl: sharedConnection.endpoint, authMode: 'none' });
+        } catch (error) {
+          this.connectionReason = error instanceof Error ? error.message : 'Suwayomi에 다시 연결해 주세요.';
+          this.reauthorizationRequired = true;
+        }
+      }
+      return;
+    }
     if (this.record.protection !== 'device_key_v1') {
       this.reauthorizationRequired = true;
       return;
@@ -430,6 +455,7 @@ export class SuwayomiSourceAccountBroker implements ExternalSourceBroker {
         return;
       }
       this.installCredential(credential, key);
+      if (!sharedConnection) await this.saveSharedConnection(credential, this.record);
     } catch {
       this.credential = undefined;
       this.client = undefined;
@@ -438,7 +464,16 @@ export class SuwayomiSourceAccountBroker implements ExternalSourceBroker {
   }
 
   status(): ExternalSourceConnectionStatus {
-    if (!this.record) return { state: 'disconnected', label: 'Suwayomi', reason: this.connectionReason };
+    if (!this.record) {
+      return this.sharedConnection
+        ? {
+            state: 'reauthorization_required',
+            accountConnectionId: this.sharedConnection.accountConnectionId,
+            label: this.sharedConnection.label,
+            reason: this.connectionReason ?? '이 기기에서 Suwayomi 인증을 한 번 확인해 주세요.',
+          }
+        : { state: 'disconnected', label: 'Suwayomi', reason: this.connectionReason };
+    }
     return {
       state: this.client && this.credential ? 'connected' : 'reauthorization_required',
       accountConnectionId: this.record.accountConnectionId,
@@ -512,10 +547,12 @@ export class SuwayomiSourceAccountBroker implements ExternalSourceBroker {
   }
 
   async disconnect(): Promise<void> {
-    const accountConnectionId = this.record?.accountConnectionId;
+    const accountConnectionId = this.record?.accountConnectionId ?? this.sharedConnection?.accountConnectionId;
     await this.state.deleteCredential(this.connectorId);
+    await this.state.deleteSharedConnection?.(this.connectorId);
     await this.state.clearCache(this.connectorId, accountConnectionId);
     this.record = undefined;
+    this.sharedConnection = undefined;
     this.credential = undefined;
     this.credentialKey = undefined;
     this.client = undefined;
@@ -817,10 +854,32 @@ export class SuwayomiSourceAccountBroker implements ExternalSourceBroker {
       updatedAt: timestamp,
     };
     await this.state.saveCredential(record);
+    await this.saveSharedConnection(credential, record);
     this.record = record;
     this.basicAuthorization = basic;
     this.reauthorizationRequired = false;
     this.installCredential(credential, key);
+  }
+
+  async refreshSharedConfiguration(): Promise<void> {
+    await this.initialize();
+  }
+
+  private async saveSharedConnection(
+    credential: SuwayomiCredential,
+    record: ExternalSourceCredentialRecord,
+  ): Promise<void> {
+    const connection: ExternalSourceSharedConnectionV1 = {
+      schemaVersion: 1,
+      connectorId: this.connectorId,
+      accountConnectionId: record.accountConnectionId,
+      endpoint: credential.baseUrl,
+      authMode: credential.authMode,
+      label: record.label,
+      updatedAt: record.updatedAt,
+    };
+    this.sharedConnection = connection;
+    await this.state.saveSharedConnection?.(connection);
   }
 
   private installCredential(credential: SuwayomiCredential, key: CryptoKey): void {

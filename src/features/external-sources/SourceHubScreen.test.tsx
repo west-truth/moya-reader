@@ -10,6 +10,9 @@ function controller(overrides: Partial<ExternalSourceController> = {}): External
     open: true,
     loading: false,
     busy: false,
+    blockingBusy: false,
+    importBusy: false,
+    tasks: [],
     sources: [
       {
         id: 'fixture.source',
@@ -73,6 +76,7 @@ function controller(overrides: Partial<ExternalSourceController> = {}): External
     importAndOpen: vi.fn(async () => undefined),
     importSelected: vi.fn(async () => undefined),
     openImported: vi.fn(async () => undefined),
+    dismissTask: vi.fn(),
     cancel: vi.fn(),
     connect: vi.fn(async () => undefined),
     disconnect: vi.fn(async () => undefined),

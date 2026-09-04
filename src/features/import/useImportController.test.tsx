@@ -403,3 +403,94 @@ describe('useImportController local series analysis', () => {
     vi.unstubAllGlobals();
   });
 });
+
+describe('useImportController background progress', () => {
+  it('keeps an active import running after its dialog closes and does not steal the current screen on completion', async () => {
+    vi.stubGlobal('window', globalThis);
+    let finishImport!: (result: { novel: Novel }) => void;
+    const importedNovel: Novel = {
+      id: 'background-book',
+      title: '백그라운드 작품',
+      sourceFileName: '백그라운드 작품.txt',
+      sourceEncoding: 'utf-8',
+      rawText: '본문',
+      normalizedText: '본문',
+      rawTextHash: 'raw',
+      normalizedTextHash: 'normalized',
+      createdAt: '2026-09-04T00:00:00.000Z',
+      updatedAt: '2026-09-04T00:00:00.000Z',
+      totalChapters: 1,
+      totalCharacters: 2,
+      totalParagraphs: 1,
+      coverSeed: 1,
+      lastReadOffset: 0,
+      lastReadProgress: 0,
+      favorite: false,
+      analysisStatus: 'not_analyzed',
+    };
+    const onImportCommitted = vi.fn(async () => undefined);
+    const onImportSettled = vi.fn(async () => undefined);
+    const onOpenRequested = vi.fn(async () => undefined);
+    const notify = vi.fn();
+    const importFile = vi.fn<ImportService['importFile']>((input, onProgress) => {
+      onProgress({
+        jobId: 'background-job',
+        status: 'reading',
+        subphase: 'uploading_chunks',
+        bytesRead: 5,
+        totalBytes: 10,
+        chaptersDetected: 0,
+        paragraphsWritten: 0,
+      });
+      return {
+        jobId: 'background-job',
+        cancel: vi.fn(),
+        promise: new Promise((resolve) => {
+          finishImport = resolve;
+        }),
+      };
+    });
+    let controller!: ImportFeatureController;
+    function Harness() {
+      controller = useImportController({
+        importService: { importFile },
+        getNovel: vi.fn(async () => undefined),
+        listNovels: vi.fn(async () => []),
+        listChapters: vi.fn(async () => []),
+        onImportCommitted,
+        onImportSettled,
+        onOpenRequested,
+        notify,
+      });
+      return null;
+    }
+    let renderer!: ReactTestRenderer;
+    await act(async () => {
+      renderer = create(<Harness />);
+    });
+    act(() => controller.open());
+    const file = new File(['본문입니다.'], '백그라운드 작품.txt', { type: 'text/plain' });
+    let importPromise!: Promise<void>;
+    await act(async () => {
+      importPromise = controller.importFiles([file]);
+      await Promise.resolve();
+    });
+
+    expect(controller.tasks).toMatchObject([
+      { source: 'local_file', title: '백그라운드 작품', phase: 'uploading', percent: 50 },
+    ]);
+    act(() => controller.close());
+    expect(controller.isOpen).toBe(false);
+    expect(notify).toHaveBeenCalledWith('가져오기는 계속됩니다.');
+
+    finishImport({ novel: importedNovel });
+    await act(async () => importPromise);
+
+    expect(onImportCommitted).toHaveBeenCalledWith(importedNovel);
+    expect(onImportSettled).toHaveBeenCalledOnce();
+    expect(onOpenRequested).not.toHaveBeenCalled();
+    expect(controller.tasks).toEqual([]);
+    await act(async () => renderer.unmount());
+    vi.unstubAllGlobals();
+  });
+});

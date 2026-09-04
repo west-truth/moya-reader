@@ -118,6 +118,14 @@ export function LibraryScreen({ model, actions }: LibraryScreenProps) {
   const focusedBook = model.presentation.focusedBookId
     ? model.collection.booksByNovelId.get(model.presentation.focusedBookId)
     : undefined;
+  const importQuery = model.query.trim().toLocaleLowerCase();
+  const hasStandaloneImportTask =
+    model.filter === 'all' &&
+    !model.management.activeShelfId &&
+    model.importTasks.some(
+      (task) =>
+        !importQuery || [task.title, task.fileName].some((value) => value?.toLocaleLowerCase().includes(importQuery)),
+    );
   return (
     <main
       className={classNames('library-screen', model.drop.active && 'is-drop-active')}
@@ -151,7 +159,8 @@ export function LibraryScreen({ model, actions }: LibraryScreenProps) {
                   <RecentReadingBand model={model} actions={actions} />
                   <LibraryControls model={model} actions={actions} />
                   {model.collection.visibleBooks.length === 0 &&
-                  (model.externalSources.libraryWorks?.length ?? 0) === 0 ? (
+                  (model.externalSources.libraryWorks?.length ?? 0) === 0 &&
+                  !hasStandaloneImportTask ? (
                     <LibraryEmptyState model={model} actions={actions} />
                   ) : (
                     <LibraryBookCollection model={model} actions={actions} />

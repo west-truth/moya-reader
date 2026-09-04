@@ -228,6 +228,7 @@ async function createHarness(input: {
   const confirm = vi.fn(() => true);
   const notify = vi.fn();
   const openNovel = vi.fn();
+  const onLibraryItemCommitted = vi.fn(async () => undefined);
   const onLibraryChanged = vi.fn(async () => undefined);
   let controller!: ExternalSourceController;
   function Harness({ libraryRevision = 0 }: { libraryRevision?: number }) {
@@ -252,6 +253,7 @@ async function createHarness(input: {
         return latestImportedNovel?.id === id ? latestImportedNovel : id === currentNovel.id ? currentNovel : undefined;
       },
       openNovel,
+      onLibraryItemCommitted,
       onLibraryChanged,
       notify,
       confirm,
@@ -279,6 +281,7 @@ async function createHarness(input: {
     confirm,
     notify,
     openNovel,
+    onLibraryItemCommitted,
     onLibraryChanged,
     registry,
     state,
@@ -667,6 +670,9 @@ describe('useExternalSourceController remote updates', () => {
       await Promise.resolve();
     });
     expect(harness.controller.busy).toBe(true);
+    expect(harness.controller.tasks).toMatchObject([
+      { source: 'external_source', phase: 'downloading', externalItemKey: 'fixture.source::fixture-account::work-1' },
+    ]);
     act(() => harness.controller.close());
 
     releaseDownload();
@@ -675,6 +681,8 @@ describe('useExternalSourceController remote updates', () => {
     });
     expect(harness.importFile).toHaveBeenCalledOnce();
     expect(harness.openNovel).not.toHaveBeenCalled();
+    expect(harness.onLibraryItemCommitted).toHaveBeenCalledOnce();
+    expect(harness.controller.tasks).toEqual([]);
     await act(async () => harness.renderer.unmount());
   });
 
