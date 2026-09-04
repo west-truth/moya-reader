@@ -905,6 +905,18 @@
 .source-hub-empty span {
   font-size: var(--ui-label-size);
 }
+.source-hub-loading-status {
+  min-height: 38px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  color: var(--text-2);
+  background: color-mix(in srgb, var(--primary) 7%, var(--app-surface));
+  border-top: 1px solid var(--border);
+  border-bottom: 1px solid var(--border);
+  font-size: var(--ui-label-size);
+}
 .source-hub-load-more {
   min-height: 38px;
   display: flex;
@@ -938,14 +950,6 @@
 }
 .source-hub-batch-bar strong {
   color: var(--text);
-}
-.source-hub-batch-bar span {
-  color: var(--text-2);
-  font-size: var(--ui-label-size);
-}
-.source-hub-batch-bar progress {
-  width: min(280px, 100%);
-  height: 5px;
 }
 .library-mobile-shelf.is-static {
   cursor: default;

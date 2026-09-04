@@ -39,7 +39,6 @@ import { BookCover } from '../library/BookCover';
 import { importTaskIsActive, importTaskLabel } from '../import/import-task-projection';
 import type {
   ExternalSourceController,
-  ExternalSourceImportProgress,
   ExternalSourceItemImportState,
   ExternalSourceItemView,
 } from './useExternalSourceController';
@@ -114,20 +113,6 @@ function itemDescription(item: ExternalSourceItemView): string | undefined {
   );
 }
 
-function importProgressMessage(progress: ExternalSourceImportProgress, sourceTitle: string): string {
-  if (progress.detail?.message) return progress.detail.message;
-  switch (progress.phase) {
-    case 'downloading':
-      return `${sourceTitle}에서 원문을 내려받는 중입니다. 큰 파일은 잠시 걸릴 수 있습니다.`;
-    case 'verifying':
-      return '다운로드한 원문을 확인하는 중입니다.';
-    case 'importing':
-      return '작품을 분석해 라이브러리에 저장하는 중입니다.';
-    default:
-      return '가져오기를 준비하는 중입니다.';
-  }
-}
-
 function ItemAction({
   item,
   controller,
@@ -140,15 +125,17 @@ function ItemAction({
   const task = controller.tasks.find((candidate) => candidate.externalItemKey === externalItemKeyId(item.key));
   if (releaseList) {
     if (task && importTaskIsActive(task)) {
+      const cancelling = task.phase === 'cancelling';
       return (
         <button
           className="icon-btn source-hub-release-action"
           type="button"
-          disabled
-          title={importTaskLabel(task)}
-          aria-label={`${item.title} ${importTaskLabel(task)}`}
+          disabled={cancelling}
+          title={cancelling ? '취소 중' : '다운로드 중단'}
+          aria-label={`${item.title} ${cancelling ? '취소 중' : '다운로드 중단'}`}
+          onClick={controller.cancel}
         >
-          <LoaderCircle size={16} className={task.phase === 'queued' ? undefined : 'spin'} />
+          <LoaderCircle size={16} className="spin" />
         </button>
       );
     }
@@ -188,15 +175,29 @@ function ItemAction({
       );
     }
     const updating = item.importState === 'update_available';
-    const label = updating ? `${item.title} 업데이트` : `${item.title} 다운로드 후 보기`;
+    const queueing = controller.canQueueItem(item);
+    const blockedByOtherWork = controller.importBusy && !queueing;
+    const label = updating
+      ? `${item.title} 업데이트`
+      : queueing
+        ? `${item.title} 다운로드 대기열에 추가`
+        : `${item.title} 다운로드 후 보기`;
     return (
       <button
         className="icon-btn source-hub-release-action"
         type="button"
-        disabled={controller.busy || controller.loading}
-        title={updating ? '업데이트' : '다운로드 후 보기'}
+        disabled={controller.blockingBusy || controller.loading || blockedByOtherWork}
+        title={
+          blockedByOtherWork
+            ? '다른 작품 다운로드 중'
+            : updating
+              ? '업데이트'
+              : queueing
+                ? '다운로드 대기열에 추가'
+                : '다운로드 후 보기'
+        }
         aria-label={label}
-        onClick={() => void (updating ? controller.importItem(item) : controller.importAndOpen(item))}
+        onClick={() => void (updating || queueing ? controller.importItem(item) : controller.importAndOpen(item))}
       >
         {updating ? <RefreshCw size={16} /> : <Download size={16} />}
       </button>
@@ -313,7 +314,7 @@ function SourceReleaseRow({
       <span className="source-hub-release-updated">{updatedLabel(item.updatedAt) ?? '—'}</span>
       <span className={`source-hub-state is-${task?.phase ?? item.readingState ?? item.importState}`}>
         {task && importTaskIsActive(task) ? (
-          <LoaderCircle size={12} className={task.phase === 'queued' ? undefined : 'spin'} />
+          <LoaderCircle size={12} className="spin" />
         ) : item.readingState === 'current' ? (
           <Play size={11} fill="currentColor" />
         ) : item.readingState === 'read' || (!item.readingState && item.importState === 'imported') ? (
@@ -1078,7 +1079,7 @@ export default function SourceHubScreen({
                     <button
                       key={externalItemKeyId(folder.key)}
                       type="button"
-                      disabled={controller.blockingBusy}
+                      disabled={controller.loading || controller.blockingBusy}
                       onClick={() => void controller.openFolder(folder)}
                     >
                       <Folder size={20} />
@@ -1115,6 +1116,13 @@ export default function SourceHubScreen({
                   모두 선택
                 </label>
               </div>
+
+              {controller.loading && controller.items.length > 0 && (
+                <div className="source-hub-loading-status" role="status" aria-live="polite">
+                  <LoaderCircle size={16} className="spin" aria-hidden="true" />
+                  <span>목록을 불러오는 중</span>
+                </div>
+              )}
 
               {controller.loading && controller.items.length === 0 ? (
                 <div className="source-hub-empty" role="status">
@@ -1174,45 +1182,38 @@ export default function SourceHubScreen({
         </section>
       </div>
 
-      {(selectedCount > 0 || controller.progress) && (
-        <div className="source-hub-batch-bar" role="status" aria-live="polite">
+      {controller.selectedBatchActive && controller.importBusy ? (
+        <div className="source-hub-batch-bar is-progress" role="status" aria-live="polite">
           <div>
-            {controller.progress ? (
-              <>
-                <strong>{controller.progress.fileName ?? '선택한 작품 가져오기'}</strong>
-                <span>
-                  {controller.progress.current}/{controller.progress.total}
-                </span>
-                <progress
-                  aria-label="외부 작품 가져오기 진행률"
-                  max={Math.max(1, controller.progress.total)}
-                  value={Math.max(0, controller.progress.current - 1)}
-                />
-                <span>{importProgressMessage(controller.progress, activeSource?.title ?? '외부 소스')}</span>
-              </>
-            ) : (
-              <>
-                <strong>{formatCount(selectedCount)}개 선택</strong>
-                <span>선택하기 전에는 원문을 내려받지 않습니다.</span>
-              </>
+            <LoaderCircle size={17} className="spin" />
+            <strong>선택 회차 다운로드 중</strong>
+            {controller.progress && (
+              <span>
+                {formatCount(controller.progress.completed)}/{formatCount(controller.progress.total)} 완료
+              </span>
             )}
           </div>
-          {controller.busy ? (
-            <button className="ghost-btn danger" type="button" onClick={controller.cancel}>
-              중단
-            </button>
-          ) : (
-            <button className="primary-btn" type="button" onClick={() => void controller.importSelected()}>
-              {selectedUpdateCount === selectedCount ? <RefreshCw size={16} /> : <Upload size={16} />}
-              {selectedUpdateCount === 0
-                ? '선택 항목 가져오기'
-                : selectedUpdateCount === selectedCount
-                  ? '선택 항목 업데이트'
-                  : '선택 항목 가져오기·업데이트'}
-            </button>
-          )}
+          <button className="ghost-btn" type="button" onClick={controller.cancel}>
+            <X size={16} /> 중단
+          </button>
         </div>
-      )}
+      ) : selectedCount > 0 && !controller.importBusy ? (
+        <div className="source-hub-batch-bar">
+          <div>
+            <strong>{formatCount(selectedCount)}개 선택</strong>
+          </div>
+          <button className="primary-btn" type="button" onClick={() => void controller.importSelected()}>
+            {selectedUpdateCount === selectedCount ? <RefreshCw size={16} /> : <Download size={16} />}
+            {selectedUpdateCount === 0
+              ? releaseList
+                ? '선택 회차 다운로드'
+                : '선택 항목 가져오기'
+              : selectedUpdateCount === selectedCount
+                ? '선택 항목 업데이트'
+                : '선택 항목 가져오기·업데이트'}
+          </button>
+        </div>
+      ) : null}
     </main>
   );
 }

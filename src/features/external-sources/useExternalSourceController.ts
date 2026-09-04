@@ -92,6 +92,18 @@ async function importerResolvedSeriesIsActive(
 type SerialItemSummary = ExternalItemSummary & Required<Pick<ExternalItemSummary, 'collection' | 'release'>>;
 type SerialSourceItem = ExternalSourceItemView & SerialItemSummary;
 
+interface ActiveSerialImportQueue {
+  readonly sourceId: string;
+  readonly collectionKey: string;
+  readonly batchId: string;
+  targetBookId: string;
+  readonly externalWorkId?: string;
+  readonly items: SerialSourceItem[];
+  readonly itemKeys: Set<string>;
+  readonly taskIdByItemKey: Map<string, string>;
+  accepting: boolean;
+}
+
 export type { ExternalSourceRegistryPort } from '../../external-sources/app-external-source-registry';
 
 export interface ExternalSourceView {
@@ -142,6 +154,7 @@ export interface ExternalSourceController {
   readonly busy: boolean;
   readonly blockingBusy: boolean;
   readonly importBusy: boolean;
+  readonly selectedBatchActive: boolean;
   readonly tasks: readonly ImportTaskView[];
   readonly sources: readonly ExternalSourceView[];
   readonly activeSourceId?: ExtensionContributionId;
@@ -165,6 +178,7 @@ export interface ExternalSourceController {
   readonly activeSubscription?: ExternalSourceSubscriptionRecord;
   readonly checkingSubscriptions: boolean;
   readonly canSubscribeCurrentWork: boolean;
+  canQueueItem(item: ExternalSourceItemView): boolean;
   isWorkInLibrary(item: ExternalSourceItemView): boolean;
   addWorkToLibrary(item: ExternalSourceItemView): Promise<void>;
   addCurrentWorkToLibrary(): Promise<void>;
@@ -415,6 +429,7 @@ export function useExternalSourceController(options: UseExternalSourceController
   const [loading, setLoading] = useState(false);
   const [blockingBusy, setBusy] = useState(false);
   const [importBusy, setImportBusy] = useState(false);
+  const [selectedBatchActive, setSelectedBatchActive] = useState(false);
   const [tasks, setTasks] = useState<ImportTaskView[]>([]);
   const busy = blockingBusy || importBusy;
   const [activeSourceId, setActiveSourceId] = useState<ExtensionContributionId>();
@@ -442,6 +457,8 @@ export function useExternalSourceController(options: UseExternalSourceController
   const [checkingSubscriptions, setCheckingSubscriptions] = useState(false);
   const [brokerRevision, setBrokerRevision] = useState(0);
   const listAbortRef = useRef<AbortController>();
+  const itemNavigationPendingRef = useRef(false);
+  const serialImportQueueRef = useRef<ActiveSerialImportQueue>();
   const downloadAbortRef = useRef<AbortController>();
   const subscriptionAbortRef = useRef<AbortController>();
   const foregroundSubscriptionChecksRef = useRef(new Set<string>());
@@ -975,17 +992,30 @@ export function useExternalSourceController(options: UseExternalSourceController
   const effectiveLocalSeriesReadingStates = useMemo(() => {
     if (!localSeriesBookId) return localSeriesReadingStates;
     const localNovel = novelById.get(localSeriesBookId) ?? localSeriesSeedNovel;
-    return localNovel
-      ? projectLocalSeriesReadingStates(localNovel, localSeriesChapters, rawItems)
-      : localSeriesReadingStates;
+    if (!localNovel) return localSeriesReadingStates;
+    const projected = projectLocalSeriesReadingStates(localNovel, localSeriesChapters, rawItems);
+    if ([...projected.values()].includes('current')) return projected;
+    const previousCurrent = [...localSeriesReadingStates].find(([, state]) => state === 'current')?.[0];
+    if (!previousCurrent || !projected.has(previousCurrent)) return projected;
+    return new Map(
+      [...projected].map(([sectionId, state]) => [sectionId, sectionId === previousCurrent ? 'current' : state]),
+    );
   }, [localSeriesBookId, localSeriesChapters, localSeriesReadingStates, localSeriesSeedNovel, novelById, rawItems]);
+  const taskByItemKey = useMemo(
+    () => new Map(tasks.flatMap((task) => (task.externalItemKey ? [[task.externalItemKey, task] as const] : []))),
+    [tasks],
+  );
   const items = useMemo<readonly ExternalSourceItemView[]>(
     () =>
       rawItems.map((item) => {
         const key = externalItemKeyId(item.key);
         const link = linkByKey.get(key);
         const linkedNovel = link ? novelById.get(link.localBookId) : undefined;
-        const localNovel = linkedNovel?.deletedAt ? undefined : linkedNovel;
+        const completedTask = taskByItemKey.get(key)?.phase === 'complete' ? taskByItemKey.get(key) : undefined;
+        const completedNovel = completedTask?.targetBookId ? novelById.get(completedTask.targetBookId) : undefined;
+        const localNovel =
+          (linkedNovel?.deletedAt ? undefined : linkedNovel) ??
+          (completedNovel?.deletedAt ? undefined : completedNovel);
         const unsupported = item.kind === 'folder' || item.importability === 'unsupported';
         const changed = Boolean(link && externalReleaseRevisionChanged(item, link.importedRemoteRevision));
         return {
@@ -993,7 +1023,7 @@ export function useExternalSourceController(options: UseExternalSourceController
           selected: selectedKeys.has(key),
           importState: unsupported
             ? 'unsupported'
-            : link && localNovel
+            : (link || completedTask) && localNovel
               ? changed
                 ? 'update_available'
                 : 'imported'
@@ -1006,7 +1036,7 @@ export function useExternalSourceController(options: UseExternalSourceController
               : undefined,
         };
       }),
-    [linkByKey, effectiveLocalSeriesReadingStates, localSeriesBookId, novelById, rawItems, selectedKeys],
+    [linkByKey, effectiveLocalSeriesReadingStates, localSeriesBookId, novelById, rawItems, selectedKeys, taskByItemKey],
   );
 
   const activeSubscription = useMemo(() => {
@@ -1109,8 +1139,23 @@ export function useExternalSourceController(options: UseExternalSourceController
     [items],
   );
 
+  const canQueueItem = useCallback(
+    (item: ExternalSourceItemView) => {
+      const queue = serialImportQueueRef.current;
+      return Boolean(
+        importBusy &&
+        queue?.accepting &&
+        queue.sourceId === activeSourceId &&
+        isSerialSourceItem(item) &&
+        serialCollectionKey(item) === queue.collectionKey,
+      );
+    },
+    [activeSourceId, importBusy],
+  );
+
   const importSerialItems = useCallback(
-    async (sourceId: ExtensionContributionId, importable: readonly SerialSourceItem[]): Promise<boolean> => {
+    async (sourceId: ExtensionContributionId, initialItems: readonly SerialSourceItem[]): Promise<boolean> => {
+      const importable = [...initialItems];
       const collectionKeys = new Set(importable.map(serialCollectionKey));
       if (collectionKeys.size !== 1) return false;
       const collection = importable[0]!.collection;
@@ -1163,6 +1208,18 @@ export function useExternalSourceController(options: UseExternalSourceController
         ...current.filter((task) => !task.externalItemKey || !taskIdByItemKey.has(task.externalItemKey)),
         ...queuedTasks,
       ]);
+      const serialQueue: ActiveSerialImportQueue = {
+        sourceId,
+        collectionKey: serialCollectionKey(importable[0]!),
+        batchId,
+        targetBookId,
+        externalWorkId: currentSubscription?.id,
+        items: importable,
+        itemKeys: new Set(importable.map((item) => externalItemKeyId(item.key))),
+        taskIdByItemKey,
+        accepting: true,
+      };
+      serialImportQueueRef.current = serialQueue;
       setImportBusy(true);
       const abort = new AbortController();
       downloadAbortRef.current = abort;
@@ -1181,7 +1238,8 @@ export function useExternalSourceController(options: UseExternalSourceController
         let { novels: knownNovels, links: knownLinks } = await loadSourceLibrary(optionsRef.current, sourceId);
         // Download/build/commit one chapter at a time. The selection is not one
         // growing upload, and completed chapters survive a later failure/cancel.
-        for (const [batchIndex, selectedItem] of importable.entries()) {
+        for (let batchIndex = 0; batchIndex < importable.length; batchIndex += 1) {
+          const selectedItem = importable[batchIndex]!;
           const selectedItemKey = externalItemKeyId(selectedItem.key);
           activeTaskId = taskIdByItemKey.get(selectedItemKey);
           stagedLinks = [];
@@ -1213,6 +1271,7 @@ export function useExternalSourceController(options: UseExternalSourceController
           }
           const existingLocalBookId = [...targetIds][0];
           if (existingLocalBookId) {
+            serialQueue.targetBookId = existingLocalBookId;
             setTasks((current) =>
               current.map((task) => (task.batchId === batchId ? { ...task, targetBookId: existingLocalBookId } : task)),
             );
@@ -1515,6 +1574,34 @@ export function useExternalSourceController(options: UseExternalSourceController
           const nextKeys = new Set(nextLinks.map((link) => externalItemKeyId(link.source)));
           knownLinks = [...knownLinks.filter((link) => !nextKeys.has(externalItemKeyId(link.source))), ...nextLinks];
           knownNovels = [...knownNovels.filter((novel) => novel.id !== importedNovel!.id), importedNovel];
+          setLinks(knownLinks);
+          setNovels(knownNovels);
+          setSelectedKeys((current) => new Set([...current].filter((key) => key !== selectedItemKey)));
+          setProgress((current) =>
+            current
+              ? { ...current, completed: changedCount, linkedExisting: revisionChecked, detail: undefined }
+              : current,
+          );
+          if (activeTaskId) {
+            const completedTaskId = activeTaskId;
+            setTasks((current) =>
+              current.map((task) =>
+                task.id === completedTaskId
+                  ? { ...task, phase: 'complete', percent: 100, targetBookId: importedNovel!.id }
+                  : task,
+              ),
+            );
+          }
+          activeTaskId = undefined;
+          if (importedNovel && !libraryProjectionPublished) {
+            const published = await optionsRef.current
+              .onLibraryItemCommitted?.(importedNovel)
+              .then(() => true)
+              .catch(() => false);
+            libraryProjectionPublished = published ?? true;
+          }
+          // Content and its release link are usable at this point. Do not keep the
+          // completed release visually blocked while optional cover persistence runs.
           if (!coverAttempted && downloadedChapters.length > 0 && sourceThumbnailUrl) {
             coverAttempted = true;
             try {
@@ -1523,19 +1610,8 @@ export function useExternalSourceController(options: UseExternalSourceController
               coverWarning = error instanceof Error ? error.message : '원격 표지를 저장하지 못했습니다.';
             }
           }
-          setLinks(knownLinks);
-          setNovels(knownNovels);
-          setSelectedKeys((current) => new Set([...current].filter((key) => key !== selectedItemKey)));
-          if (importedNovel && !libraryProjectionPublished) {
-            const published = await optionsRef.current
-              .onLibraryItemCommitted?.(importedNovel)
-              .then(() => true)
-              .catch(() => false);
-            libraryProjectionPublished = published ?? true;
-          }
-          if (activeTaskId) setTasks((current) => current.filter((task) => task.id !== activeTaskId));
-          activeTaskId = undefined;
         }
+        serialQueue.accepting = false;
         await optionsRef.current.onLibraryChanged();
         await refreshLocalProjection(sourceId);
         setSelectedKeys((current) => new Set([...current].filter((key) => !completedKeys.has(key))));
@@ -1582,6 +1658,8 @@ export function useExternalSourceController(options: UseExternalSourceController
           'warning',
         );
       } finally {
+        serialQueue.accepting = false;
+        if (serialImportQueueRef.current === serialQueue) serialImportQueueRef.current = undefined;
         downloadAbortRef.current = undefined;
         importRef.current = undefined;
         if (mountedRef.current) {
@@ -1601,8 +1679,49 @@ export function useExternalSourceController(options: UseExternalSourceController
       const importable = selected.filter(
         (item) => item.kind !== 'folder' && item.importState !== 'unsupported' && item.importState !== 'imported',
       );
-      if (!sourceId || importable.length === 0 || busy) return;
+      if (!sourceId || importable.length === 0) return;
       const serialItems = importable.filter((item): item is SerialSourceItem => isSerialSourceItem(item));
+      if (importBusy) {
+        const queue = serialImportQueueRef.current;
+        const sameActiveSeries = Boolean(
+          !blockingBusy &&
+          queue?.accepting &&
+          queue.sourceId === sourceId &&
+          serialItems.length === importable.length &&
+          serialItems.every((item) => serialCollectionKey(item) === queue.collectionKey),
+        );
+        if (!sameActiveSeries || !queue) return;
+        const additions = serialItems.filter((item) => !queue.itemKeys.has(externalItemKeyId(item.key)));
+        if (additions.length === 0) return;
+        const firstIndex = queue.items.length;
+        additions.forEach((item, offset) => {
+          const itemKey = externalItemKeyId(item.key);
+          const taskId = `${queue.batchId}-${firstIndex + offset}`;
+          queue.items.push(item);
+          queue.itemKeys.add(itemKey);
+          queue.taskIdByItemKey.set(itemKey, taskId);
+        });
+        const total = queue.items.length;
+        setTasks((current) => [
+          ...current.map((task) => (task.batchId === queue.batchId ? { ...task, total } : task)),
+          ...additions.map((item, offset) => ({
+            id: queue.taskIdByItemKey.get(externalItemKeyId(item.key))!,
+            batchId: queue.batchId,
+            source: 'external_source' as const,
+            title: item.collection.title,
+            fileName: item.release.title,
+            targetBookId: queue.targetBookId,
+            externalWorkId: queue.externalWorkId,
+            externalItemKey: externalItemKeyId(item.key),
+            phase: 'queued' as const,
+            current: firstIndex + offset + 1,
+            total,
+          })),
+        ]);
+        setProgress((current) => (current ? { ...current, total } : current));
+        return;
+      }
+      if (busy) return;
       if (serialItems.length === importable.length && (await importSerialItems(sourceId, serialItems))) return;
       const selectedUpdateCount = importable.filter((item) => item.importState === 'update_available').length;
       if (
@@ -1847,7 +1966,7 @@ export function useExternalSourceController(options: UseExternalSourceController
         }
       }
     },
-    [activeSourceId, busy, importSerialItems, refreshLocalProjection],
+    [activeSourceId, blockingBusy, busy, importBusy, importSerialItems, refreshLocalProjection],
   );
 
   const importItem = useCallback(
@@ -1882,8 +2001,15 @@ export function useExternalSourceController(options: UseExternalSourceController
   );
 
   const importSelected = useCallback(async () => {
-    await importItems(items.filter((item) => item.selected));
-  }, [importItems, items]);
+    const selected = items.filter((item) => item.selected);
+    if (selected.length === 0 || importBusy) return;
+    setSelectedBatchActive(true);
+    try {
+      await importItems(selected);
+    } finally {
+      if (mountedRef.current) setSelectedBatchActive(false);
+    }
+  }, [importBusy, importItems, items]);
 
   const openImported = useCallback(
     async (item: ExternalSourceItemView) => {
@@ -1895,10 +2021,12 @@ export function useExternalSourceController(options: UseExternalSourceController
         return;
       }
       if (item.release) {
+        const chapters = await optionsRef.current.listChapters(novel.id);
         setLocalSeriesBookId(novel.id);
         setLocalSeriesSeedNovel(novel);
         setLocalSeriesSourceId(item.key.connectorId as ExtensionContributionId);
-        setLocalSeriesChapters(await optionsRef.current.listChapters(novel.id));
+        setLocalSeriesReadingStates(projectLocalSeriesReadingStates(novel, chapters, rawItems));
+        setLocalSeriesChapters(chapters);
       } else {
         setLocalSeriesBookId(undefined);
         setLocalSeriesSeedNovel(undefined);
@@ -1914,10 +2042,15 @@ export function useExternalSourceController(options: UseExternalSourceController
         });
       else await optionsRef.current.openNovel(novel);
     },
-    [blockingBusy, refreshLocalProjection],
+    [blockingBusy, rawItems, refreshLocalProjection],
   );
 
   const cancel = useCallback(() => {
+    setTasks((current) =>
+      current.map((task) =>
+        task.phase !== 'complete' && task.phase !== 'failed' ? { ...task, phase: 'cancelling' } : task,
+      ),
+    );
     listAbortRef.current?.abort();
     downloadAbortRef.current?.abort();
     subscriptionAbortRef.current?.abort();
@@ -1977,27 +2110,38 @@ export function useExternalSourceController(options: UseExternalSourceController
 
   const openItem = useCallback(
     async (item: ExternalSourceItemView) => {
-      if (!item.navigationRef || (item.kind !== 'folder' && item.kind !== 'work')) return;
-      const next = [...breadcrumbs, { label: item.title, parentRef: item.navigationRef }];
-      setBreadcrumbs(next);
-      setSelectedKeys(new Set());
-      const connection = sources.find((source) => source.id === activeSourceId)?.connection;
-      const preference = activeSourceId
-        ? await optionsRef.current.state
-            .getCatalogPreference(activeSourceId, connection?.accountConnectionId, item.navigationRef)
-            .catch(() => undefined)
-        : undefined;
-      if (preference) setFilterValues(preference.filterValues);
-      await loadPage(
-        {
-          parentRef: item.navigationRef,
-          browseMode: preference?.browseMode,
-          filters: preference?.filters,
-        },
-        false,
-      );
+      if (
+        !item.navigationRef ||
+        (item.kind !== 'folder' && item.kind !== 'work') ||
+        blockingBusy ||
+        itemNavigationPendingRef.current
+      )
+        return;
+      itemNavigationPendingRef.current = true;
+      try {
+        const next = [...breadcrumbs, { label: item.title, parentRef: item.navigationRef }];
+        setBreadcrumbs(next);
+        setSelectedKeys(new Set());
+        const connection = sources.find((source) => source.id === activeSourceId)?.connection;
+        const preference = activeSourceId
+          ? await optionsRef.current.state
+              .getCatalogPreference(activeSourceId, connection?.accountConnectionId, item.navigationRef)
+              .catch(() => undefined)
+          : undefined;
+        if (preference) setFilterValues(preference.filterValues);
+        await loadPage(
+          {
+            parentRef: item.navigationRef,
+            browseMode: preference?.browseMode,
+            filters: preference?.filters,
+          },
+          false,
+        );
+      } finally {
+        itemNavigationPendingRef.current = false;
+      }
     },
-    [activeSourceId, breadcrumbs, loadPage, sources],
+    [activeSourceId, blockingBusy, breadcrumbs, loadPage, sources],
   );
 
   const openFolder = useCallback(
@@ -2488,6 +2632,7 @@ export function useExternalSourceController(options: UseExternalSourceController
     busy,
     blockingBusy,
     importBusy,
+    selectedBatchActive,
     tasks,
     sources,
     activeSourceId,
@@ -2513,6 +2658,7 @@ export function useExternalSourceController(options: UseExternalSourceController
     activeSubscription,
     checkingSubscriptions,
     canSubscribeCurrentWork,
+    canQueueItem,
     isWorkInLibrary,
     addWorkToLibrary,
     addCurrentWorkToLibrary,

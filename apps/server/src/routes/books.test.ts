@@ -279,11 +279,11 @@ describe('book routes', () => {
   it('saves reading position and emits a sync event only when the update is applied', async () => {
     const pool = {
       query: vi.fn(async (sql: string, params?: unknown[]) => {
-        if (sql.includes('select exists(') && sql.includes('from chapters c')) {
-          expect(params).toEqual(['book_1', 'user_test', 'chapter_1', 'chapter:6']);
-          return { rows: [{ exists: true }] };
-        }
         if (sql.includes('insert into reading_positions')) {
+          expect(sql).toContain('pg_advisory_xact_lock(hashtextextended($1, 7319))');
+          expect(sql).toContain('requested_chapter');
+          expect(sql).toContain('insert into fixed_document_section_read_states');
+          expect(sql).toContain('on conflict (book_id, user_id, document_section_id)');
           expect(params).toEqual([
             'book_1',
             'user_test',
@@ -295,13 +295,9 @@ describe('book routes', () => {
             320,
             'device_a',
             '2026-07-05T00:03:00.000Z',
+            'chapter:6',
           ]);
-          return { rowCount: 1, rows: [{ updated_at: '2026-07-05T00:03:00.000Z' }] };
-        }
-        if (sql.includes('insert into fixed_document_section_read_states')) {
-          expect(sql).toContain('on conflict (book_id, user_id, document_section_id)');
-          expect(params).toEqual(['book_1', 'user_test', 'chapter:6', '2026-07-05T00:03:00.000Z']);
-          return { rowCount: 1, rows: [] };
+          return { rows: [{ chapter_found: true, applied: true, read_applied: true }] };
         }
         if (sql.includes('insert into sync_events')) {
           expect(params?.[1]).toBe('user_test');
@@ -353,7 +349,7 @@ describe('book routes', () => {
 
     expect(response.statusCode).toBe(200);
     expect(response.json()).toEqual({ ok: true, applied: true });
-    expect(pool.query).toHaveBeenCalledTimes(4);
+    expect(pool.query).toHaveBeenCalledTimes(2);
 
     await app.close();
   });
@@ -361,12 +357,22 @@ describe('book routes', () => {
   it('does not emit sync events for stale reading-position patches', async () => {
     const pool = {
       query: vi.fn(async (sql: string, params?: unknown[]) => {
-        if (sql.includes('select exists(') && sql.includes('from chapters c')) {
-          expect(params).toEqual(['book_1', 'user_test', 'chapter_1']);
-          return { rows: [{ exists: true }] };
-        }
         expect(sql).toContain('insert into reading_positions');
-        return { rowCount: 0, rows: [] };
+        expect(sql).toContain('pg_advisory_xact_lock(hashtextextended($1, 7319))');
+        expect(params).toEqual([
+          'book_1',
+          'user_test',
+          'chapter_1',
+          undefined,
+          0,
+          0,
+          0,
+          0,
+          undefined,
+          '2026-07-04T23:59:00.000Z',
+          null,
+        ]);
+        return { rows: [{ chapter_found: true, applied: false, read_applied: false }] };
       }),
     } as unknown as pg.Pool;
     const app = await appWithBooks(pool);
@@ -382,7 +388,7 @@ describe('book routes', () => {
 
     expect(response.statusCode).toBe(200);
     expect(response.json()).toEqual({ ok: true, applied: false });
-    expect(pool.query).toHaveBeenCalledTimes(2);
+    expect(pool.query).toHaveBeenCalledTimes(1);
 
     await app.close();
   });
@@ -763,6 +769,13 @@ describe('book routes', () => {
   it('rejects direct reader mutations for missing server book or chapter before writes', async () => {
     const pool = {
       query: vi.fn(async (sql: string, params?: unknown[]) => {
+        if (sql.includes('insert into reading_positions')) {
+          expect(sql).toContain('pg_advisory_xact_lock(hashtextextended($1, 7319))');
+          expect(params?.[0]).toBe('missing_book');
+          expect(params?.[1]).toBe('user_test');
+          expect(params?.[2]).toBe('missing_chapter');
+          return { rows: [{ chapter_found: false, applied: false, read_applied: false }] };
+        }
         expect(sql).toContain('select exists(');
         expect(sql).toContain('from chapters c');
         expect(params?.[0]).toBe('missing_book');

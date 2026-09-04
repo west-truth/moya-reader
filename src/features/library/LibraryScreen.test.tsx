@@ -288,6 +288,29 @@ describe('LibraryScreen', () => {
     expect(markup).not.toContain('읽을 파일을 책장에 추가하세요');
   });
 
+  it('does not render a committed release task as a failed library card', () => {
+    const markup = renderToStaticMarkup(
+      <LibraryScreen
+        model={model([], {
+          importTasks: [
+            {
+              id: 'task-complete',
+              batchId: 'batch-1',
+              source: 'external_source',
+              title: '저장된 회차',
+              fileName: '1화',
+              phase: 'complete',
+            },
+          ],
+        })}
+        actions={actions()}
+      />,
+    );
+
+    expect(markup).not.toContain('import-task-card');
+    expect(markup).not.toContain('is-failed');
+  });
+
   it('distinguishes loading and failed bootstrap states from an empty library', () => {
     const screenActions = actions();
     const loadingMarkup = renderToStaticMarkup(

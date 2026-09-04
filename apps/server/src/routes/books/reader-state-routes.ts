@@ -3,7 +3,6 @@ import pg from 'pg';
 import type { ServerConfig } from '../../config.js';
 import { defaultSettings } from '../../../../../src/repositories/reader-defaults';
 import { normalizeSelfHostIntegrationSettings } from '../../../../../src/integration-settings/self-host-integration-settings.js';
-import { hasBookChapterAccess } from './book-access-query.js';
 import {
   validateReadingPositionBody,
   validateReadingPositionDeleteBody,
@@ -23,19 +22,27 @@ export async function registerReaderStateRoutes(
       const parsed = validateReadingPositionBody(request.body);
       if (!parsed.ok) return reply.code(400).send({ error: parsed.error });
       const body = parsed.value;
-      if (!(await hasBookChapterAccess(pool, config, request.params.bookId, body.chapterId, body.documentSectionId))) {
-        return reply.code(404).send({ error: 'book or chapter not found' });
-      }
 
       const updatedAt = body.updatedAt;
       const positionResult = await pool.query(
         `
-          with position_write as (insert into reading_positions (
+          with book_write_lock as (
+            select pg_advisory_xact_lock(hashtextextended($1, 7319))
+          ),
+          requested_chapter as (
+            select c.id, c.book_id, c.document_section_id
+              from book_write_lock
+              join library_books b on b.id = $1 and b.user_id = $2 and b.deleted_at is null
+              join chapters c on c.book_id = b.id and c.id = $3
+             where $11::text is null or c.document_section_id = $11
+          ),
+          position_write as (insert into reading_positions (
             book_id, user_id, chapter_id, paragraph_id, paragraph_index, offset_in_paragraph,
             chapter_progress, scroll_top, device_id, updated_at
           )
-          select $1, $2, $3, $4, $5, $6, $7, $8, $9, $10::timestamptz
-          where not exists (
+          select chapter.book_id, $2, chapter.id, $4, $5, $6, $7, $8, $9, $10::timestamptz
+            from requested_chapter chapter
+           where not exists (
             select 1 from sync_events e where e.book_id = $1 and e.user_id = $2
               and e.type = 'reading_position_deleted' and e.created_at >= $10::timestamptz
           )
@@ -52,10 +59,9 @@ export async function registerReaderStateRoutes(
           returning updated_at),
           read_write as (
             insert into fixed_document_section_read_states (book_id, user_id, document_section_id, last_read_at)
-            select c.book_id, $2, coalesce(c.document_section_id, c.id), $10::timestamptz
-              from chapters c
-             where c.book_id = $1 and c.id = $3
-               and not exists (
+            select chapter.book_id, $2, coalesce(chapter.document_section_id, chapter.id), $10::timestamptz
+              from requested_chapter chapter
+             where not exists (
                  select 1 from sync_events e where e.book_id = $1 and e.user_id = $2
                    and e.type = 'reading_position_deleted' and e.created_at >= $10::timestamptz
                )
@@ -64,7 +70,8 @@ export async function registerReaderStateRoutes(
               where fixed_document_section_read_states.last_read_at < excluded.last_read_at
             returning document_section_id
           )
-          select exists(select 1 from position_write) as applied,
+          select exists(select 1 from requested_chapter) as chapter_found,
+                 exists(select 1 from position_write) as applied,
                  exists(select 1 from read_write) as read_applied
         `,
         [
@@ -78,8 +85,12 @@ export async function registerReaderStateRoutes(
           body.scrollTop ?? 0,
           body.deviceId,
           updatedAt,
+          body.documentSectionId ?? null,
         ],
       );
+      if (positionResult.rows[0]?.chapter_found !== true) {
+        return reply.code(404).send({ error: 'book or chapter not found' });
+      }
       const applied = positionResult.rows[0]?.applied === true;
       if (!applied && !positionResult.rows[0]?.read_applied) {
         return { ok: true, applied: false };
