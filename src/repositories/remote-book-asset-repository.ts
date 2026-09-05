@@ -286,9 +286,9 @@ export class RemoteBookAssetRepository implements BookAssetRepository {
     return this.client.removeBookCover(bookId, expectedMetadataRevision).then(() => undefined);
   }
 
-  async getEmbeddedResource(bookId: string, assetId: string) {
+  async getEmbeddedResource(bookId: string, assetId: string, signal?: AbortSignal) {
     try {
-      const result = await this.client.getBookResource(bookId, assetId);
+      const result = await this.client.getBookResource(bookId, assetId, signal);
       const pageIndexHeader = result.headers.get('x-page-index');
       return {
         metadata: {

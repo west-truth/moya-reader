@@ -18,7 +18,7 @@ import type {
   ApplyLabelCorrectionsCommandV2,
   ApplyLabelCorrectionsResultV2,
 } from '../providers/label-mutation-contract';
-import { ReadingPosition, SyncOutboxItem, SyncState } from '../sync/types';
+import { ReadingPosition, SyncOutboxItem, SyncOutboxQueryOptions, SyncState } from '../sync/types';
 import type { SyncEvent } from '../sync/types';
 import type {
   NativeAnalysisPromotionProvenance,
@@ -198,7 +198,7 @@ export interface NativeAnalysisWorkflowRepository {
 }
 
 export interface SyncRepository {
-  listSyncOutbox(status?: SyncOutboxItem['status']): Promise<SyncOutboxItem[]>;
+  listSyncOutbox(status?: SyncOutboxItem['status'], options?: SyncOutboxQueryOptions): Promise<SyncOutboxItem[]>;
   applyRemoteSyncEvents?(events: SyncEvent[]): Promise<void>;
   discardSyncOutboxItems?(ids: string[]): Promise<SyncState>;
   getSyncState(): Promise<SyncState>;

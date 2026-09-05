@@ -5,6 +5,7 @@ import type { LibraryBookView } from './library-screen-model';
 import type { LibraryExternalWorkView, LibraryScreenProps } from './library-screen-contract';
 import { LibraryReadingProgress } from './LibraryReadingProgress';
 import { BookCover } from './BookCover';
+import { VirtualizedLibraryCollection } from './VirtualizedLibraryCollection';
 import { importTaskIsActive, type ImportTaskView } from '../import/import-task-projection';
 import {
   LibraryImportTaskActions,
@@ -390,6 +391,80 @@ export function LibraryBookCollection(props: LibraryScreenProps) {
             (!query || [task.title, task.fileName].some((value) => value?.toLocaleLowerCase().includes(query))),
         )
       : [];
+  const items = [
+    ...standaloneTasks.map((task) => ({ kind: 'task' as const, key: `task:${task.id}`, task })),
+    ...externalWorks.map((work) => ({ kind: 'external' as const, key: `external:${work.id}`, work })),
+    ...props.model.collection.visibleBooks.map((book) => ({
+      kind: 'book' as const,
+      key: `book:${book.novel.id}`,
+      book,
+    })),
+  ];
+  if (items.length > 100) {
+    const renderItem = (index: number) => {
+      const item = items[index];
+      if (item.kind === 'task') {
+        return props.model.viewMode === 'grid' ? (
+          <LibraryImportTaskCard key={item.key} task={item.task} actions={props.actions} />
+        ) : (
+          <LibraryImportTaskListRow key={item.key} task={item.task} actions={props.actions} />
+        );
+      }
+      if (item.kind === 'external') {
+        return props.model.viewMode === 'grid' ? (
+          <ExternalWorkCard
+            key={item.key}
+            work={item.work}
+            actions={props.actions}
+            importTask={taskForExternalWork(item.work.id)}
+          />
+        ) : (
+          <ExternalWorkListRow
+            key={item.key}
+            work={item.work}
+            actions={props.actions}
+            importTask={taskForExternalWork(item.work.id)}
+          />
+        );
+      }
+      return props.model.viewMode === 'grid' ? (
+        <LibraryBookCard key={item.key} book={item.book} importTask={taskForBook(item.book.novel.id)} {...props} />
+      ) : (
+        <LibraryBookListRow key={item.key} book={item.book} importTask={taskForBook(item.book.novel.id)} {...props} />
+      );
+    };
+    return (
+      <>
+        {props.model.management.selectionMode && (
+          <p className="sr-only" role="status" aria-live="polite">
+            {props.model.management.selectedBookIds.size}권 선택됨
+          </p>
+        )}
+        <div className={props.model.viewMode === 'list' ? 'books-list library-virtual-list-shell' : undefined}>
+          {props.model.viewMode === 'list' && (
+            <div className="book-list-head">
+              <span>작품</span>
+              <span>전체 진행률</span>
+              <span>작업</span>
+            </div>
+          )}
+          <VirtualizedLibraryCollection
+            count={items.length}
+            viewMode={props.model.viewMode}
+            resetKey={JSON.stringify([
+              props.model.query,
+              props.model.filter,
+              props.model.sort,
+              props.model.viewMode,
+              props.model.management.activeShelfId,
+            ])}
+            itemKey={(index) => items[index].key}
+            renderItem={renderItem}
+          />
+        </div>
+      </>
+    );
+  }
   return (
     <>
       {props.model.management.selectionMode && (

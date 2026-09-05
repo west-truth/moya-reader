@@ -720,6 +720,28 @@
   align-items: start;
 }
 
+.library-virtual-collection {
+  position: relative;
+  overflow-anchor: none;
+}
+
+.library-virtual-row {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+}
+
+.books-list.library-virtual-collection,
+.books-list.library-virtual-row {
+  border: 0;
+  border-radius: 0;
+}
+
+.library-virtual-row.books-list .book-list-row {
+  border-top: 1px solid var(--border);
+}
+
 .book-card {
   position: relative;
   container-type: inline-size;

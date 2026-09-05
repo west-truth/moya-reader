@@ -9,6 +9,7 @@ import type {
   SyncEntityType,
   SyncEventType,
   SyncOutboxItem,
+  SyncOutboxQueryOptions,
   SyncState,
 } from '../sync/types';
 import { openReaderDb } from './reader-database';
@@ -307,8 +308,11 @@ export async function enqueueSyncEvent(
   return item;
 }
 
-export async function listSyncOutbox(status?: SyncOutboxItem['status']): Promise<SyncOutboxItem[]> {
-  return listSyncOutboxInDatabase(await openReaderDb(), status);
+export async function listSyncOutbox(
+  status?: SyncOutboxItem['status'],
+  options?: SyncOutboxQueryOptions,
+): Promise<SyncOutboxItem[]> {
+  return listSyncOutboxInDatabase(await openReaderDb(), status, options);
 }
 
 async function queuedSyncCount(): Promise<number> {

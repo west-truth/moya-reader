@@ -64,7 +64,7 @@ import {
 import type { BulkParagraphPageRequest } from './reader-repository';
 import type { ReaderSearchPage, ReaderSearchPageRequest } from './reader-query-contract';
 import { throwIfReaderSearchAborted } from './reader-query-contract';
-import { ReadingPosition, SyncEvent, SyncOutboxItem, SyncState } from '../sync/types';
+import { ReadingPosition, SyncEvent, SyncOutboxItem, SyncOutboxQueryOptions, SyncState } from '../sync/types';
 import type { CharacterRelation } from '../providers/ai';
 import type {
   ApplyLabelCorrectionsCommandV2,
@@ -398,8 +398,8 @@ export class IndexedDbReaderRepository
     return storage.listNativeAnalysisProvenance(novelId);
   }
 
-  listSyncOutbox(status?: SyncOutboxItem['status']): Promise<SyncOutboxItem[]> {
-    return listSyncOutbox(status);
+  listSyncOutbox(status?: SyncOutboxItem['status'], options?: SyncOutboxQueryOptions): Promise<SyncOutboxItem[]> {
+    return listSyncOutbox(status, options);
   }
 
   applyRemoteSyncEvents(events: SyncEvent[]): Promise<void> {

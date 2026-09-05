@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { Paragraph, ReaderAnchor, ReaderPageBoundary } from '../../domain/types';
 import {
+  adjacentChapterPrefetchPages,
   bestFittingTextEnd,
   fragmentText,
   LruMap,
@@ -35,6 +36,31 @@ function anchor(offset: number): ReaderAnchor {
 }
 
 describe('reader sentence pagination model', () => {
+  it('caps adjacent chapter prefetch at the two pages nearest each chapter boundary', () => {
+    const chapters = [
+      { id: 'unrelated', index: 1, paragraphCount: 60_000 },
+      { id: 'previous', index: 2, paragraphCount: 60_000 },
+      { id: 'current', index: 3, paragraphCount: 120 },
+      { id: 'next', index: 4, paragraphCount: 60_000 },
+    ];
+    expect(adjacentChapterPrefetchPages(chapters, 3, 120)).toEqual([
+      { chapterId: 'previous', pageIndex: 499 },
+      { chapterId: 'previous', pageIndex: 498 },
+      { chapterId: 'next', pageIndex: 0 },
+      { chapterId: 'next', pageIndex: 1 },
+    ]);
+    expect(
+      adjacentChapterPrefetchPages(
+        [
+          { id: 'previous', index: 2, paragraphCount: 0 },
+          { id: 'next', index: 4, paragraphCount: 1 },
+        ],
+        3,
+        120,
+      ),
+    ).toEqual([{ chapterId: 'next', pageIndex: 0 }]);
+  });
+
   it('offers sentence ends and reconstructs exact source fragments', () => {
     const ends = sentenceEnds(paragraph.text, 0);
     expect(ends).toHaveLength(2);

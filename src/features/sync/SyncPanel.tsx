@@ -47,7 +47,11 @@ export default function SyncPanel({ data, actions }: SyncPanelProps) {
   });
   const outboxSummary = useMemo(() => summarizeSyncOutbox([...data.syncOutbox]), [data.syncOutbox]);
   const aiTtsSummary = useMemo(() => summarizeAiTtsSyncConflicts([...data.syncOutbox]), [data.syncOutbox]);
-  const groups = useMemo(() => summarizeAiTtsSyncConflictGroups([...data.syncOutbox]), [data.syncOutbox]);
+  const detailsComplete = !data.outboxDetailsTruncated && !data.outboxDetailsLoading && !data.outboxDetailsError;
+  const groups = useMemo(
+    () => (detailsComplete ? summarizeAiTtsSyncConflictGroups([...data.syncOutbox]) : []),
+    [data.syncOutbox, detailsComplete],
+  );
   const groupsWithSnapshots = groups.map((group) => {
     const snapshotState = remoteSnapshots[group.key];
     if (snapshotState?.status !== 'ready') return group;
@@ -103,11 +107,11 @@ export default function SyncPanel({ data, actions }: SyncPanelProps) {
     state: data.syncState,
   });
   const activeOutbox = data.syncOutbox.filter((item) => item.status !== 'sent').slice(0, 8);
+  const totalQueuedCount = data.syncState?.pendingCount ?? outboxSummary.unsentCount;
   const visibleItems = aiTtsSummary.items.slice(0, 4);
-  const conflictDescription = syncConfigured
-    ? syncConflictResolutionDescription(data.syncState, outboxSummary)
-    : undefined;
-  const aiTtsDescription = syncConfigured ? aiTtsSyncConflictDescription(aiTtsSummary) : undefined;
+  const conflictDescription =
+    syncConfigured && detailsComplete ? syncConflictResolutionDescription(data.syncState, outboxSummary) : undefined;
+  const aiTtsDescription = syncConfigured && detailsComplete ? aiTtsSyncConflictDescription(aiTtsSummary) : undefined;
 
   return (
     <div className="settings-layer">
@@ -158,6 +162,22 @@ export default function SyncPanel({ data, actions }: SyncPanelProps) {
               </div>
             </dl>
             {syncConfigured && data.syncState?.lastError && <p className="sync-error">{data.syncState.lastError}</p>}
+            {data.outboxDetailsLoading && <p role="status">변경 대기열을 불러오는 중...</p>}
+            {data.outboxDetailsError && (
+              <p className="sync-error">대기열을 불러오지 못했습니다: {data.outboxDetailsError}</p>
+            )}
+            {(data.outboxDetailsTruncated || data.outboxDetailsError) && (
+              <div className="sync-conflict-card">
+                <span>대기열 일부를 표시합니다. AI/TTS 변경을 묶음으로 검토하려면 전체 대기열을 불러오세요.</span>
+                <button
+                  className="ghost-btn"
+                  onClick={() => void actions.loadCompleteOutbox?.()}
+                  disabled={data.outboxDetailsLoading}
+                >
+                  전체 대기열 불러오기
+                </button>
+              </div>
+            )}
             {conflictDescription && (
               <div className="sync-conflict-card">
                 <strong>충돌 대기열</strong>
@@ -469,11 +489,15 @@ export default function SyncPanel({ data, actions }: SyncPanelProps) {
             <h3>대기 중인 변경</h3>
             {activeOutbox.length === 0 ? (
               <p className="empty-panel">
-                {data.mode === 'remote'
-                  ? '호스팅 서버 모드에서는 변경이 즉시 API에 저장됩니다.'
-                  : syncConfigured
-                    ? '전송 대기 중인 로컬 변경이 없습니다.'
-                    : '서버에 연결하지 않아도 독서 기록은 이 기기에 저장됩니다.'}
+                {data.outboxDetailsLoading
+                  ? '변경 대기열을 불러오는 중입니다.'
+                  : data.outboxDetailsError
+                    ? '변경 대기열을 다시 불러와 주세요.'
+                    : data.mode === 'remote'
+                      ? '호스팅 서버 모드에서는 변경이 즉시 API에 저장됩니다.'
+                      : syncConfigured
+                        ? '전송 대기 중인 로컬 변경이 없습니다.'
+                        : '서버에 연결하지 않아도 독서 기록은 이 기기에 저장됩니다.'}
               </p>
             ) : (
               <div className="sync-event-list">
@@ -505,9 +529,9 @@ export default function SyncPanel({ data, actions }: SyncPanelProps) {
                     </div>
                   </div>
                 ))}
-                {outboxSummary.unsentCount > activeOutbox.length && (
+                {totalQueuedCount > activeOutbox.length && (
                   <p className="sync-event-overflow">
-                    그 외 대기열 {formatCount(outboxSummary.unsentCount - activeOutbox.length)}개는 동기화 시 순서대로
+                    그 외 대기열 {formatCount(totalQueuedCount - activeOutbox.length)}개는 동기화 시 순서대로
                     처리됩니다.
                   </p>
                 )}

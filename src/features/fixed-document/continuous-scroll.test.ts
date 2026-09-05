@@ -30,6 +30,39 @@ describe('continuous comic scroll stability', () => {
     expect(shouldAnchorContinuousPageResize(799, 800, true)).toBe(false);
   });
 
+  it('keeps the reading anchor inside a long webtoon page until the next page is visible', () => {
+    const pages = [
+      { index: 0, start: 0, size: 10_000 },
+      { index: 1, start: 10_032, size: 500 },
+    ];
+    expect(continuousPageNearestViewportCenter(pages, 7500, 650)).toBe(0);
+    expect(continuousPageNearestViewportCenter(pages, 10_000, 650)).toBe(1);
+    const shortThenLong = [
+      { index: 0, start: 0, size: 500 },
+      { index: 1, start: 532, size: 10_000 },
+    ];
+    expect(continuousPageNearestViewportCenter(shortThenLong, 600, 650)).toBe(1);
+  });
+
+  it('uses the nearest page edge in padding and selects the following page at a shared boundary', () => {
+    const pages = [
+      { index: 0, start: 0, size: 10_000 },
+      { index: 1, start: 10_040, size: 500 },
+    ];
+    expect(continuousPageNearestViewportCenter(pages, 9_710, 600)).toBe(0);
+    expect(continuousPageNearestViewportCenter(pages, 9_730, 600)).toBe(1);
+    expect(
+      continuousPageNearestViewportCenter(
+        [
+          { index: 0, start: 0, size: 600 },
+          { index: 1, start: 600, size: 500 },
+        ],
+        300,
+        600,
+      ),
+    ).toBe(1);
+  });
+
   it('matches the reader fit constraints before an image is mounted', () => {
     const viewport = { viewportWidth: 1_118, viewportHeight: 628, zoom: 1 };
     const portrait = { width: 690, height: 1_600 };

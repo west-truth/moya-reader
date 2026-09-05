@@ -55,7 +55,6 @@ export interface ProgressPersistenceTimer {
  * can commit the last debounced position before the reader disappears.
  */
 export class DebouncedProgressPersistence<T> {
-  private readonly persistence = new SerializedProgressPersistence();
   private pending?: T;
   private hasPending = false;
   private timerHandle?: number;
@@ -64,6 +63,7 @@ export class DebouncedProgressPersistence<T> {
     private readonly timer: ProgressPersistenceTimer,
     private readonly delayMs: number,
     private readonly persist: (value: T) => Promise<void>,
+    private readonly persistence = new SerializedProgressPersistence(),
   ) {}
 
   schedule(value: T): void {
@@ -74,6 +74,13 @@ export class DebouncedProgressPersistence<T> {
       this.timerHandle = undefined;
       void this.flush();
     }, this.delayMs);
+  }
+
+  cancel(): void {
+    if (this.timerHandle !== undefined) this.timer.clear(this.timerHandle);
+    this.timerHandle = undefined;
+    this.pending = undefined;
+    this.hasPending = false;
   }
 
   flush(): Promise<void> {

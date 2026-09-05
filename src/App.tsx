@@ -106,6 +106,8 @@ import {
   WEBNOVEL_METADATA_ENRICHMENT_PROVIDER_ID,
 } from './extensions/builtin/webnovel-metadata-enrichment-extension';
 import type { SyncConnectionTestState } from './features/sync/sync-panel-contract';
+import { useSyncOutboxDetails } from './features/sync/useSyncOutboxDetails';
+import { mayHaveQueuedProviderMetadata } from './sync/outbox-queries';
 import {
   acceptRemoteSyncState as acceptRemoteSyncStateMutation,
   applyAiTtsRemoteSnapshotGroup as applyAiTtsRemoteSnapshotMutation,
@@ -263,7 +265,6 @@ import {
   REMOTE_AUTO_REFRESH_INTERVAL_MS,
   shouldRunRemoteAutoRefresh,
   type AiTtsSyncConflictGroup,
-  summarizeAiTtsSyncConflicts,
   syncStatusLabel,
   syncStatusTone,
 } from './sync/sync-ui';
@@ -546,9 +547,13 @@ export default function App() {
     status: 'loading' | 'ready' | 'failed';
     message?: string;
   }>({ status: 'loading' });
-  const [syncOutbox, setSyncOutbox] = useState<SyncOutboxItem[]>([]);
   const [cloudVaultMutationRevisions, setCloudVaultMutationRevisions] = useState(initialCloudVaultMutationRevisions);
   const [syncPanelOpen, setSyncPanelOpen] = useState(false);
+  const syncOutboxDetails = useSyncOutboxDetails(
+    readerRepository,
+    syncPanelOpen,
+    `${syncState?.updatedAt}:${syncState?.nextSequence}:${syncState?.pendingCount}`,
+  );
   const [syncFlushing, setSyncFlushing] = useState(false);
   const [syncApiBaseUrlDraft, setSyncApiBaseUrlDraft] = useState(
     () => getStoredSyncApiBaseUrl() || readerRuntime.apiBaseUrl || '',
@@ -1125,7 +1130,6 @@ export default function App() {
       setCharacters,
       setVoiceProfiles,
       setSyncState,
-      setSyncOutbox,
       setSyncFlushing,
       setActiveChapterId: (id) => {
         activeChapterIdRef.current = id;
@@ -1592,7 +1596,6 @@ export default function App() {
         currentChapterId: expectedChapterId,
       });
       setSyncState(result.state);
-      setSyncOutbox(result.outbox);
       setNovels(result.novels);
       const selectionStillCurrent =
         activeNovelIdRef.current === expectedNovelId && activeChapterIdRef.current === expectedChapterId;
@@ -1656,7 +1659,6 @@ export default function App() {
 
       const result = await discardSyncOutboxIds({ repository: readerRepository, ids: [item.id] });
       setSyncState(result.state);
-      setSyncOutbox(result.outbox);
       showToast('로컬 동기화 변경 1개를 폐기했습니다.', 'info');
     },
     [readerRepository, showToast],
@@ -1676,7 +1678,6 @@ export default function App() {
         ids: discardableItems.map((item) => item.id),
       });
       setSyncState(result.state);
-      setSyncOutbox(result.outbox);
       showToast(`${label} 동기화 변경 ${formatCount(discardableItems.length)}개를 지웠습니다.`, 'info');
     },
     [readerRepository, showToast],
@@ -1685,7 +1686,6 @@ export default function App() {
   const commitAiTtsSyncMutation = useCallback(
     (result: AiTtsSyncMutationResult, expectedNovelId: string | undefined, expectedChapterId: string | undefined) => {
       setSyncState(result.state);
-      setSyncOutbox(result.outbox);
       if (result.artifactReload.status === 'loaded' && activeNovelIdRef.current === expectedNovelId) {
         setCharacters(result.artifactReload.characters);
         setVoiceProfiles(result.artifactReload.voiceProfiles);
@@ -1832,22 +1832,20 @@ export default function App() {
     try {
       await runGuardedAppBootstrap(context, {
         load: async () => {
-          const [settings, activeNovels, trashNovels, state, outbox, ttsStatus, voiceList] = await Promise.all([
+          const [settings, activeNovels, trashNovels, state, ttsStatus, voiceList] = await Promise.all([
             readerRepository.getSettings(),
             readerRepository.listNovels(),
             libraryCatalogRepository?.listTrash() ?? Promise.resolve([]),
             readerRepository.getSyncState(),
-            readerRepository.listSyncOutbox(),
             systemTTS.getStatus(),
             systemTTS.listVoices(),
           ]);
-          return { settings, novels: [...activeNovels, ...trashNovels], state, outbox, ttsStatus, voiceList };
+          return { settings, novels: [...activeNovels, ...trashNovels], state, ttsStatus, voiceList };
         },
-        commit: ({ settings, novels, state, outbox, ttsStatus, voiceList }) => {
+        commit: ({ settings, novels, state, ttsStatus, voiceList }) => {
           setReaderSettings(settings);
           setNovels(novels);
           setSyncState(state);
-          setSyncOutbox(outbox);
           setTTSStatus(ttsStatus);
           setVoices(voiceList);
         },
@@ -1863,7 +1861,6 @@ export default function App() {
       if (readerRuntime.mode === 'remote') {
         const failedState = connectedSyncFailureState(message);
         setSyncState(failedState);
-        setSyncOutbox([]);
         showToast('서버 인증 또는 연결 상태를 확인하세요.', 'warning');
       } else {
         showToast('초기 데이터를 불러오지 못했습니다.', 'danger');
@@ -2533,8 +2530,10 @@ export default function App() {
     !activeBookAIWorkflow ||
     !bookAIWorkflowLabelVoiceReady ||
     bookAIWorkflowLoading;
-  const aiTtsSyncSummary = summarizeAiTtsSyncConflicts(syncOutbox);
-  const connectedProviderLocalMetadataPending = Boolean(syncService && aiTtsSyncSummary.unsentCount > 0);
+  const syncPendingProviderMetadata = async (): Promise<boolean> =>
+    !syncService ||
+    !(await mayHaveQueuedProviderMetadata(readerRepository)) ||
+    (await syncConnectedProviderState('before_job'));
   const syncUiState = readerRuntime.mode === 'remote' || syncService ? syncState : undefined;
   const cloudVaultProviderName = cloudVault.providerKind === 'dropbox' ? 'Dropbox' : '로컬 폴더';
   const syncLabel =
@@ -3929,7 +3928,7 @@ export default function App() {
       return;
     }
     if (!playable || !paragraph || !providerApiClient || !currentChapter || !hostedTTSPlaybackReady) return;
-    if (connectedProviderLocalMetadataPending) return;
+    if (syncService && (await mayHaveQueuedProviderMetadata(readerRepository))) return;
     if (!ttsExecutionController.isSessionCurrent(sessionId)) return;
     const { buildHostedTTSCacheRequest } = await import('./providers/hosted-tts-playback');
     const cacheRequest = buildHostedTTSCacheRequest({
@@ -4064,9 +4063,7 @@ export default function App() {
     if (
       !options.skipConnectedPreflight &&
       !(await runConnectedProviderPreflight({
-        syncBeforeJob: connectedProviderLocalMetadataPending
-          ? () => syncConnectedProviderState('before_job')
-          : undefined,
+        syncBeforeJob: syncPendingProviderMetadata,
         targetStillActive: () => connectedProviderTargetStillActive(paragraph.novelId, paragraph.chapterId),
         ensureAttached: () => ensureConnectedProviderServerBookAttached(paragraph.novelId, [paragraph.chapterId]),
       }))
@@ -4273,9 +4270,7 @@ export default function App() {
     const sourceChapters = warmupHostedTTSChapters(scope);
     if (
       !(await runConnectedProviderPreflight({
-        syncBeforeJob: connectedProviderLocalMetadataPending
-          ? () => syncConnectedProviderState('before_job')
-          : undefined,
+        syncBeforeJob: syncPendingProviderMetadata,
         targetStillActive: () => connectedProviderTargetStillActive(currentChapter.novelId, currentChapter.id),
         ensureAttached: () =>
           ensureConnectedProviderServerBookAttached(
@@ -4944,9 +4939,7 @@ export default function App() {
       !desktopProviderMode &&
       (!providerApiClient ||
         !(await runConnectedProviderPreflight({
-          syncBeforeJob: connectedProviderLocalMetadataPending
-            ? () => syncConnectedProviderState('before_job')
-            : undefined,
+          syncBeforeJob: syncPendingProviderMetadata,
           targetStillActive: () => connectedProviderTargetStillActive(selectedNovel.id, currentChapter.id),
           ensureAttached: () => ensureConnectedProviderServerBookAttached(selectedNovel.id, targetChapterIds),
         })))
@@ -5245,9 +5238,7 @@ export default function App() {
         ),
       ];
       hostedFixedDocumentReady = await runConnectedProviderPreflight({
-        syncBeforeJob: connectedProviderLocalMetadataPending
-          ? () => syncConnectedProviderState('before_job')
-          : undefined,
+        syncBeforeJob: syncPendingProviderMetadata,
         targetStillActive: () => connectedProviderTargetStillActive(selectedNovel.id, currentChapter.id),
         ensureAttached: () => ensureConnectedProviderServerBookAttached(selectedNovel.id, chapterIds),
       });
@@ -6242,7 +6233,10 @@ export default function App() {
               mode: readerRuntime.mode,
               apiBaseUrl: readerRuntime.apiBaseUrl,
               syncState,
-              syncOutbox,
+              syncOutbox: syncOutboxDetails.items,
+              outboxDetailsTruncated: syncOutboxDetails.truncated,
+              outboxDetailsLoading: syncOutboxDetails.loading,
+              outboxDetailsError: syncOutboxDetails.error,
               syncFlushing,
               syncServiceConnected: Boolean(syncService),
               remoteReadingPosition,
@@ -6262,6 +6256,7 @@ export default function App() {
             }}
             actions={{
               close: () => setSyncPanelOpen(false),
+              loadCompleteOutbox: syncOutboxDetails.loadComplete,
               retry: retrySyncNow,
               acceptRemoteState: acceptRemoteSyncState,
               goToRemoteReadingPosition,

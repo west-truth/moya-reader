@@ -102,7 +102,7 @@ export function useReaderSearch(options: ReaderSearchOptions): ReaderSearchContr
   optionsRef.current = options;
   const { repository, notify } = options;
   const novelId = options.novel.id;
-  const chapterId = options.chapter.id;
+  const chapterId = scope === 'chapter' ? options.chapter.id : '';
 
   const invalidateSearch = useCallback(() => {
     requestGenerationRef.current += 1;

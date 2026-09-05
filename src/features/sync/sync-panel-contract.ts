@@ -18,6 +18,9 @@ export interface SyncPanelData {
   readonly apiBaseUrl?: string;
   readonly syncState?: SyncState;
   readonly syncOutbox: readonly SyncOutboxItem[];
+  readonly outboxDetailsTruncated?: boolean;
+  readonly outboxDetailsLoading?: boolean;
+  readonly outboxDetailsError?: string;
   readonly syncFlushing: boolean;
   readonly syncServiceConnected: boolean;
   readonly remoteReadingPosition?: ReadingPosition;
@@ -38,6 +41,7 @@ export interface SyncPanelData {
 
 export interface SyncPanelActions {
   readonly close: () => void;
+  readonly loadCompleteOutbox?: () => void | Promise<void>;
   readonly retry: () => void | Promise<void>;
   readonly acceptRemoteState: () => void | Promise<void>;
   readonly goToRemoteReadingPosition: () => void | Promise<void>;

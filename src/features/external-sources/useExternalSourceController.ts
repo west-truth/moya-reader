@@ -724,11 +724,13 @@ export function useExternalSourceController(options: UseExternalSourceController
           optionsRef.current.notify('외부 저장소를 새로고치지 못해 마지막 목록을 표시합니다.', 'warning');
           return true;
         } else {
-          setRawItems([]);
-          if (!append) setDetail(undefined);
-          if (!append) setBrowse(undefined);
-          setNextCursor(undefined);
-          setStale(false);
+          if (!append) {
+            setRawItems([]);
+            setDetail(undefined);
+            setBrowse(undefined);
+            setNextCursor(undefined);
+            setStale(false);
+          }
           if (notifyFailure) {
             optionsRef.current.notify(
               error instanceof Error ? error.message : '외부 저장소 목록을 불러오지 못했습니다.',

@@ -124,6 +124,14 @@ import {
   type ContinuousImageDimensions,
 } from './continuous-scroll';
 import { projectFixedDocumentSections } from './fixed-document-sections';
+import { useArchivePageImages } from './use-archive-page-images';
+import {
+  fixedDocumentPanAxis,
+  handleFixedDocumentKeyDown,
+  isFixedDocumentInteractiveTarget,
+  parseFixedDocumentPageDraft,
+  type FixedDocumentPanAxis,
+} from './fixed-document-input';
 import './fixed-document.css';
 
 GlobalWorkerOptions.workerSrc = pdfWorkerUrl;
@@ -131,12 +139,6 @@ GlobalWorkerOptions.workerSrc = pdfWorkerUrl;
 type FitMode = ComicReadingProfile['fit'];
 type ViewMode = ComicViewMode;
 type PdfTextPageState = 'ready' | 'ocr_candidate' | 'failed';
-
-interface LoadedArchivePage {
-  readonly index: number;
-  readonly blob: Blob;
-  readonly hint?: ComicPageLayoutHint;
-}
 
 const documentTextRepository = new IndexedDbDocumentTextRepository();
 const documentAnnotationRepository = new IndexedDbDocumentAnnotationRepository();
@@ -330,7 +332,7 @@ function PdfThumbnailPreview({
 
 function ArchiveThumbnailPreview({
   bookId,
-  sourceHash,
+  sourceRevision,
   chapterId,
   pageIndex,
   repository,
@@ -338,7 +340,7 @@ function ArchiveThumbnailPreview({
   onPageHint,
 }: {
   readonly bookId: string;
-  readonly sourceHash: string;
+  readonly sourceRevision: string;
   readonly chapterId: string;
   readonly pageIndex: number;
   readonly repository: ReaderRepository;
@@ -350,7 +352,7 @@ function ArchiveThumbnailPreview({
     const controller = new AbortController();
     let objectUrl: string | undefined;
     void (async () => {
-      const paragraphPage = await repository.getParagraphPage(chapterId, 0);
+      const paragraphPage = await repository.getParagraphPage(chapterId, 0, controller.signal);
       const paragraph = paragraphPage?.paragraphs[0];
       if (paragraph?.documentPageType !== undefined || paragraph?.documentPageDouble !== undefined) {
         onPageHint(pageIndex, {
@@ -360,12 +362,12 @@ function ArchiveThumbnailPreview({
       }
       const assetId = paragraph?.assetId;
       if (!assetId) throw new Error('이미지 페이지 정보를 찾을 수 없습니다.');
-      const pageHash = archiveThumbnailPageHash(sourceHash, assetId, pageIndex);
+      const pageHash = archiveThumbnailPageHash(assetId, pageIndex);
       const renderFingerprint = archiveThumbnailFingerprint();
       const cached = await getDocumentThumbnail({ bookId, pageIndex, pageHash, renderFingerprint });
       let blob = cached?.blob;
       if (!blob) {
-        const resource = await assets.getEmbeddedResource(bookId, assetId);
+        const resource = await assets.getEmbeddedResource(bookId, assetId, controller.signal);
         if (!resource) throw new Error('이미지 페이지를 찾을 수 없습니다.');
         const rendered = await renderArchiveThumbnail(resource.blob, controller.signal);
         blob = rendered.blob;
@@ -389,7 +391,7 @@ function ArchiveThumbnailPreview({
       controller.abort();
       if (objectUrl) URL.revokeObjectURL(objectUrl);
     };
-  }, [assets, bookId, chapterId, onPageHint, pageIndex, repository, sourceHash]);
+  }, [assets, bookId, chapterId, onPageHint, pageIndex, repository, sourceRevision]);
   return url ? <img src={url} alt="" draggable={false} /> : <span>{pageIndex + 1}</span>;
 }
 
@@ -679,10 +681,7 @@ export default function FixedDocumentScreen({
   const [rotation, setRotation] = useState(0);
   const [pdf, setPdf] = useState<PDFDocumentProxy>();
   const [pdfPages, setPdfPages] = useState<Map<number, PDFPageProxy>>(() => new Map());
-  const [imageUrls, setImageUrls] = useState<Map<number, string>>(() => new Map());
-  const imageUrlsRef = useRef<Map<number, string>>(new Map());
   const [imageDimensions, setImageDimensions] = useState<Map<number, ContinuousImageDimensions>>(() => new Map());
-  const archiveImageLoadsRef = useRef(new Map<string, Promise<LoadedArchivePage>>());
   const [status, setStatus] = useState<'loading' | 'ready' | 'failed'>('loading');
   const [errorMessage, setErrorMessage] = useState('');
   const viewportRef = useRef<HTMLElement>(null);
@@ -694,6 +693,7 @@ export default function FixedDocumentScreen({
   const pendingContinuousPageRef = useRef<number>();
   const [focalRestoreRevision, setFocalRestoreRevision] = useState(0);
   const pointerStartRef = useRef<{ x: number; y: number; at: number; immersiveEligible: boolean }>();
+  const pointerPanAxisRef = useRef<FixedDocumentPanAxis>();
   const suppressViewportClickRef = useRef(false);
   const activePointersRef = useRef(new Map<number, { x: number; y: number }>());
   const pinchRef = useRef<{
@@ -993,8 +993,29 @@ export default function FixedDocumentScreen({
     return new Set(wanted.filter((index) => index >= currentDocumentSection.startPageIndex && index < sectionEnd));
   }, [continuousView, currentDocumentSection, displayedPageKey, pageIndex, totalPages]);
 
+  const archiveImages = useArchivePageImages({
+    enabled: novel.format === 'image_archive',
+    bookId: novel.id,
+    sourceRevision: novel.activeContentRevisionId ?? novel.sourceContentHash ?? novel.rawTextHash,
+    chapters: sortedChapters,
+    currentPage: pageIndex,
+    wantedPages: imageWantedPageIndexes,
+    repository,
+    assets,
+  });
+  const archiveError = archiveImages.errors.get(pageIndex);
+  const documentStatus =
+    novel.format === 'image_archive'
+      ? archiveError
+        ? 'failed'
+        : archiveImages.pages.has(pageIndex)
+          ? 'ready'
+          : 'loading'
+      : status;
+
   const goToPage = useCallback(
     (next: number) => {
+      if (!Number.isFinite(next)) return;
       const normalized = clampPage(next, totalPages);
       setPageIndex(normalized);
       setPageDraft(String(normalized + 1));
@@ -1208,7 +1229,6 @@ export default function FixedDocumentScreen({
     const pageCount = isPdf ? (pdfDocument?.numPages ?? 0) : totalPages;
     const controller = new AbortController();
     const renderFingerprint = isPdf ? pdfThumbnailFingerprint() : archiveThumbnailFingerprint();
-    const archiveSourceHash = novel.sourceContentHash ?? novel.rawTextHash;
     const archiveIdentities = new Map<number, Promise<{ assetId: string; pageHash: string }>>();
     const resolveArchiveIdentity = (index: number) => {
       const existing = archiveIdentities.get(index);
@@ -1220,7 +1240,7 @@ export default function FixedDocumentScreen({
         if (!assetId) throw new Error(`${index + 1}페이지 이미지 정보를 찾을 수 없습니다.`);
         return {
           assetId,
-          pageHash: archiveThumbnailPageHash(archiveSourceHash, assetId, index),
+          pageHash: archiveThumbnailPageHash(assetId, index),
         };
       })();
       archiveIdentities.set(index, task);
@@ -2003,164 +2023,56 @@ export default function FixedDocumentScreen({
   }, [pageIndex, wantedPageIndexes]);
 
   useEffect(() => {
-    if (novel.format !== 'image_archive') return;
-    let active = true;
-    const wanted = new Set([...imageWantedPageIndexes].filter((value) => value >= 0 && value < totalPages));
-    const missing = [...wanted].filter((index) => !imageUrlsRef.current.has(index));
-    if (missing.length === 0) {
-      setStatus('ready');
-      return;
-    }
-    setStatus('loading');
-    void Promise.all(
-      missing.map((index) => {
-        const loadKey = `${novel.id}:${index}`;
-        const existing = archiveImageLoadsRef.current.get(loadKey);
-        if (existing) return existing;
-        const pending = (async (): Promise<LoadedArchivePage> => {
-          const chapter = sortedChapters[index];
-          const paragraphPage = chapter ? await repository.getParagraphPage(chapter.id, 0) : undefined;
-          const paragraph = paragraphPage?.paragraphs[0];
-          const assetId = paragraph?.assetId;
-          const resource = assetId ? await assets.getEmbeddedResource(novel.id, assetId) : undefined;
-          if (!resource) throw new Error(`${index + 1}페이지 이미지를 찾을 수 없습니다.`);
-          return {
-            index,
-            blob: resource.blob,
-            ...(paragraph?.documentPageType !== undefined || paragraph?.documentPageDouble !== undefined
-              ? {
-                  hint: {
-                    type: paragraph.documentPageType,
-                    doublePage: paragraph.documentPageDouble,
-                  },
-                }
-              : {}),
-          };
-        })();
-        archiveImageLoadsRef.current.set(loadKey, pending);
-        void pending.then(
-          () => {
-            if (archiveImageLoadsRef.current.get(loadKey) === pending) archiveImageLoadsRef.current.delete(loadKey);
-          },
-          () => {
-            if (archiveImageLoadsRef.current.get(loadKey) === pending) archiveImageLoadsRef.current.delete(loadKey);
-          },
-        );
-        return pending;
-      }),
-    )
-      .then((loaded) => {
-        if (!active) return;
-        const hints = loaded.filter((page): page is LoadedArchivePage & { hint: ComicPageLayoutHint } =>
-          Boolean(page.hint),
-        );
-        if (hints.length > 0) {
-          setComicPageHints((previous) => {
-            const next = new Map(previous);
-            let changed = false;
-            for (const page of hints) {
-              const current = next.get(page.index);
-              if (current?.type === page.hint.type && current?.doublePage === page.hint.doublePage) continue;
-              next.set(page.index, page.hint);
-              changed = true;
-            }
-            return changed ? next : previous;
-          });
-        }
-        setImageUrls((previous) => {
-          const next = new Map(previous);
-          let changed = false;
-          for (const page of loaded) {
-            if (next.has(page.index)) continue;
-            next.set(page.index, URL.createObjectURL(page.blob));
-            changed = true;
-          }
-          if (!changed) return previous;
-          imageUrlsRef.current = next;
-          return next;
-        });
-        setStatus('ready');
-      })
-      .catch((error) => {
-        if (!active) return;
-        setErrorMessage(error instanceof Error ? error.message : '이미지 페이지를 열지 못했습니다.');
-        setStatus('failed');
-      });
-    return () => {
-      active = false;
-    };
-  }, [assets, imageWantedPageIndexes, novel.format, novel.id, repository, sortedChapters, totalPages]);
-
-  useEffect(() => {
-    setImageUrls((previous) => {
-      if (previous.size <= 20) return previous;
+    setComicPageHints((previous) => {
       const next = new Map(previous);
-      for (const [index, url] of previous) {
-        if (imageWantedPageIndexes.has(index)) continue;
-        URL.revokeObjectURL(url);
-        next.delete(index);
+      let changed = false;
+      for (const [index, page] of archiveImages.pages) {
+        if (!page.hint) continue;
+        const current = next.get(index);
+        if (current?.type === page.hint.type && current?.doublePage === page.hint.doublePage) continue;
+        next.set(index, page.hint);
+        changed = true;
       }
-      imageUrlsRef.current = next;
-      return next;
+      return changed ? next : previous;
     });
-  }, [imageWantedPageIndexes]);
+  }, [archiveImages.pages]);
 
   useEffect(
     () => () => {
       comicCropControllerRef.current?.abort();
       if (viewportScrollFrameRef.current !== undefined) cancelAnimationFrame(viewportScrollFrameRef.current);
-      imageUrlsRef.current.forEach((url) => URL.revokeObjectURL(url));
-      imageUrlsRef.current.clear();
     },
     [],
   );
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
-      if (
-        event.target instanceof HTMLInputElement ||
-        event.target instanceof HTMLSelectElement ||
-        event.target instanceof HTMLTextAreaElement ||
-        (event.target instanceof Element && event.target.closest('[contenteditable="true"]'))
-      )
-        return;
-      const rtlComic = novel.format === 'image_archive' && comicProfile.direction === 'rtl';
-      if (event.key === 'ArrowLeft') {
-        event.preventDefault();
-        turnPage(rtlComic ? 1 : -1);
-      } else if (event.key === 'ArrowRight') {
-        event.preventDefault();
-        turnPage(rtlComic ? -1 : 1);
-      } else if (event.key === 'PageUp') {
-        event.preventDefault();
-        turnPage(-1);
-      } else if (event.key === 'PageDown' || event.key === ' ') {
-        event.preventDefault();
-        turnPage(1);
-      } else if (event.key.toLowerCase() === 'i') {
-        event.preventDefault();
-        toggleImmersive();
-      } else if (event.key.toLowerCase() === 'f') {
-        event.preventDefault();
-        void toggleFullscreen();
-      } else if (event.key === '+' || event.key === '=')
-        preserveFocalPoint(() => setZoom((value) => Math.min(3, value + 0.1)));
-      else if (event.key === '-') preserveFocalPoint(() => setZoom((value) => Math.max(0.5, value - 0.1)));
-      else if (event.key === 'Escape' && pendingRegionSelection) setPendingRegionSelection(undefined);
-      else if (event.key === 'Escape' && pendingTextSelection) setPendingTextSelection(undefined);
-      else if (event.key === 'Escape' && reanchorTargetId) {
-        setReanchorTargetId(undefined);
-        setSelectionMode(false);
-      } else if (event.key === 'Escape' && mobileThumbnailOpen) setMobileThumbnailOpen(false);
-      else if (event.key === 'Escape' && mobileMenuOpen) setMobileMenuOpen(false);
-      else if (event.key === 'Escape' && regionMode) setRegionMode(false);
-      else if (event.key === 'Escape' && readingOrderOpen) setReadingOrderOpen(false);
-      else if (event.key === 'Escape' && searchOpen) setSearchOpen(false);
-      else if (event.key === 'Escape' && annotationOpen) setAnnotationOpen(false);
-      else if (event.key === 'Escape' && comicSettingsOpen) setComicSettingsOpen(false);
-      else if (event.key === 'Escape' && listeningPreparationOpen) setListeningPreparationOpen(false);
-      else if (event.key === 'Escape' && immersive) setImmersive(false);
-      else if (event.key === 'Escape' && document.fullscreenElement) void document.exitFullscreen();
+      handleFixedDocumentKeyDown(event, {
+        rtl: novel.format === 'image_archive' && comicProfile.direction === 'rtl',
+        turnPage,
+        toggleImmersive,
+        toggleFullscreen: () => void toggleFullscreen(),
+        zoomBy: (delta) => preserveFocalPoint(() => setZoom((value) => Math.max(0.5, Math.min(3, value + delta)))),
+        dismiss: () => {
+          if (pendingRegionSelection) setPendingRegionSelection(undefined);
+          else if (pendingTextSelection) setPendingTextSelection(undefined);
+          else if (reanchorTargetId) {
+            setReanchorTargetId(undefined);
+            setSelectionMode(false);
+          } else if (mobileThumbnailOpen) setMobileThumbnailOpen(false);
+          else if (mobileMenuOpen) setMobileMenuOpen(false);
+          else if (regionMode) setRegionMode(false);
+          else if (readingOrderOpen) setReadingOrderOpen(false);
+          else if (searchOpen) setSearchOpen(false);
+          else if (annotationOpen) setAnnotationOpen(false);
+          else if (comicSettingsOpen) setComicSettingsOpen(false);
+          else if (listeningPreparationOpen) setListeningPreparationOpen(false);
+          else if (immersive) setImmersive(false);
+          else if (document.fullscreenElement) void toggleFullscreen();
+          else return false;
+          return true;
+        },
+      });
     };
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
@@ -2228,22 +2140,19 @@ export default function FixedDocumentScreen({
   });
 
   const pointerDown = (event: ReactPointerEvent<HTMLElement>) => {
-    if (selectionMode && event.target instanceof Element && event.target.closest('.fixed-doc-text-layer')) return;
+    if (isFixedDocumentInteractiveTarget(event.target)) return;
+    if (activePointersRef.current.size === 0) pointerPanAxisRef.current = undefined;
     event.currentTarget.setPointerCapture(event.pointerId);
     activePointersRef.current.set(event.pointerId, { x: event.clientX, y: event.clientY });
     pointerStartRef.current = {
       x: event.clientX,
       y: event.clientY,
       at: performance.now(),
-      immersiveEligible: !(
-        event.target instanceof Element &&
-        event.target.closest(
-          'a,button,input,select,textarea,label,[role="button"],[contenteditable="true"],.fixed-doc-text-layer,.fixed-doc-region-select-layer',
-        )
-      ),
+      immersiveEligible: true,
     };
     if (activePointersRef.current.size === 1 && continuousView) scrollSectionBoundary.onPointerDown(event.clientY);
     if (activePointersRef.current.size === 2) {
+      pointerPanAxisRef.current = undefined;
       const [first, second] = [...activePointersRef.current.values()];
       const midpointX = (first.x + second.x) / 2;
       const midpointY = (first.y + second.y) / 2;
@@ -2291,14 +2200,34 @@ export default function FixedDocumentScreen({
       event.preventDefault();
       return;
     }
-    if (zoom > 1.02) {
-      viewportRef.current?.scrollBy({ left: previous.x - event.clientX, top: previous.y - event.clientY });
+    const viewport = viewportRef.current;
+    const start = pointerStartRef.current;
+    if (viewport && !pointerPanAxisRef.current) {
+      pointerPanAxisRef.current = fixedDocumentPanAxis({
+        zoom,
+        continuousView,
+        deltaX: event.clientX - (start?.x ?? previous.x),
+        deltaY: event.clientY - (start?.y ?? previous.y),
+        scrollWidth: viewport.scrollWidth,
+        scrollHeight: viewport.scrollHeight,
+        clientWidth: viewport.clientWidth,
+        clientHeight: viewport.clientHeight,
+      });
+    }
+    const panAxis = pointerPanAxisRef.current;
+    if (viewport && panAxis) {
+      event.preventDefault();
+      viewport.scrollBy({
+        left: panAxis === 'y' ? 0 : previous.x - event.clientX,
+        top: panAxis === 'x' ? 0 : previous.y - event.clientY,
+      });
       pointerStartRef.current = undefined;
     }
   };
   const pointerUp = (event: ReactPointerEvent<HTMLElement>, cancelled = false) => {
     const wasPinching = Boolean(pinchRef.current?.active);
     activePointersRef.current.delete(event.pointerId);
+    if (activePointersRef.current.size === 0) pointerPanAxisRef.current = undefined;
     if (activePointersRef.current.size < 2) pinchRef.current = undefined;
     const start = pointerStartRef.current;
     pointerStartRef.current = undefined;
@@ -2372,7 +2301,9 @@ export default function FixedDocumentScreen({
   const rightTurnStep: -1 | 1 = rtlComic ? -1 : 1;
 
   return (
-    <main className={`fixed-doc-screen${immersive ? ' is-immersive' : ''}`}>
+    <main
+      className={`fixed-doc-screen${novel.format === 'image_archive' ? ' is-comic' : ''}${immersive ? ' is-immersive' : ''}`}
+    >
       <header className="fixed-doc-header">
         <div className="fixed-doc-title-group">
           <button
@@ -2631,7 +2562,9 @@ export default function FixedDocumentScreen({
           className="fixed-doc-page-input"
           onSubmit={(event) => {
             event.preventDefault();
-            goToPage(Number(pageDraft) - 1);
+            const targetPage = parseFixedDocumentPageDraft(pageDraft, totalPages);
+            if (targetPage === undefined) setPageDraft(String(pageIndex + 1));
+            else goToPage(targetPage);
           }}
         >
           <input
@@ -2722,7 +2655,7 @@ export default function FixedDocumentScreen({
                       ) : novel.format === 'image_archive' ? (
                         <ArchiveThumbnailPreview
                           bookId={novel.id}
-                          sourceHash={novel.sourceContentHash ?? novel.rawTextHash}
+                          sourceRevision={novel.activeContentRevisionId ?? novel.sourceContentHash ?? novel.rawTextHash}
                           chapterId={chapter.id}
                           pageIndex={index}
                           repository={repository}
@@ -2778,12 +2711,12 @@ export default function FixedDocumentScreen({
             }
             preserveFocalPoint(() => setZoom((value) => (value > 1.02 ? 1 : 2)), event.clientX, event.clientY);
           }}
-          aria-busy={status === 'loading'}
+          aria-busy={documentStatus === 'loading'}
         >
-          {status === 'failed' ? (
+          {documentStatus === 'failed' ? (
             <div className="fixed-doc-message">
               <strong>문서를 열지 못했습니다.</strong>
-              <span>{errorMessage}</span>
+              <span>{archiveError ?? errorMessage}</span>
             </div>
           ) : (
             <div
@@ -2852,9 +2785,9 @@ export default function FixedDocumentScreen({
                     />
                   ) : novel.format === 'pdf' ? (
                     <div className="fixed-doc-page-loading">{index + 1}페이지 불러오는 중</div>
-                  ) : imageUrls.get(index) ? (
+                  ) : archiveImages.pages.get(index)?.url ? (
                     <img
-                      src={imageUrls.get(index)}
+                      src={archiveImages.pages.get(index)?.url}
                       alt={`${novel.title} ${index + 1}페이지`}
                       draggable={false}
                       onLoad={(event) => recordArchiveImageDimensions(index, event.currentTarget)}
@@ -2875,7 +2808,7 @@ export default function FixedDocumentScreen({
                       className="fixed-doc-page-loading"
                       style={seamlessContinuousView ? { height: estimateContinuousPageSize(index) } : undefined}
                     >
-                      {index + 1}페이지 불러오는 중
+                      {archiveImages.errors.get(index) ?? `${index + 1}페이지 불러오는 중`}
                     </div>
                   )}
                 </article>
@@ -3856,9 +3789,24 @@ export default function FixedDocumentScreen({
         <span>
           {pageIndex + 1} / {totalPages}
         </span>
-        <div>
-          <i style={{ width: `${progressPercent}%` }} />
-        </div>
+        {novel.format === 'image_archive' ? (
+          <input
+            className="fixed-doc-page-seek"
+            type="range"
+            min={1}
+            max={Math.max(1, totalPages)}
+            value={pageIndex + 1}
+            disabled={totalPages <= 1}
+            aria-label="만화 페이지 빠르게 이동"
+            aria-valuetext={`${pageIndex + 1} / ${totalPages} 페이지`}
+            style={{ '--fixed-doc-progress': `${progressPercent}%` } as CSSProperties}
+            onChange={(event) => goToPage(Number(event.target.value) - 1)}
+          />
+        ) : (
+          <div>
+            <i style={{ width: `${progressPercent}%` }} />
+          </div>
+        )}
         <span>{Math.round(progressPercent)}%</span>
       </footer>
     </main>

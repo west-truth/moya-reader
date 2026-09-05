@@ -85,8 +85,10 @@ export class IndexedDbBookAssetRepository implements BookAssetRepository {
     return removeBookCover(bookId, expectedMetadataRevision);
   }
 
-  async getEmbeddedResource(bookId: string, assetId: string) {
+  async getEmbeddedResource(bookId: string, assetId: string, signal?: AbortSignal) {
+    signal?.throwIfAborted();
     const resource = await exportEmbeddedBookAsset(assetId);
+    signal?.throwIfAborted();
     return resource?.metadata.bookId === bookId ? resource : undefined;
   }
 }
