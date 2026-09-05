@@ -4,8 +4,10 @@ export const ARCHIVE_THUMBNAIL_VERSION = 'browser-image-thumbnail-v1';
 export const ARCHIVE_THUMBNAIL_MAX_WIDTH = 112;
 export const ARCHIVE_THUMBNAIL_MAX_HEIGHT = 142;
 
-export function archiveThumbnailPageHash(sourceHash: string, assetId: string, pageIndex: number): string {
-  return persistentId128('archive_thumbnail_source', [sourceHash, assetId, String(pageIndex)]);
+export function archiveThumbnailPageHash(assetId: string, pageIndex: number): string {
+  // Document-page IDs include the immutable image/part hash. An append changes
+  // the book manifest hash, but does not change the bytes of retained assets.
+  return persistentId128('archive_thumbnail_asset_v2', [assetId, String(pageIndex)]);
 }
 
 export function archiveThumbnailFingerprint(): string {

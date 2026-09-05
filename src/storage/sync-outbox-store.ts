@@ -1,4 +1,4 @@
-import type { SyncOutboxItem } from '../sync/types';
+import type { SyncOutboxItem, SyncOutboxQueryOptions } from '../sync/types';
 
 export interface ClaimSyncOutboxBatchOptions {
   leaseToken: string;
@@ -73,10 +73,32 @@ function withoutLease(
 export async function listSyncOutboxInDatabase(
   db: IDBDatabase,
   status?: SyncOutboxItem['status'],
+  options?: SyncOutboxQueryOptions,
 ): Promise<SyncOutboxItem[]> {
+  if (options && !status) throw new Error('Filtered outbox queries require a status');
   const tx = db.transaction(STORE_NAME, 'readonly');
   const done = transactionDone(tx);
   const store = tx.objectStore(STORE_NAME);
+  if (options && status) {
+    const limit = Math.max(0, Math.floor(options.limit ?? Number.MAX_SAFE_INTEGER));
+    const items: SyncOutboxItem[] = [];
+    if (limit > 0) {
+      const request = store.index('status').openCursor(status);
+      await new Promise<void>((resolve, reject) => {
+        request.onerror = () => reject(request.error);
+        request.onsuccess = () => {
+          const cursor = request.result;
+          if (!cursor) return resolve();
+          const item = cursor.value as SyncOutboxItem;
+          items.push(item);
+          if (items.length >= limit) return resolve();
+          cursor.continue();
+        };
+      });
+    }
+    await done;
+    return sorted(items);
+  }
   const items = status
     ? await requestToPromise<SyncOutboxItem[]>(store.index('status').getAll(status))
     : await requestToPromise<SyncOutboxItem[]>(store.getAll());

@@ -16,6 +16,7 @@ import type { ReaderViewportApi, ReaderViewportLayerProps } from './ReaderViewpo
 import { useReaderGestureHandlers } from './use-reader-gestures';
 import { useReaderPositionPersistence } from './use-reader-progress';
 import {
+  adjacentChapterPrefetchPages,
   bestFittingTextEnd,
   compareReaderAnchors,
   LruMap,
@@ -228,6 +229,7 @@ export function PaginatedReaderViewport(
     assetRepository,
     onPaginationFailure,
     isActive,
+    positionPersistence,
   } = props;
   const chapterHeading = useMemo(
     () => ({ index: chapter.index, title: chapter.title }),
@@ -268,6 +270,8 @@ export function PaginatedReaderViewport(
   activeChapterIdRef.current = chapter.id;
   const contentRevisionId = novel.activeContentRevisionId ?? `${novel.id}:${chapter.textHash}`;
   const { schedule: schedulePosition, flush: flushPosition } = useReaderPositionPersistence({
+    isActive,
+    positionPersistence,
     repository,
     novel,
     chapter,
@@ -608,7 +612,7 @@ export function PaginatedReaderViewport(
   );
 
   useEffect(() => {
-    if (dimensions.width < 100 || dimensions.height < 180 || !measureRef.current) return;
+    if (!isActive || dimensions.width < 100 || dimensions.height < 180 || !measureRef.current) return;
     const preservedAnchor = visibleAnchorRef.current;
     const cached = getCachedPageMap(pageMapKey);
     if (cached) {
@@ -662,6 +666,7 @@ export function PaginatedReaderViewport(
 
       while (paragraphIndex < chapter.paragraphCount && !cancelled) {
         const paragraph = await getParagraphAtIndex(paragraphIndex);
+        if (cancelled) return;
         if (!paragraph) throw new Error(`Paragraph ${paragraphIndex} is unavailable during pagination.`);
         if (!pageStart.paragraphId) pageStart = { paragraphIndex, offset, paragraphId: paragraph.id };
         const block = measurementBlock(paragraph, offset, paragraph.text.length);
@@ -752,6 +757,7 @@ export function PaginatedReaderViewport(
     dimensions.height,
     dimensions.width,
     getParagraphAtIndex,
+    isActive,
     layoutKey,
     novel.id,
     onPaginationFailure,
@@ -763,6 +769,7 @@ export function PaginatedReaderViewport(
   useEffect(() => {
     const forcedAnchor = forcedPageStartRef.current;
     if (
+      !isActive ||
       !complete ||
       !forcedAnchor ||
       (forcedForwardLayoutRef.current === layoutKey && forcedForwardBoundariesRef.current.length > 0)
@@ -770,21 +777,19 @@ export function PaginatedReaderViewport(
       return;
     }
     void buildForwardBoundaries(forcedAnchor);
-  }, [buildForwardBoundaries, complete, layoutKey]);
+  }, [buildForwardBoundaries, complete, isActive, layoutKey]);
 
   useEffect(() => {
-    if (!complete) return;
+    if (!isActive || !complete) return;
     let cancelled = false;
     const warm = async () => {
-      const adjacent = chapters.filter((candidate) => Math.abs(candidate.index - chapter.index) === 1);
-      for (const candidate of adjacent) {
-        const pageCount = Math.ceil(candidate.paragraphCount / PARAGRAPHS_PER_PAGE);
-        const indexes = Array.from({ length: pageCount }, (_, index) => index);
-        if (candidate.index > chapter.index) indexes.reverse();
-        for (const pageIndex of indexes) {
-          if (cancelled) return;
-          await loadSharedParagraphPage(repository, contentRevisionId, candidate.id, pageIndex).catch(() => []);
-        }
+      for (const { chapterId, pageIndex } of adjacentChapterPrefetchPages(
+        chapters,
+        chapter.index,
+        PARAGRAPHS_PER_PAGE,
+      )) {
+        if (cancelled) return;
+        await loadSharedParagraphPage(repository, contentRevisionId, chapterId, pageIndex).catch(() => []);
       }
     };
     const idleId = globalThis.requestIdleCallback(() => void warm(), { timeout: 1_500 });
@@ -792,7 +797,7 @@ export function PaginatedReaderViewport(
       cancelled = true;
       globalThis.cancelIdleCallback(idleId);
     };
-  }, [chapter.index, chapters, complete, contentRevisionId, repository]);
+  }, [chapter.index, chapters, complete, contentRevisionId, isActive, repository]);
 
   const loadPageFragments = useCallback(
     async (pageIndex: number): Promise<readonly ReaderPageFragment[]> => {
@@ -858,7 +863,11 @@ export function PaginatedReaderViewport(
       currentBoundary
         ? {
             progress:
-              chapter.paragraphCount > 1 ? (currentBoundary.start.blockIndex ?? 0) / (chapter.paragraphCount - 1) : 0,
+              complete && currentPage === boundaries.length - 1
+                ? 1
+                : chapter.paragraphCount > 1
+                  ? (currentBoundary.start.blockIndex ?? 0) / (chapter.paragraphCount - 1)
+                  : 0,
             scrollTop: currentPage,
             paragraphIndex: currentParagraph?.index ?? (currentBoundary.start.blockIndex ?? 0) + 1,
             paragraph: currentParagraph,
@@ -866,7 +875,7 @@ export function PaginatedReaderViewport(
             ttsIndex: currentBoundary.start.blockIndex ?? 0,
           }
         : undefined,
-    [chapter.paragraphCount, currentBoundary, currentPage, currentParagraph],
+    [boundaries.length, chapter.paragraphCount, complete, currentBoundary, currentPage, currentParagraph],
   );
 
   useEffect(() => {

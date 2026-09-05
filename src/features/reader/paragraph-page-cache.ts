@@ -97,7 +97,7 @@ export class ParagraphPageCache {
 
   private loadPage(chapterId: string, pageIndex: number, loader: ParagraphPageLoader): Promise<void> {
     if (this.disposed) return Promise.resolve();
-    if (this.loadedPages.has(pageIndex)) return Promise.resolve();
+    if (this.loadedPages.has(pageIndex) || this.failedPages.has(pageIndex)) return Promise.resolve();
     const activeLoad = this.loadingPages.get(pageIndex);
     if (activeLoad) return activeLoad;
 

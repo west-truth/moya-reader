@@ -23,6 +23,7 @@ import { useReaderProgress } from './use-reader-progress';
 import { PaginatedReaderViewport } from './PaginatedReaderViewport';
 import { useReaderGestureHandlers } from './use-reader-gestures';
 import { useScrollChapterBoundary } from './use-scroll-chapter-boundary';
+import { SerializedProgressPersistence } from './reader-progress-controller';
 
 export interface ReaderViewportApi {
   readonly flow: ReaderRuntimeFlow;
@@ -81,6 +82,7 @@ export interface ReaderViewportProps {
 
 export interface ReaderViewportLayerProps extends ReaderViewportProps {
   readonly isActive: boolean;
+  readonly positionPersistence?: SerializedProgressPersistence;
 }
 
 function createViewportApiProxy(
@@ -235,6 +237,7 @@ function VirtualizedReaderViewportComponent({
   onDocumentLink,
   assetRepository,
   isActive,
+  positionPersistence,
 }: ReaderViewportLayerProps) {
   const rootRef = useRef<HTMLDivElement>(null);
   const documentRef = useRef<HTMLElement>(null);
@@ -290,6 +293,8 @@ function VirtualizedReaderViewportComponent({
   }, [pages, virtualizer]);
 
   const progress = useReaderProgress({
+    isActive,
+    positionPersistence,
     rootRef,
     repository,
     novel,
@@ -396,7 +401,7 @@ function VirtualizedReaderViewportComponent({
     rootRef,
     contentRef: documentRef,
     chapterId: chapter.id,
-    enabled: Boolean(nextChapter),
+    enabled: isActive && Boolean(nextChapter),
     onNextChapter: () => goChapter(1),
   });
 
@@ -732,6 +737,7 @@ function VirtualizedReaderViewportComponent({
       aria-hidden={!isActive}
       data-reader-layer="scroll"
       onScroll={() => {
+        if (!isActive) return;
         onRevealChrome();
         visibleAnchorIndexRef.current = firstVisible().index;
         progress.handleScroll();
@@ -838,6 +844,7 @@ function VirtualizedReaderViewportComponent({
 }
 
 function ReaderViewportComponent(props: ReaderViewportProps) {
+  const positionPersistence = useMemo(() => new SerializedProgressPersistence(), []);
   const { apiRef: outerApiRef, onApiReady: notifyApiReady } = props;
   const [paginationFailed, setPaginationFailed] = useState(false);
   const [paginationMounted, setPaginationMounted] = useState(props.readingFlow === 'paginated');
@@ -878,6 +885,7 @@ function ReaderViewportComponent(props: ReaderViewportProps) {
         apiRef={scrollApiRef}
         onApiReady={handleScrollApiReady}
         isActive={!pageActive}
+        positionPersistence={positionPersistence}
       />
       {(paginationMounted || props.readingFlow === 'paginated') && !paginationFailed && (
         <PaginatedReaderViewport
@@ -885,6 +893,7 @@ function ReaderViewportComponent(props: ReaderViewportProps) {
           apiRef={pageApiRef}
           onApiReady={handlePageApiReady}
           isActive={pageActive}
+          positionPersistence={positionPersistence}
           onPaginationFailure={handlePaginationFailure}
         />
       )}

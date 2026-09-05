@@ -638,7 +638,12 @@ export class RemoteApiClient {
     this.syncTransport = new RemoteSyncTransport({ request });
   }
 
-  private async fetch(path: string, init: RequestInit, requestedTimeoutMs?: number): Promise<Response> {
+  private async fetch(
+    path: string,
+    init: RequestInit,
+    requestedTimeoutMs?: number,
+    consumeResponse?: (response: Response) => Promise<void>,
+  ): Promise<Response> {
     const timeoutMs = Math.max(
       1,
       Math.floor(requestedTimeoutMs ?? this.options.requestTimeoutMs ?? DEFAULT_REMOTE_REQUEST_TIMEOUT_MS),
@@ -654,11 +659,16 @@ export class RemoteApiClient {
       controller.abort();
     }, timeoutMs);
     try {
-      return await fetch(`${this.baseUrl}${path}`, {
+      const response = await fetch(`${this.baseUrl}${path}`, {
         credentials: 'same-origin',
         ...init,
         signal: controller.signal,
       });
+      // Keep caller cancellation connected until the response body has been consumed.
+      // The existing request timeout still covers response headers only.
+      globalThis.clearTimeout(timer);
+      await consumeResponse?.(response);
+      return response;
     } catch (error) {
       if (timedOut && !callerSignal?.aborted) throw new RemoteApiRequestTimeoutError(timeoutMs);
       throw error;
@@ -670,7 +680,8 @@ export class RemoteApiClient {
 
   async request<T>(path: string, init: RequestInit = {}, timeoutMs?: number): Promise<T> {
     const authToken = this.options.getAuthToken?.()?.trim();
-    const response = await this.fetch(
+    let result!: T;
+    await this.fetch(
       path,
       {
         ...init,
@@ -681,29 +692,39 @@ export class RemoteApiClient {
         },
       },
       timeoutMs,
+      async (response) => {
+        if (!response.ok) {
+          if (response.status === 401) this.options.onUnauthorized?.();
+          throw await remoteError(response);
+        }
+        if (response.status !== 204) result = (await response.json()) as T;
+      },
     );
-    if (!response.ok) {
-      if (response.status === 401) this.options.onUnauthorized?.();
-      throw await remoteError(response);
-    }
-    if (response.status === 204) return undefined as T;
-    return response.json() as Promise<T>;
+    return result;
   }
 
   async requestBlob(path: string, init: RequestInit = {}): Promise<{ blob: Blob; headers: Headers; status: number }> {
     const authToken = this.options.getAuthToken?.()?.trim();
-    const response = await this.fetch(path, {
-      ...init,
-      headers: {
-        ...(authToken ? { Authorization: `Bearer ${authToken}` } : {}),
-        ...init.headers,
+    let blob!: Blob;
+    const response = await this.fetch(
+      path,
+      {
+        ...init,
+        headers: {
+          ...(authToken ? { Authorization: `Bearer ${authToken}` } : {}),
+          ...init.headers,
+        },
       },
-    });
-    if (!response.ok) {
-      if (response.status === 401) this.options.onUnauthorized?.();
-      throw await remoteError(response);
-    }
-    return { blob: await response.blob(), headers: response.headers, status: response.status };
+      undefined,
+      async (download) => {
+        if (!download.ok) {
+          if (download.status === 401) this.options.onUnauthorized?.();
+          throw await remoteError(download);
+        }
+        blob = await download.blob();
+      },
+    );
+    return { blob, headers: response.headers, status: response.status };
   }
 
   negotiateSyncContract(): Promise<NegotiatedSyncContract> {
@@ -787,8 +808,14 @@ export class RemoteApiClient {
     return { ...response, metadata: coverMetadataFromHeaders(bookId, response.headers) };
   }
 
-  getBookResource(bookId: string, assetId: string): Promise<{ blob: Blob; headers: Headers; status: number }> {
-    return this.requestBlob(`/books/${encodeURIComponent(bookId)}/resources/${encodeURIComponent(assetId)}`);
+  getBookResource(
+    bookId: string,
+    assetId: string,
+    signal?: AbortSignal,
+  ): Promise<{ blob: Blob; headers: Headers; status: number }> {
+    return this.requestBlob(`/books/${encodeURIComponent(bookId)}/resources/${encodeURIComponent(assetId)}`, {
+      signal,
+    });
   }
 
   saveBookCover(

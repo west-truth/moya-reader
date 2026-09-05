@@ -1,5 +1,21 @@
 import { sentenceRanges, type TextRange } from '@noveldesk/text-core/sentence-boundaries';
-import type { Paragraph, ReaderAnchor, ReaderPageBoundary } from '../../domain/types';
+import type { Chapter, Paragraph, ReaderAnchor, ReaderPageBoundary } from '../../domain/types';
+
+export function adjacentChapterPrefetchPages(
+  chapters: readonly Pick<Chapter, 'id' | 'index' | 'paragraphCount'>[],
+  currentChapterIndex: number,
+  paragraphsPerPage: number,
+): Array<{ chapterId: string; pageIndex: number }> {
+  return chapters.flatMap((chapter) => {
+    if (Math.abs(chapter.index - currentChapterIndex) !== 1) return [];
+    const pageCount = Math.ceil(chapter.paragraphCount / paragraphsPerPage);
+    const count = Math.min(2, pageCount);
+    return Array.from({ length: count }, (_, index) => ({
+      chapterId: chapter.id,
+      pageIndex: chapter.index < currentChapterIndex ? pageCount - 1 - index : index,
+    }));
+  });
+}
 
 export interface ReaderPageFragment {
   readonly paragraph: Paragraph;

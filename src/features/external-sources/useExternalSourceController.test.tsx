@@ -1003,6 +1003,50 @@ describe('useExternalSourceController remote updates', () => {
     await act(async () => harness.renderer.unmount());
   });
 
+  it('preserves the loaded page and retry cursor when loading more fails', async () => {
+    const harness = await createHarness({ downloadedContent: '기존 원격 원문' });
+    const page = {
+      detail: { title: '연동 작품', description: '작품 상세' },
+      browse: { activeMode: 'popular' as const, availableModes: ['popular' as const], filters: [] },
+      items: [
+        {
+          key: { ...ITEM_KEY, remoteId: 'chapter:11' },
+          kind: 'file' as const,
+          title: '1화',
+          mimeType: 'text/plain',
+          importability: 'supported' as const,
+        },
+      ],
+      nextCursor: 'second-page',
+    };
+    vi.mocked(harness.registry.listExternalSource).mockResolvedValueOnce(page);
+    await act(async () => harness.controller.refresh());
+    await act(async () => harness.controller.toggleItem('fixture.source::fixture-account::chapter:11'));
+    const previousItems = harness.controller.items;
+    const previousFilters = harness.controller.filterValues;
+    vi.mocked(harness.registry.listExternalSource).mockRejectedValueOnce(new Error('temporary page failure'));
+    await act(async () => harness.controller.loadMore());
+    expect(harness.controller.items).toEqual(previousItems);
+    expect(harness.controller.nextCursor).toBe('second-page');
+    expect(harness.controller.detail).toEqual(page.detail);
+    expect(harness.controller.browse).toEqual(page.browse);
+    expect(harness.controller.filterValues).toEqual(previousFilters);
+    expect(harness.controller.loading).toBe(false);
+    expect(harness.notify).toHaveBeenLastCalledWith('temporary page failure', 'danger');
+    vi.mocked(harness.registry.listExternalSource).mockResolvedValueOnce({
+      items: [{ ...page.items[0]!, key: { ...ITEM_KEY, remoteId: 'chapter:12' }, title: '2화' }],
+    });
+    await act(async () => harness.controller.loadMore());
+    expect(harness.registry.listExternalSource).toHaveBeenLastCalledWith(
+      SOURCE_ID,
+      expect.anything(),
+      expect.objectContaining({ cursor: 'second-page' }),
+      expect.any(AbortSignal),
+    );
+    expect(harness.controller.items.map((item) => item.title)).toEqual(['1화', '2화']);
+    await act(async () => harness.renderer.unmount());
+  });
+
   it('opens a catalog work as a detail and chapter page without enabling folder pinning', async () => {
     const harness = await createHarness({ downloadedContent: '기존 원격 원문' });
     vi.mocked(harness.registry.listExternalSource).mockResolvedValueOnce({

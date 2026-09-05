@@ -96,7 +96,7 @@ export function useBackupController(options: UseBackupControllerOptions): Backup
         const next = await repository.inspectBackup(file);
         archiveRef.current = file;
         setInspection(next);
-        setConflictResolutions(Object.fromEntries(next.conflicts.map((conflict) => [conflict.bookId, 'skip'])));
+        setConflictResolutions({});
         optionsRef.current.notify(`백업 ${next.manifest.books.length}권을 확인했습니다.`, 'success');
       } catch (error) {
         archiveRef.current = undefined;

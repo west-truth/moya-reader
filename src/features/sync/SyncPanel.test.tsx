@@ -111,6 +111,24 @@ function actions(): SyncPanelActions {
 }
 
 describe('SyncPanel', () => {
+  it('withholds group merge actions until a truncated queue is loaded in full', () => {
+    const entry = outboxItem('failed');
+    entry.event.type = 'character_graph_updated';
+    const markup = renderToStaticMarkup(
+      <SyncPanel
+        data={data({
+          syncServiceConnected: true,
+          syncState: syncState('conflict'),
+          syncOutbox: [entry],
+          outboxDetailsTruncated: true,
+        })}
+        actions={actions()}
+      />,
+    );
+    expect(markup).toContain('전체 대기열 불러오기');
+    expect(markup).not.toContain('이 AI/TTS 묶음 폐기');
+    expect(markup).not.toContain('서버 snapshot 적용');
+  });
   it('renders local-only connection controls and queued reader changes through its feature contract', () => {
     const markup = renderToStaticMarkup(<SyncPanel data={data()} actions={actions()} />);
 

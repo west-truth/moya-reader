@@ -1,9 +1,13 @@
-import { useCallback, useEffect, useRef } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useRef } from 'react';
 import type { Chapter, Novel, Paragraph } from '../../domain/types';
 import type { ReaderRepository } from '../../repositories/reader-repository';
 import { clamp } from '../../utils/format';
 import type { ReaderLocationSnapshot } from './reader-screen-contract';
-import { DebouncedProgressPersistence, RafProgressPublisher } from './reader-progress-controller';
+import {
+  DebouncedProgressPersistence,
+  RafProgressPublisher,
+  type SerializedProgressPersistence,
+} from './reader-progress-controller';
 
 const LOCATION_PERSIST_DEBOUNCE_MS = 350;
 
@@ -13,6 +17,8 @@ function bookProgress(novel: Pick<Novel, 'totalChapters'>, chapter: Chapter, cha
 }
 
 export interface ReaderProgressOptions {
+  readonly isActive?: boolean;
+  readonly positionPersistence?: SerializedProgressPersistence;
   readonly rootRef: React.RefObject<HTMLDivElement>;
   readonly repository: ReaderRepository;
   readonly novel: Pick<Novel, 'id' | 'totalChapters' | 'activeContentRevisionId'>;
@@ -36,6 +42,7 @@ interface PendingReaderPosition {
   readonly location: ReaderLocationSnapshot;
   readonly offsetInParagraph: number;
   readonly generation: number;
+  readonly ownerEpoch: number;
   readonly updatedAt: string;
   readonly onLocationCommitted: ReaderProgressOptions['onLocationCommitted'];
   readonly onPersistenceFailed: ReaderProgressOptions['onPersistenceFailed'];
@@ -59,6 +66,7 @@ export function useReaderPositionPersistence(
   const optionsRef = useRef(options);
   optionsRef.current = options;
   const generationRef = useRef(0);
+  const ownerEpochRef = useRef(0);
   const persistenceRef = useRef<DebouncedProgressPersistence<PendingReaderPosition>>();
   if (!persistenceRef.current) {
     persistenceRef.current = new DebouncedProgressPersistence(
@@ -68,6 +76,7 @@ export function useReaderPositionPersistence(
       },
       options.debounceMs ?? LOCATION_PERSIST_DEBOUNCE_MS,
       async (pending) => {
+        if (optionsRef.current.isActive === false || pending.ownerEpoch !== ownerEpochRef.current) return;
         try {
           await pending.repository.saveReadingPosition({
             novelId: pending.novel.id,
@@ -90,11 +99,21 @@ export function useReaderPositionPersistence(
           if (pending.generation === generationRef.current) pending.onPersistenceFailed(error);
         }
       },
+      options.positionPersistence,
     );
   }
 
+  useLayoutEffect(() => {
+    if (options.isActive !== false) return;
+    // A hidden viewport may still resize, but it no longer owns the saved position.
+    ownerEpochRef.current += 1;
+    generationRef.current += 1;
+    persistenceRef.current?.cancel();
+  }, [options.isActive]);
+
   const schedule = useCallback((location: ReaderLocationSnapshot, offsetInParagraph = 0) => {
     const current = optionsRef.current;
+    if (current.isActive === false) return;
     const generation = ++generationRef.current;
     persistenceRef.current!.schedule({
       repository: current.repository,
@@ -103,6 +122,7 @@ export function useReaderPositionPersistence(
       location,
       offsetInParagraph,
       generation,
+      ownerEpoch: ownerEpochRef.current,
       updatedAt: new Date().toISOString(),
       onLocationCommitted: current.onLocationCommitted,
       onPersistenceFailed: current.onPersistenceFailed,
@@ -133,7 +153,9 @@ export function useReaderProgress(options: ReaderProgressOptions): ReaderProgres
         request: (callback) => window.requestAnimationFrame(callback),
         cancel: (handle) => window.cancelAnimationFrame(handle),
       },
-      (location) => optionsRef.current.onVisualLocation(location),
+      (location) => {
+        if (optionsRef.current.isActive !== false) optionsRef.current.onVisualLocation(location);
+      },
     );
   }
 
@@ -160,6 +182,7 @@ export function useReaderProgress(options: ReaderProgressOptions): ReaderProgres
   }, []);
 
   const handleScroll = useCallback(() => {
+    if (optionsRef.current.isActive === false) return;
     const location = readLocation();
     if (!location) return;
     publisherRef.current?.schedule(location);
@@ -170,7 +193,7 @@ export function useReaderProgress(options: ReaderProgressOptions): ReaderProgres
     return () => {
       publisherRef.current?.cancel();
     };
-  }, [options.chapter.id, options.novel.id]);
+  }, [options.chapter.id, options.isActive, options.novel.id]);
 
   return { handleScroll, readLocation, flush };
 }

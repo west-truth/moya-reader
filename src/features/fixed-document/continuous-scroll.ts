@@ -102,8 +102,10 @@ export function continuousPageNearestViewportCenter(
   viewportHeight: number,
 ): number | undefined {
   const center = scrollTop + viewportHeight / 2;
+  const containing = items.find((item) => center >= item.start && center < item.start + item.size);
+  if (containing) return containing.index;
   return items.reduce<{ index: number; distance: number } | undefined>((nearest, item) => {
-    const distance = Math.abs(item.start + item.size / 2 - center);
+    const distance = Math.min(Math.abs(item.start - center), Math.abs(item.start + item.size - center));
     return !nearest || distance < nearest.distance ? { index: item.index, distance } : nearest;
   }, undefined)?.index;
 }

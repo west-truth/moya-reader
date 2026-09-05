@@ -15,7 +15,7 @@ import { loadLocalConnectedRefreshState, type LocalConnectedRefreshState } from 
 import { loadHostedRemoteRefreshState, type HostedRemoteRefreshState } from './remote-refresh';
 import type { ConnectedSyncSelection } from './connected-sync-controller';
 import type { ReaderView } from './sync-ui';
-import type { ReadingPosition, SyncOutboxItem, SyncState } from './types';
+import type { ReadingPosition, SyncState } from './types';
 import { useConnectedSyncController } from './use-connected-sync-controller';
 
 type Setter<Value> = Dispatch<SetStateAction<Value>>;
@@ -40,7 +40,6 @@ export interface ConnectedReaderSyncBindings {
   readonly setCharacters: Setter<Character[]>;
   readonly setVoiceProfiles: Setter<VoiceProfile[]>;
   readonly setSyncState: Setter<SyncState | undefined>;
-  readonly setSyncOutbox: Setter<SyncOutboxItem[]>;
   readonly setSyncFlushing: Setter<boolean>;
   readonly setActiveChapterId: (id: string | undefined) => void;
 }
@@ -57,7 +56,6 @@ export type RemoteRefreshOptions = { silent?: boolean };
 
 interface RemoteServerRefreshResult {
   state: SyncState;
-  outbox: SyncOutboxItem[];
   remoteState?: HostedRemoteRefreshState;
   trashNovels?: Novel[];
 }
@@ -105,15 +103,13 @@ export function useConnectedReaderSync(input: ConnectedReaderSyncInput) {
   const refreshSyncState = useCallback(async () => {
     const snapshot = await controller.runRuntimeTask('sync-status-refresh', {
       load: async () => {
-        const [state, outbox] = await Promise.all([readerRepository.getSyncState(), readerRepository.listSyncOutbox()]);
-        return { state, outbox };
+        return readerRepository.getSyncState();
       },
-      commit: ({ state, outbox }) => {
+      commit: (state) => {
         bindingsRef.current.setSyncState(state);
-        bindingsRef.current.setSyncOutbox(outbox);
       },
     });
-    return snapshot?.state;
+    return snapshot;
   }, [controller, readerRepository]);
 
   const applyHostedState = useCallback(
@@ -174,7 +170,7 @@ export function useConnectedReaderSync(input: ConnectedReaderSyncInput) {
           bindings.setSyncFlushing(true);
         },
         load: async ({ selection }) => {
-          const [remoteState, state, outbox, trashNovels] = await Promise.all([
+          const [remoteState, state, trashNovels] = await Promise.all([
             loadHostedRemoteRefreshState({
               repository: readerRepository,
               backendMode: runtime.mode,
@@ -184,12 +180,11 @@ export function useConnectedReaderSync(input: ConnectedReaderSyncInput) {
               currentChapterProgress: selection.chapterProgress,
             }),
             readerRepository.getSyncState(),
-            readerRepository.listSyncOutbox(),
             runtime.libraryCatalogRepository?.listTrash() ?? Promise.resolve([]),
           ]);
-          return { state, outbox, remoteState, trashNovels };
+          return { state, remoteState, trashNovels };
         },
-        commit: ({ state, outbox, remoteState, trashNovels }, { selection }) => {
+        commit: ({ state, remoteState, trashNovels }, { selection }) => {
           if (remoteState) {
             applyHostedState(
               { ...remoteState, novels: [...remoteState.novels, ...(trashNovels ?? [])] },
@@ -198,14 +193,12 @@ export function useConnectedReaderSync(input: ConnectedReaderSyncInput) {
             );
           }
           bindingsRef.current.setSyncState(state);
-          bindingsRef.current.setSyncOutbox(outbox);
         },
         recover: (error) => {
           const message = error instanceof Error ? error.message : String(error);
           const state = connectedSyncFailureState(message);
           bindingsRef.current.setSyncState(state);
-          bindingsRef.current.setSyncOutbox([]);
-          return { state, outbox: [] };
+          return { state };
         },
         settle: (context) => {
           if (!options.silent) {
@@ -290,8 +283,7 @@ export function useConnectedReaderSync(input: ConnectedReaderSyncInput) {
       },
       load: async ({ selection }) => {
         const state = await syncService.flushPending();
-        const [outbox, localState, trashNovels] = await Promise.all([
-          readerRepository.listSyncOutbox(),
+        const [localState, trashNovels] = await Promise.all([
           state.status === 'idle'
             ? loadLocalConnectedRefreshState({
                 repository: readerRepository,
@@ -303,13 +295,11 @@ export function useConnectedReaderSync(input: ConnectedReaderSyncInput) {
         ]);
         return {
           state,
-          outbox,
           localState: localState ? { ...localState, novels: [...localState.novels, ...trashNovels] } : undefined,
         };
       },
-      commit: ({ state, outbox, localState }, { selection }) => {
+      commit: ({ state, localState }, { selection }) => {
         bindingsRef.current.setSyncState(state);
-        bindingsRef.current.setSyncOutbox(outbox);
         if (localState) applyLocalState(localState, selection.view, selection.chapterId);
       },
       settle: (context) => {
