@@ -171,6 +171,78 @@ describe('BookWorkspaceController navigation', () => {
     });
   });
 
+  it('opens the selected TXT release through the Reader lifecycle instead of the general chapter list', async () => {
+    const novel = testNovel({ format: 'txt', documentSectionCount: 2, lastReadChapterId: 'chapter-1' });
+    const chapters = [
+      testChapter(1, { documentSectionId: 'release-one', documentSectionTitle: '같은 제목' }),
+      testChapter(2, { documentSectionId: 'release-two', documentSectionTitle: '같은 제목' }),
+    ];
+    const harness = createBookWorkspaceTestHarness({
+      novel,
+      chapters,
+      position: testPosition({ chapterId: 'chapter-1' }),
+    });
+    const controller = new BookWorkspaceController(harness.ports);
+    await controller.openDocumentSection(novel, 'release-two', '같은 제목');
+    expect(controller.getSnapshot()).toMatchObject({
+      view: 'reader',
+      currentChapter: chapters[1],
+      readerOpenRequestVersion: 7,
+    });
+    expect(harness.preparedOpens).toEqual([
+      { chapterId: 'chapter-2', options: expect.objectContaining({ restore: false, fallbackScrollTop: 0 }) },
+    ]);
+    expect(harness.calls).toContain('adjacent.loadReaderArtifacts:chapter-2');
+    expect(harness.calls).toContain('transition.activateChapter:chapter-2');
+  });
+
+  it('does not guess a TXT release by title when its stable section is missing', async () => {
+    const novel = testNovel({ format: 'txt', documentSectionCount: 1 });
+    const harness = createBookWorkspaceTestHarness({
+      novel,
+      chapters: [testChapter(1, { documentSectionId: 'one', documentSectionTitle: '같은 제목' })],
+    });
+    const controller = new BookWorkspaceController(harness.ports);
+    await controller.openDocumentSection(novel, 'missing', '같은 제목');
+    expect(controller.getSnapshot().view).toBe('chapters');
+    expect(harness.preparedOpens).toEqual([]);
+    expect(harness.notices[0]?.message).toContain('선택한 회차를 찾을 수 없습니다');
+  });
+
+  it.each(['chapters', 'artifacts'] as const)(
+    'does not open a cancelled TXT release after delayed %s resolve',
+    async (stage) => {
+      const novel = testNovel({ format: 'txt', documentSectionCount: 1 });
+      const chapter = testChapter(1, { documentSectionId: 'release-one' });
+      const harness = createBookWorkspaceTestHarness({ novel, chapters: [chapter] });
+      let finish!: () => void;
+      if (stage === 'chapters')
+        harness.ports.repository.listChapters = () =>
+          new Promise((resolve) => {
+            finish = () => resolve([chapter]);
+          });
+      else
+        harness.ports.adjacent.loadReaderArtifacts = () =>
+          new Promise((resolve) => {
+            finish = () => resolve({ segments: [], characters: [], voiceProfiles: [] });
+          });
+      const controller = new BookWorkspaceController(harness.ports);
+      const pending = controller.openDocumentSection(novel, 'release-one');
+      await vi.waitFor(() => expect(finish).toBeDefined());
+      const newer = testNovel({ id: 'new-book' });
+      controller.replaceSelection({ selectedNovel: newer, chapters: [], currentChapter: undefined });
+      controller.setView('library');
+      finish();
+      await pending;
+      expect(controller.getSnapshot()).toMatchObject({
+        selectedNovel: newer,
+        view: 'library',
+        currentChapter: undefined,
+      });
+      expect(harness.preparedOpens).toEqual([]);
+    },
+  );
+
   it('preserves the openChapter lifecycle ordering and prepares restore metadata before entering reader view', async () => {
     const novel = testNovel({ lastReadChapterId: 'chapter-2', lastReadOffset: 480 });
     const chapter = testChapter(2);
@@ -235,7 +307,9 @@ describe('BookWorkspaceController navigation', () => {
 
     await controller.continueReading();
 
-    expect(harness.calls[0]).toBe('repository.getReadingPosition');
+    expect(harness.calls.slice(0, 2)).toEqual(
+      expect.arrayContaining(['repository.getNovel', 'repository.getReadingPosition']),
+    );
     expect(harness.calls).not.toContain('repository.listChapters');
     expect(controller.getSnapshot().currentChapter?.id).toBe('chapter-2');
     expect(controller.getSnapshot().localReadingPosition).toBe(position);

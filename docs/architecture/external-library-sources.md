@@ -1,5 +1,22 @@
 # 외부 작품 소스 아키텍처
 
+## 텍스트 소스와 공통 회차 UI (2026-09-05)
+
+독립 TXT 서버는 공통 versioned adapter/wire 계약으로 작품·목차·본문과 선택형 표지를 제공합니다.
+Local은 보호된 기기 credential로 연결하고 Hosted는 서버에 설정된 단일 upstream으로 인증 요청을 전달합니다.
+HTTP core와 UI는 사이트별 처리를 하지 않으며 신뢰된 어댑터 모듈이 해당 소스의 변환을 담당합니다.
+설치와 어댑터 작성 범위는 [운영 안내](../operations/external-text-sources.md)를 참고합니다.
+
+완성 목차만 캐시로 재사용하고 15분 이후 백그라운드 확인합니다. 화면은 검색·읽음 필터·정렬 후 10화 단위로
+표시합니다. TXT와 이미지는 활성화/링크 확정을 마친 회차부터 바로 열 수 있으며 일괄 선택도 회차 오름차순으로 처리합니다.
+TXT 가져오기는 작품 ID와 회차 식별자를 유지하고 활성 revision CAS로 오래된 원본 덮어쓰기를 거절합니다.
+Reader의 새 회차 갱신은 현재 chapter ID/textHash와 작품 revision, 탐색 generation을 확인합니다.
+
+통합 설정은 진입·복귀와 visible 60초 보충 조회로 갱신합니다. 최소 30초 확인 간격, 요청 단일 실행과
+로컬 변경 이후 도착한 응답 폐기로 중복 요청·오래된 설정 덮어쓰기를 막습니다. 로컬 저장 debounce는 350ms입니다.
+완료 TXT의 Source Hub 공개는 저장 결과/로컬 링크를 사용하며 pending link 복구와 최종 정본 조회는 유지합니다.
+App의 라이브러리/Reader 갱신과 최종 라이브러리/동기화 상태 확인은 병렬 실행합니다.
+
 상태: Phase 3B Source Hub, Dropbox·Google Drive live, Suwayomi serial-comic과 self-host Docker profile 구현
 기준일: 2026-08-31
 

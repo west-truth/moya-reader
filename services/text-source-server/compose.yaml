@@ -1,0 +1,29 @@
+services:
+  text-source-server:
+    build:
+      context: .
+      dockerfile: '${TEXT_SOURCE_DOCKERFILE:-Dockerfile}'
+    init: true
+    restart: unless-stopped
+    ports:
+      - '127.0.0.1:9970:9970'
+    environment:
+      SERVER_KEY: '${SERVER_KEY:?Set SERVER_KEY}'
+      MOYA_ORIGIN: '${MOYA_ORIGIN:-}'
+      CONTENT_PROVIDER_PROTOCOL: '${CONTENT_PROVIDER_PROTOCOL:-job-v1}'
+      CONTENT_PROVIDER_ENDPOINT: '${CONTENT_PROVIDER_ENDPOINT:-}'
+      CONTENT_PROVIDER_KEY: '${CONTENT_PROVIDER_KEY:-}'
+      SOURCE_ADAPTERS: '${SOURCE_ADAPTERS:-[]}'
+      SOURCE_HTTP_TRANSPORT: '${SOURCE_HTTP_TRANSPORT:-http}'
+      SOURCE_BROWSER_CHANNEL: '${SOURCE_BROWSER_CHANNEL:-}'
+    volumes:
+      - ./data:/data:ro
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=256m
+    shm_size: 256m
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    stop_grace_period: 10s

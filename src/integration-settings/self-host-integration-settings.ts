@@ -21,7 +21,7 @@ export interface ExternalSourceSharedConnectionV1 {
   readonly connectorId: string;
   readonly accountConnectionId: string;
   readonly endpoint: string;
-  readonly authMode: 'none' | 'ui_login' | 'basic_auth';
+  readonly authMode: 'none' | 'ui_login' | 'basic_auth' | 'bearer' | 'managed';
   readonly label: string;
   readonly updatedAt: string;
 }
@@ -110,14 +110,18 @@ function sharedConnection(value: unknown): ExternalSourceSharedConnectionV1 | un
     !endpoint ||
     !label ||
     !updatedAt ||
-    !['none', 'ui_login', 'basic_auth'].includes(String(input.authMode))
+    !['none', 'ui_login', 'basic_auth', 'bearer', 'managed'].includes(String(input.authMode))
   ) {
     return undefined;
   }
   try {
-    const url = new URL(endpoint);
-    if (!['http:', 'https:'].includes(url.protocol) || url.username || url.password || url.search || url.hash) {
-      return undefined;
+    if (input.authMode === 'managed') {
+      if (endpoint !== '/api/integrations/text-sources') return undefined;
+    } else {
+      const url = new URL(endpoint);
+      if (!['http:', 'https:'].includes(url.protocol) || url.username || url.password || url.search || url.hash) {
+        return undefined;
+      }
     }
   } catch {
     return undefined;
@@ -223,7 +227,8 @@ function subscription(value: unknown): ExternalSourceSubscriptionRecord | undefi
     (input.author !== undefined && !author) ||
     (input.description !== undefined && !description) ||
     (input.thumbnailUrl !== undefined && !thumbnailUrl) ||
-    (input.sourceLabel !== undefined && !sourceLabel)
+    (input.sourceLabel !== undefined && !sourceLabel) ||
+    (input.releaseBaselineComplete !== undefined && typeof input.releaseBaselineComplete !== 'boolean')
   ) {
     return undefined;
   }
@@ -235,6 +240,9 @@ function subscription(value: unknown): ExternalSourceSubscriptionRecord | undefi
     title,
     knownReleaseIds,
     newReleaseIds,
+    ...(typeof input.releaseBaselineComplete === 'boolean'
+      ? { releaseBaselineComplete: input.releaseBaselineComplete }
+      : {}),
     availableReleaseCount: input.availableReleaseCount,
     lastCheckedAt,
     createdAt,

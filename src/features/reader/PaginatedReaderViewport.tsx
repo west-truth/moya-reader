@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { CSSProperties } from 'react';
-import type { Chapter, Paragraph, ReaderAnchor, ReaderPageBoundary } from '../../domain/types';
+import type { Paragraph, ReaderAnchor, ReaderPageBoundary } from '../../domain/types';
 import { PARAGRAPHS_PER_PAGE } from '../../repositories/reader-defaults';
 import type { ReaderRepository } from '../../repositories/reader-repository';
 import {
@@ -11,7 +11,12 @@ import {
 } from '../../storage/reader-page-map-store';
 import { clamp } from '../../utils/format';
 import { ReaderParagraphRow } from './ReaderParagraphRow';
-import { chapterSequenceLabel, ReaderChapterHeading } from './ReaderChapterHeading';
+import {
+  chapterSequenceLabel,
+  ReaderChapterHeading,
+  showChapterSequence,
+  type ReaderChapterHeadingData,
+} from './ReaderChapterHeading';
 import type { ReaderViewportApi, ReaderViewportLayerProps } from './ReaderViewport';
 import { useReaderGestureHandlers } from './use-reader-gestures';
 import { useReaderPositionPersistence } from './use-reader-progress';
@@ -176,22 +181,25 @@ function measurementBlock(paragraph: Paragraph, start: number, end: number): HTM
   return wrapper;
 }
 
-function measurementChapterHeading(chapter: Pick<Chapter, 'index' | 'title'>): HTMLElement {
+function measurementChapterHeading(chapter: ReaderChapterHeadingData): HTMLElement {
   const heading = document.createElement('header');
   heading.className = 'reader-chapter-heading';
   heading.dataset.readerChapterHeading = 'true';
-  const sequence = document.createElement('p');
-  sequence.className = 'chapter-kicker';
-  sequence.textContent = chapterSequenceLabel(chapter);
+  if (showChapterSequence(chapter)) {
+    const sequence = document.createElement('p');
+    sequence.className = 'chapter-kicker';
+    sequence.textContent = chapterSequenceLabel(chapter);
+    heading.append(sequence);
+  }
   const title = document.createElement('h1');
   title.textContent = chapter.title;
-  heading.append(sequence, title);
+  heading.append(title);
   return heading;
 }
 
 function resetMeasurementPage(
   measure: HTMLElement,
-  chapter: Pick<Chapter, 'index' | 'title'>,
+  chapter: ReaderChapterHeadingData,
   includeChapterHeading: boolean,
 ): void {
   measure.replaceChildren();
@@ -232,8 +240,13 @@ export function PaginatedReaderViewport(
     positionPersistence,
   } = props;
   const chapterHeading = useMemo(
-    () => ({ index: chapter.index, title: chapter.title }),
-    [chapter.index, chapter.title],
+    () => ({
+      index: chapter.index,
+      title: chapter.title,
+      documentSectionId: chapter.documentSectionId,
+      documentSectionTitle: chapter.documentSectionTitle,
+    }),
+    [chapter.index, chapter.title, chapter.documentSectionId, chapter.documentSectionTitle],
   );
   const rootRef = useRef<HTMLElement>(null);
   const stageRef = useRef<HTMLDivElement>(null);
@@ -365,6 +378,7 @@ export function PaginatedReaderViewport(
       JSON.stringify({
         contentRevisionId,
         rendererVersion: PAGINATION_RENDERER_VERSION,
+        ...(showChapterSequence(chapterHeading) ? {} : { chapterHeading: 'source-title' }),
         viewportWidth: dimensions.width,
         viewportHeight: dimensions.height,
         devicePixelRatioBucket: Math.round((globalThis.devicePixelRatio || 1) * 2) / 2,
@@ -379,7 +393,7 @@ export function PaginatedReaderViewport(
         marginX: settings.readingProfile.marginX,
         marginY: settings.readingProfile.marginY,
       }),
-    [contentRevisionId, dimensions.height, dimensions.width, settings.readingProfile],
+    [chapterHeading, contentRevisionId, dimensions.height, dimensions.width, settings.readingProfile],
   );
 
   const pageMapIdentity = useMemo<ReaderPageMapIdentity>(

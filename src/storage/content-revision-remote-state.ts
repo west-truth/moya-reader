@@ -10,8 +10,10 @@ import type { ReaderAnchorQuarantineEntity, ReaderAnchorQuarantineRecord } from 
 export interface BookChildIdIndex {
   chapterIndexById: Map<string, number>;
   chapterIdByIndex: Map<number, string>;
+  chapterParagraphCountById: Map<string, number>;
   paragraphKeyById: Map<string, string>;
   paragraphIdByKey: Map<string, string>;
+  paragraphIndexById: Map<string, number>;
   stableFixedDocumentChapterIds: Set<string>;
   stableFixedDocumentParagraphIds: Set<string>;
 }
@@ -57,14 +59,17 @@ export function createBookChildIdIndex(chapters: Chapter[]): BookChildIdIndex {
   const index: BookChildIdIndex = {
     chapterIndexById: new Map(),
     chapterIdByIndex: new Map(),
+    chapterParagraphCountById: new Map(),
     paragraphKeyById: new Map(),
     paragraphIdByKey: new Map(),
+    paragraphIndexById: new Map(),
     stableFixedDocumentChapterIds: new Set(),
     stableFixedDocumentParagraphIds: new Set(),
   };
   for (const chapter of chapters) {
     index.chapterIndexById.set(chapter.id, chapter.index);
     index.chapterIdByIndex.set(chapter.index, chapter.id);
+    index.chapterParagraphCountById.set(chapter.id, chapter.paragraphCount);
     if (chapter.documentSectionId) index.stableFixedDocumentChapterIds.add(chapter.id);
   }
   return index;
@@ -83,6 +88,7 @@ export function addParagraphToChildIdIndex(index: BookChildIdIndex, paragraph: P
       : integrityHash(paragraph.text);
   const key = paragraphRemapKey(chapterIndex, paragraph.index, textHash);
   index.paragraphKeyById.set(paragraph.id, key);
+  index.paragraphIndexById.set(paragraph.id, paragraph.index);
   if (!index.paragraphIdByKey.has(key)) index.paragraphIdByKey.set(key, paragraph.id);
   if (index.stableFixedDocumentChapterIds.has(paragraph.chapterId)) {
     index.stableFixedDocumentParagraphIds.add(paragraph.id);
@@ -104,8 +110,15 @@ function remapAnchorIds(
     nextIndex.stableFixedDocumentChapterIds.has(chapterId) &&
     nextIndex.stableFixedDocumentParagraphIds.has(paragraphId)
   ) {
-    return { chapterId, paragraphId, changed: false };
+    return {
+      chapterId,
+      paragraphId,
+      changed: oldIndex.paragraphIndexById.get(paragraphId) !== nextIndex.paragraphIndexById.get(paragraphId),
+    };
   }
+  // A remote release/section is an identity boundary. Reusing its old numeric
+  // position could silently attach a note to an inserted or reordered release.
+  if (oldIndex.stableFixedDocumentChapterIds.has(chapterId)) return undefined;
   const chapterIndex = oldIndex.chapterIndexById.get(chapterId);
   if (chapterIndex === undefined) return undefined;
   const nextChapterId = nextIndex.chapterIdByIndex.get(chapterIndex);
@@ -190,12 +203,28 @@ function remapJsonAnchorRecord(
   const paragraphId = stringField(record.paragraphId) || undefined;
   const remapped = remapAnchorIds(chapterId, paragraphId, oldIndex, nextIndex);
   if (!remapped) return undefined;
+  const nextParagraphIndex = nextIndex.paragraphIndexById.get(remapped.paragraphId);
+  const movedPosition =
+    typeof record.paragraphIndex === 'number' &&
+    nextParagraphIndex !== undefined &&
+    nextParagraphIndex !== record.paragraphIndex;
   return {
     changed: remapped.changed,
     record: {
       ...record,
       chapterId: remapped.chapterId,
       paragraphId: remapped.paragraphId,
+      ...(typeof record.paragraphIndex === 'number'
+        ? { paragraphIndex: nextIndex.paragraphIndexById.get(remapped.paragraphId) ?? record.paragraphIndex }
+        : {}),
+      ...(movedPosition
+        ? {
+            chapterProgress: clamp01(
+              nextParagraphIndex / Math.max(1, nextIndex.chapterParagraphCountById.get(remapped.chapterId) ?? 1),
+            ),
+            scrollTop: 0,
+          }
+        : {}),
     },
   };
 }
@@ -348,7 +377,15 @@ export function prepareRemoteContentActivation(input: {
         ...localPosition,
         chapterId: remapped.chapterId,
         paragraphId: remapped.paragraphId,
+        paragraphIndex: nextIndex.paragraphIndexById.get(remapped.paragraphId) ?? localPosition.paragraphIndex,
       };
+      if (mappedPosition.paragraphIndex !== localPosition.paragraphIndex) {
+        const chapter = snapshot.chapters.find((item) => item.id === mappedPosition.chapterId);
+        mappedPosition.chapterProgress = clamp01(
+          mappedPosition.paragraphIndex / Math.max(1, chapter?.paragraphCount ?? 1),
+        );
+        mappedPosition.scrollTop = 0;
+      }
       readingPosition = mappedPosition;
       deleteReadingPosition = false;
       const chapter = snapshot.chapters.find((item) => item.id === mappedPosition.chapterId);
@@ -369,13 +406,16 @@ export function prepareRemoteContentActivation(input: {
       if (snapshot.readingPosition) {
         novel = applyRemoteReadingPosition(novel, snapshot.readingPosition, snapshot.chapters);
       } else if (baseNovel) {
+        const survivingSection = oldIndex.stableFixedDocumentChapterIds.has(localPosition.chapterId)
+          ? snapshot.chapters.find((chapter) => chapter.id === localPosition.chapterId)
+          : undefined;
         novel = {
           ...novel,
-          lastReadChapterId: undefined,
-          lastReadChapterIndex: undefined,
+          lastReadChapterId: survivingSection?.id,
+          lastReadChapterIndex: survivingSection?.index,
           lastReadParagraphId: undefined,
           lastReadOffset: 0,
-          lastReadProgress: 0,
+          lastReadProgress: survivingSection ? bookProgressFromChapterProgress(novel, survivingSection, 0) : 0,
           lastReadAt: baseNovel.lastReadAt,
           readingSeconds: baseNovel.readingSeconds,
         };

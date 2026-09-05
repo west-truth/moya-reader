@@ -259,6 +259,9 @@ export async function planLocalDocumentSeriesImport(
         readDocumentSeriesArchive(targetSource.blob),
       )
     : undefined;
+  if (existingArchive?.manifest.schemaVersion === 2) {
+    throw new Error('외부 TXT 연재 작품의 회차는 연결된 소스에서 추가해 주세요. 로컬 파일로 자동 병합하지 않습니다.');
+  }
   const legacyChapterSplitMode =
     targetNovel && targetSource && !existingArchive
       ? await resolveLegacySplitMode(targetNovel, targetSource, targetChapters)

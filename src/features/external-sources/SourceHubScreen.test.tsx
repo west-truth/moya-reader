@@ -1,4 +1,5 @@
 import { renderToStaticMarkup } from 'react-dom/server';
+import { act, create, type ReactTestRenderer } from 'react-test-renderer';
 import { describe, expect, it, vi } from 'vitest';
 import type { LibraryScreenProps } from '../library/library-screen-contract';
 import SourceHubScreen from './SourceHubScreen';
@@ -52,6 +53,7 @@ function controller(overrides: Partial<ExternalSourceController> = {}): External
     canRemoveItems: false,
     subscriptions: [],
     libraryWorks: [],
+    linkedSeriesBookIds: new Set(),
     activeSubscription: undefined,
     checkingSubscriptions: false,
     canSubscribeCurrentWork: false,
@@ -136,6 +138,184 @@ const library = {
 } as unknown as LibraryScreenProps;
 
 describe('SourceHubScreen', () => {
+  it('keeps saved reading available but verifies originals only through the matching connected source account', () => {
+    for (const mode of ['connected', 'offline', 'different-account', 'local'] as const) {
+      const item = {
+        key: {
+          connectorId: mode === 'local' ? 'moya.local.serial' : 'fixture.source',
+          accountConnectionId: 'original-account',
+          remoteId: 'release:one',
+        },
+        kind: 'file' as const,
+        title: '1화',
+        importability: 'supported' as const,
+        selected: false,
+        importState: 'imported' as const,
+        localBookId: 'book',
+        release: { title: '1화', sourceOrder: 1 },
+        collection: {
+          remoteId: 'work',
+          title: '연재 작품',
+          seriesProfile: {
+            kind: 'document_series' as const,
+            format: 'txt' as const,
+            encoding: 'utf-8' as const,
+            chapterSplitMode: 'single' as const,
+          },
+        },
+      };
+      const base = controller();
+      const view = controller({
+        detail: { title: '연재 작품' },
+        localSeriesNovel: testNovel({ id: 'book', format: 'txt', documentSectionCount: 1 }),
+        localSeriesSourceId: 'fixture.source',
+        items: [item],
+        sources: [
+          {
+            ...base.sources[0]!,
+            connection: {
+              state: mode === 'offline' ? 'disconnected' : 'connected',
+              accountConnectionId: mode === 'different-account' ? 'another-account' : 'original-account',
+            },
+          },
+        ],
+      });
+      const markup = renderToStaticMarkup(
+        <SourceHubScreen controller={view} library={library} openSourceSettings={vi.fn()} />,
+      );
+      const read = markup.match(/<button[^>]*aria-label="1화 보기"[^>]*>/u)?.[0];
+      expect(read).toBeDefined();
+      expect(read).not.toContain('disabled');
+      const verify = markup.match(/<button[^>]*aria-label="1화 원문 확인"[^>]*>/u)?.[0];
+      if (mode === 'local') expect(verify).toBeUndefined();
+      else {
+        expect(verify).toBeDefined();
+        expect(verify?.includes('disabled')).toBe(mode !== 'connected');
+        if (mode === 'offline') expect(verify).toContain('작품 소스에 다시 연결');
+        if (mode === 'different-account') expect(verify).toContain('이 회차를 가져온 계정');
+      }
+    }
+  });
+
+  it.each(['document_series', 'image_series'] as const)(
+    'selects only pending releases and retains saved reading separately from updates for %s',
+    (kind) => {
+      const seriesProfile =
+        kind === 'document_series'
+          ? { kind, format: 'txt' as const, encoding: 'utf-8' as const, chapterSplitMode: 'single' as const }
+          : { kind, archiveFormat: 'cbz' as const };
+      const view = controller({
+        detail: { title: '연재 작품' },
+        items: (['imported', 'update_available', 'available'] as const).map((importState, index) => ({
+          key: { connectorId: 'fixture.source', remoteId: `release:${index}` },
+          kind: 'file',
+          title: `${index + 1}화`,
+          importability: 'supported',
+          selected: true,
+          importState,
+          localBookId: importState === 'available' ? undefined : 'book',
+          release: { title: `${index + 1}화`, sourceOrder: index + 1 },
+          collection: { remoteId: 'work', title: '연재 작품', seriesProfile },
+        })),
+      });
+      const markup = renderToStaticMarkup(
+        <SourceHubScreen controller={view} library={library} openSourceSettings={vi.fn()} />,
+      );
+      expect(markup).not.toContain('aria-label="1화 선택"');
+      expect(markup).toContain('aria-label="2화 선택"');
+      expect(markup).toContain('aria-label="3화 선택"');
+      expect(markup).toContain('2개 선택');
+      expect(markup).toContain('aria-label="1화 보기"');
+      expect(markup).toContain('aria-label="2화 보기"');
+      expect(markup).toContain('aria-label="2화 업데이트"');
+      expect(markup).not.toContain('선택 회차 가져오기·원문 확인');
+      expect(markup.includes('aria-label="1화 원문 확인"')).toBe(kind === 'document_series');
+    },
+  );
+
+  it('routes saved TXT reading and explicit source verification through separate actions', async () => {
+    const item = {
+      key: { connectorId: 'fixture.source', remoteId: 'release:one' },
+      kind: 'file' as const,
+      title: '1화',
+      importability: 'supported' as const,
+      selected: false,
+      importState: 'imported' as const,
+      localBookId: 'book',
+      release: { title: '1화', sourceOrder: 1 },
+      collection: {
+        remoteId: 'work',
+        title: '연재 작품',
+        seriesProfile: {
+          kind: 'document_series' as const,
+          format: 'txt' as const,
+          encoding: 'utf-8' as const,
+          chapterSplitMode: 'single' as const,
+        },
+      },
+    };
+    const view = controller({ detail: { title: '연재 작품' }, items: [item] });
+    let renderer!: ReactTestRenderer;
+    await act(async () => {
+      renderer = create(<SourceHubScreen controller={view} library={library} openSourceSettings={vi.fn()} />);
+    });
+    try {
+      await act(async () => renderer.root.findByProps({ 'aria-label': '1화 보기' }).props.onClick());
+      expect(view.openImported).toHaveBeenCalledWith(item);
+      expect(view.importItem).not.toHaveBeenCalled();
+      await act(async () => renderer.root.findByProps({ 'aria-label': '1화 원문 확인' }).props.onClick());
+      expect(view.importItem).toHaveBeenCalledWith(item);
+      expect(view.importSelected).not.toHaveBeenCalled();
+    } finally {
+      await act(async () => renderer.unmount());
+    }
+  });
+
+  it('labels a partial release page as loaded chapters instead of the work total', () => {
+    const view = controller({ detail: { title: '연재 작품' }, nextCursor: 'more-releases' });
+    const release = view.items[0]!;
+    const markup = renderToStaticMarkup(
+      <SourceHubScreen
+        controller={{
+          ...view,
+          items: Array.from({ length: 50 }, (_, index) => ({
+            ...release,
+            key: { ...release.key, remoteId: `release:${index}` },
+            kind: 'file',
+          })),
+        }}
+        library={library}
+        openSourceSettings={vi.fn()}
+      />,
+    );
+    expect(markup).toContain('<dt>불러온 회차</dt><dd>50화</dd>');
+    expect(markup).not.toContain('총 회차');
+    expect(markup).toContain('목차 더 불러오기');
+  });
+
+  it.each(['empty', 'cached', 'append'] as const)(
+    'shows a persistent browse failure and retry action for an %s list',
+    (kind) => {
+      const message = '원본 사이트와 서버 상태를 확인하고 다시 시도해 주세요.';
+      const view = controller({
+        listError: { message, retry: vi.fn(async () => undefined) },
+        stale: kind === 'cached',
+        ...(kind === 'empty' ? { items: [] } : {}),
+        ...(kind === 'append' ? { nextCursor: 'second-page' } : {}),
+      });
+      const markup = renderToStaticMarkup(
+        <SourceHubScreen controller={view} library={library} openSourceSettings={vi.fn()} />,
+      );
+      expect(markup).toContain('role="alert"');
+      expect(markup).toContain(message);
+      expect(markup).toContain('목록 다시 불러오기');
+      expect(markup).not.toContain('표시할 파일이나 작품이 없습니다');
+      if (kind !== 'empty') expect(markup).toContain('외부 작품');
+      if (kind === 'cached') expect(markup).toContain('저장된 목록');
+      if (kind === 'append') expect(markup).toContain('더 보기');
+    },
+  );
+
   it('labels an empty-query extension search as filter results', () => {
     const markup = renderToStaticMarkup(
       <SourceHubScreen
@@ -337,6 +517,24 @@ describe('SourceHubScreen', () => {
     expect(detailMarkup).not.toContain('기본 폴더로 설정');
     expect(detailMarkup).toContain('라이브러리에서 제거');
     expect(detailMarkup).toContain('새 회차 선택');
+  });
+
+  it('shows fetched text-source artwork for an existing book without replacing a saved cover', () => {
+    const render = (coverAssetId?: string) =>
+      renderToStaticMarkup(
+        <SourceHubScreen
+          controller={controller({
+            localSeriesNovel: testNovel({ id: 'text-book', format: 'txt', coverAssetId }),
+            detail: { title: 'Text work', thumbnailUrl: 'blob:text-source-cover' },
+            items: [],
+          })}
+          library={library}
+          openSourceSettings={vi.fn()}
+          openLocalSeriesImport={vi.fn()}
+        />,
+      );
+    expect(render()).toContain('src="blob:text-source-cover"');
+    expect(render('saved-cover')).not.toContain('blob:text-source-cover');
   });
 
   it('offers a persistent default-folder action only inside a nested folder', () => {

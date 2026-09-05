@@ -1,8 +1,12 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { TextServerRequestError } from '../../external-sources/text-server/text-server-errors';
+import { filterAndSortReleases } from './source-release-list-model';
+import { completeSeriesCatalog } from './complete-series-catalog';
 import type { ExtensionContributionId, ExternalSourceContributionDescriptor } from '@noveldesk/extension-contracts';
-import { integrityHash, persistentId128 } from '@noveldesk/text-core/hash';
+import { persistentId128 } from '@noveldesk/text-core/hash';
 import type { Chapter, Novel } from '../../domain/types';
 import type {
+  ExternalItemKey,
   ExternalItemSummary,
   ExternalSourceBrowseMode,
   ExternalSourceBrowseState,
@@ -46,15 +50,23 @@ import {
 } from '../../external-sources/link-import-reconciliation';
 import {
   externalReleaseRevisionChanged,
+  externalItemSectionId,
   localSeriesDetail,
   projectLocalSeries,
   projectLocalSeriesReadingStates,
   type SerialReleaseReadingState,
 } from './serial-work-projection';
 import { projectImportProgress, type ImportTaskView } from '../import/import-task-projection';
+import { externalDocumentCollectionId } from '../../external-sources/series/document-series-identity';
+import { MAX_SOURCE_COVER_BYTES, persistSourceCover, sourceCoverContentType } from './source-cover';
+import {
+  collectSubscriptionReleasePages,
+  mergeSeriesCatalogItems,
+  MAX_SUBSCRIPTION_CHECK_TOTAL_PAGES,
+  reconcileSubscriptionReleaseIds,
+} from './series-catalog-pagination';
 
 const CACHE_TTL_MS = 15 * 60 * 1_000;
-const MAX_SOURCE_COVER_BYTES = 8 * 1024 * 1024;
 
 function normalizedSourceHash(value: string | undefined): string | undefined {
   return value
@@ -126,6 +138,8 @@ export interface ExternalSourceItemView extends ExternalItemSummary {
   readonly localBookId?: string;
   readonly localBookTitle?: string;
   readonly readingState?: SerialReleaseReadingState;
+  /** Local-only section order must not be compared with remote chapter numbers. */
+  readonly localOrderOnly?: boolean;
 }
 
 export interface ExternalSourceLibraryWork extends ExternalSourceSubscriptionRecord {
@@ -151,17 +165,25 @@ export interface ExternalSourceImportProgress {
 export interface ExternalSourceController {
   readonly open: boolean;
   readonly loading: boolean;
+  readonly catalogLoading?: boolean;
+  readonly catalogUpdateAvailable?: boolean;
+  applyCatalogUpdate?(): void;
   readonly busy: boolean;
   readonly blockingBusy: boolean;
   readonly importBusy: boolean;
   readonly selectedBatchActive: boolean;
   readonly tasks: readonly ImportTaskView[];
+  readonly linkedSeriesBookIds: ReadonlySet<string>;
   readonly sources: readonly ExternalSourceView[];
   readonly activeSourceId?: ExtensionContributionId;
   readonly items: readonly ExternalSourceItemView[];
   readonly query: string;
   readonly nextCursor?: string;
   readonly stale: boolean;
+  readonly listError?: {
+    readonly message: string;
+    retry(): Promise<void>;
+  };
   readonly detail?: ExternalSourceWorkDetail;
   readonly localSeriesNovel?: Novel;
   readonly localSeriesSourceId?: ExtensionContributionId;
@@ -196,7 +218,7 @@ export interface ExternalSourceController {
   refresh(): Promise<void>;
   loadMore(): Promise<void>;
   toggleItem(key: string): void;
-  selectAllSupported(selected: boolean): void;
+  selectAllSupported(selected: boolean, itemKeys?: readonly string[]): void;
   importItem(item: ExternalSourceItemView): Promise<void>;
   importAndOpen(item: ExternalSourceItemView): Promise<void>;
   importSelected(): Promise<void>;
@@ -242,9 +264,9 @@ export interface UseExternalSourceControllerOptions {
   confirm(message: string): boolean;
 }
 
-async function loadSourceLibrary(options: UseExternalSourceControllerOptions, sourceId?: string) {
+async function loadSourceLibrary(options: UseExternalSourceControllerOptions) {
   // Read links first: a catalog snapshot taken before a new link must never prune it.
-  const links = await options.state.listLinks(sourceId);
+  const links = await options.state.listLinks();
   const novels = await options.listNovels({ includeTrash: true });
   const reconciled = await reconcilePendingExternalSourceLinks(options.state, links, novels, Date.now(), {
     catalogIncludesTrash: true,
@@ -315,67 +337,6 @@ function serialCollectionKey(item: SerialItemSummary): string {
   return [item.key.connectorId, item.key.accountConnectionId ?? '', item.collection.remoteId].join('::');
 }
 
-function sourceCoverContentType(value: string): 'image/jpeg' | 'image/png' | 'image/webp' | undefined {
-  const normalized = value.split(';')[0]?.trim().toLocaleLowerCase();
-  if (normalized === 'image/jpg' || normalized === 'image/jpeg') return 'image/jpeg';
-  if (normalized === 'image/png') return 'image/png';
-  if (normalized === 'image/webp') return 'image/webp';
-  return undefined;
-}
-
-async function persistSourceCover(
-  assets: BookAssetRepository | undefined,
-  novel: Novel,
-  thumbnailUrl: string | undefined,
-): Promise<boolean> {
-  if (!thumbnailUrl) return false;
-  if (!assets?.saveApprovedEnrichmentCover) {
-    throw new Error('원격 표지를 저장할 기능을 찾지 못했습니다. Moya Web과 서버를 함께 업데이트해 주세요.');
-  }
-  const active = await assets.getActiveCover(novel.id);
-  if (
-    active &&
-    active.metadata.provenance !== 'archive_embedded' &&
-    active.metadata.provenance !== 'generated_preview'
-  ) {
-    return false;
-  }
-  const response = await fetch(thumbnailUrl);
-  if (!response.ok) throw new Error(`표지 요청에 실패했습니다. (HTTP ${response.status})`);
-  const declaredLength = Number(response.headers.get('Content-Length'));
-  if (Number.isFinite(declaredLength) && declaredLength > MAX_SOURCE_COVER_BYTES) {
-    throw new Error('원격 표지 크기가 안전 한도를 초과했습니다.');
-  }
-  const blob = await response.blob();
-  const contentType = sourceCoverContentType(blob.type || response.headers.get('Content-Type') || '');
-  if (!contentType || blob.size === 0 || blob.size > MAX_SOURCE_COVER_BYTES) {
-    throw new Error('지원하지 않는 원격 표지 형식입니다.');
-  }
-  const bitmap = await createImageBitmap(blob);
-  const pixelWidth = bitmap.width;
-  const pixelHeight = bitmap.height;
-  bitmap.close();
-  if (pixelWidth < 1 || pixelHeight < 1) throw new Error('원격 표지 크기를 확인하지 못했습니다.');
-  // Hosted cover uploads require the current tagged integrity-hash contract.
-  // External-source link hashes intentionally stay on the legacy bare SHA-256
-  // helper until their persisted compatibility contract is migrated.
-  const contentHash = integrityHash(await blob.arrayBuffer());
-  const extension = contentType === 'image/png' ? 'png' : contentType === 'image/webp' ? 'webp' : 'jpg';
-  await assets.saveApprovedEnrichmentCover(novel.id, {
-    blob,
-    fileName: `${novel.title}.${extension}`,
-    contentType,
-    contentHash,
-    pixelWidth,
-    pixelHeight,
-    fit: 'crop',
-    positionX: 50,
-    positionY: 50,
-    expectedMetadataRevision: novel.metadataRevision ?? 0,
-  });
-  return true;
-}
-
 function cacheSafeItems(items: readonly ExternalItemSummary[]): readonly ExternalItemSummary[] {
   return items.map((item) => (item.thumbnailUrl?.startsWith('blob:') ? { ...item, thumbnailUrl: undefined } : item));
 }
@@ -428,19 +389,50 @@ export function useExternalSourceController(options: UseExternalSourceController
   const [open, setOpen] = useState(false);
   const [loading, setLoading] = useState(false);
   const [blockingBusy, setBusy] = useState(false);
+  const [catalogLoading, setCatalogLoading] = useState(false);
+  const [catalogUpdateAvailable, setCatalogUpdateAvailable] = useState(false);
+  const pendingCatalogApplyRef = useRef<() => void>();
+  const applyCatalogUpdate = useCallback(() => {
+    pendingCatalogApplyRef.current?.();
+    pendingCatalogApplyRef.current = undefined;
+    setCatalogUpdateAvailable(false);
+  }, []);
   const [importBusy, setImportBusy] = useState(false);
   const [selectedBatchActive, setSelectedBatchActive] = useState(false);
   const [tasks, setTasks] = useState<ImportTaskView[]>([]);
   const busy = blockingBusy || importBusy;
   const [activeSourceId, setActiveSourceId] = useState<ExtensionContributionId>();
-  const [rawItems, setRawItems] = useState<readonly ExternalItemSummary[]>([]);
+  const [catalogItems, setRawItems] = useState<readonly ExternalItemSummary[]>([]);
+  const [coverUrls, setCoverUrls] = useState<ReadonlyMap<string, string>>(new Map());
+  const rawItems = useMemo(
+    () =>
+      catalogItems.map((item) =>
+        item.coverRef && coverUrls.has(externalItemKeyId(item.coverRef))
+          ? { ...item, thumbnailUrl: coverUrls.get(externalItemKeyId(item.coverRef)) }
+          : item,
+      ),
+    [catalogItems, coverUrls],
+  );
   const [links, setLinks] = useState<readonly ExternalSourceLink[]>([]);
   const [novels, setNovels] = useState<readonly Novel[]>([]);
   const [selectedKeys, setSelectedKeys] = useState<ReadonlySet<string>>(() => new Set());
   const [query, setQuery] = useState('');
   const [nextCursor, setNextCursor] = useState<string>();
   const [stale, setStale] = useState(false);
-  const [detail, setDetail] = useState<ExternalSourceWorkDetail>();
+  const [listFailure, setListFailure] = useState<{
+    message: string;
+    input: ExternalSourceListInput;
+    append: boolean;
+    sourceId: ExtensionContributionId;
+  }>();
+  const [catalogDetail, setDetail] = useState<ExternalSourceWorkDetail>();
+  const detail = useMemo(
+    () =>
+      catalogDetail?.coverRef && coverUrls.has(externalItemKeyId(catalogDetail.coverRef))
+        ? { ...catalogDetail, thumbnailUrl: coverUrls.get(externalItemKeyId(catalogDetail.coverRef)) }
+        : catalogDetail,
+    [catalogDetail, coverUrls],
+  );
   const [localSeriesBookId, setLocalSeriesBookId] = useState<string>();
   const [localSeriesSeedNovel, setLocalSeriesSeedNovel] = useState<Novel>();
   const [localSeriesSourceId, setLocalSeriesSourceId] = useState<ExtensionContributionId>();
@@ -457,14 +449,65 @@ export function useExternalSourceController(options: UseExternalSourceController
   const [checkingSubscriptions, setCheckingSubscriptions] = useState(false);
   const [brokerRevision, setBrokerRevision] = useState(0);
   const listAbortRef = useRef<AbortController>();
+  const localSeriesPageSeedRef = useRef<{
+    sourceId?: string;
+    accountConnectionId?: string;
+    parentRef?: string;
+    items: readonly ExternalItemSummary[];
+    remoteItems: readonly ExternalItemSummary[];
+    detail: ExternalSourceWorkDetail;
+  }>();
   const itemNavigationPendingRef = useRef(false);
   const serialImportQueueRef = useRef<ActiveSerialImportQueue>();
   const downloadAbortRef = useRef<AbortController>();
   const subscriptionAbortRef = useRef<AbortController>();
   const foregroundSubscriptionChecksRef = useRef(new Set<string>());
+  const subscriptionCheckOffsetsRef = useRef(new Map<string, number>());
   const importRef = useRef<ImportController>();
   const mountedRef = useRef(true);
   const openRef = useRef(open);
+
+  const coverTargets = JSON.stringify([
+    ...(detail?.coverRef ? [detail.coverRef] : []),
+    ...rawItems.flatMap((item) => (item.coverRef ? [item.coverRef] : [])),
+  ]);
+  useEffect(() => {
+    if (!open) return;
+    const targets = JSON.parse(coverTargets) as ExternalItemKey[];
+    const abort = new AbortController();
+    const unique = [...new Map(targets.map((key) => [externalItemKeyId(key), key])).values()];
+    let next = 0;
+    const run = async () => {
+      while (next < unique.length && !abort.signal.aborted) {
+        const key = unique[next++]!;
+        try {
+          const thumbnailUrl = await optionsRef.current.registry.resolveExternalSourceCover?.(
+            key.connectorId as ExtensionContributionId,
+            optionsRef.current.hostContext,
+            key,
+            abort.signal,
+          );
+          if (abort.signal.aborted || !thumbnailUrl) continue;
+          setCoverUrls((current) => new Map(current).set(externalItemKeyId(key), thumbnailUrl));
+        } catch {
+          /* Optional artwork never blocks catalog use or body downloads. */
+        }
+      }
+    };
+    void Promise.all(Array.from({ length: Math.min(3, unique.length) }, run));
+    return () => abort.abort();
+  }, [coverTargets, open, brokerRevision]);
+
+  const resolveDetailThumbnail = useCallback(async (value: ExternalSourceWorkDetail, signal: AbortSignal) => {
+    if (value.thumbnailUrl) return value.thumbnailUrl;
+    if (!value.coverRef) return undefined;
+    return optionsRef.current.registry.resolveExternalSourceCover?.(
+      value.coverRef.connectorId as ExtensionContributionId,
+      optionsRef.current.hostContext,
+      value.coverRef,
+      signal,
+    );
+  }, []);
 
   useEffect(() => {
     openRef.current = open;
@@ -547,9 +590,9 @@ export function useExternalSourceController(options: UseExternalSourceController
 
   const currentParentRef = breadcrumbs.at(-1)?.parentRef;
 
-  const refreshLocalProjection = useCallback(async (sourceId: string) => {
+  const refreshLocalProjection = useCallback(async () => {
     try {
-      const next = await loadSourceLibrary(optionsRef.current, sourceId);
+      const next = await loadSourceLibrary(optionsRef.current);
       if (!mountedRef.current) return;
       setLinks(next.links);
       setNovels(next.novels);
@@ -562,6 +605,21 @@ export function useExternalSourceController(options: UseExternalSourceController
     }
   }, []);
 
+  const publishCommittedNovel = useCallback(
+    async (novel: Novel) => {
+      const links = await optionsRef.current.state.listLinks();
+      // Recovery still needs an authoritative catalog read before reconciling pending links.
+      if (links.some((link) => link.localBookId === novel.id && link.pendingImport)) {
+        await refreshLocalProjection();
+        return;
+      }
+      if (!mountedRef.current) return;
+      setLinks(links);
+      setNovels((current) => [...current.filter((item) => item.id !== novel.id), novel]);
+    },
+    [refreshLocalProjection],
+  );
+
   const replaceSubscription = useCallback((next: ExternalSourceSubscriptionRecord) => {
     setSubscriptions((current) => [...current.filter((item) => item.id !== next.id), next]);
   }, []);
@@ -572,19 +630,20 @@ export function useExternalSourceController(options: UseExternalSourceController
       accountConnectionId: string | undefined,
       parentRef: string | undefined,
       page: { readonly detail?: ExternalSourceWorkDetail; readonly items: readonly ExternalItemSummary[] },
+      complete: boolean,
+      isCurrent: () => boolean = () => true,
     ) => {
       if (!parentRef || !page.detail) return;
       const id = externalSourceSubscriptionId(sourceId, accountConnectionId, parentRef);
       const current = (await optionsRef.current.state.listSubscriptions(sourceId, accountConnectionId)).find(
         (item) => item.id === id,
       );
-      if (!current) return;
+      if (!current || !mountedRef.current || !isCurrent()) return;
       const releaseIds = page.items.filter((item) => item.release).map((item) => item.key.remoteId);
-      const known = new Set(current.knownReleaseIds);
-      const previouslyNew = new Set(current.newReleaseIds);
       const thumbnailUrl = current.thumbnailUrl?.startsWith('data:')
         ? current.thumbnailUrl
         : await persistentThumbnailUrl(page.detail.thumbnailUrl);
+      if (!mountedRef.current || !isCurrent()) return;
       const next: ExternalSourceSubscriptionRecord = {
         ...current,
         title: page.detail.title,
@@ -592,14 +651,12 @@ export function useExternalSourceController(options: UseExternalSourceController
         description: page.detail.description,
         thumbnailUrl: thumbnailUrl ?? current.thumbnailUrl,
         sourceLabel: page.detail.sourceLabel,
-        knownReleaseIds: [...new Set([...current.knownReleaseIds, ...releaseIds])],
-        newReleaseIds: releaseIds.filter((releaseId) => previouslyNew.has(releaseId) || !known.has(releaseId)),
-        availableReleaseCount: releaseIds.length,
-        lastCheckedAt: currentIso(),
+        ...reconcileSubscriptionReleaseIds(current, releaseIds, complete),
+        lastCheckedAt: complete ? currentIso() : current.lastCheckedAt,
         updatedAt: currentIso(),
       };
       await optionsRef.current.state.saveSubscription(next);
-      if (mountedRef.current) replaceSubscription(next);
+      if (mountedRef.current && isCurrent()) replaceSubscription(next);
     },
     [replaceSubscription],
   );
@@ -637,36 +694,168 @@ export function useExternalSourceController(options: UseExternalSourceController
       append: boolean,
       sourceOverride?: ExtensionContributionId,
       notifyFailure = true,
+      forceRefresh = false,
     ): Promise<boolean | undefined> => {
       const sourceId = sourceOverride ?? activeSourceId;
       if (!sourceId || blockingBusy) return undefined;
+      listAbortRef.current?.abort();
+      pendingCatalogApplyRef.current = undefined;
+      setCatalogUpdateAvailable(false);
+      setListFailure(undefined);
       const connection = optionsRef.current.registry.getExternalSourceStatus(sourceId, optionsRef.current.hostContext);
+      const seed = localSeriesPageSeedRef.current;
+      const localSeed =
+        seed?.sourceId === sourceId &&
+        (seed.accountConnectionId ?? '') === (connection.accountConnectionId ?? '') &&
+        seed.parentRef === input.parentRef &&
+        !input.query &&
+        !input.filters?.length
+          ? seed
+          : undefined;
+      if (!localSeed) localSeriesPageSeedRef.current = undefined;
       if (connection.state !== 'connected') {
-        setRawItems([]);
-        setDetail(undefined);
+        setRawItems(localSeed?.items ?? []);
+        setDetail(localSeed?.detail);
         setNextCursor(undefined);
         setStale(false);
         return false;
       }
-      listAbortRef.current?.abort();
       const abort = new AbortController();
       listAbortRef.current = abort;
-      setLoading(true);
+      if (append) setCatalogLoading(true);
+      else {
+        setLoading(true);
+        setCatalogLoading(false);
+      }
       const normalizedInput: ExternalSourceListInput = {
         ...input,
         accountConnectionId: connection.accountConnectionId,
       };
       const id = cachePageId(sourceId, connection.accountConnectionId, normalizedInput);
+      let cached =
+        normalizedInput.parentRef && !normalizedInput.query
+          ? await optionsRef.current.state.getCachePage(id).catch(() => undefined)
+          : undefined;
+      if (!mountedRef.current || abort.signal.aborted || listAbortRef.current !== abort) return;
+      const snapshot = !append && cached?.completeSeries && !cached.nextCursor ? cached : undefined;
+      const connectionIsCurrent = () => {
+        const current = optionsRef.current.registry.getExternalSourceStatus(sourceId, optionsRef.current.hostContext);
+        return (
+          mountedRef.current &&
+          !abort.signal.aborted &&
+          listAbortRef.current === abort &&
+          current.state === 'connected' &&
+          current.connectionGeneration === connection.connectionGeneration &&
+          (current.accountConnectionId ?? '') === (connection.accountConnectionId ?? '')
+        );
+      };
+      if (!connectionIsCurrent()) {
+        setLoading(false);
+        setCatalogLoading(false);
+        return;
+      }
+      const publish = (page: { items: readonly ExternalItemSummary[]; detail?: ExternalSourceWorkDetail }) => {
+        if (localSeed) {
+          localSeed.remoteItems = page.items;
+          setRawItems(mergeSeriesCatalogItems(localSeed.items, page.items));
+        } else setRawItems([...page.items]);
+        setDetail(page.detail ?? localSeed?.detail);
+        setNextCursor(undefined);
+      };
+      if (snapshot) {
+        publish(snapshot);
+        setLoading(false);
+        setStale(false);
+        if (!forceRefresh && Date.parse(snapshot.expiresAt) > Date.now()) {
+          setCatalogLoading(false);
+          return true;
+        }
+        setCatalogLoading(true);
+      } else if (!append) setRawItems(localSeed?.items ?? []);
       try {
-        const page = await optionsRef.current.registry.listExternalSource(
+        let page = await optionsRef.current.registry.listExternalSource(
           sourceId,
           optionsRef.current.hostContext,
           normalizedInput,
           abort.signal,
         );
-        if (!mountedRef.current || abort.signal.aborted) return;
-        setRawItems((current) => (append ? [...current, ...page.items] : page.items));
-        if (!append) setDetail(page.detail);
+        if (!mountedRef.current || abort.signal.aborted || listAbortRef.current !== abort) return;
+        const initialConnection = optionsRef.current.registry.getExternalSourceStatus(
+          sourceId,
+          optionsRef.current.hostContext,
+        );
+        if (
+          initialConnection.state !== 'connected' ||
+          initialConnection.connectionGeneration !== connection.connectionGeneration ||
+          (initialConnection.accountConnectionId ?? '') !== (connection.accountConnectionId ?? '')
+        )
+          return;
+        const series = !normalizedInput.cursor && Boolean(page.detail && !page.browse);
+        if (series) {
+          if (!snapshot) setDetail(page.detail ?? localSeed?.detail);
+          page = await completeSeriesCatalog(
+            page,
+            (cursor) =>
+              optionsRef.current.registry.listExternalSource(
+                sourceId,
+                optionsRef.current.hostContext,
+                { ...normalizedInput, cursor },
+                abort.signal,
+              ),
+            abort.signal,
+          );
+        }
+        if (!mountedRef.current || abort.signal.aborted || listAbortRef.current !== abort) return;
+        const currentConnection = optionsRef.current.registry.getExternalSourceStatus(
+          sourceId,
+          optionsRef.current.hostContext,
+        );
+        if (
+          currentConnection.state !== 'connected' ||
+          currentConnection.connectionGeneration !== connection.connectionGeneration ||
+          (currentConnection.accountConnectionId ?? '') !== (connection.accountConnectionId ?? '')
+        )
+          return;
+        if (snapshot && series) {
+          const nextItems = cacheSafeItems(page.items);
+          if (
+            JSON.stringify(snapshot.items) !== JSON.stringify(nextItems) ||
+            JSON.stringify(snapshot.detail) !== JSON.stringify({ ...page.detail, thumbnailUrl: undefined })
+          ) {
+            const update = page;
+            pendingCatalogApplyRef.current = () => {
+              if (connectionIsCurrent()) publish(update);
+            };
+            setCatalogUpdateAvailable(true);
+          }
+          const now = currentIso();
+          await optionsRef.current.state.saveCachePage({
+            ...snapshot,
+            items: nextItems,
+            detail: { ...page.detail!, thumbnailUrl: undefined },
+            fetchedAt: now,
+            expiresAt: new Date(Date.now() + CACHE_TTL_MS).toISOString(),
+          });
+          await reconcileSubscriptionPage(
+            sourceId,
+            connection.accountConnectionId,
+            normalizedInput.parentRef,
+            page,
+            true,
+            () => !abort.signal.aborted && listAbortRef.current === abort,
+          ).catch(() => undefined);
+          return true;
+        }
+        if (localSeed) {
+          localSeed.remoteItems = mergeSeriesCatalogItems(
+            [],
+            [...(append ? localSeed.remoteItems : []), ...page.items],
+          );
+          setRawItems(mergeSeriesCatalogItems(localSeed.items, localSeed.remoteItems));
+        } else {
+          setRawItems((current) => mergeSeriesCatalogItems([], [...(append ? current : []), ...page.items]));
+        }
+        if (!append) setDetail(page.detail ?? localSeed?.detail);
         if (!append) {
           setBrowse(page.browse);
           if (page.browse?.filters) {
@@ -675,16 +864,12 @@ export function useExternalSourceController(options: UseExternalSourceController
             );
           }
         }
-        setSelectedKeys(
-          (current) =>
-            new Set(
-              [...current].filter((key) =>
-                (append ? [...rawItems, ...page.items] : page.items).some(
-                  (item) => externalItemKeyId(item.key) === key,
-                ),
-              ),
-            ),
+        const visibleKeys = new Set(
+          [...(localSeed?.items ?? []), ...(append ? rawItems : []), ...page.items].map((item) =>
+            externalItemKeyId(item.key),
+          ),
         );
+        setSelectedKeys((current) => new Set([...current].filter((key) => visibleKeys.has(key))));
         setNextCursor(page.nextCursor);
         setStale(false);
         await reconcileSubscriptionPage(
@@ -692,6 +877,8 @@ export function useExternalSourceController(options: UseExternalSourceController
           connection.accountConnectionId,
           normalizedInput.parentRef,
           page,
+          !normalizedInput.cursor && !page.nextCursor,
+          () => !abort.signal.aborted && listAbortRef.current === abort,
         ).catch(() => undefined);
         const fetchedAt = currentIso();
         await optionsRef.current.state.saveCachePage({
@@ -702,31 +889,60 @@ export function useExternalSourceController(options: UseExternalSourceController
           cursor: normalizedInput.cursor,
           nextCursor: page.nextCursor,
           items: cacheSafeItems(page.items),
+          completeSeries: series || undefined,
+          detail: series && page.detail ? { ...page.detail, thumbnailUrl: undefined } : undefined,
           browse: page.browse,
           fetchedAt,
           expiresAt: new Date(Date.now() + CACHE_TTL_MS).toISOString(),
           schemaVersion: 1,
         });
+        if (!mountedRef.current || abort.signal.aborted || listAbortRef.current !== abort) return;
         return true;
       } catch (error) {
-        if (isAbort(error)) return undefined;
-        const cached = await optionsRef.current.state.getCachePage(id);
-        if (!mountedRef.current || abort.signal.aborted) return undefined;
+        if (isAbort(error) || !mountedRef.current || abort.signal.aborted || listAbortRef.current !== abort)
+          return undefined;
+        cached ??= await optionsRef.current.state.getCachePage(id).catch(() => undefined);
+        if (!mountedRef.current || abort.signal.aborted || listAbortRef.current !== abort) return undefined;
+        const failureMessage =
+          error instanceof TextServerRequestError
+            ? error.message
+            : '외부 저장소 목록을 불러오지 못했습니다. 연결 상태를 확인하고 다시 시도해 주세요.';
+        setListFailure({
+          message: cached ? `${failureMessage} 마지막으로 받아 둔 목록을 표시합니다.` : failureMessage,
+          // Cached pages are already visible. Refresh from the start instead of appending them twice.
+          input: cached ? { ...input, cursor: undefined } : input,
+          append: cached ? false : append,
+          sourceId,
+        });
         if (cached) {
-          setRawItems((current) => (append ? [...current, ...cached.items] : cached.items));
-          if (!append) setDetail(undefined);
+          if (localSeed) {
+            localSeed.remoteItems = mergeSeriesCatalogItems(
+              [],
+              [...(append ? localSeed.remoteItems : []), ...cached.items],
+            );
+            setRawItems(mergeSeriesCatalogItems(localSeed.items, localSeed.remoteItems));
+          } else {
+            const cachedItems = cached.items;
+            setRawItems((current) => mergeSeriesCatalogItems([], [...(append ? current : []), ...cachedItems]));
+          }
+          if (!append) setDetail(cached.detail ?? localSeed?.detail);
           if (!append) {
             setBrowse(cached.browse);
             setFilterValues(defaultFilterValues(cached.browse?.filters));
           }
           setNextCursor(cached.nextCursor);
           setStale(true);
-          optionsRef.current.notify('외부 저장소를 새로고치지 못해 마지막 목록을 표시합니다.', 'warning');
+          optionsRef.current.notify(
+            error instanceof TextServerRequestError
+              ? `${error.message} 마지막으로 받아 둔 목록을 표시합니다.`
+              : '외부 저장소를 새로고치지 못해 마지막 목록을 표시합니다.',
+            'warning',
+          );
           return true;
         } else {
           if (!append) {
-            setRawItems([]);
-            setDetail(undefined);
+            setRawItems(localSeed?.items ?? []);
+            setDetail(localSeed?.detail);
             setBrowse(undefined);
             setNextCursor(undefined);
             setStale(false);
@@ -740,7 +956,10 @@ export function useExternalSourceController(options: UseExternalSourceController
           return false;
         }
       } finally {
-        if (mountedRef.current && listAbortRef.current === abort) setLoading(false);
+        if (mountedRef.current && listAbortRef.current === abort) {
+          setLoading(false);
+          setCatalogLoading(false);
+        }
       }
     },
     [activeSourceId, blockingBusy, rawItems, reconcileSubscriptionPage],
@@ -748,6 +967,8 @@ export function useExternalSourceController(options: UseExternalSourceController
 
   const loadSourceStart = useCallback(
     async (sourceId: ExtensionContributionId) => {
+      listAbortRef.current?.abort();
+      setListFailure(undefined);
       const connection = optionsRef.current.registry.getExternalSourceStatus(sourceId, optionsRef.current.hostContext);
       if (connection.state !== 'connected') return;
       const savedFolder = await optionsRef.current.state
@@ -763,7 +984,7 @@ export function useExternalSourceController(options: UseExternalSourceController
       setSelectedKeys(new Set());
       setNextCursor(undefined);
       setBreadcrumbs(savedFolder ? [{ label: '최상위 폴더' }, ...savedFolder.breadcrumbs] : [{ label: '최상위 폴더' }]);
-      await refreshLocalProjection(sourceId);
+      await refreshLocalProjection();
       const loaded = await loadPage({ parentRef: savedFolder?.parentRef }, false, sourceId, !savedFolder);
       if (!savedFolder || loaded !== false || !mountedRef.current) return;
       await optionsRef.current.state
@@ -779,7 +1000,7 @@ export function useExternalSourceController(options: UseExternalSourceController
 
   const refresh = useCallback(async () => {
     if (!activeSourceId) return;
-    await refreshLocalProjection(activeSourceId);
+    await refreshLocalProjection();
     await loadPage(
       {
         parentRef: currentParentRef,
@@ -788,6 +1009,9 @@ export function useExternalSourceController(options: UseExternalSourceController
         filters: filterChanges(browse?.filters, filterValues),
       },
       false,
+      undefined,
+      true,
+      true,
     );
   }, [activeSourceId, browse, currentParentRef, filterValues, loadPage, query, refreshLocalProjection]);
 
@@ -825,6 +1049,10 @@ export function useExternalSourceController(options: UseExternalSourceController
   const close = useCallback(() => {
     const wasOpen = openRef.current;
     listAbortRef.current?.abort();
+    pendingCatalogApplyRef.current = undefined;
+    setCatalogUpdateAvailable(false);
+    setCatalogLoading(false);
+    setListFailure(undefined);
     openRef.current = false;
     setOpen(false);
     if (!importBusy) {
@@ -841,19 +1069,30 @@ export function useExternalSourceController(options: UseExternalSourceController
     async (novel: Novel) => {
       if (blockingBusy) return;
       listAbortRef.current?.abort();
+      const navigation = new AbortController();
+      listAbortRef.current = navigation;
+      setListFailure(undefined);
       const [allLinks, chapters, nextNovels] = await Promise.all([
         optionsRef.current.state.listLinks(),
         optionsRef.current.listChapters(novel.id),
         optionsRef.current.listNovels(),
       ]);
-      if (!mountedRef.current) return;
+      if (!mountedRef.current || navigation.signal.aborted || listAbortRef.current !== navigation) return;
       const relatedLinks = allLinks.filter((link) => link.localBookId === novel.id && link.collectionRemoteId);
       // The caller may hold the pre-reader render snapshot. Prefer the just-loaded progress.
       novel = nextNovels.find((candidate) => candidate.id === novel.id) ?? novel;
       const sourceId = relatedLinks[0]?.source.connectorId as ExtensionContributionId | undefined;
       const collectionRemoteId = relatedLinks[0]?.collectionRemoteId;
-      const sourceLinks = sourceId ? allLinks.filter((link) => link.source.connectorId === sourceId) : relatedLinks;
-      const local = projectLocalSeries(novel, chapters, sourceLinks);
+      const local = projectLocalSeries(novel, chapters, allLinks);
+      const localSeed = {
+        sourceId,
+        accountConnectionId: relatedLinks[0]?.source.accountConnectionId,
+        parentRef: collectionRemoteId,
+        items: local.items,
+        remoteItems: [] as readonly ExternalItemSummary[],
+        detail: localSeriesDetail(novel),
+      };
+      localSeriesPageSeedRef.current = localSeed;
       setLocalSeriesBookId(novel.id);
       setLocalSeriesSeedNovel(novel);
       setLocalSeriesSourceId(sourceId);
@@ -877,8 +1116,7 @@ export function useExternalSourceController(options: UseExternalSourceController
       const source = sourceId ? sources.find((candidate) => candidate.id === sourceId) : undefined;
       if (!sourceId || !collectionRemoteId || source?.connection.state !== 'connected') return;
       const loaded = await loadPage({ parentRef: collectionRemoteId }, false, sourceId, false);
-      if (!mountedRef.current) return;
-      if (loaded === false) setRawItems(local.items);
+      if (!mountedRef.current || loaded === undefined || localSeriesPageSeedRef.current !== localSeed) return;
       setDetail((current) => current ?? localSeriesDetail(novel));
     },
     [blockingBusy, loadPage, sources],
@@ -888,6 +1126,7 @@ export function useExternalSourceController(options: UseExternalSourceController
     async (id: ExtensionContributionId) => {
       if (importBusy && id !== activeSourceId) return;
       listAbortRef.current?.abort();
+      setListFailure(undefined);
       setLocalSeriesBookId(undefined);
       setLocalSeriesSeedNovel(undefined);
       setLocalSeriesSourceId(undefined);
@@ -991,6 +1230,41 @@ export function useExternalSourceController(options: UseExternalSourceController
 
   const linkByKey = useMemo(() => new Map(links.map((link) => [externalItemKeyId(link.source), link])), [links]);
   const novelById = useMemo(() => new Map(novels.map((novel) => [novel.id, novel])), [novels]);
+  const catalogNovel = useMemo(() => {
+    if (localSeriesBookId || !detail || !open) return undefined;
+    const account = sources.find((source) => source.id === activeSourceId)?.connection.accountConnectionId;
+    const link = links.find(
+      (candidate) =>
+        candidate.source.connectorId === activeSourceId &&
+        (candidate.source.accountConnectionId ?? '') === (account ?? '') &&
+        candidate.collectionRemoteId === currentParentRef &&
+        !novelById.get(candidate.localBookId)?.deletedAt,
+    );
+    return link ? novelById.get(link.localBookId) : undefined;
+  }, [activeSourceId, currentParentRef, detail, links, localSeriesBookId, novelById, open, sources]);
+  const [catalogChapters, setCatalogChapters] = useState<{ novel: Novel; chapters: readonly Chapter[] }>();
+  useEffect(() => {
+    let active = true;
+    setCatalogChapters(undefined);
+    if (catalogNovel) {
+      void optionsRef.current
+        .listChapters(catalogNovel.id)
+        .then((chapters) => {
+          if (active) setCatalogChapters({ novel: catalogNovel, chapters });
+        })
+        .catch(() => undefined);
+    }
+    return () => {
+      active = false;
+    };
+  }, [catalogNovel]);
+  const catalogReadingStates = useMemo(
+    () =>
+      catalogNovel && catalogChapters?.novel === catalogNovel
+        ? projectLocalSeriesReadingStates(catalogNovel, catalogChapters.chapters, rawItems)
+        : new Map<string, SerialReleaseReadingState>(),
+    [catalogNovel, catalogChapters, rawItems],
+  );
   const effectiveLocalSeriesReadingStates = useMemo(() => {
     if (!localSeriesBookId) return localSeriesReadingStates;
     const localNovel = novelById.get(localSeriesBookId) ?? localSeriesSeedNovel;
@@ -1007,38 +1281,55 @@ export function useExternalSourceController(options: UseExternalSourceController
     () => new Map(tasks.flatMap((task) => (task.externalItemKey ? [[task.externalItemKey, task] as const] : []))),
     [tasks],
   );
-  const items = useMemo<readonly ExternalSourceItemView[]>(
-    () =>
-      rawItems.map((item) => {
-        const key = externalItemKeyId(item.key);
-        const link = linkByKey.get(key);
-        const linkedNovel = link ? novelById.get(link.localBookId) : undefined;
-        const completedTask = taskByItemKey.get(key)?.phase === 'complete' ? taskByItemKey.get(key) : undefined;
-        const completedNovel = completedTask?.targetBookId ? novelById.get(completedTask.targetBookId) : undefined;
-        const localNovel =
-          (linkedNovel?.deletedAt ? undefined : linkedNovel) ??
-          (completedNovel?.deletedAt ? undefined : completedNovel);
-        const unsupported = item.kind === 'folder' || item.importability === 'unsupported';
-        const changed = Boolean(link && externalReleaseRevisionChanged(item, link.importedRemoteRevision));
-        return {
-          ...item,
-          selected: selectedKeys.has(key),
-          importState: unsupported
-            ? 'unsupported'
-            : (link || completedTask) && localNovel
-              ? changed
-                ? 'update_available'
-                : 'imported'
-              : 'available',
-          localBookId: localNovel?.id,
-          localBookTitle: localNovel?.title,
-          readingState:
-            item.release && localSeriesBookId
-              ? (effectiveLocalSeriesReadingStates.get(item.key.remoteId) ?? 'unread')
-              : undefined,
-        };
-      }),
-    [linkByKey, effectiveLocalSeriesReadingStates, localSeriesBookId, novelById, rawItems, selectedKeys, taskByItemKey],
+  const items = useMemo<readonly ExternalSourceItemView[]>(() => {
+    const remoteItems = localSeriesPageSeedRef.current?.remoteItems;
+    const remoteKeys = remoteItems?.length
+      ? new Set(remoteItems.map((item) => externalItemKeyId(item.key)))
+      : undefined;
+    return rawItems.map((item) => {
+      const key = externalItemKeyId(item.key);
+      const link = linkByKey.get(key);
+      const linkedNovel = link ? novelById.get(link.localBookId) : undefined;
+      const completedTask = taskByItemKey.get(key)?.phase === 'complete' ? taskByItemKey.get(key) : undefined;
+      const completedNovel = completedTask?.targetBookId ? novelById.get(completedTask.targetBookId) : undefined;
+      const localNovel =
+        (linkedNovel?.deletedAt ? undefined : linkedNovel) ?? (completedNovel?.deletedAt ? undefined : completedNovel);
+      const unsupported = item.kind === 'folder' || item.importability === 'unsupported';
+      const changed = Boolean(link && externalReleaseRevisionChanged(item, link.importedRemoteRevision));
+      return {
+        ...item,
+        selected: selectedKeys.has(key),
+        importState: unsupported
+          ? 'unsupported'
+          : (link || completedTask) && localNovel
+            ? changed
+              ? 'update_available'
+              : 'imported'
+            : 'available',
+        localBookId: localNovel?.id,
+        localBookTitle: localNovel?.title,
+        localOrderOnly: Boolean(localSeriesBookId && remoteKeys && !remoteKeys.has(key)),
+        readingState: item.release
+          ? ((localSeriesBookId ? effectiveLocalSeriesReadingStates : catalogReadingStates).get(
+              externalItemSectionId(item),
+            ) ?? 'unread')
+          : undefined,
+      };
+    });
+  }, [
+    linkByKey,
+    effectiveLocalSeriesReadingStates,
+    catalogReadingStates,
+    localSeriesBookId,
+    novelById,
+    rawItems,
+    selectedKeys,
+    taskByItemKey,
+  ]);
+
+  const linkedSeriesBookIds = useMemo(
+    () => new Set(links.filter((link) => link.collectionRemoteId).map((link) => link.localBookId)),
+    [links],
   );
 
   const activeSubscription = useMemo(() => {
@@ -1124,19 +1415,22 @@ export function useExternalSourceController(options: UseExternalSourceController
   }, []);
 
   const selectAllSupported = useCallback(
-    (selected: boolean) => {
-      setSelectedKeys(
-        selected
-          ? new Set(
-              items
-                .filter(
-                  (item) =>
-                    item.kind !== 'folder' && item.importState !== 'unsupported' && item.importState !== 'imported',
-                )
-                .map((item) => externalItemKeyId(item.key)),
-            )
-          : new Set(),
-      );
+    (selected: boolean, itemKeys?: readonly string[]) => {
+      const scope = itemKeys ? new Set(itemKeys) : undefined;
+      const eligible = items
+        .filter(
+          (item) => item.kind !== 'folder' && item.importState !== 'unsupported' && item.importState !== 'imported',
+        )
+        .map((item) => externalItemKeyId(item.key))
+        .filter((key) => !scope || scope.has(key));
+      setSelectedKeys((current) => {
+        const next = scope ? new Set(current) : new Set<string>();
+        for (const key of eligible) {
+          if (selected) next.add(key);
+          else next.delete(key);
+        }
+        return next;
+      });
     },
     [items],
   );
@@ -1157,7 +1451,7 @@ export function useExternalSourceController(options: UseExternalSourceController
 
   const importSerialItems = useCallback(
     async (sourceId: ExtensionContributionId, initialItems: readonly SerialSourceItem[]): Promise<boolean> => {
-      const importable = [...initialItems];
+      const importable = filterAndSortReleases(initialItems, '', 'all', 'asc') as SerialSourceItem[];
       const collectionKeys = new Set(importable.map(serialCollectionKey));
       if (collectionKeys.size !== 1) return false;
       const collection = importable[0]!.collection;
@@ -1174,14 +1468,203 @@ export function useExternalSourceController(options: UseExternalSourceController
             .listSubscriptions(sourceId, accountConnectionId)
             .catch(() => [] as readonly ExternalSourceSubscriptionRecord[])
         ).find((record) => record.collectionRemoteId === collection.remoteId);
-      const sourceThumbnailUrl = detail?.thumbnailUrl ?? currentSubscription?.thumbnailUrl;
+      let sourceThumbnailUrl = detail?.thumbnailUrl ?? currentSubscription?.thumbnailUrl;
       const selectedUpdateCount = importable.filter((item) => item.importState === 'update_available').length;
       if (
         selectedUpdateCount > 0 &&
         !optionsRef.current.confirm(
-          `${selectedUpdateCount}개 회차의 원격 revision이 변경되었습니다. 실제 이미지가 달라진 회차만 기존 연재 작품 ID를 유지한 채 교체합니다. 실패하면 현재 작품과 연결은 유지됩니다. 계속할까요?`,
+          `${selectedUpdateCount}개 회차의 원격 revision이 변경되었습니다. 본문이나 회차 구성이 달라졌으면 기존 작품 ID를 유지한 채 갱신합니다. 완료된 회차는 이후 실패에도 유지됩니다. 계속할까요?`,
         )
       ) {
+        return true;
+      }
+
+      if (collection.seriesProfile?.kind === 'document_series') {
+        const batchId = `external-document-series-${crypto.randomUUID()}`;
+        const taskIdByItemKey = new Map<string, string>();
+        const serialQueue: ActiveSerialImportQueue = {
+          sourceId,
+          collectionKey: serialCollectionKey(importable[0]!),
+          batchId,
+          targetBookId: externalDocumentCollectionId(importable[0]!.key, collection.remoteId),
+          externalWorkId: currentSubscription?.id,
+          items: importable,
+          itemKeys: new Set(importable.map((item) => externalItemKeyId(item.key))),
+          taskIdByItemKey,
+          accepting: true,
+        };
+        const queuedTasks = importable.map((item, index): ImportTaskView => {
+          const itemKey = externalItemKeyId(item.key);
+          const id = `${batchId}-${index}`;
+          taskIdByItemKey.set(itemKey, id);
+          return {
+            id,
+            batchId,
+            source: 'external_source',
+            title: collection.title,
+            fileName: item.release.title,
+            targetBookId: serialQueue.targetBookId,
+            externalWorkId: currentSubscription?.id,
+            externalItemKey: itemKey,
+            phase: 'queued',
+            current: index + 1,
+            total: importable.length,
+          };
+        });
+        setTasks((current) => [
+          ...current.filter((task) => !task.externalItemKey || !taskIdByItemKey.has(task.externalItemKey)),
+          ...queuedTasks,
+        ]);
+        serialImportQueueRef.current = serialQueue;
+        const abort = new AbortController();
+        downloadAbortRef.current = abort;
+        setImportBusy(true);
+        setSelectedBatchActive(true);
+        let completed = 0;
+        let replacedRelease = false;
+        let coverAttempted = false;
+        let coverWarning: string | undefined;
+        try {
+          const { importDocumentSeries } =
+            await import('../../external-sources/series/document-series-import-coordinator');
+          // Capture each accepted selection once. Additions made while a batch is
+          // running are imported against its committed source in the next pass.
+          for (let offset = 0; offset < importable.length;) {
+            abort.signal.throwIfAborted();
+            const selectedItems = importable.slice(offset, offset + 1);
+            const committedBefore = completed;
+            await importDocumentSeries({
+              sourceId,
+              items: selectedItems,
+              registry: optionsRef.current.registry,
+              hostContext: optionsRef.current.hostContext,
+              state: optionsRef.current.state,
+              assets: optionsRef.current.assets,
+              importService: optionsRef.current.importService,
+              getNovel: (id) => optionsRef.current.getNovel(id),
+              signal: abort.signal,
+              onReplacedRelease: () => {
+                replacedRelease = true;
+              },
+              onProgress: (value) => {
+                completed = committedBefore + value.committed;
+                if (mountedRef.current) {
+                  const activeKey = value.item && externalItemKeyId(value.item.key);
+                  const batchKeys = new Set(value.items?.map((item) => externalItemKeyId(item.key)));
+                  setTasks((current) =>
+                    current.map((task) => {
+                      if (task.batchId !== batchId || task.phase === 'complete' || task.phase === 'cancelling')
+                        return task;
+                      if (value.detail && task.externalItemKey && batchKeys.has(task.externalItemKey))
+                        return { ...task, ...projectImportProgress(value.detail) };
+                      if (activeKey === task.externalItemKey)
+                        return { ...task, phase: value.stage ?? 'downloading', percent: undefined };
+                      if (activeKey && task.phase === 'downloading') return { ...task, phase: 'verifying' };
+                      return task;
+                    }),
+                  );
+                  setProgress({
+                    current: committedBefore + value.received,
+                    total: importable.length,
+                    completed,
+                    failed: 0,
+                    linkedExisting: 0,
+                    fileName: value.title,
+                    phase: value.detail ? 'importing' : 'downloading',
+                    detail: value.detail,
+                  });
+                }
+              },
+              onCommitted: async (novel, committedItems) => {
+                const keys = new Set(committedItems.map((item) => externalItemKeyId(item.key)));
+                serialQueue.targetBookId = novel.id;
+                if (mountedRef.current)
+                  setTasks((current) =>
+                    current.map((task) =>
+                      task.batchId === batchId
+                        ? {
+                            ...task,
+                            targetBookId: novel.id,
+                            ...(task.externalItemKey && keys.has(task.externalItemKey)
+                              ? { phase: 'complete' as const, percent: 100, error: undefined }
+                              : {}),
+                          }
+                        : task,
+                    ),
+                  );
+                await acknowledgeImportedReleaseIds(
+                  sourceId,
+                  accountConnectionId,
+                  collection.remoteId,
+                  committedItems.map((item) => item.key.remoteId),
+                );
+                if (mountedRef.current)
+                  setSelectedKeys((current) => new Set([...current].filter((key) => !keys.has(key))));
+                await Promise.all([publishCommittedNovel(novel), optionsRef.current.onLibraryItemCommitted?.(novel)]);
+                if (!coverAttempted && (sourceThumbnailUrl || detail?.coverRef)) {
+                  coverAttempted = true;
+                  try {
+                    sourceThumbnailUrl ??= await resolveDetailThumbnail(detail!, downloadAbortRef.current!.signal);
+                    await persistSourceCover(optionsRef.current.assets, novel, sourceThumbnailUrl, abort.signal);
+                  } catch (error) {
+                    coverWarning = error instanceof Error ? error.message : '원격 표지를 저장하지 못했습니다.';
+                  }
+                }
+              },
+            });
+            offset += selectedItems.length;
+          }
+          serialQueue.accepting = false;
+          optionsRef.current.notify(
+            `${collection.title}의 ${completed}개 회차를 저장하거나 확인했습니다.${
+              replacedRelease ? ' 수정 회차에서 연결할 수 없는 위치·메모는 복구 대기로 보관합니다.' : ''
+            }${coverWarning ? ` 표지는 저장하지 못했습니다. ${coverWarning}` : ''}`,
+            coverWarning ? 'warning' : 'success',
+          );
+        } catch (error) {
+          serialQueue.accepting = false;
+          if (mountedRef.current)
+            setTasks((current) =>
+              current.map((task) =>
+                task.batchId === batchId && task.phase !== 'complete'
+                  ? {
+                      ...task,
+                      phase: 'failed',
+                      percent: undefined,
+                      error: isAbort(error)
+                        ? '다운로드를 취소했습니다.'
+                        : error instanceof Error
+                          ? error.message
+                          : '텍스트 회차를 가져오지 못했습니다.',
+                    }
+                  : task,
+              ),
+            );
+          optionsRef.current.notify(
+            `${completed}개 회차는 저장되었습니다. ${
+              isAbort(error)
+                ? '진행 중인 묶음 가져오기를 취소했습니다.'
+                : error instanceof Error
+                  ? error.message
+                  : '텍스트 회차를 가져오지 못했습니다.'
+            }`,
+            'warning',
+          );
+        } finally {
+          serialQueue.accepting = false;
+          if (serialImportQueueRef.current === serialQueue) serialImportQueueRef.current = undefined;
+          if (downloadAbortRef.current === abort) downloadAbortRef.current = undefined;
+          await optionsRef.current.onLibraryChanged().catch(() => undefined);
+          await refreshLocalProjection().catch(() => undefined);
+          if (mountedRef.current) {
+            setTasks((current) =>
+              current.filter((task) => task.batchId !== batchId || (!abort.signal.aborted && task.phase === 'failed')),
+            );
+            setImportBusy(false);
+            setSelectedBatchActive(false);
+            setProgress(undefined);
+          }
+        }
         return true;
       }
 
@@ -1237,7 +1720,7 @@ export function useExternalSourceController(options: UseExternalSourceController
       const completedKeys = new Set<string>();
       let activeTaskId: string | undefined;
       try {
-        let { novels: knownNovels, links: knownLinks } = await loadSourceLibrary(optionsRef.current, sourceId);
+        let { novels: knownNovels, links: knownLinks } = await loadSourceLibrary(optionsRef.current);
         // Download/build/commit one chapter at a time. The selection is not one
         // growing upload, and completed chapters survive a later failure/cancel.
         for (let batchIndex = 0; batchIndex < importable.length; batchIndex += 1) {
@@ -1607,7 +2090,7 @@ export function useExternalSourceController(options: UseExternalSourceController
           if (!coverAttempted && downloadedChapters.length > 0 && sourceThumbnailUrl) {
             coverAttempted = true;
             try {
-              await persistSourceCover(optionsRef.current.assets, importedNovel, sourceThumbnailUrl);
+              await persistSourceCover(optionsRef.current.assets, importedNovel, sourceThumbnailUrl, abort.signal);
             } catch (error) {
               coverWarning = error instanceof Error ? error.message : '원격 표지를 저장하지 못했습니다.';
             }
@@ -1615,7 +2098,7 @@ export function useExternalSourceController(options: UseExternalSourceController
         }
         serialQueue.accepting = false;
         await optionsRef.current.onLibraryChanged();
-        await refreshLocalProjection(sourceId);
+        await refreshLocalProjection();
         setSelectedKeys((current) => new Set([...current].filter((key) => !completedKeys.has(key))));
         const importedMessage =
           changedCount > 0
@@ -1632,7 +2115,7 @@ export function useExternalSourceController(options: UseExternalSourceController
         }
         if (changedCount > 0 || completedKeys.size > 0) {
           await optionsRef.current.onLibraryChanged().catch(() => undefined);
-          await refreshLocalProjection(sourceId).catch(() => undefined);
+          await refreshLocalProjection().catch(() => undefined);
           setSelectedKeys((current) => new Set([...current].filter((key) => !completedKeys.has(key))));
         }
         const cancelled = isAbort(error);
@@ -1672,14 +2155,25 @@ export function useExternalSourceController(options: UseExternalSourceController
       }
       return true;
     },
-    [acknowledgeImportedReleaseIds, detail?.thumbnailUrl, rawItems, refreshLocalProjection, subscriptions],
+    [
+      acknowledgeImportedReleaseIds,
+      detail,
+      rawItems,
+      refreshLocalProjection,
+      publishCommittedNovel,
+      subscriptions,
+      resolveDetailThumbnail,
+    ],
   );
 
   const importItems = useCallback(
     async (selected: readonly ExternalSourceItemView[]) => {
       const sourceId = activeSourceId;
       const importable = selected.filter(
-        (item) => item.kind !== 'folder' && item.importState !== 'unsupported' && item.importState !== 'imported',
+        (item) =>
+          item.kind !== 'folder' &&
+          item.importState !== 'unsupported' &&
+          (item.importState !== 'imported' || item.collection?.seriesProfile?.kind === 'document_series'),
       );
       if (!sourceId || importable.length === 0) return;
       const serialItems = importable.filter((item): item is SerialSourceItem => isSerialSourceItem(item));
@@ -1693,7 +2187,9 @@ export function useExternalSourceController(options: UseExternalSourceController
           serialItems.every((item) => serialCollectionKey(item) === queue.collectionKey),
         );
         if (!sameActiveSeries || !queue) return;
-        const additions = serialItems.filter((item) => !queue.itemKeys.has(externalItemKeyId(item.key)));
+        const additions = (filterAndSortReleases(serialItems, '', 'all', 'asc') as SerialSourceItem[]).filter(
+          (item) => !queue.itemKeys.has(externalItemKeyId(item.key)),
+        );
         if (additions.length === 0) return;
         const firstIndex = queue.items.length;
         additions.forEach((item, offset) => {
@@ -1745,7 +2241,7 @@ export function useExternalSourceController(options: UseExternalSourceController
       let firstFailureMessage: string | undefined;
       setProgress({ current: 0, total: importable.length, completed, failed, linkedExisting });
       try {
-        const { novels: knownNovels, links } = await loadSourceLibrary(optionsRef.current, sourceId);
+        const { novels: knownNovels, links } = await loadSourceLibrary(optionsRef.current);
         const knownLinks = new Map(links.map((link) => [externalItemKeyId(link.source), link]));
         for (const [index, item] of importable.entries()) {
           if (!mountedRef.current) break;
@@ -1933,7 +2429,7 @@ export function useExternalSourceController(options: UseExternalSourceController
           }
         }
         await optionsRef.current.onLibraryChanged();
-        await refreshLocalProjection(sourceId);
+        await refreshLocalProjection();
         setSelectedKeys(new Set());
         const connected = completed - updated + linkedExisting;
         const successMessage = [
@@ -1995,7 +2491,7 @@ export function useExternalSourceController(options: UseExternalSourceController
       setLocalSeriesChapters(await optionsRef.current.listChapters(novel.id));
       setOpen(false);
       await optionsRef.current.openNovel(novel, {
-        documentSectionId: item.key.remoteId,
+        documentSectionId: externalItemSectionId(item),
         documentSectionTitle: item.release.title,
       });
     },
@@ -2015,10 +2511,10 @@ export function useExternalSourceController(options: UseExternalSourceController
 
   const openImported = useCallback(
     async (item: ExternalSourceItemView) => {
-      if (blockingBusy || item.importState !== 'imported' || !item.localBookId) return;
+      if (blockingBusy || !['imported', 'update_available'].includes(item.importState) || !item.localBookId) return;
       const novel = await optionsRef.current.getNovel(item.localBookId);
       if (!novel || novel.deletedAt) {
-        await refreshLocalProjection(item.key.connectorId);
+        await refreshLocalProjection();
         optionsRef.current.notify('작품의 보관 상태가 변경되어 목록을 갱신했습니다.', 'warning');
         return;
       }
@@ -2039,7 +2535,7 @@ export function useExternalSourceController(options: UseExternalSourceController
       setOpen(false);
       if (item.release)
         await optionsRef.current.openNovel(novel, {
-          documentSectionId: item.key.remoteId,
+          documentSectionId: externalItemSectionId(item),
           documentSectionTitle: item.release.title,
         });
       else await optionsRef.current.openNovel(novel);
@@ -2048,6 +2544,7 @@ export function useExternalSourceController(options: UseExternalSourceController
   );
 
   const cancel = useCallback(() => {
+    if (serialImportQueueRef.current) serialImportQueueRef.current.accepting = false;
     setTasks((current) =>
       current.map((task) =>
         task.phase !== 'complete' && task.phase !== 'failed' ? { ...task, phase: 'cancelling' } : task,
@@ -2091,11 +2588,13 @@ export function useExternalSourceController(options: UseExternalSourceController
     setBusy(true);
     try {
       await optionsRef.current.registry.disconnectExternalSource(activeSourceId, optionsRef.current.hostContext);
+      listAbortRef.current?.abort();
+      setListFailure(undefined);
       setRawItems([]);
       setDetail(undefined);
       setBrowse(undefined);
       setFilterValues({});
-      setLinks([]);
+      await refreshLocalProjection();
       setSelectedKeys(new Set());
       setNextCursor(undefined);
       setBrokerRevision((value) => value + 1);
@@ -2108,7 +2607,7 @@ export function useExternalSourceController(options: UseExternalSourceController
     } finally {
       if (mountedRef.current) setBusy(false);
     }
-  }, [activeSourceId, busy]);
+  }, [activeSourceId, busy, refreshLocalProjection]);
 
   const openItem = useCallback(
     async (item: ExternalSourceItemView) => {
@@ -2120,7 +2619,10 @@ export function useExternalSourceController(options: UseExternalSourceController
       )
         return;
       itemNavigationPendingRef.current = true;
+      listAbortRef.current?.abort();
+      setListFailure(undefined);
       try {
+        if (item.kind === 'work') setQuery('');
         const next = [...breadcrumbs, { label: item.title, parentRef: item.navigationRef }];
         setBreadcrumbs(next);
         setSelectedKeys(new Set());
@@ -2160,6 +2662,8 @@ export function useExternalSourceController(options: UseExternalSourceController
       return;
     }
     if (breadcrumbs.length <= 1) return;
+    listAbortRef.current?.abort();
+    setListFailure(undefined);
     const next = breadcrumbs.slice(0, -1);
     setBreadcrumbs(next);
     setSelectedKeys(new Set());
@@ -2239,7 +2743,7 @@ export function useExternalSourceController(options: UseExternalSourceController
         optionsRef.current.hostContext,
       );
       setBrokerRevision((value) => value + 1);
-      await refreshLocalProjection(activeSourceId);
+      await refreshLocalProjection();
       await loadPage({ query: query.trim() || undefined }, false, activeSourceId);
       if (result.selectedCount > 0) {
         optionsRef.current.notify(
@@ -2302,6 +2806,8 @@ export function useExternalSourceController(options: UseExternalSourceController
       readonly sourceNavigationRef?: string;
       readonly detail: ExternalSourceWorkDetail;
       readonly items: readonly ExternalItemSummary[];
+      readonly baselineComplete: boolean;
+      readonly signal?: AbortSignal;
     }) => {
       const existing = subscriptions.find(
         (record) =>
@@ -2312,7 +2818,13 @@ export function useExternalSourceController(options: UseExternalSourceController
       if (existing) return existing;
       const now = currentIso();
       const releaseIds = input.items.filter((item) => item.release).map((item) => item.key.remoteId);
-      const thumbnailUrl = await persistentThumbnailUrl(input.detail.thumbnailUrl);
+      const resolvedThumbnail = await resolveDetailThumbnail(
+        input.detail,
+        input.signal ?? new AbortController().signal,
+      ).catch(() => undefined);
+      const thumbnailUrl = await persistentThumbnailUrl(resolvedThumbnail);
+      input.signal?.throwIfAborted();
+      if (!mountedRef.current) throw new DOMException('Operation cancelled', 'AbortError');
       const record = {
         id: externalSourceSubscriptionId(input.sourceId, input.accountConnectionId, input.navigationRef),
         connectorId: input.sourceId,
@@ -2327,6 +2839,7 @@ export function useExternalSourceController(options: UseExternalSourceController
         sourceLabel: input.detail.sourceLabel,
         knownReleaseIds: releaseIds,
         newReleaseIds: [],
+        releaseBaselineComplete: input.baselineComplete,
         availableReleaseCount: releaseIds.length,
         lastCheckedAt: now,
         createdAt: now,
@@ -2337,7 +2850,7 @@ export function useExternalSourceController(options: UseExternalSourceController
       if (mountedRef.current) replaceSubscription(record);
       return record;
     },
-    [replaceSubscription, subscriptions],
+    [replaceSubscription, subscriptions, resolveDetailThumbnail],
   );
 
   const addCurrentWorkToLibrary = useCallback(async () => {
@@ -2352,9 +2865,13 @@ export function useExternalSourceController(options: UseExternalSourceController
         sourceNavigationRef: breadcrumbs.at(-2)?.parentRef,
         detail,
         items: rawItems,
+        baselineComplete: !nextCursor,
+        signal: listAbortRef.current?.signal,
       });
       optionsRef.current.notify(
-        `${record.title}을(를) 라이브러리에 추가했습니다. 회차는 선택할 때만 다운로드합니다.`,
+        `${record.title}을(를) 라이브러리에 추가했습니다. 회차는 선택할 때만 다운로드합니다.${
+          record.releaseBaselineComplete ? '' : ' 일부 목록만 확인되어 새 회차 판단은 아직 완료되지 않았습니다.'
+        }`,
         'success',
       );
     } catch (error) {
@@ -2363,7 +2880,7 @@ export function useExternalSourceController(options: UseExternalSourceController
         'danger',
       );
     }
-  }, [activeSourceId, breadcrumbs, busy, currentParentRef, detail, persistLibraryWork, rawItems, sources]);
+  }, [activeSourceId, breadcrumbs, busy, currentParentRef, detail, nextCursor, persistLibraryWork, rawItems, sources]);
 
   const addWorkToLibrary = useCallback(
     async (item: ExternalSourceItemView) => {
@@ -2402,9 +2919,13 @@ export function useExternalSourceController(options: UseExternalSourceController
             sourceLabel: item.collection?.sourceLabel,
           },
           items: page.items,
+          baselineComplete: !page.nextCursor,
+          signal: abort.signal,
         });
         optionsRef.current.notify(
-          `${record.title}을(를) 라이브러리에 추가했습니다. 회차는 선택할 때만 다운로드합니다.`,
+          `${record.title}을(를) 라이브러리에 추가했습니다. 회차는 선택할 때만 다운로드합니다.${
+            record.releaseBaselineComplete ? '' : ' 일부 목록만 확인되어 새 회차 판단은 아직 완료되지 않았습니다.'
+          }`,
           'success',
         );
       } catch (error) {
@@ -2501,45 +3022,96 @@ export function useExternalSourceController(options: UseExternalSourceController
         (item.accountConnectionId ?? '') === (source.connection.accountConnectionId ?? ''),
     );
     if (targets.length === 0) return;
+    const checkScope = JSON.stringify([activeSourceId, source.connection.accountConnectionId ?? '']);
+    const startOffset = (subscriptionCheckOffsetsRef.current.get(checkScope) ?? 0) % targets.length;
+    const orderedTargets = [...targets.slice(startOffset), ...targets.slice(0, startOffset)];
     const abort = new AbortController();
     subscriptionAbortRef.current?.abort();
     subscriptionAbortRef.current = abort;
     setCheckingSubscriptions(true);
     let failed = 0;
+    let checked = 0;
+    let incomplete = 0;
+    let remainingPages = MAX_SUBSCRIPTION_CHECK_TOTAL_PAGES;
+    const isCurrent = () => {
+      const current = optionsRef.current.registry.getExternalSourceStatus(
+        activeSourceId,
+        optionsRef.current.hostContext,
+      );
+      return (
+        !abort.signal.aborted &&
+        subscriptionAbortRef.current === abort &&
+        current.state === 'connected' &&
+        current.connectionGeneration === source.connection.connectionGeneration &&
+        (current.accountConnectionId ?? '') === (source.connection.accountConnectionId ?? '')
+      );
+    };
     const previousNewCount = targets.reduce((total, item) => total + item.newReleaseIds.length, 0);
     try {
-      for (const subscription of targets.slice(0, 50)) {
-        if (abort.signal.aborted) break;
+      for (const subscription of orderedTargets.slice(0, 50)) {
+        if (!isCurrent() || remainingPages === 0) break;
         try {
-          const page = await optionsRef.current.registry.listExternalSource(
-            activeSourceId,
-            optionsRef.current.hostContext,
-            {
-              accountConnectionId: source.connection.accountConnectionId,
-              parentRef: subscription.navigationRef,
+          const page = await collectSubscriptionReleasePages({
+            signal: abort.signal,
+            takePageBudget: () => {
+              if (remainingPages === 0) return false;
+              remainingPages -= 1;
+              return true;
             },
-            abort.signal,
-          );
+            readPage: (cursor, signal) => {
+              if (!isCurrent()) throw new DOMException('Operation cancelled', 'AbortError');
+              return optionsRef.current.registry.listExternalSource(
+                activeSourceId,
+                optionsRef.current.hostContext,
+                {
+                  accountConnectionId: source.connection.accountConnectionId,
+                  parentRef: subscription.navigationRef,
+                  cursor,
+                },
+                signal,
+              );
+            },
+          });
+          if (!isCurrent()) break;
           await reconcileSubscriptionPage(
             activeSourceId,
             source.connection.accountConnectionId,
             subscription.collectionRemoteId,
             page,
+            page.complete,
+            isCurrent,
           );
+          checked += 1;
+          if (!page.complete) incomplete += 1;
         } catch (error) {
           if (isAbort(error)) break;
           failed += 1;
         }
       }
+      if (isCurrent())
+        subscriptionCheckOffsetsRef.current.set(checkScope, (startOffset + checked + failed) % targets.length);
       const next = await optionsRef.current.state.listSubscriptions();
-      if (!mountedRef.current || abort.signal.aborted) return;
+      if (!mountedRef.current || !isCurrent()) return;
       setSubscriptions(next);
       const nextNewCount = next
-        .filter((item) => item.connectorId === activeSourceId)
+        .filter(
+          (item) =>
+            item.connectorId === activeSourceId &&
+            (item.accountConnectionId ?? '') === (source.connection.accountConnectionId ?? ''),
+        )
         .reduce((total, item) => total + item.newReleaseIds.length, 0);
-      if (failed > 0) {
+      if (incomplete > 0 || targets.length > checked + failed) {
         optionsRef.current.notify(
-          `라이브러리 작품 ${targets.length - failed}개를 확인했고 ${failed}개는 확인하지 못했습니다.`,
+          `일부 회차 목록만 확인했습니다. ${incomplete}개 작품의 새 회차 판단이 미완료이며 기존 표시는 유지됩니다.${
+            targets.length > checked + failed
+              ? ` 아직 확인하지 않은 작품 ${targets.length - checked - failed}개가 있습니다.`
+              : ''
+          }${failed ? ` ${failed}개 작품은 목록을 불러오지 못했습니다.` : ''}`,
+          'warning',
+        );
+      } else if (failed > 0) {
+        optionsRef.current.notify(
+          `라이브러리 작품 ${checked}개를 확인했고 ${failed}개는 확인하지 못했습니다.`,
           'warning',
         );
       } else if (nextNewCount > previousNewCount) {
@@ -2576,7 +3148,7 @@ export function useExternalSourceController(options: UseExternalSourceController
           : []),
         { label: subscription.title, parentRef: subscription.navigationRef },
       ]);
-      await refreshLocalProjection(sourceId);
+      await refreshLocalProjection();
       await loadPage({ parentRef: subscription.navigationRef }, false, sourceId);
     },
     [activeSourceId, blockingBusy, importBusy, loadPage, refreshLocalProjection, sources],
@@ -2633,15 +3205,27 @@ export function useExternalSourceController(options: UseExternalSourceController
     loading,
     busy,
     blockingBusy,
+    catalogLoading,
+    catalogUpdateAvailable,
+    applyCatalogUpdate,
     importBusy,
     selectedBatchActive,
     tasks,
+    linkedSeriesBookIds,
     sources,
     activeSourceId,
     items,
     query,
     nextCursor,
     stale,
+    listError: listFailure
+      ? {
+          message: listFailure.message,
+          retry: async () => {
+            await loadPage(listFailure.input, listFailure.append, listFailure.sourceId, true, true);
+          },
+        }
+      : undefined,
     detail,
     localSeriesNovel,
     localSeriesSourceId,

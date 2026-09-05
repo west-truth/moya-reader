@@ -10,6 +10,7 @@ import type { BookEnrichmentController } from '../book-enrichment/useBookEnrichm
 import type { ExternalSourceController } from '../external-sources/useExternalSourceController';
 import { useResponsiveLayoutMode } from './useResponsiveLayoutMode';
 import { importTaskIsActive, type ImportTaskView } from '../import/import-task-projection';
+import { continueLibraryBook, openLibraryBook } from './book-workspace-source-navigation';
 
 const ChaptersScreen = lazy(() =>
   import('../chapters/ChaptersScreen').then((module) => ({ default: module.ChaptersScreen })),
@@ -183,20 +184,7 @@ export function BookWorkspaceScreens({
   };
 
   const openLibraryNovel = (novel: import('../../domain/types').Novel) => {
-    if (novel.format === 'image_archive') {
-      controller.replaceSelection({
-        selectedNovel: novel,
-        chapters: [],
-        currentChapter: undefined,
-        localReadingPosition: undefined,
-        remoteReadingPosition: undefined,
-      });
-      controller.setView('library');
-      void externalSources.showLocalSeries(novel);
-      return;
-    }
-    externalSources.close();
-    void controller.openNovel(novel);
+    void openLibraryBook(novel, controller, externalSources);
   };
 
   const libraryModel: LibraryScreenModel = {
@@ -292,7 +280,7 @@ export function BookWorkspaceScreens({
     },
     books: {
       open: openLibraryNovel,
-      continueReading: controller.continueReading,
+      continueReading: (novel) => continueLibraryBook(novel, controller, externalSources),
       toggleFavorite: (novel) => (bookHasActiveImport(novel.id) ? undefined : controller.toggleFavorite(novel)),
       remove: (novel) => (bookHasActiveImport(novel.id) ? undefined : controller.removeNovel(novel)),
       restore: (novel) => (bookHasActiveImport(novel.id) ? undefined : controller.restoreNovel(novel)),

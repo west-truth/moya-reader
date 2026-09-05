@@ -77,6 +77,78 @@ function fileLastModified(): number {
 }
 
 describe('ServerUploadImportService', () => {
+  it.each([{ kind: 'absent' }, { kind: 'revision', contentRevisionId: 'revision_1' }] as const)(
+    'persists and verifies the $kind expected base before uploading',
+    async (expectedBase) => {
+      const store: RemoteUploadSessionStore = { read: vi.fn(), write: vi.fn(), remove: vi.fn() };
+      const client = {
+        initUpload: vi.fn(async () => ({ uploadId: 'upload_1', chunkUrlTemplate: '/chunks' })),
+        getUpload: vi.fn(async () => ({ ...uploadStatus([], 0), expectedBase })),
+        putUploadChunk: vi.fn(async () => {
+          throw new Error('fixture stop');
+        }),
+      };
+      const service = new ServerUploadImportService(client as unknown as RemoteApiClient, 2, 1, store);
+      await expect(
+        service.importFile({ file: makeFile(), encoding: 'utf-8', clientBookId: 'book', expectedBase }, vi.fn())
+          .promise,
+      ).rejects.toThrow('fixture stop');
+      expect(client.initUpload).toHaveBeenCalledWith(
+        expect.objectContaining({ expectedBase }),
+        expect.any(AbortSignal),
+      );
+      expect(store.write).toHaveBeenCalledWith(expect.any(String), expect.objectContaining({ expectedBase }));
+    },
+  );
+
+  it('rejects a server that drops the expected base before any bytes are sent', async () => {
+    const store: RemoteUploadSessionStore = { read: vi.fn(), write: vi.fn(), remove: vi.fn() };
+    const client = {
+      initUpload: vi.fn(async () => ({ uploadId: 'upload_1', chunkUrlTemplate: '/chunks' })),
+      getUpload: vi.fn(async () => uploadStatus([], 0)),
+      putUploadChunk: vi.fn(),
+      cancelUpload: vi.fn(async () => ({ ok: true })),
+    };
+    const service = new ServerUploadImportService(client as unknown as RemoteApiClient, 2, 1, store);
+    await expect(
+      service.importFile(
+        { file: makeFile(), encoding: 'utf-8', clientBookId: 'book', expectedBase: { kind: 'absent' } },
+        vi.fn(),
+      ).promise,
+    ).rejects.toThrow('서버를 먼저 업데이트');
+    expect(client.putUploadChunk).not.toHaveBeenCalled();
+    expect(client.cancelUpload).toHaveBeenCalledWith('upload_1');
+  });
+
+  it.each(['uploading', 'queued'] as const)('refuses a %s resume with a different expected base', async (status) => {
+    const expectedBase = { kind: 'revision', contentRevisionId: 'revision_new' } as const;
+    const oldBase = { kind: 'revision', contentRevisionId: 'revision_old' } as const;
+    const store: RemoteUploadSessionStore = {
+      read: vi.fn(() => ({ ...storedSession(), expectedBase: oldBase })),
+      write: vi.fn(),
+      remove: vi.fn(),
+    };
+    const client = {
+      getUpload: vi.fn(async () => ({
+        ...uploadStatus([0, 1, 2], 6),
+        status,
+        expectedBase: oldBase,
+        importJobId: 'job_old',
+      })),
+      initUpload: vi.fn(async () => {
+        throw new Error('fresh upload required');
+      }),
+      getImportJob: vi.fn(),
+      putUploadChunk: vi.fn(),
+    };
+    const service = new ServerUploadImportService(client as unknown as RemoteApiClient, 2, 1, store);
+    await expect(
+      service.importFile({ file: makeFile(), encoding: 'utf-8', clientBookId: 'book', expectedBase }, vi.fn()).promise,
+    ).rejects.toThrow('fresh upload required');
+    expect(client.initUpload).toHaveBeenCalledWith(expect.objectContaining({ expectedBase }), expect.any(AbortSignal));
+    expect(client.getImportJob).not.toHaveBeenCalled();
+    expect(client.putUploadChunk).not.toHaveBeenCalled();
+  });
   it('explains the configured per-upload cap without confusing it with the total work size', async () => {
     const store: RemoteUploadSessionStore = { read: vi.fn(), write: vi.fn(), remove: vi.fn() };
     const client = {
@@ -913,54 +985,61 @@ describe('ServerUploadImportService', () => {
     expect(client.initUpload).toHaveBeenCalledTimes(1);
   });
 
-  it('resumes an already queued import job instead of starting a duplicate upload', async () => {
-    const store: RemoteUploadSessionStore = {
-      read: vi.fn(() => storedSession('upload_old')),
-      write: vi.fn(),
-      remove: vi.fn(),
-    };
-    const client = {
-      initUpload: vi.fn(),
-      getUpload: vi.fn(async () => ({
-        ...uploadStatus([0, 1, 2], 6),
-        uploadId: 'upload_old',
-        status: 'queued',
-        importJobId: 'job_existing',
-        importJobStatus: 'queued',
-        importJobStage: 'queued',
-      })),
-      putUploadChunk: vi.fn(),
-      completeUpload: vi.fn(),
-      getImportJob: vi.fn(async () => ({
-        id: 'job_existing',
-        upload_id: 'upload_old',
-        status: 'done' as const,
-        stage: 'ready' as const,
-        bytes_read: 6,
-        total_bytes: 6,
-        chapters_detected: 1,
-        paragraphs_written: 3,
-        message: 'done',
-        book_id: 'book_1',
-      })),
-      getBookManifest: vi.fn(async () => importedBook()),
-    };
-    const service = new ServerUploadImportService(client as unknown as RemoteApiClient, 2, 3, store);
-    const progress = vi.fn();
+  it.each([undefined, { kind: 'absent' }, { kind: 'revision', contentRevisionId: 'revision_1' }] as const)(
+    'resumes an already queued job with its original expected base %#',
+    async (expectedBase) => {
+      const store: RemoteUploadSessionStore = {
+        read: vi.fn(() => ({ ...storedSession('upload_old'), expectedBase })),
+        write: vi.fn(),
+        remove: vi.fn(),
+      };
+      const client = {
+        initUpload: vi.fn(),
+        getUpload: vi.fn(async () => ({
+          ...uploadStatus([0, 1, 2], 6),
+          uploadId: 'upload_old',
+          status: 'queued',
+          importJobId: 'job_existing',
+          importJobStatus: 'queued',
+          importJobStage: 'queued',
+          expectedBase,
+        })),
+        putUploadChunk: vi.fn(),
+        completeUpload: vi.fn(),
+        getImportJob: vi.fn(async () => ({
+          id: 'job_existing',
+          upload_id: 'upload_old',
+          status: 'done' as const,
+          stage: 'ready' as const,
+          bytes_read: 6,
+          total_bytes: 6,
+          chapters_detected: 1,
+          paragraphs_written: 3,
+          message: 'done',
+          book_id: 'book_1',
+        })),
+        getBookManifest: vi.fn(async () => importedBook()),
+      };
+      const service = new ServerUploadImportService(client as unknown as RemoteApiClient, 2, 3, store);
+      const progress = vi.fn();
 
-    await expect(service.importFile({ file: makeFile(), encoding: 'utf-8' }, progress).promise).resolves.toMatchObject({
-      novel: expect.objectContaining({ id: 'book_1' }),
-    });
+      await expect(
+        service.importFile({ file: makeFile(), encoding: 'utf-8', clientBookId: 'book_1', expectedBase }, progress)
+          .promise,
+      ).resolves.toMatchObject({
+        novel: expect.objectContaining({ id: 'book_1' }),
+      });
 
-    expect(client.initUpload).not.toHaveBeenCalled();
-    expect(client.putUploadChunk).not.toHaveBeenCalled();
-    expect(client.completeUpload).not.toHaveBeenCalled();
-    expect(client.getImportJob).toHaveBeenCalledWith('job_existing', expect.any(AbortSignal));
-    expect(progress).toHaveBeenCalledWith(
-      expect.objectContaining({ message: '서버 가져오기 작업을 이어서 확인합니다.' }),
-    );
-    expect(store.remove).toHaveBeenCalledWith(expect.any(String));
-  });
+      expect(client.initUpload).not.toHaveBeenCalled();
+      expect(client.putUploadChunk).not.toHaveBeenCalled();
+      expect(client.completeUpload).not.toHaveBeenCalled();
+      expect(client.getImportJob).toHaveBeenCalledWith('job_existing', expect.any(AbortSignal));
+      expect(progress).toHaveBeenCalledWith(
+        expect.objectContaining({ message: '서버 가져오기 작업을 이어서 확인합니다.' }),
+      );
+      expect(store.remove).toHaveBeenCalledWith(expect.any(String));
+    },
+  );
 
   it('terminates an externally cancelled resumed job immediately and clears resume metadata', async () => {
     const store: RemoteUploadSessionStore = {

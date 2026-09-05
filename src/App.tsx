@@ -183,6 +183,10 @@ import { voiceApprovalForProfile, type VoiceProductStateV1 } from './providers/v
 import type { PlayableTtsSegment } from './providers/tts-playback';
 import { BrowserAudioSession } from './providers/browser-audio-session';
 import { BookPlaybackCoordinator, nextPlaybackChapter } from './providers/book-playback-coordinator';
+import {
+  returnToSourceSeriesDetails,
+  shouldOpenSourceSeriesDetails,
+} from './features/book-workspace/book-workspace-source-navigation';
 import { BrowserMediaSessionAdapter } from './platform/media-session-adapter';
 import { createPlatformDocumentIo } from './platform/document-io';
 import { createPlatformLibraryFolderIo } from './platform/library-folder-io';
@@ -203,6 +207,12 @@ import {
   googleDriveBuiltInExternalSource,
 } from './external-sources/google-drive-external-source';
 import { SuwayomiSourceAccountBroker } from './external-sources/suwayomi/suwayomi-source-account-broker';
+import { TextServerSourceAccountBroker } from './external-sources/text-server/text-server-source-account-broker';
+import {
+  TEXT_SERVER_EXTERNAL_SOURCE_ID,
+  TEXT_SERVER_EXTERNAL_SOURCE_BROKER_ID,
+  textServerBuiltInExternalSource,
+} from './external-sources/text-server/text-server-external-source';
 import {
   SUWAYOMI_EXTERNAL_SOURCE_BROKER_ID,
   SUWAYOMI_EXTERNAL_SOURCE_ID,
@@ -411,19 +421,36 @@ export default function App() {
     [externalSourceState],
   );
   const [externalSourceBrokerRevision, setExternalSourceBrokerRevision] = useState(0);
+  const textServerExternalSourceBroker = useMemo(
+    () =>
+      new TextServerSourceAccountBroker(TEXT_SERVER_EXTERNAL_SOURCE_ID, externalSourceState, {
+        managedFetch:
+          readerRuntime.mode === 'remote' && remoteApiClient
+            ? (path, signal) => remoteApiClient.fetchTextSourceGateway(path, signal)
+            : undefined,
+      }),
+    [externalSourceState, readerRuntime.mode, remoteApiClient],
+  );
   useEffect(() => {
     let cancelled = false;
     void Promise.allSettled([
       dropboxExternalSourceBroker.initialize(),
       googleDriveExternalSourceBroker.initialize(),
       suwayomiExternalSourceBroker.initialize(),
+      textServerExternalSourceBroker.initialize(),
     ]).finally(() => {
       if (!cancelled) setExternalSourceBrokerRevision((value) => value + 1);
     });
     return () => {
       cancelled = true;
+      textServerExternalSourceBroker.dispose();
     };
-  }, [dropboxExternalSourceBroker, googleDriveExternalSourceBroker, suwayomiExternalSourceBroker]);
+  }, [
+    dropboxExternalSourceBroker,
+    googleDriveExternalSourceBroker,
+    suwayomiExternalSourceBroker,
+    textServerExternalSourceBroker,
+  ]);
   const externalSourceHostContext = useMemo<TrustedExternalSourceHostContext>(
     () => ({
       brokers: {
@@ -431,16 +458,27 @@ export default function App() {
           if (brokerId === DROPBOX_EXTERNAL_SOURCE_BROKER_ID) return dropboxExternalSourceBroker;
           if (brokerId === GOOGLE_DRIVE_EXTERNAL_SOURCE_BROKER_ID) return googleDriveExternalSourceBroker;
           if (brokerId === SUWAYOMI_EXTERNAL_SOURCE_BROKER_ID) return suwayomiExternalSourceBroker;
+          if (brokerId === TEXT_SERVER_EXTERNAL_SOURCE_BROKER_ID) return textServerExternalSourceBroker;
           return undefined;
         },
       },
     }),
-    [dropboxExternalSourceBroker, googleDriveExternalSourceBroker, suwayomiExternalSourceBroker],
+    [
+      dropboxExternalSourceBroker,
+      googleDriveExternalSourceBroker,
+      suwayomiExternalSourceBroker,
+      textServerExternalSourceBroker,
+    ],
   );
   const externalSourceRegistry = useMemo(
     () =>
       new AppExternalSourceRegistry(
-        [dropboxBuiltInExternalSource, googleDriveBuiltInExternalSource, suwayomiBuiltInExternalSource],
+        [
+          dropboxBuiltInExternalSource,
+          googleDriveBuiltInExternalSource,
+          suwayomiBuiltInExternalSource,
+          textServerBuiltInExternalSource,
+        ],
         extensionRuntime.trustedExtensions,
       ),
     [extensionRuntime.trustedExtensions],
@@ -1170,7 +1208,7 @@ export default function App() {
     extensionManager: extensionRuntime.manager,
     metadataCollector: webNovelMetadataCollector,
     externalSourceState,
-    suwayomi: suwayomiExternalSourceBroker,
+    sourceBrokers: [suwayomiExternalSourceBroker, textServerExternalSourceBroker],
     onApplied: () => setExternalSourceBrokerRevision((value) => value + 1),
     notify: showToast,
   });
@@ -1347,12 +1385,11 @@ export default function App() {
         ? bookWorkspace.openDocumentSection(novel, target.documentSectionId, target.documentSectionTitle)
         : bookWorkspace.openNovel(novel),
     listNovels: (options) => readerRepository.listNovels(options),
-    onLibraryItemCommitted: async () => {
-      await refreshNovels();
+    onLibraryItemCommitted: async (novel) => {
+      await Promise.all([refreshNovels(), bookWorkspace.refreshImportedSeries(novel).catch(() => undefined)]);
     },
     onLibraryChanged: async () => {
-      await refreshNovels();
-      await refreshAfterLocalMutation();
+      await Promise.all([refreshNovels(), refreshAfterLocalMutation()]);
     },
     notify: showToast,
     confirm: (message) => window.confirm(message),
@@ -5553,7 +5590,7 @@ export default function App() {
       return handleAppBackNavigation({
         layers: appBackLayers,
         view,
-        returnToChapters: bookWorkspace.returnToChapters,
+        returnToChapters: () => returnToSourceSeriesDetails(bookWorkspace, externalSourceFeature),
         returnToLibrary: () => bookWorkspace.setView('library'),
       }).handled;
     },
@@ -5598,7 +5635,7 @@ export default function App() {
 
   readerScreenHandle.setActions({
     openChapter: (chapter, options = {}) => bookWorkspace.openChapter(chapter, { ...options, novel: selectedNovel }),
-    returnToChapters: bookWorkspace.returnToChapters,
+    returnToChapters: () => returnToSourceSeriesDetails(bookWorkspace, externalSourceFeature),
     openSettings: openReaderSettings,
     openSync: () => setSyncPanelOpen(true),
     toggleAddon: () => setAddonOpen((open) => !open),
@@ -5932,7 +5969,7 @@ export default function App() {
             projection: bookWorkspaceProjection,
             annotationCount: bookmarks.length + highlights.length + notes.length,
             syncLabel,
-            returnToChapters: bookWorkspace.returnToChapters,
+            returnToChapters: () => returnToSourceSeriesDetails(bookWorkspace, externalSourceFeature),
             openSettings: openReaderSettings,
             openSync: () => setSyncPanelOpen(true),
           },
@@ -6128,7 +6165,7 @@ export default function App() {
             assets={bookAssetRepository}
             onBack={() => {
               bookWorkspace.setView('library');
-              if (externalSourceFeature.localSeriesNovel?.id === selectedNovel.id) {
+              if (shouldOpenSourceSeriesDetails(selectedNovel, externalSourceFeature.linkedSeriesBookIds)) {
                 void externalSourceFeature.showLocalSeries(selectedNovel);
               }
             }}

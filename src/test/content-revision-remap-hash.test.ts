@@ -89,6 +89,88 @@ function novel(): Novel {
 }
 
 describe('remote snapshot child remap hash compatibility', () => {
+  it('does not attach a changed remote release anchor to the same numeric position', () => {
+    const oldChapter = { ...chapter('release-old'), documentSectionId: 'source-old' };
+    const nextChapter = { ...chapter('release-new'), documentSectionId: 'source-new' };
+    const oldIndex = createBookChildIdIndex([oldChapter]);
+    const nextIndex = createBookChildIdIndex([nextChapter]);
+    addParagraphPagesToChildIdIndex(oldIndex, [
+      page('old', paragraph('old-p', oldChapter.id, integrityHash('Same paragraph'))),
+    ]);
+    addParagraphPagesToChildIdIndex(nextIndex, [
+      page('new', paragraph('new-p', nextChapter.id, integrityHash('Same paragraph'))),
+    ]);
+    const result = prepareRemoteContentActivation({
+      snapshot: { novel: novel(), chapters: [nextChapter] },
+      baseNovel: novel(),
+      localSnapshot: {
+        bookmarks: [],
+        highlights: [],
+        notes: [
+          {
+            id: 'note',
+            novelId: 'book-1',
+            chapterId: oldChapter.id,
+            paragraphId: 'old-p',
+            body: 'Keep my annotation',
+            progress: 0.5,
+            createdAt: now,
+            updatedAt: now,
+          },
+        ],
+      },
+      outboxItems: [],
+      oldIndex,
+      nextIndex,
+      now,
+    });
+    expect(result.readerPlan.deleteNoteIds).toEqual(['note']);
+    expect(result.readerPlan.notes).toEqual([]);
+    expect(result.readerPlan.quarantineRecords).toEqual([expect.objectContaining({ entityType: 'note' })]);
+  });
+
+  it('updates the numeric position when an exact remote paragraph moves after insertion', () => {
+    const stableChapter = { ...chapter('release'), documentSectionId: 'source', paragraphCount: 4 };
+    const oldIndex = createBookChildIdIndex([stableChapter]);
+    const nextIndex = createBookChildIdIndex([stableChapter]);
+    const stable = paragraph('unique-p', stableChapter.id, integrityHash('Same paragraph'));
+    addParagraphPagesToChildIdIndex(oldIndex, [page('old', stable)]);
+    addParagraphPagesToChildIdIndex(nextIndex, [page('next', { ...stable, index: 2 })]);
+    const result = prepareRemoteContentActivation({
+      snapshot: { novel: novel(), chapters: [stableChapter] },
+      baseNovel: novel(),
+      localSnapshot: {
+        bookmarks: [],
+        highlights: [],
+        notes: [],
+        readingPosition: {
+          id: 'position',
+          novelId: 'book-1',
+          chapterId: stableChapter.id,
+          paragraphId: stable.id,
+          paragraphIndex: 1,
+          offsetInParagraph: 2,
+          chapterProgress: 0.25,
+          scrollTop: 300,
+          deviceId: 'local',
+          updatedAt: now,
+        },
+      },
+      outboxItems: [],
+      oldIndex,
+      nextIndex,
+      now,
+    });
+    expect(result.readerPlan.readingPosition).toMatchObject({
+      paragraphId: stable.id,
+      paragraphIndex: 2,
+      chapterProgress: 0.5,
+      scrollTop: 0,
+      offsetInParagraph: 2,
+    });
+    expect(result.readerPlan.quarantineRecords).toEqual([]);
+  });
+
   it('keeps exact fixed-document anchors when a new section is inserted before them', () => {
     const stableChapter = { ...chapter('chapter-stable'), documentSectionId: 'section-stable' };
     const insertedChapter = {

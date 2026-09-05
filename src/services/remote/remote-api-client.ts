@@ -638,6 +638,28 @@ export class RemoteApiClient {
     this.syncTransport = new RemoteSyncTransport({ request });
   }
 
+  /** The text-source broker owns bounded body consumption and keeps this signal alive until it finishes. */
+  async fetchTextSourceGateway(path: string, signal: AbortSignal): Promise<Response> {
+    if (
+      !/^\/v1\/(?:health|sources(?:\/[A-Za-z0-9_-]{1,128}(?:\/works(?:\/[A-Za-z0-9_-]{1,128}(?:\/releases(?:\/[A-Za-z0-9_-]{1,128}\/content)?)?)?)?)?)(?:\?[^#]*)?$/u.test(
+        path,
+      )
+    ) {
+      throw new Error('지원하지 않는 텍스트 서버 요청입니다.');
+    }
+    signal.throwIfAborted();
+    const token = this.options.getAuthToken?.()?.trim();
+    const response = await fetch(`${this.baseUrl}/integrations/text-sources${path}`, {
+      method: 'GET',
+      credentials: 'same-origin',
+      redirect: 'error',
+      signal,
+      headers: token ? { Authorization: `Bearer ${token}` } : undefined,
+    });
+    if (response.status === 401) this.options.onUnauthorized?.();
+    return response;
+  }
+
   private async fetch(
     path: string,
     init: RequestInit,
@@ -1721,6 +1743,7 @@ export class RemoteApiClient {
       chapterSplitMode?: ChapterSplitMode;
       importMode?: 'replace_book' | 'append_image_series';
       baseActiveContentRevisionId?: string;
+      expectedBase?: import('@noveldesk/contracts').ImportExpectedBase;
       totalChunks: number;
       clientBookId?: string;
       sourceContentHash?: string;

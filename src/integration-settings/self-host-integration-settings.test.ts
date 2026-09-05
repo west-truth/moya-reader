@@ -70,6 +70,25 @@ function validDocument() {
 }
 
 describe('self-host integration settings contract', () => {
+  it('round-trips bearer and managed connection hints without credentials or arbitrary managed endpoints', () => {
+    for (const authMode of ['bearer', 'managed']) {
+      const input = validDocument();
+      Object.assign(input.externalSources.connections[0]!, {
+        connectorId: 'moya.external.text-server.sources',
+        authMode,
+        endpoint: authMode === 'managed' ? '/api/integrations/text-sources' : 'https://text.test',
+        token: 'private-token',
+      });
+      const normalized = normalizeSelfHostIntegrationSettings(input);
+      expect(normalized?.externalSources.connections[0]?.authMode).toBe(authMode);
+      expect(JSON.stringify(normalized)).not.toContain('private-token');
+      if (authMode === 'managed') {
+        input.externalSources.connections[0]!.endpoint = '/api/arbitrary';
+        expect(normalizeSelfHostIntegrationSettings(input)).toBeUndefined();
+      }
+    }
+  });
+
   it('keeps non-secret extension and source library state', () => {
     expect(normalizeSelfHostIntegrationSettings(validDocument())).toEqual(validDocument());
   });

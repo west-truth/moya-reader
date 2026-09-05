@@ -356,11 +356,19 @@ export async function restoreExactAnchoredReaderState(
         book_id, user_id, chapter_id, paragraph_id, paragraph_index, offset_in_paragraph,
         chapter_progress, scroll_top, device_id, updated_at
       )
-      select state.book_id, state.user_id, state.chapter_id, state.paragraph_id, state.paragraph_index,
-             state.offset_in_paragraph, state.chapter_progress, state.scroll_top, state.device_id, state.updated_at
+      select state.book_id, state.user_id, state.chapter_id, state.paragraph_id,
+             coalesce(anchor.paragraph_index, state.paragraph_index), state.offset_in_paragraph,
+             case when anchor.paragraph_index is not null and anchor.paragraph_index <> state.paragraph_index
+               then least(1.0, anchor.paragraph_index::double precision / greatest(1, chapter.paragraph_count))
+               else state.chapter_progress end,
+             case when anchor.paragraph_index is not null and anchor.paragraph_index <> state.paragraph_index
+               then 0 else state.scroll_top end,
+             state.device_id, state.updated_at
         from book_revision_quarantine quarantine
         cross join lateral jsonb_populate_record(null::reading_positions, quarantine.payload) state
         join chapters chapter on chapter.id = state.chapter_id and chapter.book_id = state.book_id
+        left join paragraph_search anchor on anchor.book_id = state.book_id
+          and anchor.chapter_id = state.chapter_id and anchor.paragraph_id = state.paragraph_id
        where quarantine.replacement_run_id = $1 and quarantine.book_id = $2
          and quarantine.artifact_type = 'reading_position'
          and (
@@ -381,6 +389,27 @@ export async function restoreExactAnchoredReaderState(
             device_id = excluded.device_id,
             updated_at = excluded.updated_at
     `,
+    [replacement.runId, replacement.bookId],
+  );
+  // Keep the original unmatched anchor in quarantine, but resume at the start
+  // of its surviving logical release rather than jumping to another chapter.
+  await client.query(
+    `insert into reading_positions (book_id, user_id, chapter_id, paragraph_id, paragraph_index,
+       offset_in_paragraph, chapter_progress, scroll_top, device_id, updated_at)
+     select state.book_id, state.user_id, chapter.id, first_paragraph.paragraph_id,
+       first_paragraph.paragraph_index, 0, 0, 0, state.device_id, state.updated_at
+       from book_revision_quarantine quarantine
+       cross join lateral jsonb_populate_record(null::reading_positions, quarantine.payload) state
+       join chapters chapter on chapter.id = state.chapter_id and chapter.book_id = state.book_id
+       cross join lateral (select paragraph_id, paragraph_index from paragraph_search paragraph
+         where paragraph.book_id = state.book_id and paragraph.chapter_id = state.chapter_id
+         order by paragraph_index asc limit 1) first_paragraph
+      where quarantine.replacement_run_id = $1 and quarantine.book_id = $2
+        and quarantine.artifact_type = 'reading_position' and chapter.document_section_id is not null
+        and state.paragraph_id is not null and not exists (
+          select 1 from paragraph_search paragraph where paragraph.book_id = state.book_id
+            and paragraph.chapter_id = state.chapter_id and paragraph.paragraph_id = state.paragraph_id)
+     on conflict (book_id, user_id) do nothing`,
     [replacement.runId, replacement.bookId],
   );
   const bookmarks = await client.query(

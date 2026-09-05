@@ -421,6 +421,7 @@ async function createStagingContentRevision(input: {
   sourceHash?: string;
   expected: ContentRevisionExpectedCounts;
   expectedBaseActiveContentRevisionId?: string;
+  expectedBase?: import('@noveldesk/contracts').ImportExpectedBase;
   appendDelta?: {
     baseRevision: BookContentRevisionRecord;
     logicalCounts: StoredContentRevisionCounts;
@@ -1761,6 +1762,7 @@ async function stageAndActivateImportedNovel(input: {
     sourceHash: input.novel.rawTextHash || input.novel.normalizedTextHash,
     expected,
     expectedBaseActiveContentRevisionId: input.options.expectedBaseActiveContentRevisionId,
+    expectedBase: input.options.expectedBase,
     appendDelta: appendDelta
       ? { baseRevision: appendDelta.baseRevision, logicalCounts: appendDelta.logicalCounts }
       : undefined,

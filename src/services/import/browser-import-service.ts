@@ -1,4 +1,5 @@
 import { stableId } from '../../domain/hash';
+import { ContentRevisionConflictError } from '../../storage/content-revisions';
 import {
   ArchiveImportError,
   ImportController,
@@ -35,6 +36,7 @@ export async function assertLocalImportCapacity(fileSize: number): Promise<void>
 }
 
 export class BrowserImportService implements ImportService {
+  readonly supportsExpectedBase = true;
   readonly supportsArchivePassword = true;
   readonly supportsExpectedNormalizedTextHash = true;
   readonly supportsExpectedSourceContentHash = true;
@@ -66,6 +68,9 @@ export class BrowserImportService implements ImportService {
       void assertLocalImportCapacity(input.file.size)
         .then(() => {
           if (cancelRequested) return;
+          if (input.expectedBase && (!input.clientBookId || input.importMode === 'append_image_series')) {
+            throw new Error('expectedBase requires clientBookId and replace_book');
+          }
           worker = new Worker(new URL('./import-worker.ts', import.meta.url), { type: 'module' });
           worker.onmessage = (event: MessageEvent<WorkerMessage>) => {
             const message = event.data;
@@ -90,7 +95,9 @@ export class BrowserImportService implements ImportService {
               reject(
                 message.name === 'AbortError'
                   ? (new DOMException(message.message, 'AbortError') as Error)
-                  : new Error(message.message),
+                  : message.name === 'ContentRevisionConflictError'
+                    ? new ContentRevisionConflictError(message.message)
+                    : new Error(message.message),
               );
             }
           };
@@ -112,6 +119,7 @@ export class BrowserImportService implements ImportService {
             encoding: input.encoding,
             chapterSplitMode: input.chapterSplitMode ?? 'auto',
             clientBookId: input.clientBookId,
+            expectedBase: input.expectedBase,
             importMode: input.importMode,
             baseActiveContentRevisionId: input.baseActiveContentRevisionId,
             expectedSourceContentHash: input.expectedSourceContentHash,

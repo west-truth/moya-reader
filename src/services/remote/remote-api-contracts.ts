@@ -16,6 +16,7 @@ export interface RemoteUploadStatus {
   chapterSplitMode?: ChapterSplitMode;
   importMode?: 'replace_book' | 'append_image_series';
   baseActiveContentRevisionId?: string;
+  expectedBase?: import('@noveldesk/contracts').ImportExpectedBase;
   status: string;
   totalChunks?: number | null;
   expectedBytes: number;

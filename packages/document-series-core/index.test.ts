@@ -5,6 +5,11 @@ import {
   buildDocumentSeriesArchive,
   materializeDocumentSeriesArchive,
   readDocumentSeriesArchive,
+  isDocumentSeriesManifest,
+  isRemoteDocumentSeriesImport,
+  documentSeriesConfigurationFingerprint,
+  REMOTE_DOCUMENT_IDENTITY_SCHEME,
+  REMOTE_DOCUMENT_LIMITS,
   type DocumentSeriesSourceInput,
 } from './index';
 
@@ -153,5 +158,146 @@ describe('document series archive', () => {
     expect(parsed.novel).toMatchObject({ format: 'epub', title: '작품', totalChapters: 2 });
     expect(rows.map((row) => row.chapter.title)).toEqual(['1권', '2권']);
     expect(rows.map((row) => row.paragraphs.at(-1)?.text)).toEqual(['첫 EPUB 본문', '둘째 EPUB 본문']);
+  });
+});
+
+describe('remote TXT single identity', () => {
+  const collection = { id: 'remote-series', title: 'Remote work', format: 'txt' as const };
+  function remoteSource(id: string, body: string, order = 1): DocumentSeriesSourceInput {
+    return {
+      ...textSource(id, `${id}.txt`, id, body, order),
+      chapterSplitMode: 'single',
+      extractionVersion: 'utf8-txt-v1',
+    };
+  }
+  async function materialize(sources: DocumentSeriesSourceInput[]) {
+    const file = await buildDocumentSeriesArchive({
+      collection,
+      sources,
+      identityScheme: REMOTE_DOCUMENT_IDENTITY_SCHEME,
+    });
+    const parsed = await materializeDocumentSeriesArchive(file, { fileName: file.name, clientBookId: 'remote-book' });
+    return { file, parsed, rows: await chapterRows(parsed) };
+  }
+
+  it('keeps logical chapter and unique paragraph IDs through edits, insertion, title and filename changes', async () => {
+    const body = 'Unique first.\n\nRepeated text.\n\nRepeated text.\n\nOriginal last.';
+    const first = remoteSource('release-1', body);
+    const initial = await materialize([first]);
+    const revised = await materialize([
+      remoteSource(
+        'release-1',
+        'Inserted paragraph.\n\nUnique first.\n\nRepeated text.\n\nRepeated text.\n\nRevised last.',
+        5,
+      ),
+    ]);
+    expect(initial.parsed.chapters[0]!.id).toBe(revised.parsed.chapters[0]!.id);
+    expect(revised.rows[0]!.paragraphs.find((paragraph) => paragraph.text === 'Unique first.')!.id).toBe(
+      initial.rows[0]!.paragraphs[0]!.id,
+    );
+    const oldRepeated = initial.rows[0]!.paragraphs.filter((paragraph) => paragraph.text === 'Repeated text.').map(
+      (paragraph) => paragraph.id,
+    );
+    expect(
+      revised.rows[0]!.paragraphs.filter((paragraph) => paragraph.text === 'Repeated text.').every(
+        (paragraph) => !oldRepeated.includes(paragraph.id),
+      ),
+    ).toBe(true);
+    const renamed = await materialize([
+      { ...first, title: 'Renamed release', fileName: 'renamed.txt', sourceOrder: 7 },
+    ]);
+    expect(renamed.rows[0]!.paragraphs.map((paragraph) => paragraph.id)).toEqual(
+      initial.rows[0]!.paragraphs.map((paragraph) => paragraph.id),
+    );
+    expect(renamed.parsed.chapters[0]).toMatchObject({
+      id: initial.parsed.chapters[0]!.id,
+      documentSectionId: 'release-1',
+      documentSectionTitle: 'Renamed release',
+      documentSectionIndex: 7,
+      documentSectionSourceContentHash: first.contentHash,
+    });
+    expect(isRemoteDocumentSeriesImport(renamed.parsed)).toBe(true);
+    expect(await (await readDocumentSeriesArchive(renamed.file))!.sources.get('release-1')!.text()).toBe(body);
+  });
+
+  it('keeps schema 1 packages on their legacy identities and requires explicit supported identity metadata', async () => {
+    const first = remoteSource('release-1', 'First paragraph.\n\nOther paragraph.');
+    const legacy = await buildDocumentSeriesArchive({ collection, sources: [first] });
+    const parsedLegacy = await materializeDocumentSeriesArchive(legacy, {
+      fileName: legacy.name,
+      clientBookId: 'remote-book',
+    });
+    expect(isRemoteDocumentSeriesImport(parsedLegacy)).toBe(false);
+    expect(parsedLegacy.chapters[0]!.documentSectionId).toBeUndefined();
+    const remote = await materialize([first]);
+    expect(remote.parsed.chapters[0]!.id).not.toBe(parsedLegacy.chapters[0]!.id);
+    const manifest = (await readDocumentSeriesArchive(remote.file))!.manifest;
+    expect(manifest.schemaVersion).toBe(2);
+    expect(isDocumentSeriesManifest({ ...manifest, identityScheme: 'unknown' })).toBe(false);
+    expect(isDocumentSeriesManifest({ ...manifest, schemaVersion: 1 })).toBe(false);
+    expect(isDocumentSeriesManifest({ ...manifest, configurationFingerprint: first.contentHash })).toBe(false);
+  });
+
+  it('fingerprints interpreted ordering and titles, with deterministic ties and no delivery filename dependency', async () => {
+    const first = remoteSource('release-a', 'First.', 1);
+    const second = remoteSource('release-b', 'Second.', 1);
+    const fingerprint = (sources: DocumentSeriesSourceInput[]) =>
+      documentSeriesConfigurationFingerprint({ collection, sources, identityScheme: REMOTE_DOCUMENT_IDENTITY_SCHEME });
+    expect(fingerprint([first, second])).toBe(fingerprint([second, { ...first, fileName: 'delivery.txt' }]));
+    expect(fingerprint([first, second])).not.toBe(fingerprint([{ ...first, sourceOrder: 2 }, second]));
+    expect(fingerprint([first, second])).not.toBe(fingerprint([{ ...first, title: 'Updated title' }, second]));
+    expect(fingerprint([first])).toBe(fingerprint([remoteSource('release-a', 'Updated exact bytes.', 1)]));
+    expect((await materialize([second, first])).parsed.chapters.map((chapter) => chapter.documentSectionId)).toEqual([
+      'release-a',
+      'release-b',
+    ]);
+  });
+
+  it('keeps the legacy 512 limit and permits only bounded remote packages up to 1,000 sources', async () => {
+    const sources = Array.from({ length: 1_000 }, (_, index) =>
+      remoteSource(`release-${index}`, 'Small fixture.', index),
+    );
+    await expect(buildDocumentSeriesArchive({ collection, sources: sources.slice(0, 513) })).rejects.toThrow('원본 수');
+    for (const count of [512, 513, 1_000]) {
+      const file = await buildDocumentSeriesArchive({
+        collection,
+        sources: sources.slice(0, count),
+        identityScheme: REMOTE_DOCUMENT_IDENTITY_SCHEME,
+      });
+      expect((await readDocumentSeriesArchive(file))!.manifest.sources).toHaveLength(count);
+    }
+    await expect(
+      buildDocumentSeriesArchive({
+        collection,
+        sources: [...sources, remoteSource('overflow', 'Over.')],
+        identityScheme: REMOTE_DOCUMENT_IDENTITY_SCHEME,
+      }),
+    ).rejects.toThrow('원본 수');
+    await expect(
+      buildDocumentSeriesArchive({
+        collection,
+        sources: [{ ...sources[0]!, blob: new Blob([new Uint8Array(REMOTE_DOCUMENT_LIMITS.sourceBytes + 1)]) }],
+        identityScheme: REMOTE_DOCUMENT_IDENTITY_SCHEME,
+      }),
+    ).rejects.toThrow('원본 크기');
+  });
+
+  it('still rejects corrupt archive bytes and changed hash claims when reusing verified remote bytes', async () => {
+    const original = await materialize([remoteSource('release-1', 'Correct bytes.')]);
+    const archive = (await readDocumentSeriesArchive(original.file))!;
+    const descriptor = archive.manifest.sources[0]!;
+    const writer = new ZipWriter(new BlobWriter());
+    await writer.add(descriptor.entryName, new TextReader('Corrupt bytes.'));
+    await writer.add('moya-document-series.json', new TextReader(JSON.stringify(archive.manifest)));
+    await expect(readDocumentSeriesArchive(await writer.close())).rejects.toThrow('원본 해시');
+    await expect(
+      buildDocumentSeriesArchive({
+        collection,
+        identityScheme: REMOTE_DOCUMENT_IDENTITY_SCHEME,
+        sources: [
+          { ...descriptor, blob: archive.sources.get(descriptor.id)!, contentHash: integrityHash('Corrupt bytes.') },
+        ],
+      }),
+    ).rejects.toThrow('원본 해시');
   });
 });

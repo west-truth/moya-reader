@@ -1,3 +1,6 @@
+import type { ExternalSeriesProfile } from '@noveldesk/extension-contracts';
+export type { ExternalSeriesProfile } from '@noveldesk/extension-contracts';
+
 export type ExternalSourceKind = 'cloud_file' | 'catalog';
 export type ExternalSourceBrowseMode = 'popular' | 'latest' | 'search';
 
@@ -82,6 +85,12 @@ export interface ExternalSourceCollectionDescriptor {
   readonly tags?: readonly string[];
   readonly status?: string;
   readonly sourceLabel?: string;
+  /** Required for v2 serial sources; absent on legacy v1 catalog records. */
+  readonly seriesProfile?: ExternalSeriesProfile;
+}
+
+export interface ExternalSourceCollectionDescriptorV2 extends ExternalSourceCollectionDescriptor {
+  readonly seriesProfile: ExternalSeriesProfile;
 }
 
 export interface ExternalSourceReleaseDescriptor {
@@ -111,6 +120,8 @@ export interface ExternalItemSummary {
   readonly updatedAt?: string;
   /** Display-only remote cover/icon URL. Import still requires an explicit download action. */
   readonly thumbnailUrl?: string;
+  /** Stable work identity for separately fetched authenticated artwork; never a remote URL. */
+  readonly coverRef?: ExternalItemKey;
   /** Optional work/release identity used to aggregate serial catalog downloads into one local work. */
   readonly collection?: ExternalSourceCollectionDescriptor;
   readonly release?: ExternalSourceReleaseDescriptor;
@@ -128,6 +139,7 @@ export interface ExternalSourceWorkDetail {
   readonly tags?: readonly string[];
   readonly status?: string;
   readonly thumbnailUrl?: string;
+  readonly coverRef?: ExternalItemKey;
   readonly sourceLabel?: string;
 }
 
@@ -153,11 +165,42 @@ export interface ExternalSourceDownloadRef {
   readonly mimeType?: string;
   readonly byteLength?: number;
   readonly remoteRevision?: string;
+  readonly context?: {
+    readonly expectedProfile?: ExternalSeriesProfile;
+    /** Broker-owned generation: changes on reconnect/configuration changes, not token refresh. */
+    readonly connectionGeneration?: string;
+    /** Optional stricter host limit; cannot raise the normalized format's hard limit. */
+    readonly maxBytes?: number;
+  };
 }
 
 export interface DownloadedExternalSource {
   readonly file: File;
   readonly remoteRevision?: string;
+  /** Present on the app registry result; optional while legacy test/host ports migrate. */
+  readonly content?: ExternalSourceContent;
+}
+
+export type ExternalSourceContent =
+  | {
+      readonly kind: 'document';
+      readonly file: File;
+      readonly format: 'txt';
+      readonly encoding: 'utf-8';
+      readonly chapterSplitMode: 'single';
+    }
+  | { readonly kind: 'image_archive'; readonly file: File; readonly format: 'cbz' | 'zip' }
+  | { readonly kind: 'standalone_file'; readonly file: File };
+
+export interface DownloadedExternalSourceV2 {
+  readonly content: ExternalSourceContent;
+  readonly remoteRevision?: string;
+}
+
+export type ExternalSourceDownloadResult = DownloadedExternalSource | DownloadedExternalSourceV2;
+
+export interface NormalizedDownloadedExternalSource extends DownloadedExternalSource {
+  readonly content: ExternalSourceContent;
 }
 
 export type ExternalSourceConnectionState = 'disconnected' | 'reauthorization_required' | 'connected' | 'unavailable';
@@ -167,6 +210,7 @@ export interface ExternalSourceConnectionStatus {
   readonly accountConnectionId?: string;
   readonly label?: string;
   readonly reason?: string;
+  readonly connectionGeneration?: string;
 }
 
 export interface ExternalSourceConnectionOption {
@@ -215,7 +259,8 @@ export interface ExternalSourceBroker {
   connect(input?: ExternalSourceConnectionInput): Promise<void>;
   disconnect(): Promise<void>;
   list(input: ExternalSourceListInput, signal: AbortSignal): Promise<ExternalItemPage>;
-  download(ref: ExternalSourceDownloadRef, signal: AbortSignal): Promise<DownloadedExternalSource>;
+  resolveCover?(key: ExternalItemKey, signal: AbortSignal): Promise<string | undefined>;
+  download(ref: ExternalSourceDownloadRef, signal: AbortSignal): Promise<ExternalSourceDownloadResult>;
   pickItems?(): Promise<ExternalSourcePickResult>;
   removeSelectedItem?(key: ExternalItemKey): Promise<void>;
 }
@@ -260,6 +305,9 @@ export interface ExternalSourceLink {
 }
 
 export interface ExternalCatalogCachePage {
+  /** Only a fully traversed series can be reused as an ordered work snapshot. */
+  readonly completeSeries?: boolean;
+  readonly detail?: ExternalSourceWorkDetail;
   readonly id: string;
   readonly connectorId: string;
   readonly accountConnectionId?: string;

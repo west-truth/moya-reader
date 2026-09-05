@@ -1,3 +1,4 @@
+import type { ImportExpectedBase } from '@noveldesk/contracts';
 import type {
   Bookmark,
   Chapter,
@@ -382,6 +383,7 @@ export async function createStagingContentRevision(
     sourceHash?: string;
     expected: ContentRevisionExpectedCounts;
     expectedBaseActiveContentRevisionId?: string;
+    expectedBase?: ImportExpectedBase;
     appendDelta?: {
       baseRevision: BookContentRevisionRecord;
       logicalCounts: StoredContentRevisionCounts;
@@ -390,6 +392,14 @@ export async function createStagingContentRevision(
 ): Promise<BookContentRevisionRecord> {
   const tx = db.transaction(['novels', CONTENT_REVISION_STORES.revisions], 'readwrite');
   const currentNovel = await requestToPromise<Novel | undefined>(tx.objectStore('novels').get(input.novel.id));
+  if (
+    (input.expectedBase?.kind === 'absent' && currentNovel) ||
+    (input.expectedBase?.kind === 'revision' &&
+      currentNovel?.activeContentRevisionId !== input.expectedBase.contentRevisionId)
+  ) {
+    tx.abort();
+    throw new ContentRevisionConflictError('import_expected_base_conflict');
+  }
   if (
     input.expectedBaseActiveContentRevisionId !== undefined &&
     currentNovel?.activeContentRevisionId !== input.expectedBaseActiveContentRevisionId

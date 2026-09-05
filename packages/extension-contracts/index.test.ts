@@ -200,7 +200,7 @@ describe('extension manifest contract', () => {
         externalSources: [
           {
             id: 'dropbox',
-            schemaVersion: 2,
+            schemaVersion: 99,
             title: '',
             kind: 'drive',
             capabilities: ['browse', 'browse', 'raw-request'],
@@ -225,5 +225,29 @@ describe('extension manifest contract', () => {
         'contributes.externalSources[0].order',
       ]),
     );
+  });
+
+  it('accepts explicit TXT v2 sources while preserving the v1 capability boundary', () => {
+    const source = {
+      id: 'example.reader.tools.text',
+      schemaVersion: 2,
+      title: 'Text',
+      kind: 'catalog',
+      capabilities: ['browse', 'release-list', 'release-download', 'document-content'],
+      runtimes: ['self-host-gateway'],
+      seriesProfile: { kind: 'document_series', format: 'txt', encoding: 'utf-8', chapterSplitMode: 'single' },
+    };
+    const withSource = (value: unknown) => ({ ...validManifest, contributes: { externalSources: [value] } });
+    expect(validateExtensionManifest(withSource(source)).ok).toBe(true);
+    expect(validateExtensionManifest(withSource({ ...source, schemaVersion: 1 })).ok).toBe(false);
+    for (const replacement of [
+      { seriesProfile: { ...source.seriesProfile, format: 'epub' } },
+      { seriesProfile: { ...source.seriesProfile, script: 'unsupported' } },
+      { capabilities: ['release-download', 'document-content'] },
+      { capabilities: ['release-list', 'release-download', 'image-content'] },
+      { capabilities: [...source.capabilities, 'document-content'] },
+    ]) {
+      expect(validateExtensionManifest(withSource({ ...source, ...replacement })).ok).toBe(false);
+    }
   });
 });

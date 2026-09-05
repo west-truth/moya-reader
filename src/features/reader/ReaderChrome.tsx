@@ -35,13 +35,14 @@ import type {
   ReaderScreenModel,
 } from './reader-screen-contract';
 import type { ReaderRuntimeFlow, ReaderViewportApi } from './ReaderViewport';
+import { showChapterSequence } from './ReaderChapterHeading';
 
 function classNames(...values: Array<string | false | undefined>): string {
   return values.filter(Boolean).join(' ');
 }
 
-function chapterSubtitle(index: number, title: string): string {
-  return `${formatCount(index)}화 · ${title}`;
+function chapterSubtitle(chapter: ReaderScreenModel['chapter']): string {
+  return showChapterSequence(chapter) ? `${formatCount(chapter.index)}화 · ${chapter.title}` : chapter.title;
 }
 
 function flowLabel(readingFlow: ReaderRuntimeFlow): string {
@@ -131,7 +132,7 @@ export function ReaderChrome({
         </button>
         <div className="reader-title">
           <strong>{model.novel.title}</strong>
-          <span>{chapterSubtitle(model.chapter.index, model.chapter.title)}</span>
+          <span>{chapterSubtitle(model.chapter)}</span>
         </div>
         <div className="reader-actions">
           <label className="search-box compact">

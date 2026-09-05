@@ -84,6 +84,107 @@ describeWithPostgres('exact reader-state restoration after fixed-document replac
     await harness?.stop();
   });
 
+  test('restores a surviving remote TXT paragraph at its new index and leaves ambiguous notes quarantined', async () => {
+    await withPostgresSchema(harness!, 'remote_text_reader_restore', async (pool) => {
+      await migrateDatabase(pool);
+      await seedBooks(pool);
+      const prepared = await prepareReplacement(pool, {
+        bookId: 'book_target',
+        sourceObjectId: 'object_target_new',
+        sourceRawTextHash: 'remote_new',
+        normalizedTextHash: 'remote_normalized',
+        sourceFileName: 'novel.zip',
+      });
+      await pool.query(`insert into chapters (id, book_id, chapter_index, title, text_hash,
+        raw_start_offset, raw_end_offset, character_count, paragraph_count, document_section_id)
+        values ('remote_chapter', 'book_target', 2, 'Release', 'text_hash', 0, 40, 40, 4, 'remote_source')`);
+      await pool.query(`insert into paragraph_search (id, paragraph_id, book_id, chapter_id, page_index,
+        paragraph_index, text, text_lower, paragraph) values ('search_remote', 'unique_paragraph', 'book_target',
+        'remote_chapter', 0, 3, 'Same paragraph', 'same paragraph', '{"id":"unique_paragraph"}'::jsonb)`);
+      await seedQuarantine(pool, {
+        id: 'remote_position',
+        runId: prepared.replacement.runId,
+        bookId: 'book_target',
+        artifactType: 'reading_position',
+        sourceEntityId: 'position',
+        payload: {
+          book_id: 'book_target',
+          user_id: 'user_test',
+          chapter_id: 'remote_chapter',
+          paragraph_id: 'unique_paragraph',
+          paragraph_index: 1,
+          offset_in_paragraph: 2,
+          chapter_progress: 0.25,
+          scroll_top: 500,
+          device_id: 'device_test',
+          updated_at: timestamp,
+        },
+      });
+      await seedQuarantine(pool, {
+        id: 'remote_ambiguous_note',
+        runId: prepared.replacement.runId,
+        bookId: 'book_target',
+        artifactType: 'note',
+        sourceEntityId: 'ambiguous_note',
+        payload: {
+          id: 'ambiguous_note',
+          book_id: 'book_target',
+          user_id: 'user_test',
+          chapter_id: 'remote_chapter',
+          paragraph_id: 'old_repeated_paragraph',
+          quote: 'Repeated',
+          body: 'Annotation',
+          progress: 0.25,
+          created_at: timestamp,
+          updated_at: timestamp,
+          deleted_at: null,
+        },
+      });
+      const client = await pool.connect();
+      try {
+        expect(await restoreExactAnchoredReaderState(client, prepared)).toBe(1);
+      } finally {
+        client.release();
+      }
+      const position = await pool.query('select * from reading_positions where book_id = $1', ['book_target']);
+      expect(position.rows[0]).toMatchObject({
+        paragraph_id: 'unique_paragraph',
+        paragraph_index: 3,
+        offset_in_paragraph: 2,
+        scroll_top: 0,
+      });
+      expect(Number(position.rows[0].chapter_progress)).toBe(0.75);
+      expect((await pool.query('select * from notes where id = $1', ['ambiguous_note'])).rows).toEqual([]);
+      const quarantine = await pool.query('select remap_status from book_revision_quarantine where id = $1', [
+        'remote_ambiguous_note',
+      ]);
+      expect(quarantine.rows[0].remap_status).not.toBe('remapped');
+      await pool.query('delete from reading_positions where book_id = $1', ['book_target']);
+      await pool.query(`update book_revision_quarantine set remap_status = 'quarantined',
+        payload = jsonb_set(payload, '{paragraph_id}', '"removed_paragraph"'::jsonb)
+        where id = 'remote_position'`);
+      const fallbackClient = await pool.connect();
+      try {
+        expect(await restoreExactAnchoredReaderState(fallbackClient, prepared)).toBe(0);
+      } finally {
+        fallbackClient.release();
+      }
+      const fallback = await pool.query('select * from reading_positions where book_id = $1', ['book_target']);
+      expect(fallback.rows[0]).toMatchObject({
+        chapter_id: 'remote_chapter',
+        paragraph_id: 'unique_paragraph',
+        paragraph_index: 3,
+        offset_in_paragraph: 0,
+        scroll_top: 0,
+      });
+      expect(Number(fallback.rows[0].chapter_progress)).toBe(0);
+      expect(
+        (await pool.query('select remap_status from book_revision_quarantine where id = $1', ['remote_position']))
+          .rows[0].remap_status,
+      ).toBe('quarantined');
+    });
+  });
+
   test('restores only same-run, same-book rows whose chapter ids survived and marks them remapped', async () => {
     await withPostgresSchema(harness!, 'reader_state_restore', async (pool) => {
       await migrateDatabase(pool);

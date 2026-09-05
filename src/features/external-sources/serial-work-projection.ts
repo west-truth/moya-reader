@@ -5,6 +5,13 @@ import type {
   ExternalSourceWorkDetail,
 } from '../../external-sources/contracts';
 import { parseSerialReleaseName } from '../../domain/serial-release-name';
+import { externalDocumentReleaseSourceId } from '../../external-sources/series/document-series-identity';
+
+export function externalItemSectionId(item: ExternalItemSummary): string {
+  return item.collection?.seriesProfile?.kind === 'document_series' && item.key.connectorId !== 'moya.local.serial'
+    ? externalDocumentReleaseSourceId(item.key, item.collection.remoteId)
+    : item.key.remoteId;
+}
 
 export type SerialReleaseReadingState = 'current' | 'read' | 'unread';
 
@@ -156,7 +163,13 @@ export function projectLocalSeries(
   const items = [...sections.entries()]
     .sort((left, right) => left[1].index - right[1].index)
     .map(([sectionId, section]) => {
-      const persisted = relatedLinks.find((link) => link.source.remoteId === sectionId);
+      const persisted = relatedLinks.find(
+        (link) =>
+          link.source.remoteId === sectionId ||
+          (novel.format === 'txt' &&
+            link.collectionRemoteId &&
+            externalDocumentReleaseSourceId(link.source, link.collectionRemoteId) === sectionId),
+      );
       const key =
         persisted?.source ??
         ({ connectorId: 'moya.local.serial', remoteId: sectionId } satisfies ExternalItemSummary['key']);
@@ -175,9 +188,9 @@ export function projectLocalSeries(
         key,
         kind: 'file' as const,
         title: section.title,
-        subtitle: `${section.pageCount.toLocaleString()}페이지`,
-        mimeType: 'application/vnd.comicbook+zip',
-        formatHint: 'CBZ',
+        subtitle: `${section.pageCount.toLocaleString()}${novel.format === 'image_archive' ? '페이지' : '회차'}`,
+        mimeType: novel.format === 'image_archive' ? 'application/vnd.comicbook+zip' : 'text/plain',
+        formatHint: novel.format === 'image_archive' ? 'CBZ' : 'TXT',
         remoteRevision: persisted?.importedRemoteRevision,
         updatedAt: section.updatedAt,
         collection: {
@@ -186,6 +199,16 @@ export function projectLocalSeries(
           author: novel.author,
           description: novel.description,
           tags: novel.tags,
+          ...(novel.format === 'txt'
+            ? {
+                seriesProfile: {
+                  kind: 'document_series' as const,
+                  format: 'txt' as const,
+                  encoding: 'utf-8' as const,
+                  chapterSplitMode: 'single' as const,
+                },
+              }
+            : {}),
         },
         release: { title: section.title, sourceOrder: section.index },
         importability: 'supported' as const,

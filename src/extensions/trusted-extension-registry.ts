@@ -15,7 +15,7 @@ import type {
   TrustedBookEnrichmentHostContext,
 } from '../features/book-enrichment/book-enrichment-contract';
 import type {
-  DownloadedExternalSource,
+  ExternalSourceDownloadResult,
   ExternalItemPage,
   ExternalSourceConnectionForm,
   ExternalSourceConnectionInput,
@@ -74,7 +74,7 @@ export interface TrustedExternalSourceRegistration {
     context: TrustedExternalSourceHostContext,
     ref: ExternalSourceDownloadRef,
     signal: AbortSignal,
-  ): Promise<DownloadedExternalSource>;
+  ): Promise<ExternalSourceDownloadResult>;
 }
 
 export interface TrustedExternalSourceContribution extends TrustedExternalSourceRegistration {
@@ -505,7 +505,7 @@ export class TrustedExtensionRegistry<TReaderAddonContext, TAnalysisWorkflowCont
     hostContext: TrustedExternalSourceHostContext,
     ref: ExternalSourceDownloadRef,
     signal: AbortSignal,
-  ): Promise<DownloadedExternalSource> {
+  ): Promise<ExternalSourceDownloadResult> {
     return this.requireExternalSource(contributionId).download(hostContext, ref, signal);
   }
 

@@ -28,7 +28,7 @@ import {
   Upload,
   X,
 } from 'lucide-react';
-import { useLayoutEffect, useRef, type FormEvent } from 'react';
+import { useLayoutEffect, useMemo, useRef, type FormEvent } from 'react';
 import type { Novel } from '../../domain/types';
 import type { ExternalSourceFilterDefinition, ExternalSourceFilterValue } from '../../external-sources/contracts';
 import { externalItemKeyId } from '../../external-sources/contracts';
@@ -36,7 +36,8 @@ import { formatBytes, formatCount } from '../../utils/format';
 import type { LibraryScreenProps } from '../library/library-screen-contract';
 import { LibraryMobileHeader, LibrarySidebar } from '../library/LibraryChrome';
 import { BookCover } from '../library/BookCover';
-import { importTaskIsActive, importTaskLabel } from '../import/import-task-projection';
+import { importTaskIsActive, importTaskLabel, type ImportTaskView } from '../import/import-task-projection';
+import { SourceReleasePanel } from './SourceReleasePanel';
 import type {
   ExternalSourceController,
   ExternalSourceItemImportState,
@@ -88,8 +89,7 @@ function canSelectItem(item: ExternalSourceItemView): boolean {
   return (
     item.kind !== 'folder' &&
     item.importability !== 'unsupported' &&
-    item.importState !== 'unsupported' &&
-    item.importState !== 'imported'
+    (item.importState === 'available' || item.importState === 'update_available')
   );
 }
 
@@ -103,7 +103,7 @@ function updatedLabel(value: string | undefined): string | undefined {
 function sourceFileExtension(fileName: string | undefined): string {
   const leafName = fileName?.split(/[\\/]/u).at(-1)?.trim();
   const extension = leafName?.match(/\.([^.]+)$/u)?.[1]?.trim();
-  return extension ? extension.toLocaleUpperCase() : '압축 파일';
+  return extension ? extension.toLocaleUpperCase() : '파일';
 }
 
 function itemDescription(item: ExternalSourceItemView): string | undefined {
@@ -113,108 +113,149 @@ function itemDescription(item: ExternalSourceItemView): string | undefined {
   );
 }
 
-function ItemAction({
+function ReleaseDownloadAction({
   item,
   controller,
-  releaseList = false,
+  task,
 }: {
   item: ExternalSourceItemView;
   controller: ExternalSourceController;
-  releaseList?: boolean;
+  task?: ImportTaskView;
 }) {
-  const task = controller.tasks.find((candidate) => candidate.externalItemKey === externalItemKeyId(item.key));
-  if (releaseList) {
-    if (task && importTaskIsActive(task)) {
-      const cancelling = task.phase === 'cancelling';
-      return (
-        <button
-          className="icon-btn source-hub-release-action"
-          type="button"
-          disabled={cancelling}
-          title={cancelling ? '취소 중' : '다운로드 중단'}
-          aria-label={`${item.title} ${cancelling ? '취소 중' : '다운로드 중단'}`}
-          onClick={controller.cancel}
-        >
-          <LoaderCircle size={16} className="spin" />
-        </button>
-      );
-    }
-    if (task?.phase === 'failed') {
-      return (
-        <button
-          className="icon-btn source-hub-release-action"
-          type="button"
-          disabled={controller.busy || controller.loading}
-          title="다시 시도"
-          aria-label={`${item.title} 다시 시도`}
-          onClick={() => void controller.importItem(item)}
-        >
-          <RotateCcw size={16} />
-        </button>
-      );
-    }
-    if (item.importState === 'imported') {
-      return (
-        <button
-          className="icon-btn source-hub-release-action"
-          type="button"
-          disabled={controller.blockingBusy}
-          title="회차 보기"
-          aria-label={`${item.title} 보기`}
-          onClick={() => void controller.openImported(item)}
-        >
-          <BookOpen size={16} />
-        </button>
-      );
-    }
-    if (!canSelectItem(item)) {
-      return (
-        <button className="icon-btn source-hub-release-action" type="button" disabled title="지원하지 않음">
-          <X size={16} />
-        </button>
-      );
-    }
-    const updating = item.importState === 'update_available';
-    const queueing = controller.canQueueItem(item);
-    const blockedByOtherWork = controller.importBusy && !queueing;
-    const label = updating
-      ? `${item.title} 업데이트`
-      : queueing
-        ? `${item.title} 다운로드 대기열에 추가`
-        : `${item.title} 다운로드 후 보기`;
+  if (task && importTaskIsActive(task)) {
+    const cancelling = task.phase === 'cancelling';
     return (
       <button
         className="icon-btn source-hub-release-action"
         type="button"
-        disabled={controller.blockingBusy || controller.loading || blockedByOtherWork}
-        title={
-          blockedByOtherWork
-            ? '다른 작품 다운로드 중'
-            : updating
-              ? '업데이트'
-              : queueing
-                ? '다운로드 대기열에 추가'
-                : '다운로드 후 보기'
-        }
-        aria-label={label}
-        onClick={() => void (updating || queueing ? controller.importItem(item) : controller.importAndOpen(item))}
+        disabled={cancelling}
+        title={cancelling ? '취소 중' : '다운로드 중단'}
+        aria-label={`${item.title} ${cancelling ? '취소 중' : '다운로드 중단'}`}
+        onClick={controller.cancel}
       >
-        {updating ? <RefreshCw size={16} /> : <Download size={16} />}
+        <LoaderCircle size={16} className="spin" />
+      </button>
+    );
+  }
+  if (task?.phase === 'failed') {
+    return (
+      <button
+        className="icon-btn source-hub-release-action"
+        type="button"
+        disabled={controller.busy || controller.loading}
+        title="다시 시도"
+        aria-label={`${item.title} 다시 시도`}
+        onClick={() => void controller.importItem(item)}
+      >
+        <RotateCcw size={16} />
       </button>
     );
   }
   if (item.importState === 'imported') {
+    if (item.collection?.seriesProfile?.kind !== 'document_series') return null;
+    const source = controller.sources.find((candidate) => candidate.id === item.key.connectorId);
+    if (!source) return null;
+    const connection = source.connection;
+    const unavailableReason =
+      connection.state !== 'connected'
+        ? '원문을 확인하려면 작품 소스에 다시 연결해 주세요.'
+        : (connection.accountConnectionId ?? '') !== (item.key.accountConnectionId ?? '')
+          ? '원문을 확인하려면 이 회차를 가져온 계정으로 연결해 주세요.'
+          : undefined;
     return (
       <button
-        className="ghost-btn source-hub-card-action"
+        className="icon-btn source-hub-release-action"
         type="button"
-        disabled={controller.blockingBusy}
-        onClick={() => void controller.openImported(item)}
+        disabled={controller.busy || controller.loading || Boolean(unavailableReason)}
+        title={unavailableReason ?? '원문 확인'}
+        aria-label={`${item.title} 원문 확인`}
+        onClick={() => void controller.importItem(item)}
       >
-        <BookOpen size={15} /> {releaseList ? '보기' : '라이브러리에서 보기'}
+        <RefreshCw size={16} />
       </button>
     );
   }
+  if (!canSelectItem(item)) {
+    return (
+      <button className="icon-btn source-hub-release-action" type="button" disabled title="지원하지 않음">
+        <X size={16} />
+      </button>
+    );
+  }
+  const updating = item.importState === 'update_available';
+  const queueing = controller.canQueueItem(item);
+  const blockedByOtherWork = controller.importBusy && !queueing;
+  const label = updating
+    ? `${item.title} 업데이트`
+    : queueing
+      ? `${item.title} 다운로드 대기열에 추가`
+      : `${item.title} 다운로드 후 보기`;
+  return (
+    <button
+      className="icon-btn source-hub-release-action"
+      type="button"
+      disabled={controller.blockingBusy || controller.loading || blockedByOtherWork}
+      title={
+        blockedByOtherWork
+          ? '다른 작품 다운로드 중'
+          : updating
+            ? '업데이트'
+            : queueing
+              ? '다운로드 대기열에 추가'
+              : '다운로드 후 보기'
+      }
+      aria-label={label}
+      onClick={() => void (updating || queueing ? controller.importItem(item) : controller.importAndOpen(item))}
+    >
+      {updating ? <RefreshCw size={16} /> : <Download size={16} />}
+    </button>
+  );
+}
+
+function ItemAction({
+  item,
+  controller,
+  task,
+  releaseList = false,
+}: {
+  item: ExternalSourceItemView;
+  controller: ExternalSourceController;
+  task?: ImportTaskView;
+  releaseList?: boolean;
+}) {
+  const canRead = Boolean(
+    item.localBookId && (item.importState === 'imported' || item.importState === 'update_available'),
+  );
+  if (releaseList) {
+    return (
+      <div className="source-hub-release-actions">
+        {canRead && (
+          <button
+            className="icon-btn source-hub-release-action"
+            type="button"
+            disabled={controller.blockingBusy}
+            title="회차 보기"
+            aria-label={`${item.title} 보기`}
+            onClick={() => void controller.openImported(item)}
+          >
+            <BookOpen size={16} />
+          </button>
+        )}
+        <ReleaseDownloadAction item={item} controller={controller} task={task} />
+      </div>
+    );
+  }
+  const readAction = canRead ? (
+    <button
+      className="ghost-btn source-hub-card-action"
+      type="button"
+      disabled={controller.blockingBusy}
+      onClick={() => void controller.openImported(item)}
+    >
+      <BookOpen size={15} /> 라이브러리에서 보기
+    </button>
+  ) : null;
+  if (item.importState === 'imported') return readAction;
   if (!canSelectItem(item)) {
     return (
       <button className="ghost-btn source-hub-card-action" type="button" disabled>
@@ -222,20 +263,24 @@ function ItemAction({
       </button>
     );
   }
-  return (
+  const importAction = (
     <button
       className="primary-btn source-hub-card-action"
       type="button"
       disabled={controller.busy || controller.loading}
-      onClick={() =>
-        void (releaseList && item.importState === 'available'
-          ? controller.importAndOpen(item)
-          : controller.importItem(item))
-      }
+      onClick={() => void controller.importItem(item)}
     >
       {item.importState === 'update_available' ? <RefreshCw size={15} /> : <Upload size={15} />}
-      {item.importState === 'update_available' ? '업데이트' : releaseList ? '다운로드 후 보기' : '라이브러리로 추가'}
+      {item.importState === 'update_available' ? '업데이트' : '라이브러리로 추가'}
     </button>
+  );
+  return readAction ? (
+    <div className="source-hub-card-actions">
+      {readAction}
+      {importAction}
+    </div>
+  ) : (
+    importAction
   );
 }
 
@@ -268,12 +313,13 @@ function WorkItemActions({
 function SourceReleaseRow({
   item,
   controller,
+  task,
 }: {
   item: ExternalSourceItemView;
   controller: ExternalSourceController;
+  task?: ImportTaskView;
 }) {
   const itemId = externalItemKeyId(item.key);
-  const task = controller.tasks.find((candidate) => candidate.externalItemKey === itemId);
   const selectable = canSelectItem(item);
   const readingStateLabel = releaseReadingStateLabel(item);
   return (
@@ -322,7 +368,7 @@ function SourceReleaseRow({
         ) : null}
         {task ? importTaskLabel(task) : (readingStateLabel ?? importStateLabel(item.importState))}
       </span>
-      <ItemAction item={item} controller={controller} releaseList />
+      <ItemAction item={item} controller={controller} task={task} releaseList />
     </article>
   );
 }
@@ -518,12 +564,19 @@ export default function SourceHubScreen({
   localSeriesTitleEditor,
 }: SourceHubScreenProps) {
   const scrollRef = useRef<HTMLDivElement>(null);
+  const taskByItemKey = useMemo(() => {
+    const tasks = new Map<string, ImportTaskView>();
+    for (const task of controller.tasks) {
+      if (task.externalItemKey && !tasks.has(task.externalItemKey)) tasks.set(task.externalItemKey, task);
+    }
+    return tasks;
+  }, [controller.tasks]);
   const seriesNovel = localSeriesNovel ?? controller.localSeriesNovel;
   const activeSource = controller.sources.find((source) =>
     seriesNovel ? source.id === controller.localSeriesSourceId : source.id === controller.activeSourceId,
   );
-  const folders = controller.items.filter((item) => item.kind === 'folder');
-  const contentItems = controller.items.filter((item) => item.kind !== 'folder');
+  const folders = useMemo(() => controller.items.filter((item) => item.kind === 'folder'), [controller.items]);
+  const contentItems = useMemo(() => controller.items.filter((item) => item.kind !== 'folder'), [controller.items]);
   const selectableItems = contentItems.filter(canSelectItem);
   const selectedCount = selectableItems.filter((item) => item.selected).length;
   const updateCount = contentItems.filter((item) => item.importState === 'update_available').length;
@@ -531,8 +584,14 @@ export default function SourceHubScreen({
     (item) => item.selected && item.importState === 'update_available',
   ).length;
   const allSelected = selectableItems.length > 0 && selectedCount === selectableItems.length;
-  const isSuwayomi = activeSource?.id.startsWith('moya.external.suwayomi') ?? false;
-  const releaseList = Boolean(controller.detail && contentItems.some((item) => item.release));
+  const releaseList = Boolean(controller.detail || seriesNovel);
+  const releaseLocationKey = JSON.stringify([
+    activeSource?.id,
+    activeSource?.connection.accountConnectionId,
+    seriesNovel?.id,
+    controller.breadcrumbs.at(-1)?.parentRef,
+    controller.detail?.title,
+  ]);
   const hasWorkHero = Boolean(seriesNovel || controller.detail);
   const connected = activeSource?.connection.state === 'connected';
   const workTitle = seriesNovel?.title ?? controller.detail?.title ?? '연재 작품';
@@ -555,7 +614,11 @@ export default function SourceHubScreen({
         : '미독'
       : undefined);
   const seriesCanContinue = seriesLibraryBook ? !seriesLibraryBook.isUnread : seriesReadingStatus !== '미독';
-  const localArchiveFormat = seriesNovel ? sourceFileExtension(seriesNovel.sourceFileName) : undefined;
+  const localArchiveFormat = seriesNovel
+    ? seriesNovel.format === 'txt'
+      ? 'TXT'
+      : sourceFileExtension(seriesNovel.sourceFileName)
+    : undefined;
   const sourceSubscriptions = activeSource
     ? controller.subscriptions.filter(
         (subscription) =>
@@ -674,7 +737,7 @@ export default function SourceHubScreen({
                 </button>
                 <div className="detail-hero-body">
                   <div className="detail-hero-cover">
-                    {seriesNovel ? (
+                    {seriesNovel && (seriesNovel.coverAssetId || !controller.detail?.thumbnailUrl) ? (
                       <BookCover novel={seriesNovel} className="book-cover source-hub-detail-cover" />
                     ) : (
                       <div className="book-cover source-hub-detail-cover source-hub-remote-cover">
@@ -835,7 +898,7 @@ export default function SourceHubScreen({
                     </div>
                   )}
                   <div>
-                    <dt>총 회차</dt>
+                    <dt>불러온 회차</dt>
                     <dd>{formatCount(contentItems.length)}화</dd>
                   </div>
                   <div>
@@ -853,11 +916,7 @@ export default function SourceHubScreen({
                 <div className="source-hub-hero-copy">
                   <span className="eyebrow">외부 소스</span>
                   <h1>{activeSource?.title ?? '외부 소스'}</h1>
-                  <p>
-                    {isSuwayomi
-                      ? 'Suwayomi에 설치된 Mihon 소스를 탐색합니다.'
-                      : '목록을 확인하고 원하는 파일이나 작품만 라이브러리로 가져옵니다.'}
-                  </p>
+                  <p>목록을 확인하고 원하는 파일이나 작품의 회차를 라이브러리로 가져옵니다.</p>
                 </div>
                 {controller.canPickItems && (
                   <div className="source-hub-hero-actions">
@@ -896,7 +955,7 @@ export default function SourceHubScreen({
                   {sourceSubscriptions.map((subscription) => (
                     <article key={subscription.id} className="source-hub-subscription-card">
                       <div>
-                        <span className="eyebrow">{subscription.sourceLabel ?? 'Suwayomi'}</span>
+                        <span className="eyebrow">{subscription.sourceLabel ?? '외부 소스'}</span>
                         <strong>{subscription.title}</strong>
                         <small>
                           {subscription.author ?? '작가 정보 없음'} · 회차{' '}
@@ -1091,69 +1150,80 @@ export default function SourceHubScreen({
               </section>
             )}
 
-            <section
-              className={`source-hub-items${releaseList ? ' chapter-panel source-hub-release-panel' : ''}`}
-              aria-labelledby="source-items-title"
-            >
-              <div
-                className={`source-hub-section-heading source-hub-items-heading${
-                  releaseList ? ' chapter-panel-heading' : ''
-                }`}
-              >
-                <div>
-                  <h2 id="source-items-title">
-                    {controller.detail ? '회차' : activeSource?.kind === 'catalog' ? '작품' : '파일'}
-                  </h2>
-                  <span>{formatCount(contentItems.length)}개</span>
-                </div>
-                <label>
-                  <input
-                    type="checkbox"
-                    checked={allSelected}
-                    disabled={selectableItems.length === 0 || controller.busy}
-                    onChange={(event) => controller.selectAllSupported(event.target.checked)}
+            {releaseList ? (
+              <SourceReleasePanel
+                key={releaseLocationKey}
+                controller={controller}
+                items={contentItems}
+                renderItem={(item) => (
+                  <SourceReleaseRow
+                    key={externalItemKeyId(item.key)}
+                    item={item}
+                    controller={controller}
+                    task={taskByItemKey.get(externalItemKeyId(item.key))}
                   />
-                  모두 선택
-                </label>
-              </div>
-
-              {controller.loading && controller.items.length > 0 && (
-                <div className="source-hub-loading-status" role="status" aria-live="polite">
-                  <LoaderCircle size={16} className="spin" aria-hidden="true" />
-                  <span>목록을 불러오는 중</span>
-                </div>
-              )}
-
-              {controller.loading && controller.items.length === 0 ? (
-                <div className="source-hub-empty" role="status">
-                  <LoaderCircle size={24} className="spin" /> 목록을 불러오고 있습니다.
-                </div>
-              ) : controller.items.length === 0 ? (
-                <div className="source-hub-empty">
-                  <FileText size={34} />
-                  <strong>표시할 파일이나 작품이 없습니다.</strong>
-                  <span>
-                    {controller.canPickItems
-                      ? 'Drive에서 파일 추가를 눌러 연결할 파일을 선택해 보세요.'
-                      : '다른 폴더를 열거나 검색어를 변경해 보세요.'}
-                  </span>
-                </div>
-              ) : contentItems.length > 0 ? (
-                releaseList ? (
-                  <div className="source-hub-release-list" aria-label="작품 회차 목록">
-                    <div className="source-hub-release-list-head" aria-hidden="true">
-                      <span />
-                      <span>회차</span>
-                      <span>제목</span>
-                      <span>업데이트</span>
-                      <span>상태</span>
-                      <span>작업</span>
-                    </div>
-                    {contentItems.map((item) => (
-                      <SourceReleaseRow key={externalItemKeyId(item.key)} item={item} controller={controller} />
-                    ))}
+                )}
+              />
+            ) : (
+              <section className="source-hub-items" aria-labelledby="source-items-title">
+                <div className="source-hub-section-heading source-hub-items-heading">
+                  <div>
+                    <h2 id="source-items-title">
+                      {controller.detail ? '회차' : activeSource?.kind === 'catalog' ? '작품' : '파일'}
+                    </h2>
+                    <span>{formatCount(contentItems.length)}개</span>
                   </div>
-                ) : (
+                  <label>
+                    <input
+                      type="checkbox"
+                      checked={allSelected}
+                      disabled={selectableItems.length === 0 || controller.busy}
+                      onChange={(event) => controller.selectAllSupported(event.target.checked)}
+                    />
+                    모두 선택
+                  </label>
+                </div>
+
+                {controller.listError && (
+                  <div className="source-hub-list-error" role="alert">
+                    <AlertTriangle size={18} aria-hidden="true" />
+                    <div>
+                      <strong>목록을 불러오지 못했습니다.</strong>
+                      <p>{controller.listError.message}</p>
+                      <button
+                        className="ghost-btn"
+                        type="button"
+                        disabled={controller.loading || controller.blockingBusy}
+                        onClick={() => void controller.listError?.retry()}
+                      >
+                        <RefreshCw size={15} /> 목록 다시 불러오기
+                      </button>
+                    </div>
+                  </div>
+                )}
+
+                {controller.loading && controller.items.length > 0 && (
+                  <div className="source-hub-loading-status" role="status" aria-live="polite">
+                    <LoaderCircle size={16} className="spin" aria-hidden="true" />
+                    <span>목록을 불러오는 중</span>
+                  </div>
+                )}
+
+                {controller.loading && controller.items.length === 0 ? (
+                  <div className="source-hub-empty" role="status">
+                    <LoaderCircle size={24} className="spin" /> 목록을 불러오고 있습니다.
+                  </div>
+                ) : controller.items.length === 0 && !controller.listError ? (
+                  <div className="source-hub-empty">
+                    <FileText size={34} />
+                    <strong>표시할 파일이나 작품이 없습니다.</strong>
+                    <span>
+                      {controller.canPickItems
+                        ? 'Drive에서 파일 추가를 눌러 연결할 파일을 선택해 보세요.'
+                        : '다른 폴더를 열거나 검색어를 변경해 보세요.'}
+                    </span>
+                  </div>
+                ) : contentItems.length > 0 ? (
                   <div className="source-hub-card-grid" aria-label="외부 소스 작품 목록">
                     {contentItems.map((item) => (
                       <SourceItemCard
@@ -1164,20 +1234,20 @@ export default function SourceHubScreen({
                       />
                     ))}
                   </div>
-                )
-              ) : null}
+                ) : null}
 
-              {controller.nextCursor && (
-                <button
-                  className="source-hub-load-more ghost-btn"
-                  type="button"
-                  disabled={controller.loading || controller.blockingBusy}
-                  onClick={() => void controller.loadMore()}
-                >
-                  {controller.loading && <LoaderCircle size={15} className="spin" />} 더 보기
-                </button>
-              )}
-            </section>
+                {controller.nextCursor && (
+                  <button
+                    className="source-hub-load-more ghost-btn"
+                    type="button"
+                    disabled={controller.loading || controller.blockingBusy}
+                    onClick={() => void controller.loadMore()}
+                  >
+                    {controller.loading && <LoaderCircle size={15} className="spin" />} 더 보기
+                  </button>
+                )}
+              </section>
+            )}
           </div>
         </section>
       </div>
@@ -1189,6 +1259,9 @@ export default function SourceHubScreen({
             <strong>선택 회차 다운로드 중</strong>
             {controller.progress && (
               <span>
+                {contentItems.some((item) => item.collection?.seriesProfile?.kind === 'document_series') && (
+                  <>수신 {formatCount(controller.progress.current)} · 저장 </>
+                )}
                 {formatCount(controller.progress.completed)}/{formatCount(controller.progress.total)} 완료
               </span>
             )}

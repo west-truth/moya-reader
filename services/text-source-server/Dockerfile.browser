@@ -1,0 +1,10 @@
+FROM mcr.microsoft.com/playwright:v1.62.0-noble
+WORKDIR /app
+COPY package.json package-lock.json ./
+RUN npm ci --omit=dev --ignore-scripts --no-audit --no-fund && npm cache clean --force
+COPY --chown=pwuser:pwuser src ./src
+COPY --chown=pwuser:pwuser scripts/init.mjs scripts/check.mjs ./scripts/
+USER pwuser
+ENV HOST=0.0.0.0 PORT=9970 CATALOG_FILE=/data/catalog.json SOURCE_ROOT=/data/content SOURCE_HTTP_TRANSPORT=browser
+EXPOSE 9970
+CMD ["node", "src/server.mjs"]

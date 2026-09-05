@@ -3,11 +3,60 @@ import type { ExternalItemSummary, ExternalSourceLink } from '../../external-sou
 import { testChapter, testNovel } from '../book-workspace/book-workspace-test-fixtures';
 import {
   externalReleaseRevisionChanged,
+  externalItemSectionId,
   projectLocalSeries,
   projectLocalSeriesReadingStates,
 } from './serial-work-projection';
 
 describe('projectLocalSeries', () => {
+  it('connects a TXT release section to its remote link and exact read marker', () => {
+    const novel = testNovel({
+      format: 'txt',
+      lastReadProgress: 0,
+      lastReadAt: undefined,
+      lastReadChapterIndex: undefined,
+    });
+    const item: ExternalItemSummary = {
+      key: { connectorId: 'moya.external.text', accountConnectionId: 'server', remoteId: 'release-one' },
+      kind: 'file',
+      title: 'First release',
+      importability: 'supported',
+      collection: {
+        remoteId: 'work',
+        title: 'Novel',
+        seriesProfile: {
+          kind: 'document_series',
+          format: 'txt',
+          encoding: 'utf-8',
+          chapterSplitMode: 'single',
+        },
+      },
+      release: { title: 'First release', sourceOrder: 1 },
+    };
+    const sectionId = externalItemSectionId(item);
+    const chapter = testChapter(1, {
+      documentSectionId: sectionId,
+      documentSectionTitle: item.release!.title,
+      documentSectionReadAt: '2026-09-05T00:00:00Z',
+    });
+    const link: ExternalSourceLink = {
+      id: 'link',
+      source: item.key,
+      localBookId: novel.id,
+      collectionRemoteId: 'work',
+      linkedAt: novel.createdAt,
+    };
+    const projected = projectLocalSeries(novel, [chapter], [link]);
+    expect(projected.items[0]).toMatchObject({
+      key: item.key,
+      formatHint: 'TXT',
+      subtitle: '1회차',
+      collection: { seriesProfile: item.collection!.seriesProfile },
+    });
+    expect(projected.links).toHaveLength(1);
+    expect(externalItemSectionId(projected.items[0]!)).toBe(sectionId);
+    expect(projectLocalSeriesReadingStates(novel, [chapter], [item]).get(sectionId)).toBe('read');
+  });
   it('matches migrated legacy read ids to source releases only for a unique title', () => {
     const novel = testNovel({ format: 'image_archive' });
     const id = `local-section:${novel.id}:1`;

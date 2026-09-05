@@ -14,6 +14,7 @@ interface StartMessage {
   encoding: EncodingMode;
   chapterSplitMode?: ChapterSplitMode;
   clientBookId?: string;
+  expectedBase?: import('./import-service').ImportExpectedBase;
   importMode?: 'replace_book' | 'append_image_series';
   baseActiveContentRevisionId?: string;
   expectedSourceContentHash?: string;
@@ -99,6 +100,7 @@ async function runImport(message: StartMessage): Promise<void> {
       encoding,
       chapterSplitMode: message.chapterSplitMode ?? 'auto',
       clientBookId: message.clientBookId,
+      expectedBase: message.expectedBase,
       importMode: message.importMode,
       baseActiveContentRevisionId: message.baseActiveContentRevisionId,
       expectedSourceContentHash: message.expectedSourceContentHash,
