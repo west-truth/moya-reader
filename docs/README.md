@@ -10,6 +10,7 @@
 - [WireGuard + Nginx Proxy Manager + Suwayomi 배포](operations/nginx-proxy-manager-wireguard.md)
 - [Hosted provider admission과 비용 경계](operations/hosted-provider-admission.md)
 - [독서·가져오기 UX 동작과 검증](operations/reader-ux-verification.md)
+- [텍스트 소스 서버 설치·연결·회차 사용](operations/external-text-sources.md)
 
 ## 데스크톱과 Android
 

@@ -11,6 +11,7 @@ import { registerSyncRoutes } from './routes/sync.js';
 import { registerBackupRoutes } from './routes/backups.js';
 import { registerSelfHostAuthRoutes } from './routes/auth.js';
 import { registerWebNovelMetadataCollectorGateway } from './routes/webnovel-metadata-collector-gateway.js';
+import { registerTextSourceGateway } from './routes/text-source-gateway.js';
 import { pruneStaleUploadSessions } from './services/upload-cleanup.js';
 import { registerAuthHook } from './auth.js';
 import { PostgresSelfHostAuthStore, SelfHostAuthService } from './services/self-host-auth-service.js';
@@ -225,6 +226,7 @@ export async function buildServer(config: ServerConfig): Promise<FastifyInstance
   await registerSyncRoutes(app, pool, config);
   await registerBackupRoutes(app, pool, config);
   await registerWebNovelMetadataCollectorGateway(app, config);
+  await registerTextSourceGateway(app, config);
 
   return app;
 }

@@ -46,6 +46,8 @@ export interface ServerConfig {
   corsAllowedOrigins?: readonly string[];
   webNovelMetadataCollectorUrl?: string;
   webNovelMetadataCollectorRemoteAuthEnabled?: boolean;
+  textSourceServerUrl?: string;
+  textSourceServerKey?: string;
   s3: {
     endpoint: string;
     region: string;
@@ -238,6 +240,8 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): ServerConfig {
     trustedProxyHops: boundedNonNegativeIntegerFromEnv(env, 'TRUSTED_PROXY_HOPS', 0, 4),
     exposure: exposureFromEnv(env, host),
     corsAllowedOrigins: corsOriginsFromEnv(env),
+    textSourceServerUrl: optionalInternalHttpUrlFromEnv(env.TEXT_SOURCE_SERVER_URL, 'TEXT_SOURCE_SERVER_URL'),
+    textSourceServerKey: env.TEXT_SOURCE_SERVER_KEY?.trim() || undefined,
     webNovelMetadataCollectorUrl: optionalInternalHttpUrlFromEnv(
       env.WEBNOVEL_METADATA_COLLECTOR_URL,
       'WEBNOVEL_METADATA_COLLECTOR_URL',

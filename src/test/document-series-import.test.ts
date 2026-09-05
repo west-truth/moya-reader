@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import {
   buildDocumentSeriesArchive,
   DOCUMENT_SERIES_CONTENT_TYPE,
+  REMOTE_DOCUMENT_IDENTITY_SCHEME,
   readDocumentSeriesArchive,
   type DocumentSeriesSourceInput,
 } from '@noveldesk/document-series-core';
@@ -71,6 +72,87 @@ async function activeRevisionStorage(bookId: string) {
 }
 
 describe('browser document-series import', () => {
+  it('round-trips remote schema 2 through stored source export and a different book identity without changing source bytes', async () => {
+    const sources = [
+      {
+        ...(await source('remote-release-1', '원격 1화', '\ufeff# 제목\r\n\r\n\u00a0  첫 문단  \r\n\r\n끝  ', 1)),
+        extractionVersion: 'utf8-txt-v1',
+      },
+      {
+        ...(await source('remote-release-2', '원격 2화', '\ufeff1장\r\n\r\n두 번째 본문\r\n', 2)),
+        extractionVersion: 'utf8-txt-v1',
+      },
+    ];
+    const aggregate = await buildDocumentSeriesArchive({
+      collection: { id: 'portable-remote-series', title: '원격 원본 보존', format: 'txt' },
+      identityScheme: REMOTE_DOCUMENT_IDENTITY_SCHEME,
+      sources,
+    });
+    const importSource = (bookId: string, blob: Blob, fileName: string) =>
+      runBrowserFixedDocumentImportPipeline({
+        jobId: `portable-${bookId}`,
+        fileName,
+        buffer: new ArrayBuffer(0),
+        sourceBlob: blob,
+        totalBytes: blob.size,
+        encoding: 'auto',
+        clientBookId: bookId,
+        expectedBase: { kind: 'absent' },
+        onProgress: () => undefined,
+        yieldControl: async () => undefined,
+      });
+    await importSource('remote-original', aggregate, aggregate.name);
+    const reader = new IndexedDbReaderRepository();
+    const assets = new IndexedDbBookAssetRepository();
+    const exported = await assets.exportSource('remote-original');
+    expect(exported?.metadata.contentType).toBe(DOCUMENT_SERIES_CONTENT_TYPE);
+    expect(await exported!.blob.arrayBuffer()).toEqual(await aggregate.arrayBuffer());
+    const originalPackage = (await readDocumentSeriesArchive(exported!.blob))!;
+    expect(originalPackage.manifest).toMatchObject({
+      schemaVersion: 2,
+      identityScheme: REMOTE_DOCUMENT_IDENTITY_SCHEME,
+      collection: { id: 'portable-remote-series', format: 'txt' },
+    });
+
+    await importSource('remote-restored', exported!.blob, exported!.metadata.fileName ?? aggregate.name);
+    const restored = await assets.exportSource('remote-restored');
+    expect(restored?.metadata.contentType).toBe(DOCUMENT_SERIES_CONTENT_TYPE);
+    expect(await restored!.blob.arrayBuffer()).toEqual(await exported!.blob.arrayBuffer());
+    const restoredPackage = (await readDocumentSeriesArchive(restored!.blob))!;
+    expect(restoredPackage.manifest).toEqual(originalPackage.manifest);
+    for (const input of sources) {
+      const expectedBytes = new Uint8Array(await input.blob.arrayBuffer());
+      expect(new Uint8Array(await originalPackage.sources.get(input.id)!.arrayBuffer())).toEqual(expectedBytes);
+      expect(new Uint8Array(await restoredPackage.sources.get(input.id)!.arrayBuffer())).toEqual(expectedBytes);
+    }
+
+    const originalChapters = await reader.listChapters('remote-original');
+    const restoredChapters = await reader.listChapters('remote-restored');
+    expect(originalChapters).toHaveLength(2);
+    expect(restoredChapters).toHaveLength(2);
+    for (const [index, chapter] of restoredChapters.entries()) {
+      const original = originalChapters[index]!;
+      expect(chapter).toMatchObject({
+        novelId: 'remote-restored',
+        title: original.title,
+        documentSectionId: sources[index]!.id,
+        documentSectionTitle: original.documentSectionTitle,
+        documentSectionIndex: original.documentSectionIndex,
+        documentSectionSourceContentHash: sources[index]!.contentHash,
+      });
+      // Chapters are book-scoped; the portable remote section identity survives across books.
+      expect(chapter.id).not.toBe(original.id);
+      expect(chapter.documentSectionId).toBe(original.documentSectionId);
+      const oldPage = await reader.getParagraphPage(original.id, 0);
+      const newPage = await reader.getParagraphPage(chapter.id, 0);
+      expect(newPage?.paragraphs.map((paragraph) => paragraph.text)).toEqual(
+        oldPage?.paragraphs.map((paragraph) => paragraph.text),
+      );
+      expect(newPage!.paragraphs.every((paragraph) => paragraph.chapterId === chapter.id)).toBe(true);
+    }
+    expect((await reader.getNovel('remote-restored'))?.documentSectionCount).toBe(2);
+  });
+
   it('stores a TXT source bundle as one Library work through the normal atomic pipeline', async () => {
     const aggregate = await buildDocumentSeriesArchive({
       collection: { id: 'local-series', title: '작품', format: 'txt' },

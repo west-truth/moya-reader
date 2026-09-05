@@ -26,6 +26,36 @@ jobs:
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       - run: pnpm check:web-server
+      - name: Install and test text-source companion
+        working-directory: services/text-source-server
+        run: |
+          npm ci --ignore-scripts --no-audit --no-fund
+          npm test
+      - name: Verify text-source contracts and chapter workflows
+        run: >-
+          pnpm exec vitest run
+          src/external-sources/text-server
+          src/external-sources/series
+          src/external-sources/source-normalization.test.ts
+          src/integration-settings
+          src/features/book-workspace
+          src/features/external-sources/SourceReleasePanel.test.tsx
+          src/features/external-sources/complete-series-catalog.test.ts
+          src/features/external-sources/series-catalog-pagination.test.ts
+          src/features/external-sources/source-cover.test.ts
+          src/features/external-sources/useExternalSourceController.pagination.test.tsx
+          src/features/reader/ReaderChapterHeading.test.tsx
+          src/test/import-expected-base.test.ts
+          src/test/document-series-import.test.ts
+          src/test/content-revision-remap-hash.test.ts
+          src/features/import/local-document-series-import.test.ts
+          src/services/import/browser-import-service.test.ts
+          packages/document-series-core
+          packages/extension-contracts
+          apps/server/src/routes/text-source-gateway.test.ts
+          apps/server/src/services/import-expected-base.integration.test.ts
+          apps/server/src/services/book-revision/reader-state-restore.integration.test.ts
+          --maxWorkers=2
       - run: pnpm check:mobile-readiness
       - run: docker compose config --quiet
       - run: docker compose -f compose.yaml -f compose.local-tts.yaml config --quiet
@@ -33,6 +63,7 @@ jobs:
         run: |
           docker compose -f compose.yaml -f compose.public.yaml config --quiet
           docker compose -f compose.yaml -f compose.public.yaml -f compose.suwayomi.yaml config --quiet
+          docker compose -f compose.yaml -f compose.public.yaml -f compose.text-sources.yaml config --quiet
         env:
           READER_AUTH_TOKEN: ci-config-check-only
           POSTGRES_PASSWORD: ci-postgres-config-check-only
@@ -40,6 +71,7 @@ jobs:
           MINIO_ROOT_PASSWORD: ci-storage-password-config-check-only
           SUWAYOMI_AUTH_USERNAME: ci-suwayomi-config-check-only
           SUWAYOMI_AUTH_PASSWORD: ci-suwayomi-password-config-check-only
+          TEXT_SOURCE_SERVER_KEY: ci-text-source-config-check-only
       - name: Protected Compose import E2E
         run: pnpm check:hosted:e2e -- --public --project-name moya-ci-${{ github.run_id }}-${{ github.run_attempt }}
 

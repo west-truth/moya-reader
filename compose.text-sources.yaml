@@ -1,0 +1,67 @@
+# Optional operator-managed TXT catalog/content server.
+# Hosted browsers use Moya /api; the companion has no host port.
+services:
+  api:
+    environment:
+      TEXT_SOURCE_SERVER_URL: http://text-source-server:9970
+      TEXT_SOURCE_SERVER_KEY: ${TEXT_SOURCE_SERVER_KEY:?Set TEXT_SOURCE_SERVER_KEY}
+    networks:
+      default:
+      text-sources:
+
+  text-source-server:
+    build:
+      context: ./services/text-source-server
+      dockerfile: ${TEXT_SOURCE_DOCKERFILE:-Dockerfile}
+    environment:
+      HOST: 0.0.0.0
+      PORT: '9970'
+      CATALOG_FILE: /data/catalog.json
+      SOURCE_ROOT: /data/content
+      SERVER_KEY: ${TEXT_SOURCE_SERVER_KEY:?Set TEXT_SOURCE_SERVER_KEY}
+      CONTENT_PROVIDER_PROTOCOL: ${CONTENT_PROVIDER_PROTOCOL:-job-v1}
+      CONTENT_PROVIDER_ENDPOINT: ${CONTENT_PROVIDER_ENDPOINT:-}
+      CONTENT_PROVIDER_KEY: ${CONTENT_PROVIDER_KEY:-}
+      SOURCE_ADAPTERS: ${SOURCE_ADAPTERS:-[]}
+      SOURCE_HTTP_TRANSPORT: ${SOURCE_HTTP_TRANSPORT:-http}
+      SOURCE_BROWSER_CHANNEL: ${SOURCE_BROWSER_CHANNEL:-}
+    volumes:
+      - type: bind
+        source: ${TEXT_SOURCE_DATA_DIR:-./services/text-source-server/data}
+        target: /data
+        read_only: true
+        bind:
+          create_host_path: false
+    networks:
+      - text-sources
+    healthcheck:
+      test:
+        - CMD
+        - node
+        - -e
+        - "fetch('http://127.0.0.1:9970/v1/health', { headers: { Authorization: 'Bearer ' + process.env.SERVER_KEY }, signal: AbortSignal.timeout(3000) }).then(response => process.exit(response.ok ? 0 : 1), () => process.exit(1))"
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    init: true
+    restart: unless-stopped
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=256m
+    shm_size: 256m
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    stop_grace_period: 10s
+    mem_limit: ${TEXT_SOURCE_MEMORY_LIMIT:-256m}
+    logging:
+      driver: json-file
+      options:
+        max-size: ${LOG_MAX_SIZE:-10m}
+        max-file: ${LOG_MAX_FILES:-5}
+
+networks:
+  text-sources:
+    driver: bridge

@@ -47,6 +47,7 @@
 - 시스템 음성, 선택형 서버 TTS, 캐시와 전역 미니 플레이어
 - 원본 파일 다운로드, 백업·복원, Dropbox Cloud Vault 기반 기기 간 동기화
 - 연결된 Dropbox, Google Drive 선택 파일과 Suwayomi/Mihon source를 탐색하는 Source Hub
+- 별도 텍스트 소스 서버의 작품 구독·TXT 회차 순차 다운로드와 공통 검색·정렬·페이지 목록
 - 연재 작품 단위 회차 누적, 로컬 회차 추가와 압축 파일 안의 TXT·EPUB 묶음 가져오기
 - 선택형 self-host 수집기를 통한 웹소설 표지·작품 정보 자동 보강
 - 켜고 끌 수 있는 bundled 신뢰 익스텐션과 선택형 AI 화자 분석·등장인물별 음성 설정
@@ -330,6 +331,9 @@ docker compose -f compose.yaml -f compose.metadata-collector.yaml up -d --build
 [Docker Compose 한국어 가이드](docs/operations/docker-compose-guide-ko.md)를 참고하십시오.
 
 ### 선택 기능: Suwayomi/Mihon source
+
+텍스트 작품은 별도 [텍스트 소스 서버 설치 안내](docs/operations/external-text-sources.md)를 따릅니다.
+공통 어댑터 계약으로 수동 TXT catalog와 별도 구현한 소스를 연결하며, 사이트별 구현이나 Suwayomi 확장 파일 실행은 포함하지 않습니다.
 
 사용자 소유 Suwayomi Server에 설치한 Mihon 호환 source를 모야의 `설정 → 소스`와 Source Hub에서 탐색할 수
 있습니다. `compose.npm.yaml`은 Moya Web을 Nginx Proxy Manager network에 연결하고,

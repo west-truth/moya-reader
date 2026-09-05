@@ -20,6 +20,9 @@ vertex env/**
 secrets/
 .codex-provider-pg/
 .server-test-data/
+services/text-source-server/data/
+services/text-source-server/.env
+services/text-source-server/.env.*
 
 node_modules
 **/node_modules

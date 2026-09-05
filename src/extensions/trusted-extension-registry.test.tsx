@@ -75,6 +75,56 @@ function manifest(
 }
 
 describe('TrustedExtensionRegistry', () => {
+  it('registers a v2 document source without exposing credentials in its payload', async () => {
+    const registry = new TrustedExtensionRegistry<TestReaderContext>();
+    const profile = { kind: 'document_series', format: 'txt', encoding: 'utf-8', chapterSplitMode: 'single' } as const;
+    const file = new File(['1화 본문'], 'chapter.txt');
+    const payload = {
+      content: { kind: 'document', file, format: 'txt', encoding: 'utf-8', chapterSplitMode: 'single' },
+    } as const;
+    const definition: TrustedExtensionDefinition<TestReaderContext> = {
+      manifest: {
+        ...manifest('test.text', { externalSource: true }),
+        contributes: {
+          externalSources: [
+            {
+              id: 'test.text.source',
+              schemaVersion: 2,
+              title: 'Text',
+              kind: 'catalog',
+              capabilities: ['browse', 'release-list', 'release-download', 'document-content'],
+              runtimes: ['self-host-gateway'],
+              seriesProfile: profile,
+            },
+          ],
+        },
+      },
+      activate: (host) =>
+        host.externalSources.register('test.text.source', {
+          status: () => ({ state: 'connected', accountConnectionId: 'account' }),
+          connect: async () => undefined,
+          disconnect: async () => undefined,
+          list: async () => ({ items: [] }),
+          download: async () => payload,
+        }),
+    };
+    expect(registry.register(definition)).toBe(true);
+    registry.activateAll();
+    expect(registry.getExternalSources()[0]?.descriptor.schemaVersion).toBe(2);
+    await expect(
+      registry.downloadExternalSource(
+        'test.text.source',
+        { brokers: { get: () => undefined } },
+        {
+          key: { connectorId: 'test.text.source', accountConnectionId: 'account', remoteId: 'chapter' },
+          fileName: file.name,
+          context: { expectedProfile: profile },
+        },
+        new AbortController().signal,
+      ),
+    ).resolves.toBe(payload);
+  });
+
   it('activates a declared reader addon and renders with host-owned context', () => {
     const registry = new TrustedExtensionRegistry<TestReaderContext>();
     const definition: TrustedExtensionDefinition<TestReaderContext> = {

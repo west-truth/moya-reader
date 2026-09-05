@@ -100,6 +100,26 @@ export class BookWorkspaceController {
     this.updateState({ chapters: resolveUpdate(update, this.state.chapters) });
   };
 
+  /** Newly committed releases become navigable without reopening the current text. */
+  readonly refreshImportedSeries = async (novel: Novel): Promise<void> => {
+    if (this.state.selectedNovel?.id !== novel.id) return;
+    const generation = this.navigationGeneration;
+    const chapters = await this.ports.repository.listChapters(novel.id);
+    const fresh = await this.ports.repository.getNovel(novel.id);
+    if (
+      !this.navigationIsCurrent(generation) ||
+      this.state.selectedNovel?.id !== novel.id ||
+      !fresh ||
+      fresh.deletedAt ||
+      fresh.activeContentRevisionId !== novel.activeContentRevisionId
+    )
+      return;
+    const current = this.state.currentChapter;
+    if (current && !chapters.some((chapter) => chapter.id === current.id && chapter.textHash === current.textHash))
+      return;
+    this.updateState({ chapters, selectedNovel: fresh });
+  };
+
   readonly setCurrentChapter = (update: BookWorkspaceUpdate<Chapter | undefined>): void => {
     const currentChapter = resolveUpdate(update, this.state.currentChapter);
     if (currentChapter?.id !== this.state.currentChapter?.id) this.beginNavigation();
@@ -197,13 +217,21 @@ export class BookWorkspaceController {
     documentSectionId: string,
     documentSectionTitle?: string,
   ): Promise<void> => {
-    await this.openNovelForNavigation(
+    const generation = this.beginNavigation();
+    const opened = await this.openNovelForNavigation(
       novel,
-      this.beginNavigation(),
+      generation,
       undefined,
       documentSectionId,
       documentSectionTitle,
     );
+    if (!opened || !this.navigationIsCurrent(generation) || isFixedDocumentFormat(novel.format)) return;
+    const chapter = this.state.chapters.find((candidate) => candidate.documentSectionId === documentSectionId);
+    if (!chapter) {
+      this.ports.environment.notify('선택한 회차를 찾을 수 없습니다. 작품 목록을 새로고침해 주세요.', 'warning');
+      return;
+    }
+    await this.openChapterForNavigation(chapter, { novel }, generation);
   };
 
   private async openChapterForNavigation(
@@ -250,21 +278,25 @@ export class BookWorkspaceController {
   readonly continueReading = async (novel: Novel | undefined = this.state.selectedNovel): Promise<void> => {
     if (!novel) return;
     const generation = this.beginNavigation();
-    const chaptersPromise =
-      this.state.chapters.length > 0 && this.state.selectedNovel?.id === novel.id
-        ? Promise.resolve(this.state.chapters)
-        : this.ports.repository.listChapters(novel.id);
-    const [chapters, readingPosition] = await Promise.all([
-      chaptersPromise,
+    const [freshNovel, readingPosition] = await Promise.all([
+      this.ports.repository.getNovel(novel.id),
       this.ports.repository.getReadingPosition(novel.id),
     ]);
+    if (!this.navigationIsCurrent(generation)) return;
+    novel = freshNovel ?? novel;
+    const chapters =
+      this.state.chapters.length > 0 &&
+      this.state.selectedNovel?.id === novel.id &&
+      this.state.selectedNovel.activeContentRevisionId === novel.activeContentRevisionId
+        ? this.state.chapters
+        : await this.ports.repository.listChapters(novel.id);
     if (!this.navigationIsCurrent(generation)) return;
     const chapter = selectContinueChapter(chapters, novel, readingPosition);
     if (this.state.selectedNovel?.id !== novel.id) {
       const opened = await this.openNovelForNavigation(novel, generation, { chapters, readingPosition });
       if (!opened) return;
     } else {
-      this.updateState({ localReadingPosition: readingPosition });
+      this.updateState({ selectedNovel: novel, chapters, localReadingPosition: readingPosition });
     }
     if (isFixedDocumentFormat(novel.format)) {
       this.updateState({
@@ -289,11 +321,30 @@ export class BookWorkspaceController {
   };
 
   readonly returnToChapters = async (): Promise<void> => {
+    await this.returnToChaptersAndThen();
+  };
+
+  readonly returnToChaptersAndThen = async (onReturned?: (novel: Novel) => void | Promise<void>): Promise<void> => {
     const generation = this.beginNavigation();
     this.ports.transition.stopReaderTTS();
     await this.ports.transition.flushReaderSession();
     if (!this.navigationIsCurrent(generation)) return;
-    this.updateState({ view: 'chapters' });
+    const selectedNovel = this.state.selectedNovel;
+    const freshNovel = selectedNovel
+      ? await this.ports.repository.getNovel(selectedNovel.id).catch(() => undefined)
+      : undefined;
+    if (!this.navigationIsCurrent(generation)) return;
+    this.updateState({
+      ...(freshNovel && freshNovel.id === selectedNovel?.id
+        ? {
+            selectedNovel: freshNovel,
+            novels: this.state.novels.map((novel) => (novel.id === freshNovel.id ? freshNovel : novel)),
+          }
+        : {}),
+      view: 'chapters',
+    });
+    if (this.navigationIsCurrent(generation) && this.state.selectedNovel && onReturned)
+      await onReturned(this.state.selectedNovel);
   };
 
   readonly saveFixedDocumentPage = async (

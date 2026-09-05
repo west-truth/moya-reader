@@ -7,7 +7,8 @@ import pg from 'pg';
 import { ServerConfig } from '../config.js';
 import { enqueueImportJob } from '../queue.js';
 import { pruneStaleUploadSessions, removeUploadDirectory, uploadDirectory } from '../services/upload-cleanup.js';
-import type { ChapterSplitMode } from '@noveldesk/contracts';
+import type { ChapterSplitMode, ImportExpectedBase } from '@noveldesk/contracts';
+import { parseImportExpectedBase } from '../services/import-expected-base.js';
 import {
   nonNegativeInteger,
   positiveInteger,
@@ -29,6 +30,7 @@ interface InitUploadBody {
   clientBookId?: string;
   importMode?: 'replace_book' | 'append_image_series';
   baseActiveContentRevisionId?: string;
+  expectedBase?: ImportExpectedBase;
   totalChunks?: number;
 }
 
@@ -41,6 +43,7 @@ interface UploadSessionRow {
   chapter_split_mode?: ChapterSplitMode;
   import_mode?: 'replace_book' | 'append_image_series';
   base_active_content_revision_id?: string | null;
+  expected_base?: ImportExpectedBase | null;
   status: string;
   total_chunks: number | null;
   source_content_hash?: string | null;
@@ -100,7 +103,7 @@ async function uploadProgress(
   const sessionResult = await poolOrClient.query<UploadSessionRow>(
     `
       select id, file_name, size_bytes, content_type, encoding, chapter_split_mode, status, total_chunks,
-             source_content_hash, import_mode, base_active_content_revision_id, created_at, updated_at
+             source_content_hash, import_mode, base_active_content_revision_id, expected_base, created_at, updated_at
       from upload_sessions
       where id = $1
     `,
@@ -139,6 +142,7 @@ function uploadStatusPayload(session: UploadSessionRow, chunks: UploadChunkRow[]
     chapterSplitMode: session.chapter_split_mode ?? 'auto',
     importMode: session.import_mode ?? 'replace_book',
     baseActiveContentRevisionId: session.base_active_content_revision_id ?? undefined,
+    expectedBase: session.expected_base ?? undefined,
     status: session.status,
     totalChunks: session.total_chunks,
     sourceContentHash: session.source_content_hash ?? undefined,
@@ -189,6 +193,15 @@ export async function registerUploadRoutes(
     }
     const importMode = validImportMode(body.importMode);
     if (!importMode) return reply.code(400).send({ error: 'importMode is not supported' });
+    let expectedBase: ImportExpectedBase | undefined;
+    try {
+      expectedBase = parseImportExpectedBase(body.expectedBase);
+    } catch {
+      return reply.code(400).send({ error: 'invalid_import_expected_base' });
+    }
+    if (expectedBase && (!clientBookId || importMode !== 'replace_book')) {
+      return reply.code(400).send({ error: 'expectedBase requires clientBookId and replace_book' });
+    }
     const baseActiveContentRevisionId = validClientBookId(body.baseActiveContentRevisionId);
     if (body.baseActiveContentRevisionId !== undefined && !baseActiveContentRevisionId) {
       return reply.code(400).send({ error: 'baseActiveContentRevisionId must be a safe identifier when provided' });
@@ -211,9 +224,9 @@ export async function registerUploadRoutes(
       `
         insert into upload_sessions (
           id, user_id, file_name, size_bytes, content_type, encoding, chapter_split_mode, client_hash_hint,
-          client_book_id, total_chunks, source_content_hash, import_mode, base_active_content_revision_id
+          client_book_id, total_chunks, source_content_hash, import_mode, base_active_content_revision_id, expected_base
         )
-        values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+        values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
       `,
       [
         uploadId,
@@ -229,6 +242,7 @@ export async function registerUploadRoutes(
         sourceContentHash,
         importMode,
         baseActiveContentRevisionId,
+        expectedBase ? JSON.stringify(expectedBase) : null,
       ],
     );
 
@@ -266,7 +280,7 @@ export async function registerUploadRoutes(
         const sessionResult = await client.query<UploadSessionRow>(
           `
             select id, file_name, size_bytes, content_type, encoding, chapter_split_mode, status, total_chunks,
-                   source_content_hash, import_mode, base_active_content_revision_id, created_at, updated_at
+                   source_content_hash, import_mode, base_active_content_revision_id, expected_base, created_at, updated_at
             from upload_sessions
             where id = $1
             for update
@@ -345,7 +359,7 @@ export async function registerUploadRoutes(
       await client.query('begin');
       const sessionResult = await client.query<UploadSessionRow>(
         `select id, file_name, size_bytes, content_type, encoding, chapter_split_mode, status, total_chunks,
-                source_content_hash, import_mode, base_active_content_revision_id, created_at, updated_at
+                source_content_hash, import_mode, base_active_content_revision_id, expected_base, created_at, updated_at
            from upload_sessions where id = $1 for update`,
         [request.params.uploadId],
       );

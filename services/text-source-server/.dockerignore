@@ -1,0 +1,12 @@
+# The companion image only needs its source; operator data and secrets stay out
+# of the build context as well as the final image.
+**
+!Dockerfile
+!Dockerfile.browser
+!package.json
+!package-lock.json
+!src/
+!src/**
+!scripts/
+!scripts/init.mjs
+!scripts/check.mjs

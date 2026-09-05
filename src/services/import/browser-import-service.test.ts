@@ -4,6 +4,31 @@ import { assertLocalImportCapacity, BrowserImportService, estimatedLocalImportBy
 describe('browser import storage preflight', () => {
   afterEach(() => vi.unstubAllGlobals());
 
+  it('forwards the complete-package fence and preserves worker conflict errors', async () => {
+    const posted: unknown[] = [];
+    class TestWorker {
+      onmessage?: (event: MessageEvent) => void;
+      postMessage(message: unknown) {
+        posted.push(message);
+        queueMicrotask(() =>
+          this.onmessage?.({
+            data: { type: 'error', name: 'ContentRevisionConflictError', message: 'import_expected_base_conflict' },
+          } as MessageEvent),
+        );
+      }
+      terminate() {}
+    }
+    vi.stubGlobal('navigator', {});
+    vi.stubGlobal('Worker', TestWorker);
+    const expectedBase = { kind: 'revision', contentRevisionId: 'revision-1' } as const;
+    const result = new BrowserImportService().importFile(
+      { file: new File(['body'], 'fixture.txt'), encoding: 'utf-8', clientBookId: 'book', expectedBase },
+      vi.fn(),
+    );
+    await expect(result.promise).rejects.toMatchObject({ name: 'ContentRevisionConflictError' });
+    expect(posted[0]).toMatchObject({ expectedBase });
+  });
+
   it('allows import when the browser reports enough persistent storage', async () => {
     vi.stubGlobal('navigator', {
       storage: { estimate: vi.fn(async () => ({ quota: 100 * 1024 * 1024, usage: 10 * 1024 * 1024 })) },

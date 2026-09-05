@@ -4,7 +4,6 @@ import type { TrustedReaderAddonHostContext } from '../extensions/reader-addon-h
 import type { TrustedAnalysisWorkflowHostContext } from '../extensions/analysis-workflow-host-context';
 import type { WebNovelMetadataCollectorBroker } from '../services/webnovel-metadata-collector-broker';
 import type { ExternalSourceLocalStateStore } from '../external-sources/local-state';
-import type { SuwayomiSourceAccountBroker } from '../external-sources/suwayomi/suwayomi-source-account-broker';
 import type { RemoteApiClient } from '../services/remote/remote-api-client';
 import { RemoteApiError } from '../services/remote/remote-api-contracts';
 import {
@@ -14,7 +13,9 @@ import {
 } from './self-host-integration-settings';
 
 const SAVE_DEBOUNCE_MS = 350;
-const REMOTE_REFRESH_MS = 5_000;
+const HYDRATION_RETRY_MS = 5_000;
+const REMOTE_REFRESH_MS = 60_000;
+const FOCUS_REFRESH_MIN_AGE_MS = 30_000;
 
 type ExtensionManager = AppExtensionManager<TrustedReaderAddonHostContext, TrustedAnalysisWorkflowHostContext>;
 
@@ -24,7 +25,7 @@ export interface SelfHostIntegrationSettingsInput {
   readonly extensionManager: ExtensionManager;
   readonly metadataCollector: WebNovelMetadataCollectorBroker;
   readonly externalSourceState: ExternalSourceLocalStateStore;
-  readonly suwayomi: SuwayomiSourceAccountBroker;
+  readonly sourceBrokers: readonly { refreshSharedConfiguration(): Promise<void> }[];
   onApplied(): void;
   notify(message: string, tone?: 'info' | 'success' | 'warning' | 'danger'): void;
 }
@@ -48,6 +49,8 @@ export function useSelfHostIntegrationSettings(input: SelfHostIntegrationSetting
   const lastSavedContentRef = useRef<string>();
   const legacyImportCompletedRef = useRef(false);
   const errorNotifiedRef = useRef(false);
+  const lastRemoteCheckRef = useRef(0);
+  const localChangeRef = useRef(0);
 
   const capture = useCallback(async (): Promise<SelfHostIntegrationSettingsV1> => {
     const current = inputRef.current;
@@ -73,7 +76,7 @@ export function useSelfHostIntegrationSettings(input: SelfHostIntegrationSetting
       current.extensionManager.applyEnablementSnapshot(settings.extensionEnablement);
       current.metadataCollector.applySharedSettings(settings.webNovelMetadata);
       await current.externalSourceState.replaceSharedState(settings.externalSources);
-      await current.suwayomi.refreshSharedConfiguration();
+      await Promise.all(current.sourceBrokers.map((broker) => broker.refreshSharedConfiguration()));
       legacyImportCompletedRef.current = settings.legacyImportCompleted;
       lastRemoteRevisionRef.current = settings.revision;
       lastSavedContentRef.current = comparable(settings);
@@ -99,6 +102,7 @@ export function useSelfHostIntegrationSettings(input: SelfHostIntegrationSetting
       legacyImportCompletedRef.current = response.settings.legacyImportCompleted;
       lastRemoteRevisionRef.current = response.settings.revision;
       lastSavedContentRef.current = comparable(response.settings);
+      lastRemoteCheckRef.current = Date.now();
       errorNotifiedRef.current = false;
     } catch (error) {
       if (error instanceof RemoteApiError && error.status === 409) {
@@ -131,6 +135,7 @@ export function useSelfHostIntegrationSettings(input: SelfHostIntegrationSetting
 
   const scheduleSave = useCallback(() => {
     if (!hydratedRef.current || applyingRef.current) return;
+    localChangeRef.current += 1;
     if (saveTimerRef.current !== undefined) window.clearTimeout(saveTimerRef.current);
     saveTimerRef.current = window.setTimeout(() => {
       saveTimerRef.current = undefined;
@@ -179,6 +184,7 @@ export function useSelfHostIntegrationSettings(input: SelfHostIntegrationSetting
           inputRef.current.onApplied();
         }
         hydratedRef.current = true;
+        lastRemoteCheckRef.current = Date.now();
         errorNotifiedRef.current = false;
       } catch (error) {
         if (!active || errorNotifiedRef.current) return;
@@ -195,7 +201,7 @@ export function useSelfHostIntegrationSettings(input: SelfHostIntegrationSetting
     };
 
     void hydrate();
-    const retryTimer = window.setInterval(() => void hydrate(), REMOTE_REFRESH_MS);
+    const retryTimer = window.setInterval(() => void hydrate(), HYDRATION_RETRY_MS);
     return () => {
       active = false;
       window.clearInterval(retryTimer);
@@ -223,26 +229,56 @@ export function useSelfHostIntegrationSettings(input: SelfHostIntegrationSetting
 
   useEffect(() => {
     if (!input.enabled || !input.client) return;
-    const refresh = () => {
+    let active = true;
+    let inFlight = false;
+    const refresh = (minimumAge: number) => {
       if (
+        !active ||
+        inFlight ||
         document.visibilityState === 'hidden' ||
         !hydratedRef.current ||
         applyingRef.current ||
         saveInFlightRef.current ||
-        saveTimerRef.current !== undefined
+        saveTimerRef.current !== undefined ||
+        Date.now() - lastRemoteCheckRef.current < minimumAge
       ) {
         return;
       }
+      inFlight = true;
+      lastRemoteCheckRef.current = Date.now();
+      const revision = lastRemoteRevisionRef.current;
+      const localChange = localChangeRef.current;
       void input
-        .client!.getIntegrationSettings(lastRemoteRevisionRef.current)
-        .then(({ settings }) => {
-          if (settings && settings.revision !== lastRemoteRevisionRef.current) return apply(settings);
-          return undefined;
+        .client!.getIntegrationSettings(revision)
+        .then(async ({ settings }) => {
+          // A slow background read must not overwrite a more recent local edit/save.
+          if (
+            !active ||
+            localChange !== localChangeRef.current ||
+            revision !== lastRemoteRevisionRef.current ||
+            applyingRef.current ||
+            saveInFlightRef.current ||
+            saveTimerRef.current !== undefined
+          )
+            return;
+          if (settings && settings.revision !== lastRemoteRevisionRef.current) await apply(settings);
+          lastRemoteCheckRef.current = Date.now();
         })
-        .catch(() => undefined);
+        .catch(() => undefined)
+        .finally(() => {
+          inFlight = false;
+        });
     };
-    const timer = window.setInterval(refresh, REMOTE_REFRESH_MS);
-    return () => window.clearInterval(timer);
+    const onFocus = () => refresh(FOCUS_REFRESH_MIN_AGE_MS);
+    const timer = window.setInterval(onFocus, REMOTE_REFRESH_MS);
+    window.addEventListener('focus', onFocus);
+    document.addEventListener('visibilitychange', onFocus);
+    return () => {
+      active = false;
+      window.clearInterval(timer);
+      window.removeEventListener('focus', onFocus);
+      document.removeEventListener('visibilitychange', onFocus);
+    };
   }, [apply, input.client, input.enabled]);
 
   useEffect(

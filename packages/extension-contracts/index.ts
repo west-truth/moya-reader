@@ -64,6 +64,7 @@ export interface BookEnrichmentProviderDescriptor {
 }
 
 export const MOYA_EXTERNAL_SOURCE_SCHEMA_VERSION = 1 as const;
+export const MOYA_EXTERNAL_SOURCE_SCHEMA_VERSION_V2 = 2 as const;
 export const EXTERNAL_SOURCE_KINDS = ['cloud_file', 'catalog'] as const;
 export const EXTERNAL_SOURCE_CAPABILITIES = [
   'browse',
@@ -75,22 +76,51 @@ export const EXTERNAL_SOURCE_CAPABILITIES = [
   'file-download',
   'work-import',
 ] as const;
+export const EXTERNAL_SOURCE_CAPABILITIES_V2 = [
+  ...EXTERNAL_SOURCE_CAPABILITIES,
+  'release-download',
+  'document-content',
+  'image-content',
+] as const;
 export const EXTERNAL_SOURCE_RUNTIMES = ['web-direct', 'self-host-gateway', 'tauri-native'] as const;
 
 export type ExternalSourceKind = (typeof EXTERNAL_SOURCE_KINDS)[number];
-export type ExternalSourceCapability = (typeof EXTERNAL_SOURCE_CAPABILITIES)[number];
+export type ExternalSourceCapability = (typeof EXTERNAL_SOURCE_CAPABILITIES_V2)[number];
 export type ExternalSourceRuntime = (typeof EXTERNAL_SOURCE_RUNTIMES)[number];
 
-export interface ExternalSourceContributionDescriptor {
+/** Only the verified remote TXT single profile is enabled for document sources. */
+export type ExternalSeriesProfile =
+  | {
+      readonly kind: 'document_series';
+      readonly format: 'txt';
+      readonly encoding: 'utf-8';
+      readonly chapterSplitMode: 'single';
+    }
+  | { readonly kind: 'image_series'; readonly archiveFormat: 'cbz' | 'zip'; readonly readingDirection?: 'ltr' | 'rtl' };
+
+interface ExternalSourceContributionDescriptorBase {
   readonly id: ExtensionContributionId;
-  readonly schemaVersion: typeof MOYA_EXTERNAL_SOURCE_SCHEMA_VERSION;
   readonly title: string;
   readonly description?: string;
   readonly kind: ExternalSourceKind;
-  readonly capabilities: readonly ExternalSourceCapability[];
   readonly runtimes: readonly ExternalSourceRuntime[];
   readonly order?: number;
 }
+
+export interface ExternalSourceContributionDescriptorV1 extends ExternalSourceContributionDescriptorBase {
+  readonly schemaVersion: typeof MOYA_EXTERNAL_SOURCE_SCHEMA_VERSION;
+  readonly capabilities: readonly (typeof EXTERNAL_SOURCE_CAPABILITIES)[number][];
+}
+
+export interface ExternalSourceContributionDescriptorV2 extends ExternalSourceContributionDescriptorBase {
+  readonly schemaVersion: typeof MOYA_EXTERNAL_SOURCE_SCHEMA_VERSION_V2;
+  readonly capabilities: readonly ExternalSourceCapability[];
+  /** Optional source-wide restriction. Serial items still declare their collection profile. */
+  readonly seriesProfile?: ExternalSeriesProfile;
+}
+
+export type ExternalSourceContributionDescriptor =
+  ExternalSourceContributionDescriptorV1 | ExternalSourceContributionDescriptorV2;
 
 export interface ExtensionManifestV1 {
   readonly manifestVersion: typeof MOYA_EXTENSION_MANIFEST_VERSION;
@@ -128,6 +158,7 @@ const analysisWorkflowKindSet = new Set<string>(ANALYSIS_WORKFLOW_KINDS);
 const bookEnrichmentCapabilitySet = new Set<string>(BOOK_ENRICHMENT_CAPABILITIES);
 const externalSourceKindSet = new Set<string>(EXTERNAL_SOURCE_KINDS);
 const externalSourceCapabilitySet = new Set<string>(EXTERNAL_SOURCE_CAPABILITIES);
+const externalSourceCapabilitySetV2 = new Set<string>(EXTERNAL_SOURCE_CAPABILITIES_V2);
 const externalSourceRuntimeSet = new Set<string>(EXTERNAL_SOURCE_RUNTIMES);
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -136,6 +167,24 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 function validText(value: unknown, maxLength: number): value is string {
   return typeof value === 'string' && value.trim().length > 0 && value.length <= maxLength;
+}
+
+export function isExternalSeriesProfile(value: unknown): value is ExternalSeriesProfile {
+  if (!isRecord(value)) return false;
+  if (value.kind === 'document_series') {
+    return (
+      value.format === 'txt' &&
+      value.encoding === 'utf-8' &&
+      value.chapterSplitMode === 'single' &&
+      Object.keys(value).every((key) => ['kind', 'format', 'encoding', 'chapterSplitMode'].includes(key))
+    );
+  }
+  return (
+    value.kind === 'image_series' &&
+    ['cbz', 'zip'].includes(String(value.archiveFormat)) &&
+    (value.readingDirection === undefined || ['ltr', 'rtl'].includes(String(value.readingDirection))) &&
+    Object.keys(value).every((key) => ['kind', 'archiveFormat', 'readingDirection'].includes(key))
+  );
 }
 
 function validateContributionId(value: unknown, extensionId: string): value is ExtensionContributionId {
@@ -378,7 +427,10 @@ export function validateExtensionManifest(input: unknown): ExtensionManifestVali
         } else {
           contributionIds.add(candidate.id);
         }
-        if (candidate.schemaVersion !== MOYA_EXTERNAL_SOURCE_SCHEMA_VERSION) {
+        if (
+          candidate.schemaVersion !== MOYA_EXTERNAL_SOURCE_SCHEMA_VERSION &&
+          candidate.schemaVersion !== MOYA_EXTERNAL_SOURCE_SCHEMA_VERSION_V2
+        ) {
           issues.push({ path: `${path}.schemaVersion`, message: 'Unsupported external source schema version.' });
         }
         if (!validText(candidate.title, 80)) {
@@ -398,7 +450,8 @@ export function validateExtensionManifest(input: unknown): ExtensionManifestVali
         } else {
           const seenCapabilities = new Set<string>();
           candidate.capabilities.forEach((capability, capabilityIndex) => {
-            if (typeof capability !== 'string' || !externalSourceCapabilitySet.has(capability)) {
+            const allowed = candidate.schemaVersion === 2 ? externalSourceCapabilitySetV2 : externalSourceCapabilitySet;
+            if (typeof capability !== 'string' || !allowed.has(capability)) {
               issues.push({
                 path: `${path}.capabilities[${capabilityIndex}]`,
                 message: 'Unknown external source capability.',
@@ -412,6 +465,37 @@ export function validateExtensionManifest(input: unknown): ExtensionManifestVali
               seenCapabilities.add(capability);
             }
           });
+          if (candidate.schemaVersion === 2) {
+            const capabilities = candidate.capabilities;
+            const profile = candidate.seriesProfile;
+            if (
+              capabilities.includes('release-download') &&
+              (candidate.kind !== 'catalog' ||
+                !capabilities.includes('release-list') ||
+                (!capabilities.includes('document-content') && !capabilities.includes('image-content')))
+            ) {
+              issues.push({
+                path: `${path}.capabilities`,
+                message: 'Release download requires a catalog, release listing and a content capability.',
+              });
+            }
+            if (
+              profile !== undefined &&
+              (!isExternalSeriesProfile(profile) ||
+                !capabilities.includes('release-download') ||
+                !capabilities.includes(profile.kind === 'document_series' ? 'document-content' : 'image-content'))
+            ) {
+              issues.push({
+                path: `${path}.seriesProfile`,
+                message: 'Unsupported or incompatible external series profile.',
+              });
+            }
+          } else if (candidate.seriesProfile !== undefined) {
+            issues.push({
+              path: `${path}.seriesProfile`,
+              message: 'Series profiles require external source schema version 2.',
+            });
+          }
         }
         if (!Array.isArray(candidate.runtimes) || candidate.runtimes.length === 0) {
           issues.push({ path: `${path}.runtimes`, message: 'External source runtimes must not be empty.' });

@@ -9,6 +9,8 @@ export function bookUnitLabel(novel: Novel): string {
 }
 
 export function bookFormatLabel(novel: Novel): string {
+  // A TXT series is stored in a portable ZIP container, but remains text to the reader.
+  if (novel.format === 'txt' && (novel.documentSectionCount ?? 0) > 0) return 'TXT';
   const extension = novel.sourceFileName
     .split(/[\\/]/u)
     .at(-1)

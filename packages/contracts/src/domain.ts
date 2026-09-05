@@ -1,5 +1,8 @@
 export type EncodingMode = 'auto' | 'utf-8' | 'euc-kr';
 export type ChapterSplitMode = 'auto' | 'mixed' | 'single';
+/** Caller-owned snapshot fence for a complete import package. */
+export type ImportExpectedBase =
+  { readonly kind: 'absent' } | { readonly kind: 'revision'; readonly contentRevisionId: string };
 export type BookFormat = 'txt' | 'markdown' | 'epub' | 'pdf' | 'image_archive';
 export type BookAssetKind = 'source' | 'source_part' | 'cover' | 'epub_resource' | 'document_page' | 'user_font';
 export type BookAssetProvenance =

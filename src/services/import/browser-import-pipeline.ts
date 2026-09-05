@@ -32,6 +32,7 @@ export interface BrowserImportPipelineInput {
   encoding: EncodingMode;
   chapterSplitMode?: ChapterSplitMode;
   clientBookId?: string;
+  expectedBase?: import('./import-service').ImportExpectedBase;
   importMode?: 'replace_book' | 'append_image_series';
   baseActiveContentRevisionId?: string;
   expectedSourceContentHash?: string;
@@ -76,6 +77,7 @@ function normalizedContentHash(value: string): string {
 }
 
 async function runBrowserImageSeriesAppendPipeline(input: BrowserImportPipelineInput): Promise<ImportResult> {
+  if (input.expectedBase) throw new Error('expectedBase cannot be combined with append_image_series');
   const bookId = input.clientBookId;
   const deltaArchive = input.sourceBlob;
   if (!bookId || !deltaArchive) throw new Error('추가할 만화 회차의 작품 정보가 없습니다.');
@@ -302,6 +304,7 @@ export async function runBrowserImportPipeline(input: BrowserImportPipelineInput
   );
 
   await saveParsedNovelImport(parsed, {
+    expectedBase: input.expectedBase,
     batchPageCount: BROWSER_IMPORT_WRITE_BATCH_PAGES,
     shouldCancel: input.shouldCancel,
     sourceAsset: input.sourceBlob
@@ -364,6 +367,7 @@ export async function runBrowserEpubImportPipeline(input: BrowserImportPipelineI
     }),
   );
   await saveParsedNovelImport(parsed, {
+    expectedBase: input.expectedBase,
     batchPageCount: BROWSER_IMPORT_WRITE_BATCH_PAGES,
     shouldCancel: input.shouldCancel,
     sourceAsset: input.sourceBlob
@@ -538,6 +542,7 @@ export async function runBrowserFixedDocumentImportPipeline(input: BrowserImport
     }),
   );
   await saveParsedNovelImport(parsed, {
+    expectedBase: input.expectedBase,
     batchPageCount: BROWSER_IMPORT_WRITE_BATCH_PAGES,
     allowAppendDelta: isDocumentSeries,
     // Reused immutable pages may move when a synced package adds earlier chapters.

@@ -1,5 +1,10 @@
 import { describe, expect, it, vi } from 'vitest';
-import { inspectDocumentSeriesSource, materializeDocumentSeriesArchive } from '@noveldesk/document-series-core';
+import {
+  buildDocumentSeriesArchive,
+  inspectDocumentSeriesSource,
+  materializeDocumentSeriesArchive,
+  REMOTE_DOCUMENT_IDENTITY_SCHEME,
+} from '@noveldesk/document-series-core';
 import { integrityHash } from '@noveldesk/text-core/hash';
 import { BlobReader, BlobWriter, TextReader, ZipWriter } from '@zip.js/zip.js';
 import type { Chapter, Novel } from '../../domain/types';
@@ -54,6 +59,41 @@ function storedSource(book: Novel, file: File, contentHash: string): ExportedBoo
     blob: file,
   };
 }
+
+it('does not downgrade a remote identity package through local file append', async () => {
+  const blob = new Blob(['Remote original.']);
+  const file = await buildDocumentSeriesArchive({
+    collection: { id: 'remote', title: 'Remote', format: 'txt' },
+    identityScheme: REMOTE_DOCUMENT_IDENTITY_SCHEME,
+    sources: [
+      {
+        id: 'release-1',
+        title: 'First',
+        fileName: 'first.txt',
+        format: 'txt',
+        encoding: 'utf-8',
+        chapterSplitMode: 'single',
+        contentType: 'text/plain',
+        contentHash: integrityHash(await blob.arrayBuffer()),
+        sourceOrder: 1,
+        includedChapterIndices: [1],
+        blob,
+      },
+    ],
+  });
+  const book = novel('Remote', file, 1);
+  const selected = new File(['New local body.'], 'Remote 2.txt');
+  const inspection = await inspectLocalDocumentSeriesImport([selected], [book], {
+    targetNovel: book,
+    encoding: 'utf-8',
+    chapterSplitMode: 'single',
+  });
+  expect(inspection).toBeDefined();
+  const assets = {
+    exportSource: async () => storedSource(book, file, integrityHash(await file.arrayBuffer())),
+  } as unknown as BookAssetRepository;
+  await expect(planLocalDocumentSeriesImport(inspection!, book, [], assets)).rejects.toThrow('연결된 소스');
+});
 
 async function documentBundle(name: string, files: readonly File[]): Promise<File> {
   const writer = new ZipWriter(new BlobWriter('application/zip'));

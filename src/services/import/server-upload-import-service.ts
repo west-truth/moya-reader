@@ -51,6 +51,7 @@ export interface StoredUploadSession {
   chapterSplitMode?: NonNullable<ImportFileInput['chapterSplitMode']>;
   importMode?: NonNullable<ImportFileInput['importMode']>;
   baseActiveContentRevisionId?: string;
+  expectedBase?: ImportFileInput['expectedBase'];
   clientBookId?: string;
   chunkBytes: number;
   totalChunks: number;
@@ -144,6 +145,13 @@ function fileLastModified(file: File): number {
   return typeof file.lastModified === 'number' ? file.lastModified : 0;
 }
 
+function sameExpectedBase(a: ImportFileInput['expectedBase'], b: ImportFileInput['expectedBase']): boolean {
+  return (
+    a?.kind === b?.kind &&
+    (a?.kind !== 'revision' || (b?.kind === 'revision' && a.contentRevisionId === b.contentRevisionId))
+  );
+}
+
 function uploadSessionKey(
   input: ImportFileInput,
   chunkBytes: number,
@@ -163,6 +171,7 @@ function uploadSessionKey(
   if (input.clientBookId) parts.push(input.clientBookId);
   parts.push(input.importMode ?? 'replace_book');
   if (input.baseActiveContentRevisionId) parts.push(input.baseActiveContentRevisionId);
+  if (input.expectedBase) parts.push(JSON.stringify(input.expectedBase));
   return parts.map((part) => encodeURIComponent(part)).join('|');
 }
 
@@ -228,6 +237,7 @@ class BrowserRemoteUploadSessionStore implements RemoteUploadSessionStore {
 }
 
 export class ServerUploadImportService implements ImportService {
+  readonly supportsExpectedBase = true;
   readonly supportsExpectedSourceContentHash = true;
   readonly supportsIncrementalImageSeriesAppend = true;
   constructor(
@@ -290,6 +300,10 @@ export class ServerUploadImportService implements ImportService {
         paragraphsWritten: 0,
         message: '서버 업로드를 준비하고 있습니다.',
       });
+
+      if (input.expectedBase && (!input.clientBookId || input.importMode === 'append_image_series')) {
+        throw new Error('expectedBase requires clientBookId and replace_book');
+      }
 
       if (
         input.importMode === 'append_image_series' &&
@@ -520,6 +534,7 @@ export class ServerUploadImportService implements ImportService {
         chapterSplitMode: input.chapterSplitMode ?? 'auto',
         importMode: input.importMode ?? 'replace_book',
         baseActiveContentRevisionId: input.baseActiveContentRevisionId,
+        expectedBase: input.expectedBase,
         totalChunks,
         clientBookId: input.clientBookId,
         sourceContentHash,
@@ -527,6 +542,13 @@ export class ServerUploadImportService implements ImportService {
       signal,
     );
     let verifiedStatus: RemoteUploadStatus | undefined;
+    if (input.expectedBase) {
+      verifiedStatus = await this.client.getUpload(upload.uploadId, signal);
+      if (!sameExpectedBase(verifiedStatus.expectedBase, input.expectedBase)) {
+        await this.client.cancelUpload(upload.uploadId).catch(() => undefined);
+        throw new Error('연결된 서버가 조건부 가져오기를 지원하지 않습니다. 서버를 먼저 업데이트해 주세요.');
+      }
+    }
     if (input.importMode === 'append_image_series') {
       verifiedStatus = await this.client.getUpload(upload.uploadId, signal);
       if (
@@ -547,6 +569,7 @@ export class ServerUploadImportService implements ImportService {
       chapterSplitMode: input.chapterSplitMode ?? 'auto',
       importMode: input.importMode ?? 'replace_book',
       baseActiveContentRevisionId: input.baseActiveContentRevisionId,
+      expectedBase: input.expectedBase,
       clientBookId: input.clientBookId,
       chunkBytes: this.chunkBytes,
       totalChunks,
@@ -572,6 +595,8 @@ export class ServerUploadImportService implements ImportService {
       status.fileName === input.file.name &&
       (status.importMode ?? 'replace_book') === (input.importMode ?? 'replace_book') &&
       (status.baseActiveContentRevisionId ?? undefined) === (input.baseActiveContentRevisionId ?? undefined) &&
+      sameExpectedBase(status.expectedBase, input.expectedBase) &&
+      sameExpectedBase(stored.expectedBase, input.expectedBase) &&
       status.expectedBytes === input.file.size &&
       status.expectedChunks === totalChunks &&
       (status.totalChunks === undefined || status.totalChunks === null || status.totalChunks === totalChunks)
@@ -597,6 +622,8 @@ export class ServerUploadImportService implements ImportService {
       status.fileName === input.file.name &&
       (status.importMode ?? 'replace_book') === (input.importMode ?? 'replace_book') &&
       (status.baseActiveContentRevisionId ?? undefined) === (input.baseActiveContentRevisionId ?? undefined) &&
+      sameExpectedBase(status.expectedBase, input.expectedBase) &&
+      sameExpectedBase(stored.expectedBase, input.expectedBase) &&
       status.expectedBytes === input.file.size &&
       status.expectedChunks === totalChunks &&
       (status.totalChunks === undefined || status.totalChunks === null || status.totalChunks === totalChunks)

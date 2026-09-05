@@ -1,4 +1,6 @@
 import { ChapterSplitMode, EncodingMode, Novel } from '../../domain/types';
+import type { ImportExpectedBase } from '@noveldesk/contracts';
+export type { ImportExpectedBase } from '@noveldesk/contracts';
 
 export type ImportJobStatus =
   'queued' | 'reading' | 'decoding' | 'splitting_chapters' | 'writing' | 'cancelling' | 'ready' | 'failed';
@@ -36,6 +38,8 @@ export interface ImportFileInput {
   encoding: EncodingMode;
   chapterSplitMode?: ChapterSplitMode;
   clientBookId?: string;
+  /** Strict complete-package fence. Mutually exclusive with image delta rebase mode. */
+  expectedBase?: ImportExpectedBase;
   /**
    * The input contains only new or changed image-series sections. Supporting
    * local and Hosted boundaries update a manifest of immutable comic originals
@@ -70,6 +74,7 @@ export interface ImportController {
 }
 
 export interface ImportService {
+  readonly supportsExpectedBase?: boolean;
   readonly supportsArchivePassword?: boolean;
   readonly supportsExpectedNormalizedTextHash?: boolean;
   readonly supportsExpectedSourceContentHash?: boolean;

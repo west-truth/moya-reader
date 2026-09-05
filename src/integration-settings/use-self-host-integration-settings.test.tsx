@@ -1,5 +1,5 @@
 import { act, create, type ReactTestRenderer } from 'react-test-renderer';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { useSelfHostIntegrationSettings } from './use-self-host-integration-settings';
 import type { SelfHostIntegrationSettingsV1 } from './self-host-integration-settings';
 import { RemoteApiError } from '../services/remote/remote-api-contracts';
@@ -43,6 +43,7 @@ function createFixture(
   const applySharedSettings = vi.fn();
   const replaceSharedState = vi.fn(async () => undefined);
   const refreshSharedConfiguration = vi.fn(async () => undefined);
+  const refreshTextConfiguration = vi.fn(async () => undefined);
   const onApplied = vi.fn();
   const notify = vi.fn();
 
@@ -74,7 +75,7 @@ function createFixture(
         exportSharedState: async () => local.externalSources,
         replaceSharedState,
       } as never,
-      suwayomi: { refreshSharedConfiguration } as never,
+      sourceBrokers: [{ refreshSharedConfiguration }, { refreshSharedConfiguration: refreshTextConfiguration }],
       onApplied,
       notify,
     });
@@ -90,6 +91,7 @@ function createFixture(
     applySharedSettings,
     replaceSharedState,
     refreshSharedConfiguration,
+    refreshTextConfiguration,
     onApplied,
     notify,
     updateLocal(update: SelfHostIntegrationSettingsV1) {
@@ -105,15 +107,25 @@ async function flush(): Promise<void> {
 }
 
 describe('useSelfHostIntegrationSettings', () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+    vi.stubGlobal(
+      'window',
+      Object.assign(new EventTarget(), {
+        setTimeout,
+        clearTimeout,
+        setInterval,
+        clearInterval,
+      }),
+    );
+    vi.stubGlobal('document', Object.assign(new EventTarget(), { visibilityState: 'visible' }));
+  });
   afterEach(() => {
     vi.useRealTimers();
     vi.unstubAllGlobals();
   });
 
   it('hydrates live extension, metadata and source state, then saves later local changes', async () => {
-    vi.useFakeTimers();
-    vi.stubGlobal('window', globalThis);
-    vi.stubGlobal('document', { visibilityState: 'visible' });
     const fixture = createFixture();
     let renderer!: ReactTestRenderer;
 
@@ -126,6 +138,7 @@ describe('useSelfHostIntegrationSettings', () => {
     expect(fixture.applySharedSettings).toHaveBeenCalledWith(integrationSettings().webNovelMetadata);
     expect(fixture.replaceSharedState).toHaveBeenCalledWith(integrationSettings().externalSources);
     expect(fixture.refreshSharedConfiguration).toHaveBeenCalledOnce();
+    expect(fixture.refreshTextConfiguration).toHaveBeenCalledOnce();
     expect(fixture.onApplied).toHaveBeenCalledOnce();
 
     fixture.updateLocal({
@@ -148,9 +161,6 @@ describe('useSelfHostIntegrationSettings', () => {
   });
 
   it('retries initial hydration after a transient self-host request failure', async () => {
-    vi.useFakeTimers();
-    vi.stubGlobal('window', globalThis);
-    vi.stubGlobal('document', { visibilityState: 'visible' });
     const getIntegrationSettings = vi
       .fn()
       .mockRejectedValueOnce(new Error('temporary outage'))
@@ -175,9 +185,6 @@ describe('useSelfHostIntegrationSettings', () => {
   });
 
   it('uses a migrated server document as authoritative instead of reviving stale local source state', async () => {
-    vi.useFakeTimers();
-    vi.stubGlobal('window', globalThis);
-    vi.stubGlobal('document', { visibilityState: 'visible' });
     const server = {
       ...integrationSettings(),
       externalSources: { schemaVersion: 1 as const, connections: [], links: [], subscriptions: [] },
@@ -215,9 +222,6 @@ describe('useSelfHostIntegrationSettings', () => {
   });
 
   it('imports meaningful device-local state once when the server migration marker is incomplete', async () => {
-    vi.useFakeTimers();
-    vi.stubGlobal('window', globalThis);
-    vi.stubGlobal('document', { visibilityState: 'visible' });
     const server = {
       ...integrationSettings(),
       legacyImportCompleted: false,
@@ -246,9 +250,6 @@ describe('useSelfHostIntegrationSettings', () => {
   });
 
   it('reloads current server state instead of overwriting it after a stale revision conflict', async () => {
-    vi.useFakeTimers();
-    vi.stubGlobal('window', globalThis);
-    vi.stubGlobal('document', { visibilityState: 'visible' });
     const latest = {
       ...integrationSettings(),
       revision: 5,
@@ -285,5 +286,148 @@ describe('useSelfHostIntegrationSettings', () => {
       'warning',
     );
     await act(async () => renderer.unmount());
+  });
+
+  it('polls once per minute while visible and refreshes a stale tab on return', async () => {
+    const fixture = createFixture();
+    let renderer!: ReactTestRenderer;
+    await act(async () => {
+      renderer = create(<fixture.Harness />);
+      await flush();
+    });
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(5_000);
+      window.dispatchEvent(new Event('focus'));
+      document.dispatchEvent(new Event('visibilitychange'));
+    });
+    expect(fixture.getIntegrationSettings).toHaveBeenCalledOnce();
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(55_000);
+    });
+    expect(fixture.getIntegrationSettings).toHaveBeenCalledTimes(2);
+    expect(fixture.getIntegrationSettings).toHaveBeenLastCalledWith(4);
+    Object.assign(document, { visibilityState: 'hidden' });
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(120_000);
+    });
+    expect(fixture.getIntegrationSettings).toHaveBeenCalledTimes(2);
+    Object.assign(document, { visibilityState: 'visible' });
+    await act(async () => {
+      document.dispatchEvent(new Event('visibilitychange'));
+      window.dispatchEvent(new Event('focus'));
+      await flush();
+    });
+    expect(fixture.getIntegrationSettings).toHaveBeenCalledTimes(3);
+    await act(async () => renderer.unmount());
+  });
+
+  it('coalesces focus, visibility and timer events while a slow request is pending', async () => {
+    let resolve!: (value: { settings: SelfHostIntegrationSettingsV1 }) => void;
+    const delayed = new Promise<{ settings: SelfHostIntegrationSettingsV1 }>((done) => {
+      resolve = done;
+    });
+    const get = vi.fn().mockResolvedValueOnce({ settings: integrationSettings() }).mockReturnValue(delayed);
+    const fixture = createFixture(get);
+    let renderer!: ReactTestRenderer;
+    await act(async () => {
+      renderer = create(<fixture.Harness />);
+      await flush();
+    });
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(30_000);
+      window.dispatchEvent(new Event('focus'));
+      document.dispatchEvent(new Event('visibilitychange'));
+      await vi.advanceTimersByTimeAsync(120_000);
+      window.dispatchEvent(new Event('focus'));
+    });
+    expect(get).toHaveBeenCalledTimes(2);
+    await act(async () => {
+      resolve({ settings: { ...integrationSettings(), revision: 5 } });
+      await flush();
+    });
+    expect(fixture.onApplied).toHaveBeenCalledTimes(2);
+    await act(async () => renderer.unmount());
+  });
+
+  it.each([100, 700])('does not apply a delayed poll over a local edit (%i ms response delay)', async (delay) => {
+    const get = vi
+      .fn()
+      .mockResolvedValueOnce({ settings: integrationSettings() })
+      .mockImplementation(
+        () =>
+          new Promise((resolve) =>
+            setTimeout(
+              () =>
+                resolve({
+                  settings: {
+                    ...integrationSettings(),
+                    revision: 5,
+                    extensionEnablement: { schemaVersion: 1, enabledByExtensionId: { remote: true } },
+                  },
+                }),
+              delay,
+            ),
+          ),
+      );
+    const fixture = createFixture(get);
+    let renderer!: ReactTestRenderer;
+    await act(async () => {
+      renderer = create(<fixture.Harness />);
+      await flush();
+    });
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(60_000);
+    });
+    fixture.updateLocal({
+      ...integrationSettings(),
+      extensionEnablement: { schemaVersion: 1, enabledByExtensionId: { local: true } },
+    });
+    await act(async () => {
+      fixture.extensionListeners.forEach((listener) => listener());
+      await vi.advanceTimersByTimeAsync(349);
+    });
+    expect(fixture.saveIntegrationSettings).not.toHaveBeenCalled();
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(1);
+    });
+    expect(fixture.saveIntegrationSettings).toHaveBeenCalledOnce();
+    expect(fixture.saveIntegrationSettings).toHaveBeenCalledWith(
+      expect.objectContaining({
+        extensionEnablement: { schemaVersion: 1, enabledByExtensionId: { local: true } },
+      }),
+      4,
+    );
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(700);
+    });
+    expect(fixture.onApplied).toHaveBeenCalledOnce();
+    await act(async () => renderer.unmount());
+  });
+
+  it('ignores late background responses and removes focus listeners after unmount', async () => {
+    const get = vi
+      .fn()
+      .mockResolvedValueOnce({ settings: integrationSettings() })
+      .mockImplementation(
+        () =>
+          new Promise((resolve) =>
+            setTimeout(() => resolve({ settings: { ...integrationSettings(), revision: 5 } }), 700),
+          ),
+      );
+    const fixture = createFixture(get);
+    let renderer!: ReactTestRenderer;
+    await act(async () => {
+      renderer = create(<fixture.Harness />);
+      await flush();
+    });
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(60_000);
+    });
+    await act(async () => renderer.unmount());
+    await vi.advanceTimersByTimeAsync(120_000);
+    window.dispatchEvent(new Event('focus'));
+    document.dispatchEvent(new Event('visibilitychange'));
+    expect(get).toHaveBeenCalledTimes(2);
+    expect(fixture.onApplied).toHaveBeenCalledOnce();
   });
 });

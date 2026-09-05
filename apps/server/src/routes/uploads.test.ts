@@ -40,6 +40,68 @@ function appWithUploads(pool: pg.Pool, queue: Queue) {
 }
 
 describe('upload routes', () => {
+  it.each([{ kind: 'absent' }, { kind: 'revision', contentRevisionId: 'revision_1' }] as const)(
+    'stores and returns the $kind caller snapshot fence',
+    async (expectedBase) => {
+      let storedBase: unknown;
+      const pool = {
+        query: vi.fn(async (sql: string, params?: unknown[]) => {
+          if (sql.includes('insert into upload_sessions')) {
+            storedBase = JSON.parse(String(params?.[13]));
+            return { rows: [] };
+          }
+          if (sql.includes('from upload_sessions'))
+            return {
+              rows: [
+                {
+                  id: 'upload_fixture',
+                  size_bytes: '4',
+                  total_chunks: 1,
+                  status: 'uploading',
+                  expected_base: storedBase,
+                },
+              ],
+            };
+          return { rows: [] };
+        }),
+      } as unknown as pg.Pool;
+      const app = await appWithUploads(pool, { add: vi.fn() } as unknown as Queue);
+      try {
+        const response = await app.inject({
+          method: 'POST',
+          url: '/api/uploads/init',
+          payload: { fileName: 'fixture.txt', sizeBytes: 4, totalChunks: 1, clientBookId: 'book', expectedBase },
+        });
+        expect(response.statusCode).toBe(200);
+        expect(storedBase).toEqual(expectedBase);
+        expect((await app.inject('/api/uploads/upload_fixture')).json().expectedBase).toEqual(expectedBase);
+      } finally {
+        await app.close();
+      }
+    },
+  );
+
+  it.each([
+    { expectedBase: {} },
+    { expectedBase: { kind: 'revision', contentRevisionId: '' } },
+    { expectedBase: { kind: 'absent', contentRevisionId: 'unexpected' } },
+    { expectedBase: { kind: 'absent' }, clientBookId: undefined },
+    { expectedBase: { kind: 'absent' }, importMode: 'append_image_series' },
+  ])('rejects an invalid or incompatible caller snapshot fence %#', async (override) => {
+    const pool = { query: vi.fn() } as unknown as pg.Pool;
+    const app = await appWithUploads(pool, { add: vi.fn() } as unknown as Queue);
+    try {
+      const response = await app.inject({
+        method: 'POST',
+        url: '/api/uploads/init',
+        payload: { fileName: 'fixture.txt', sizeBytes: 4, totalChunks: 1, clientBookId: 'book', ...override },
+      });
+      expect(response.statusCode).toBe(400);
+      expect(pool.query).not.toHaveBeenCalled();
+    } finally {
+      await app.close();
+    }
+  });
   afterEach(() => {
     vi.restoreAllMocks();
   });
@@ -192,6 +254,7 @@ describe('upload routes', () => {
           undefined,
           'replace_book',
           undefined,
+          null,
         ]);
         return { rows: [] };
       }),
@@ -238,6 +301,7 @@ describe('upload routes', () => {
           sourceContentHash,
           'append_image_series',
           'content_revision_7',
+          null,
         ]);
         return { rows: [] };
       }),

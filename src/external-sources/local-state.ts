@@ -153,6 +153,8 @@ export interface ExternalSourceSubscriptionRecord {
   readonly sourceLabel?: string;
   readonly knownReleaseIds: readonly string[];
   readonly newReleaseIds: readonly string[];
+  /** Missing/false means older unseen pages must first establish a complete metadata baseline. */
+  readonly releaseBaselineComplete?: boolean;
   readonly availableReleaseCount: number;
   readonly lastCheckedAt: string;
   readonly createdAt: string;

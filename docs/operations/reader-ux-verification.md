@@ -1,5 +1,18 @@
 # 독서·가져오기 UX 검증
 
+## 텍스트 소스·회차 목록·동기화 변경 검증 (2026-09-05)
+
+- 공개용 `pnpm check:web-server` 통과: 90개 Vitest 파일에서 738개 통과/3개 생략, 전체 타입 검사,
+  lint·공개 소스/라이선스 경계·Hosted 정적 검사 264개·Web/서버 production build를 포함합니다.
+- 추가 텍스트 계약/목차/Reader/설정 검사에서 PostgreSQL revision 검증식 오류 2건을
+  발견했습니다. 후속 migration 0045로 수정한 뒤 실제 DB의 가져오기·migration 검사 16개가 모두 통과했습니다.
+  기존 migration checksum을 보존하며 길이 경계와 동시 저장 충돌을 검증합니다.
+- 최종 범용 텍스트 서버 Node 테스트는 48개 통과/브라우저 transport 선택 검사 1개 생략입니다.
+  범용 client/wire/broker 회귀 35개도 통과했습니다. 사이트별 구현과 해당 검증은 공개 제품 범위에 포함하지 않습니다.
+  Hosted 텍스트 소스 Compose 조합의 정적 검증과 전체 PR 범위의 포맷 검사도 통과했습니다.
+- 실제 외부 사이트의 대량 다운로드 처리량, 장시간 self-host 사용 및 Funnel 지연 개선 수치는 이 검사의
+  범위 밖입니다. 이 PR의 Windows native/Protected Compose 실행 결과는 GitHub Actions에서 별도로 확인합니다.
+
 ## 현재 동작
 
 - 텍스트 Reader는 활성 화면만 읽기 위치를 저장하며, 스크롤/페이지 전환의 저장 순서를 보장한다.

@@ -1,3 +1,5 @@
+import type { ImportExpectedBase } from '@noveldesk/contracts';
+
 export interface SaveImportedNovelProgress {
   phase: 'writing_pages' | 'activating_revision';
   chaptersWritten: number;
@@ -9,6 +11,7 @@ export interface SaveImportedNovelProgress {
 }
 
 export interface SaveImportedNovelOptions {
+  expectedBase?: ImportExpectedBase;
   batchPageCount?: number;
   /**
    * Allows an append-only document-series import to reuse the active content

@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { deflateSync } from 'node:zlib';
 import type pg from 'pg';
+import type { ImportExpectedBase } from '@noveldesk/contracts';
 import { BlobWriter, TextReader, Uint8ArrayReader, ZipWriter } from '@zip.js/zip.js';
 import { integrityHash } from '@noveldesk/text-core/hash';
 import type { ServerConfig } from '../../config.js';
@@ -95,7 +96,7 @@ export async function withImportPageFixture<T>(pool: pg.Pool, run: (fixture: Imp
     gets,
     profiles,
     useExecutionLease: false,
-    async import(bytes: Buffer, append = false, bookId = 'book_fixture') {
+    async import(bytes: Buffer, append = false, bookId = 'book_fixture', options = {}) {
       const uploadId = `upload_${randomUUID()}`;
       const jobId = `job_${randomUUID()}`;
       const executionId = fixture.useExecutionLease ? `execution_${randomUUID()}` : undefined;
@@ -108,8 +109,8 @@ export async function withImportPageFixture<T>(pool: pg.Pool, run: (fixture: Imp
             ?.active_content_revision_id
         : undefined;
       await pool.query(
-        `insert into upload_sessions (id, user_id, file_name, content_type, size_bytes, encoding, total_chunks, status, client_book_id, source_content_hash, import_mode, base_active_content_revision_id)
-        values ($1, 'user_test', 'fixture.cbz', 'application/vnd.comicbook+zip', $2, 'auto', 1, 'queued', $3, $4, $5, $6)`,
+        `insert into upload_sessions (id, user_id, file_name, content_type, size_bytes, encoding, total_chunks, status, client_book_id, source_content_hash, import_mode, base_active_content_revision_id, expected_base)
+        values ($1, 'user_test', $7, $8, $2, 'utf-8', 1, 'queued', $3, $4, $5, $6, $9)`,
         [
           uploadId,
           bytes.length,
@@ -117,6 +118,9 @@ export async function withImportPageFixture<T>(pool: pg.Pool, run: (fixture: Imp
           integrityHash(bytes),
           append ? 'append_image_series' : 'replace_book',
           base ?? null,
+          options.fileName ?? 'fixture.cbz',
+          options.contentType ?? 'application/vnd.comicbook+zip',
+          options.expectedBase ? JSON.stringify(options.expectedBase) : null,
         ],
       );
       await pool.query(
@@ -161,6 +165,7 @@ export interface ImportPageFixture {
     bytes: Buffer,
     append?: boolean,
     bookId?: string,
+    options?: { expectedBase?: ImportExpectedBase; fileName?: string; contentType?: string },
   ): Promise<{ jobId: string; uploadId: string; durationMs: number }>;
 }
 

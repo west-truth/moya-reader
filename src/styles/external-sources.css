@@ -807,7 +807,7 @@
 .source-hub-release-row {
   min-width: 0;
   display: grid;
-  grid-template-columns: 28px 62px minmax(220px, 1fr) 92px 96px 42px;
+  grid-template-columns: 28px 62px minmax(220px, 1fr) 92px 96px 74px;
   align-items: center;
   gap: 12px;
 }
@@ -876,6 +876,11 @@
   color: var(--muted);
   font-size: var(--ui-label-size);
 }
+.source-hub-release-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 6px;
+}
 .source-hub-release-action {
   width: 34px;
   min-width: 34px;
@@ -884,6 +889,27 @@
   justify-self: end;
   color: var(--primary);
   border: 1px solid var(--border-strong);
+}
+
+.source-hub-list-error {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 10px;
+  margin: 14px 0;
+  padding: 14px;
+  color: var(--warning);
+  background: color-mix(in srgb, var(--warning) 8%, var(--app-surface));
+  border: 1px solid color-mix(in srgb, var(--warning) 24%, var(--border));
+  border-radius: var(--radius-control);
+}
+.source-hub-list-error strong {
+  color: var(--text);
+}
+.source-hub-list-error p {
+  margin: 6px 0 12px;
+  color: var(--text-2);
+  font-size: var(--ui-label-size);
+  overflow-wrap: anywhere;
 }
 
 .source-hub-empty {
@@ -950,6 +976,18 @@
 }
 .source-hub-batch-bar strong {
   color: var(--text);
+}
+.source-release-catalog-status,
+.source-release-selection-summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 10px 14px;
+  color: var(--text-2);
+  font-size: var(--ui-label-size);
+  border-bottom: 1px solid var(--border);
 }
 .library-mobile-shelf.is-static {
   cursor: default;
@@ -1078,8 +1116,10 @@
     grid-area: state;
     justify-self: end;
   }
-  .source-hub-release-action {
+  .source-hub-release-actions {
     grid-area: action;
+  }
+  .source-hub-release-action {
     width: 34px;
     min-width: 34px;
   }

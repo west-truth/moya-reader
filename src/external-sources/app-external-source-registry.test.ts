@@ -1,7 +1,11 @@
 import type { ExtensionContributionId } from '@noveldesk/extension-contracts';
 import { describe, expect, it, vi } from 'vitest';
-import type { ExternalSourceBroker, TrustedExternalSourceHostContext } from './contracts';
-import { AppExternalSourceRegistry, type ExternalSourceRegistryPort } from './app-external-source-registry';
+import type { ExternalSourceBroker, ExternalSourceDownloadResult, TrustedExternalSourceHostContext } from './contracts';
+import {
+  AppExternalSourceRegistry,
+  type ExternalSourceRegistryPort,
+  type ExternalSourceProviderRegistryPort,
+} from './app-external-source-registry';
 import { DROPBOX_EXTERNAL_SOURCE_ID, dropboxBuiltInExternalSource } from './dropbox-external-source';
 
 describe('AppExternalSourceRegistry', () => {
@@ -67,5 +71,100 @@ describe('AppExternalSourceRegistry', () => {
     expect(registry.canRemoveExternalSourceItem(DROPBOX_EXTERNAL_SOURCE_ID, context)).toBe(true);
     await registry.removeExternalSourceItem(DROPBOX_EXTERNAL_SOURCE_ID, context, key);
     expect(removeSelectedItem).toHaveBeenCalledWith(key);
+  });
+});
+
+describe('app source v2 boundary', () => {
+  const profile = { kind: 'document_series', format: 'txt', encoding: 'utf-8', chapterSplitMode: 'single' } as const;
+  const descriptor = {
+    id: 'test.text' as const,
+    schemaVersion: 2 as const,
+    title: 'Text',
+    kind: 'catalog' as const,
+    capabilities: ['browse', 'release-list', 'release-download', 'document-content'] as const,
+    runtimes: ['web-direct'] as const,
+    seriesProfile: profile,
+  };
+  const key = { connectorId: descriptor.id, accountConnectionId: 'account', remoteId: 'release' };
+  const ref = { key, fileName: 'chapter.txt', context: { expectedProfile: profile, connectionGeneration: 'g1' } };
+  const file = new File(['text'], 'chapter.txt');
+  const result = {
+    content: { kind: 'document', file, format: 'txt', encoding: 'utf-8', chapterSplitMode: 'single' },
+  } as const;
+
+  function harness(plugin = false) {
+    const state = { generation: 'g1' };
+    const broker: ExternalSourceBroker = {
+      status: () => ({ state: 'connected', accountConnectionId: 'account', connectionGeneration: state.generation }),
+      connect: vi.fn(async () => undefined),
+      disconnect: vi.fn(async () => undefined),
+      list: vi.fn(async () => ({ items: [] })),
+      download: vi.fn(async (): Promise<ExternalSourceDownloadResult> => result),
+    };
+    const context: TrustedExternalSourceHostContext = { brokers: { get: () => broker } };
+    const provider: ExternalSourceProviderRegistryPort = {
+      getExternalSources: () => [{ descriptor }],
+      getExternalSourceStatus: () => broker.status(),
+      connectExternalSource: async () => broker.connect(),
+      disconnectExternalSource: async () => broker.disconnect(),
+      listExternalSource: async (_id, _context, input, signal) => broker.list(input, signal),
+      downloadExternalSource: async (_id, _context, input, signal) => broker.download(input, signal),
+    };
+    return {
+      state,
+      broker,
+      context,
+      registry: new AppExternalSourceRegistry(
+        plugin ? [] : [{ descriptor, brokerId: 'text' }],
+        plugin ? provider : undefined,
+      ),
+    };
+  }
+
+  it.each([false, true])('normalizes %s plugin and built-in downloads through the same boundary', async (plugin) => {
+    const { registry, context } = harness(plugin);
+    const downloaded = await registry.downloadExternalSource(descriptor.id, context, ref, new AbortController().signal);
+    expect(downloaded.file).toBe(file);
+    expect(downloaded.content).toEqual(result.content);
+  });
+
+  it('rejects stale generation and wrong source before calling a provider', async () => {
+    const { registry, context, broker } = harness();
+    const signal = new AbortController().signal;
+    await expect(
+      registry.downloadExternalSource(
+        descriptor.id,
+        context,
+        { ...ref, context: { connectionGeneration: 'old' } },
+        signal,
+      ),
+    ).rejects.toThrow('연결');
+    await expect(
+      registry.downloadExternalSource(
+        descriptor.id,
+        context,
+        { ...ref, key: { ...key, connectorId: 'other.source' } },
+        signal,
+      ),
+    ).rejects.toThrow('연결');
+    expect(broker.download).not.toHaveBeenCalled();
+  });
+
+  it.each(['generation', 'reconnect', 'abort'] as const)('discards a completed download after %s', async (change) => {
+    const { registry, context, broker, state } = harness();
+    let finish!: (value: ExternalSourceDownloadResult) => void;
+    vi.mocked(broker.download).mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          finish = resolve;
+        }),
+    );
+    const abort = new AbortController();
+    const pending = registry.downloadExternalSource(descriptor.id, context, ref, abort.signal);
+    if (change === 'generation') state.generation = 'g2';
+    if (change === 'reconnect') await registry.connectExternalSource(descriptor.id, context);
+    if (change === 'abort') abort.abort();
+    finish(result);
+    await expect(pending).rejects.toThrow();
   });
 });

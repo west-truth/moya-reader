@@ -5,7 +5,11 @@ import { ServerConfig } from '../config.js';
 import { createS3Client, getObjectBuffer, inspectStoredObject, putRawBookObject } from './object-storage.js';
 import { parseNovelFileForImport } from '@noveldesk/text-core/parser';
 import { materializeEpubImport, parseEpub } from '@noveldesk/epub-core';
-import { hasDocumentSeriesManifest, materializeDocumentSeriesArchive } from '@noveldesk/document-series-core';
+import {
+  hasDocumentSeriesManifest,
+  materializeDocumentSeriesArchive,
+  isRemoteDocumentSeriesImport,
+} from '@noveldesk/document-series-core';
 import {
   materializePdfImport,
   materializeStreamingImageArchiveImport,
@@ -51,6 +55,7 @@ import { ImportMeasurements } from './import-measurements.js';
 import type { StructuredLogger } from '../observability/logger.js';
 import { insertParagraphSearchBatch } from './paragraph-search-persistence.js';
 import { createImportProgressUpdateThrottle } from './import-progress-throttle.js';
+import { assertImportExpectedBase, parseImportExpectedBase } from './import-expected-base.js';
 
 const PARAGRAPHS_PER_PAGE = 120;
 const SERVER_IMPORT_CHAPTER_BATCH_SIZE = 100;
@@ -79,6 +84,7 @@ interface UploadSessionRow {
   source_content_hash?: string | null;
   import_mode?: 'replace_book' | 'append_image_series';
   base_active_content_revision_id?: string | null;
+  expected_base?: import('@noveldesk/contracts').ImportExpectedBase | null;
 }
 
 interface ImageSeriesAppendBaseRow {
@@ -742,6 +748,10 @@ export async function processImportJob(
   try {
     await assertImportExecutionActive(pool, jobId, attempt.executionId);
     const { session, buffer: uploadBuffer } = await readUploadBuffer(pool, uploadId);
+    const expectedBase = parseImportExpectedBase(session.expected_base);
+    if (expectedBase && (!session.client_book_id || session.import_mode === 'append_image_series')) {
+      throw new Error('invalid_import_expected_base');
+    }
     let buffer: Buffer | undefined = uploadBuffer;
     const bytesRead = buffer.length;
     const totalBytes = Number(session.size_bytes);
@@ -1124,6 +1134,7 @@ export async function processImportJob(
     const releaseTransactionClient = client !== appendLockClient;
     try {
       await client.query('begin');
+      await assertImportExpectedBase(client, { bookId: parsed.novel.id, userId: session.user_id, expectedBase });
       if (appendBaseContentRevisionId) {
         const currentBase = await client.query<{ id: string }>(
           `select id from library_books
@@ -1164,7 +1175,7 @@ export async function processImportJob(
         sourceFileName: parsed.novel.sourceFileName,
         sourceEncoding: parsed.novel.sourceEncoding,
       });
-      await client.query(
+      const activatedBook = await client.query(
         `
           insert into library_books (
             id, user_id, object_id, format, title, author, description, language, source_file_name, source_encoding,
@@ -1193,6 +1204,10 @@ export async function processImportJob(
                   else library_books.metadata_revision + 1
                 end,
                 updated_at = excluded.updated_at
+          where $20::text is null or (
+            $20::text = 'revision' and library_books.user_id = excluded.user_id and
+            library_books.active_content_revision_id = $21::text
+          )
         `,
         [
           parsed.novel.id,
@@ -1214,8 +1229,11 @@ export async function processImportJob(
           parsed.novel.createdAt,
           parsed.novel.updatedAt,
           importMode,
+          expectedBase?.kind ?? null,
+          expectedBase?.kind === 'revision' ? expectedBase.contentRevisionId : null,
         ],
       );
+      if (expectedBase && activatedBook.rowCount === 0) throw new Error('import_expected_base_conflict');
       if (previousBookObject.rows[0]?.object_id && previousBookObject.rows[0].object_id !== objectId) {
         const orphanedSource = await client.query<{ storage_key: string }>(
           `delete from book_objects object
@@ -1348,7 +1366,11 @@ export async function processImportJob(
         );
         if (attempt.executionId && !progressUpdated) throw new ImportExecutionStoppedError('cancelled');
       }
-      if (replacement && parsed.novel.format === 'image_archive' && parsed.novel.documentSectionCount) {
+      if (
+        replacement &&
+        ((parsed.novel.format === 'image_archive' && parsed.novel.documentSectionCount) ||
+          isRemoteDocumentSeriesImport(parsed))
+      ) {
         await restoreExactAnchoredReaderState(client, replacement);
       }
       if (replacement) await finalizeBookReplacement(client, replacement);
