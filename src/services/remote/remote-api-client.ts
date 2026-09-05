@@ -664,7 +664,7 @@ export class RemoteApiClient {
         ...init,
         signal: controller.signal,
       });
-      // Keep caller cancellation connected while Blob bodies are downloading.
+      // Keep caller cancellation connected until the response body has been consumed.
       // The existing request timeout still covers response headers only.
       globalThis.clearTimeout(timer);
       await consumeResponse?.(response);
@@ -680,7 +680,8 @@ export class RemoteApiClient {
 
   async request<T>(path: string, init: RequestInit = {}, timeoutMs?: number): Promise<T> {
     const authToken = this.options.getAuthToken?.()?.trim();
-    const response = await this.fetch(
+    let result!: T;
+    await this.fetch(
       path,
       {
         ...init,
@@ -691,13 +692,15 @@ export class RemoteApiClient {
         },
       },
       timeoutMs,
+      async (response) => {
+        if (!response.ok) {
+          if (response.status === 401) this.options.onUnauthorized?.();
+          throw await remoteError(response);
+        }
+        if (response.status !== 204) result = (await response.json()) as T;
+      },
     );
-    if (!response.ok) {
-      if (response.status === 401) this.options.onUnauthorized?.();
-      throw await remoteError(response);
-    }
-    if (response.status === 204) return undefined as T;
-    return response.json() as Promise<T>;
+    return result;
   }
 
   async requestBlob(path: string, init: RequestInit = {}): Promise<{ blob: Blob; headers: Headers; status: number }> {
