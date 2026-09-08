@@ -7,6 +7,8 @@ import shutil
 import socket
 import subprocess
 import time
+import uuid
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 from urllib.parse import parse_qsl, urlencode, urlparse, urlunparse
@@ -107,6 +109,7 @@ class AuthSessionManager:
         self.data_dir = data_dir
         self.profile_dir = data_dir / "browser-profile"
         self.settings_path = data_dir / "settings.json"
+        self.session_path = data_dir / "session-cookies.json"
         self.enabled_platforms = self._load_enabled_platforms()
         self._playwright: Any = None
         self._context: Any = None
@@ -123,10 +126,13 @@ class AuthSessionManager:
             "1",
         ).strip().lower() not in {"0", "false", "no", "off"}
         self._remote_login_active = False
+        self._active_platform: str | None = None
         self._remote_viewport_width = REMOTE_VIEWPORT_WIDTH
         self._remote_viewport_height = REMOTE_VIEWPORT_HEIGHT
         self._remote_frame_digest: str | None = None
         self._remote_frame_revision = 0
+        self._remote_pages: dict[str, Any] = {}
+        self._selected_remote_page: Any = None
         self._remote_io_lock = asyncio.Lock()
         self._context_lock = asyncio.Lock()
         self._remote_blocked_host_cache: dict[str, float] = {}
@@ -168,9 +174,17 @@ class AuthSessionManager:
             "browser_presentation": self.browser_presentation,
             "enabled_platforms": sorted(self.enabled_platforms),
             "last_error": self.last_error,
+            "session_saved_at": self._load_session().get("saved_at"),
+            "active_platform": self._active_platform if self.browser_running else None,
         }
 
     async def open_login(
+        self, platform: str, *, viewport_width: int | None = None, viewport_height: int | None = None,
+    ) -> None:
+        async with self._request_slots, self._remote_io_lock:
+            await self._open_login(platform, viewport_width=viewport_width, viewport_height=viewport_height)
+
+    async def _open_login(
         self,
         platform: str,
         *,
@@ -189,6 +203,7 @@ class AuthSessionManager:
             self._remote_viewport_height = viewport_height or REMOTE_VIEWPORT_HEIGHT
             context = await self._ensure_context(visible=False)
             page = context.pages[-1] if context.pages else await context.new_page()
+            self._selected_remote_page = page
             try:
                 await page.goto(
                     LOGIN_URLS[platform],
@@ -200,6 +215,7 @@ class AuthSessionManager:
                 self.last_error = "원격 로그인 페이지를 열지 못했습니다."
                 raise AuthFeatureUnavailable(self.last_error) from exc
             self._remote_login_active = True
+            self._active_platform = platform
             self._remote_frame_digest = None
             self._remote_frame_revision = 0
             self.last_error = None
@@ -232,11 +248,16 @@ class AuthSessionManager:
             self.last_error = None
 
     async def finish_login(self) -> None:
+        async with self._request_slots, self._remote_io_lock:
+            await self._finish_login()
+
+    async def _finish_login(self) -> None:
         """로그인 창을 닫고 같은 프로필로 검색 컨텍스트를 열 수 있는지 확인한다."""
         if self.remote_auth:
             context = await self._ensure_context(visible=False)
             if not self._remote_login_active:
                 raise AuthFeatureUnavailable("먼저 로그인 화면을 열어 주세요.")
+            await self._save_session(context)
             self._remote_login_active = False
             for page in list(context.pages):
                 try:
@@ -245,6 +266,8 @@ class AuthSessionManager:
                     pass
             self._remote_frame_digest = None
             self.last_error = None
+            # Flush the persistent profile too, before reporting completion.
+            await self.close_browser()
             return
 
         await self._stop_login_processes()
@@ -271,6 +294,10 @@ class AuthSessionManager:
             await self._close_context_locked()
         await self._stop_login_processes()
 
+    async def close_login(self) -> None:
+        async with self._request_slots, self._remote_io_lock:
+            await self.close_browser()
+
     async def remote_frame(self, after_revision: int) -> dict[str, Any] | None:
         if not self.remote_auth:
             raise AuthFeatureUnavailable("원격 로그인 화면을 사용할 수 없습니다.")
@@ -288,7 +315,8 @@ class AuthSessionManager:
                 raise AuthFeatureUnavailable("원격 로그인 화면을 읽지 못했습니다.") from exc
             if len(content) > REMOTE_FRAME_MAX_BYTES:
                 raise AuthFeatureUnavailable("원격 로그인 화면이 허용 크기를 초과했습니다.")
-            digest = hashlib.sha256(content).hexdigest()
+            metadata = await self._remote_metadata(page)
+            digest = hashlib.sha256(content + json.dumps(metadata, sort_keys=True).encode()).hexdigest()
             if digest != self._remote_frame_digest:
                 self._remote_frame_digest = digest
                 self._remote_frame_revision += 1
@@ -299,6 +327,7 @@ class AuthSessionManager:
                 "revision": self._remote_frame_revision,
                 "width": self._remote_viewport_width,
                 "height": self._remote_viewport_height,
+                "metadata": metadata,
             }
 
     async def remote_action(
@@ -310,6 +339,7 @@ class AuthSessionManager:
         text: str | None = None,
         key: str | None = None,
         delta_y: float | None = None,
+        page_id: str | None = None,
     ) -> None:
         if not self.remote_auth or not self._remote_login_active:
             raise AuthFeatureUnavailable("열려 있는 원격 로그인 화면이 없습니다.")
@@ -317,10 +347,33 @@ class AuthSessionManager:
             page = self._active_remote_page()
             if page is None:
                 raise AuthFeatureUnavailable("원격 로그인 화면이 닫혔습니다.")
+            if action in {"select_tab", "close_tab"}:
+                target = self._remote_pages.get(page_id or "")
+                if target is None or target.is_closed():
+                    raise ValueError("로그인 창이 닫혔습니다. 화면을 새로 확인해 주세요.")
+                if action == "close_tab":
+                    if len([p for p in self._context.pages if not p.is_closed()]) <= 1:
+                        raise ValueError("마지막 로그인 창은 닫을 수 없습니다.")
+                    await target.close()
+                else:
+                    self._selected_remote_page = target
+                    await target.bring_to_front()
+                self._remote_frame_digest = None
+                return
+            if page_id is not None and self._remote_page_id(page) != page_id:
+                raise ValueError("로그인 창이 바뀌었습니다. 입력할 칸을 다시 선택해 주세요.")
             if action == "click" and x is not None and y is not None:
                 await page.mouse.click(x, y)
             elif action == "text" and text is not None:
                 await page.keyboard.insert_text(text)
+            elif action == "fill" and text is not None:
+                if await self._remote_input_type(page) is None:
+                    raise ValueError("화면에서 입력할 칸을 먼저 선택해 주세요.")
+                await page.keyboard.press("ControlOrMeta+A")
+                if text:
+                    await page.keyboard.insert_text(text)
+                else:
+                    await page.keyboard.press("Backspace")
             elif action == "key" and key in REMOTE_CONTROL_KEYS:
                 await page.keyboard.press(key)
             elif action == "scroll" and delta_y is not None:
@@ -361,6 +414,10 @@ class AuthSessionManager:
         await web_socket.close(code=1008, reason="Remote authentication WebSocket blocked")
 
     async def clear_session(self) -> None:
+        async with self._request_slots, self._remote_io_lock:
+            await self._clear_session()
+
+    async def _clear_session(self) -> None:
         await self.close_browser()
         if self.browser_running:
             raise AuthFeatureUnavailable(
@@ -373,6 +430,8 @@ class AuthSessionManager:
         if profile.exists():
             shutil.rmtree(profile)
         self.enabled_platforms.clear()
+        self.session_path.unlink(missing_ok=True)
+        self.session_path.with_suffix(".tmp").unlink(missing_ok=True)
         self._save_settings()
 
     async def aclose(self) -> None:
@@ -434,11 +493,16 @@ class AuthSessionManager:
 
     async def fetch_many(self, requests: list[dict[str, Any]]) -> list[str]:
         async with self._request_slots:
+            if self.remote_auth and self._remote_login_active:
+                raise AuthFeatureUnavailable("로그인을 완료한 뒤 다시 검색해 주세요.")
             for attempt in range(2):
                 context: Any = None
                 try:
                     context = await self._ensure_context(visible=False)
-                    return await self._fetch_many_once(context, requests)
+                    results = await self._fetch_many_once(context, requests)
+                    if self.remote_auth and self.session_path.exists():
+                        await self._save_session(context)
+                    return results
                 except AuthFeatureUnavailable:
                     if attempt == 1:
                         raise
@@ -528,6 +592,7 @@ class AuthSessionManager:
                 self.last_error = "설치된 Chrome 또는 Edge를 찾지 못했습니다."
                 raise AuthFeatureUnavailable(self.last_error)
 
+            context = None
             try:
                 launch_options: dict[str, Any] = {
                     "headless": self.remote_auth_headless if self.remote_auth else not visible,
@@ -546,10 +611,16 @@ class AuthSessionManager:
                     user_data_dir=str(self.profile_dir),
                     **launch_options,
                 )
+                session = self._load_session()
+                if self.remote_auth and session.get("cookies"):
+                    await context.add_cookies(session["cookies"])
+                context.on("page", self._remote_page_opened)
                 if self.remote_auth:
                     await context.route("**/*", self._guard_remote_request)
                     await context.route_web_socket("**/*", self._block_remote_web_socket)
             except Exception as exc:
+                if context is not None:
+                    await context.close()
                 self.last_error = (
                     "인증 브라우저 프로필을 열지 못했습니다. "
                     "로그인 전용 창을 완전히 닫고 다시 시도해 주세요."
@@ -564,22 +635,130 @@ class AuthSessionManager:
 
     async def _close_context_locked(self) -> None:
         context = self._context
+        if context is not None and self.remote_auth and not self._remote_login_active and self.session_path.exists():
+            try:
+                await self._save_session(context)
+            except (PlaywrightError, OSError):
+                # A crashed browser must not prevent closing or clearing its saved session.
+                pass
         self._context = None
         self._context_headless = None
         self._remote_login_active = False
         self._remote_frame_digest = None
+        self._remote_pages.clear()
+        self._selected_remote_page = None
+        self._active_platform = None
         if context is not None:
             try:
                 await context.close()
             except PlaywrightError:
                 pass
 
+    def _remote_page_opened(self, page: Any) -> None:
+        self._remote_page_id(page)
+        self._selected_remote_page = page
+
+    def _remote_page_id(self, page: Any) -> str:
+        for key, candidate in self._remote_pages.items():
+            if candidate is page:
+                return key
+        key = uuid.uuid4().hex
+        self._remote_pages[key] = page
+        return key
+
+    async def _remote_input_type(self, page: Any) -> str | None:
+        for frame in page.frames:
+            try:
+                kind = await frame.evaluate("""() => {
+                  const e = document.activeElement;
+                  if (!e || e.disabled || e.readOnly) return null;
+                  if (e.tagName === 'TEXTAREA' || e.isContentEditable) return 'text';
+                  return e.tagName === 'INPUT' && ['text','password','email','tel','number','search','url'].includes(e.type)
+                    ? e.type : null;
+                }""")
+                if kind:
+                    return kind
+            except PlaywrightError:
+                continue
+        return None
+
+    async def _remote_metadata(self, page: Any) -> dict[str, Any]:
+        pages = [p for p in self._context.pages if not p.is_closed()]
+        visible_pages = pages[-12:]
+        if page not in visible_pages:
+            visible_pages = [page, *pages[-11:]]
+        fields = []
+        for frame in page.frames:
+            try:
+                offset_x, offset_y = 0, 0
+                if frame != page.main_frame:
+                    element = await frame.frame_element()
+                    box = await element.bounding_box()
+                    if box is None:
+                        continue
+                    offset_x, offset_y = box["x"], box["y"]
+                regions = await frame.evaluate("""() => Array.from(document.querySelectorAll('input, textarea')).slice(0, 32).flatMap(e => {
+                  if (e.disabled || e.readOnly || (e.tagName === 'INPUT' && !['text','password','email','tel','number','search','url'].includes(e.type))) return [];
+                  const r = e.getBoundingClientRect();
+                  if (r.width <= 0 || r.height <= 0) return [];
+                  return [{x:r.x, y:r.y, width:r.width, height:r.height, type:e.type === 'textarea' ? 'text' : e.type}];
+                })""")
+                for region in regions:
+                    region["x"] = round(region["x"] + offset_x, 2)
+                    region["y"] = round(region["y"] + offset_y, 2)
+                    region["width"] = round(region["width"], 2)
+                    region["height"] = round(region["height"], 2)
+                    if (region["x"] >= 0 and region["y"] >= 0 and
+                            region["x"] < self._remote_viewport_width and region["y"] < self._remote_viewport_height):
+                        fields.append(region)
+            except PlaywrightError:
+                continue
+        return {
+            "pageId": self._remote_page_id(page),
+            "inputType": await self._remote_input_type(page),
+            "tabs": [{"id": self._remote_page_id(p), "host": urlparse(p.url).hostname or ""} for p in visible_pages],
+            "fields": fields[:24],
+        }
+
     def _active_remote_page(self) -> Any | None:
         context = self._context
         if context is None:
             return None
         pages = [page for page in context.pages if not page.is_closed()]
-        return pages[-1] if pages else None
+        if self._selected_remote_page in pages:
+            return self._selected_remote_page
+        self._selected_remote_page = pages[-1] if pages else None
+        return self._selected_remote_page
+
+    def _load_session(self) -> dict[str, Any]:
+        try:
+            payload = json.loads(self.session_path.read_text(encoding="utf-8"))
+            if isinstance(payload, dict) and isinstance(payload.get("cookies"), list):
+                return payload
+        except (OSError, ValueError):
+            pass
+        return {}
+
+    async def _save_session(self, context: Any) -> None:
+        # Persistent cookies/local storage already live in the browser profile. Chromium drops session cookies
+        # on a fresh launch, so checkpoint those explicitly after the user completes authentication.
+        cookies = [cookie for cookie in await context.cookies() if cookie.get("expires", -1) == -1]
+        self.data_dir.mkdir(parents=True, exist_ok=True)
+        payload = {"saved_at": datetime.now(timezone.utc).isoformat(), "cookies": cookies}
+        self._write_private_json(self.session_path, payload)
+
+    @staticmethod
+    def _write_private_json(path: Path, payload: dict[str, Any]) -> None:
+        temporary = path.with_suffix(".tmp")
+        fd = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as handle:
+                json.dump(payload, handle)
+                handle.flush()
+                os.fsync(handle.fileno())
+            os.replace(temporary, path)
+        finally:
+            temporary.unlink(missing_ok=True)
 
     def _live_login_processes(self) -> list[subprocess.Popen[Any]]:
         live = [process for process in self._login_processes if process.poll() is None]
@@ -685,14 +864,7 @@ class AuthSessionManager:
 
     def _save_settings(self) -> None:
         self.data_dir.mkdir(parents=True, exist_ok=True)
-        self.settings_path.write_text(
-            json.dumps(
-                {"enabled_platforms": sorted(self.enabled_platforms)},
-                ensure_ascii=False,
-                indent=2,
-            ),
-            encoding="utf-8",
-        )
+        self._write_private_json(self.settings_path, {"enabled_platforms": sorted(self.enabled_platforms)})
 
     @staticmethod
     def _validate_platform(platform: str) -> None:

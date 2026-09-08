@@ -51,6 +51,14 @@ export function RemoteCollectorAuthBrowser({
   const [error, setError] = useState<string>();
   const frameUrlRef = useRef<string>();
   const textInputRef = useRef<HTMLInputElement>(null);
+  const [showText, setShowText] = useState(false);
+  const [inputBusy, setInputBusy] = useState(false);
+  const [viewport, setViewport] = useState<{ top: number; height: number }>();
+  const inputTargetRef = useRef<string>();
+  const mountedRef = useRef(true);
+  const refreshRef = useRef<() => void>();
+  const frameContainerRef = useRef<HTMLDivElement>(null);
+  const [frameSpace, setFrameSpace] = useState<{ width: number; height: number }>();
   const pointerRef = useRef<{
     frameX: number;
     frameY: number;
@@ -62,10 +70,40 @@ export function RemoteCollectorAuthBrowser({
   const actionQueueRef = useRef<Promise<void>>(Promise.resolve());
 
   useEffect(() => {
+    const container = frameContainerRef.current;
+    if (!container) return;
+    const observer = new ResizeObserver(([entry]) => {
+      if (entry) setFrameSpace({ width: entry.contentRect.width, height: entry.contentRect.height });
+    });
+    observer.observe(container);
+    return () => observer.disconnect();
+  }, []);
+
+  useEffect(() => {
+    const update = () => {
+      if (window.visualViewport)
+        setViewport({ top: window.visualViewport.offsetTop, height: window.visualViewport.height });
+    };
+    update();
+    window.visualViewport?.addEventListener('resize', update);
+    window.visualViewport?.addEventListener('scroll', update);
+    return () => {
+      window.visualViewport?.removeEventListener('resize', update);
+      window.visualViewport?.removeEventListener('scroll', update);
+    };
+  }, []);
+
+  useEffect(() => {
     const controller = new AbortController();
+    mountedRef.current = true;
     let stopped = false;
     let revision = 0;
     let nextDelay = REMOTE_BROWSER_POLL_MIN_MS;
+    let wake: (() => void) | undefined;
+    refreshRef.current = () => {
+      nextDelay = REMOTE_BROWSER_POLL_MIN_MS;
+      wake?.();
+    };
     const poll = async () => {
       while (!stopped) {
         if (document.visibilityState === 'hidden') {
@@ -74,6 +112,7 @@ export function RemoteCollectorAuthBrowser({
         }
         try {
           const nextFrame = await broker.authBrowserFrame(revision, controller.signal);
+          if (stopped) return;
           if (nextFrame) {
             revision = nextFrame.revision;
             const nextUrl = URL.createObjectURL(nextFrame.blob);
@@ -92,12 +131,25 @@ export function RemoteCollectorAuthBrowser({
           setError(cause instanceof Error ? cause.message : '로그인 화면을 불러오지 못했습니다.');
           nextDelay = REMOTE_BROWSER_POLL_MAX_MS;
         }
-        await new Promise((resolve) => globalThis.setTimeout(resolve, nextDelay));
+        await new Promise<void>((resolve) => {
+          const timer = globalThis.setTimeout(() => {
+            wake = undefined;
+            resolve();
+          }, nextDelay);
+          wake = () => {
+            globalThis.clearTimeout(timer);
+            wake = undefined;
+            resolve();
+          };
+        });
       }
     };
     void poll();
     return () => {
       stopped = true;
+      mountedRef.current = false;
+      wake?.();
+      refreshRef.current = undefined;
       controller.abort();
       if (frameUrlRef.current) URL.revokeObjectURL(frameUrlRef.current);
       frameUrlRef.current = undefined;
@@ -106,15 +158,24 @@ export function RemoteCollectorAuthBrowser({
   }, [broker]);
 
   const sendAction = (action: Parameters<WebNovelMetadataCollectorBroker['authBrowserAction']>[0]) => {
+    const boundAction = { ...action, pageId: action.pageId ?? frame?.pageId };
     const task = actionQueueRef.current.then(async () => {
+      if (!mountedRef.current) return false;
       try {
-        await broker.authBrowserAction(action);
+        await broker.authBrowserAction(boundAction);
         setError(undefined);
+        refreshRef.current?.();
+        return true;
       } catch (cause) {
         setError(cause instanceof Error ? cause.message : '브라우저 입력을 전달하지 못했습니다.');
+        refreshRef.current?.();
+        return false;
       }
     });
-    actionQueueRef.current = task.catch(() => undefined);
+    actionQueueRef.current = task.then(
+      () => undefined,
+      () => undefined,
+    );
     return task;
   };
 
@@ -131,6 +192,7 @@ export function RemoteCollectorAuthBrowser({
 
   const pointerDownFrame = (event: PointerEvent<HTMLDivElement>) => {
     if (!frame) return;
+    if (event.pointerType !== 'mouse') event.preventDefault();
     const bounds = event.currentTarget.getBoundingClientRect();
     if (bounds.width <= 0 || bounds.height <= 0) return;
     event.currentTarget.focus();
@@ -161,6 +223,24 @@ export function RemoteCollectorAuthBrowser({
     }
     if (pointer && !pointer.moved) {
       void sendAction({ action: 'click', x: pointer.frameX, y: pointer.frameY });
+      const field = frame?.fields?.find(
+        (field) =>
+          pointer.frameX >= field.x &&
+          pointer.frameX <= field.x + field.width &&
+          pointer.frameY >= field.y &&
+          pointer.frameY <= field.y + field.height,
+      );
+      if (field && event.pointerType !== 'mouse' && textInputRef.current) {
+        // Focus synchronously in the touch gesture so mobile browsers open their native keyboard.
+        const input = textInputRef.current;
+        input.value = '';
+        input.type = field.type === 'password' ? 'password' : 'text';
+        input.inputMode =
+          field.type === 'tel' || field.type === 'number' ? 'numeric' : field.type === 'email' ? 'email' : 'text';
+        setShowText(field.type !== 'password');
+        inputTargetRef.current = frame?.pageId;
+        input.focus({ preventScroll: true });
+      }
     }
   };
 
@@ -182,15 +262,24 @@ export function RemoteCollectorAuthBrowser({
 
   const sendText = (event: FormEvent) => {
     event.preventDefault();
+    if (inputBusy) return;
     const input = textInputRef.current;
     const text = input?.value ?? '';
     if (!text) return;
-    if (input) input.value = '';
-    void sendAction({ action: 'text', text });
+    setInputBusy(true);
+    void sendAction({ action: frame?.pageId ? 'fill' : 'text', text, pageId: inputTargetRef.current })
+      .then((success) => {
+        if (success && input) input.value = '';
+      })
+      .finally(() => setInputBusy(false));
   };
 
   return (
-    <div className="collector-auth-browser-backdrop" role="presentation">
+    <div
+      className="collector-auth-browser-backdrop"
+      role="presentation"
+      style={viewport ? { top: viewport.top, height: viewport.height, bottom: 'auto' } : undefined}
+    >
       <section
         className="collector-auth-browser-dialog"
         role="dialog"
@@ -230,49 +319,125 @@ export function RemoteCollectorAuthBrowser({
           </div>
         </header>
 
-        <div
-          className="collector-auth-browser-frame"
-          style={frame ? { aspectRatio: `${frame.width} / ${frame.height}` } : undefined}
-          role="application"
-          aria-label="원격 로그인 브라우저"
-          tabIndex={0}
-          onPointerDown={pointerDownFrame}
-          onPointerMove={pointerMoveFrame}
-          onPointerUp={pointerUpFrame}
-          onPointerCancel={() => {
-            pointerRef.current = undefined;
-          }}
-          onKeyDown={keyFrame}
-          onPaste={(event) => {
-            const text = event.clipboardData.getData('text');
-            if (!text) return;
-            event.preventDefault();
-            void sendAction({ action: 'text', text });
-          }}
-          onWheel={wheelFrame}
-        >
-          {frameUrl ? (
-            <img src={frameUrl} alt="" draggable={false} />
-          ) : (
-            <div className="collector-auth-browser-loading" role="status">
-              <LoaderCircle className="spin" size={22} />
-            </div>
-          )}
+        {Boolean(frame?.tabs?.length) && (
+          <div className="collector-auth-browser-tabs">
+            <select
+              aria-label="로그인 창 선택"
+              value={frame?.pageId}
+              onChange={(event) => void sendAction({ action: 'select_tab', pageId: event.target.value })}
+            >
+              {frame?.tabs?.map((tab, index) => (
+                <option key={tab.id} value={tab.id}>
+                  {index + 1}. {tab.host || '새 창'}
+                </option>
+              ))}
+            </select>
+            {(frame?.tabs?.length ?? 0) > 1 && (
+              <button className="ghost-btn" type="button" onClick={() => void sendAction({ action: 'close_tab' })}>
+                현재 창 닫기
+              </button>
+            )}
+          </div>
+        )}
+
+        <div className="collector-auth-browser-scroll" ref={frameContainerRef}>
+          <div
+            className="collector-auth-browser-frame"
+            style={
+              frame
+                ? {
+                    aspectRatio: `${frame.width} / ${frame.height}`,
+                    width: frameSpace
+                      ? Math.min(frameSpace.width, (frameSpace.height * frame.width) / frame.height)
+                      : undefined,
+                  }
+                : undefined
+            }
+            role="application"
+            aria-label="원격 로그인 브라우저"
+            tabIndex={0}
+            onPointerDown={pointerDownFrame}
+            onPointerMove={pointerMoveFrame}
+            onPointerUp={pointerUpFrame}
+            onPointerCancel={() => {
+              pointerRef.current = undefined;
+            }}
+            onKeyDown={keyFrame}
+            onPaste={(event) => {
+              const text = event.clipboardData.getData('text');
+              if (!text) return;
+              event.preventDefault();
+              void sendAction({ action: 'text', text });
+            }}
+            onWheel={wheelFrame}
+          >
+            {frameUrl ? (
+              <img src={frameUrl} alt="" draggable={false} />
+            ) : (
+              <div className="collector-auth-browser-loading" role="status">
+                <LoaderCircle className="spin" size={22} />
+              </div>
+            )}
+          </div>
         </div>
 
         <form className="collector-auth-browser-input" onSubmit={sendText}>
           <input
             ref={textInputRef}
-            type="password"
+            type={showText ? 'text' : 'password'}
+            inputMode={
+              frame?.inputType === 'tel' || frame?.inputType === 'number'
+                ? 'numeric'
+                : frame?.inputType === 'email'
+                  ? 'email'
+                  : 'text'
+            }
             autoComplete="off"
+            autoCapitalize="none"
+            autoCorrect="off"
+            spellCheck={false}
+            disabled={inputBusy}
+            onFocus={() => {
+              inputTargetRef.current = frame?.pageId;
+            }}
             maxLength={2048}
             aria-label="선택한 로그인 입력칸에 입력"
             placeholder="선택한 칸에 입력"
           />
-          <button className="ghost-btn" type="submit">
+          <button
+            className="ghost-btn"
+            type="button"
+            aria-label={showText ? '입력 내용 숨기기' : '입력 내용 보기'}
+            aria-pressed={showText}
+            onClick={() => setShowText((shown) => !shown)}
+          >
+            {showText ? '숨김' : '보기'}
+          </button>
+          <button className="ghost-btn" type="submit" disabled={inputBusy}>
             입력
           </button>
         </form>
+        <div className="collector-auth-browser-keys">
+          <span>화면의 입력칸을 선택한 뒤 입력하세요.</span>
+          {frame?.pageId && (
+            <button className="ghost-btn" type="button" onClick={() => void sendAction({ action: 'fill', text: '' })}>
+              칸 비우기
+            </button>
+          )}
+          <button
+            className="ghost-btn"
+            type="button"
+            onClick={() => void sendAction({ action: 'key', key: 'Backspace' })}
+          >
+            한 글자 삭제
+          </button>
+          <button className="ghost-btn" type="button" onClick={() => void sendAction({ action: 'key', key: 'Tab' })}>
+            다음 칸
+          </button>
+          <button className="ghost-btn" type="button" onClick={() => void sendAction({ action: 'key', key: 'Enter' })}>
+            확인 ↵
+          </button>
+        </div>
 
         {error && (
           <p className="field-help warning" role="alert">
@@ -284,7 +449,16 @@ export function RemoteCollectorAuthBrowser({
           <button className="ghost-btn danger" type="button" disabled={busy} onClick={onCancel}>
             취소
           </button>
-          <button className="primary-btn" type="button" disabled={busy || !frame} onClick={onComplete}>
+          <button
+            className="primary-btn"
+            type="button"
+            disabled={busy || inputBusy || !frame}
+            onClick={() =>
+              void actionQueueRef.current.then(() => {
+                if (mountedRef.current) onComplete();
+              })
+            }
+          >
             {busy && <LoaderCircle size={15} className="spin" />} 로그인 완료
           </button>
         </footer>

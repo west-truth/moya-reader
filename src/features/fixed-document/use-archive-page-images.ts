@@ -3,13 +3,12 @@ import type { Chapter } from '../../domain/types';
 import type { BookAssetRepository } from '../../repositories/book-asset-repository';
 import type { ReaderRepository } from '../../repositories/reader-repository';
 import { ArchivePageLoader, type ArchivePageSnapshot } from './archive-page-loader';
+import { archivePageSourceIdentity } from './archive-thumbnail';
 
 const EMPTY_SNAPSHOT: ArchivePageSnapshot = { pages: new Map(), errors: new Map() };
 
 function pageIdentity(chapter: Chapter | undefined, sourceRevision: string): string {
-  return `${chapter?.id ?? 'missing'}:${
-    chapter?.documentSectionSourceContentHash ?? chapter?.textHash ?? sourceRevision
-  }`;
+  return `${chapter?.id ?? 'missing'}:${archivePageSourceIdentity(chapter, sourceRevision)}`;
 }
 
 export function useArchivePageImages(input: {

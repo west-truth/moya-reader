@@ -678,11 +678,13 @@
 }
 
 .collector-auth-browser-dialog {
-  display: grid;
+  display: flex;
+  flex-direction: column;
   width: min(1120px, 100%);
-  max-height: calc(100dvh - 36px);
+  height: min(960px, 100%);
+  max-height: 100%;
   padding: 12px;
-  overflow: auto;
+  overflow: hidden;
   background: var(--app-surface);
   border: 1px solid var(--border-strong);
   border-radius: var(--radius-panel);
@@ -712,7 +714,8 @@
 .collector-auth-browser-frame {
   position: relative;
   width: 100%;
-  min-height: 240px;
+  aspect-ratio: 16 / 10;
+  flex-shrink: 0;
   overflow: hidden;
   background: #fff;
   border: 1px solid var(--border-strong);
@@ -746,12 +749,55 @@
 .collector-auth-browser-input input {
   flex: 1 1 auto;
   min-width: 0;
-  min-height: 38px;
+  min-height: 44px;
+  font-size: 16px;
   padding: 0 10px;
   color: var(--text);
   background: var(--app-input);
   border: 1px solid var(--border);
   border-radius: var(--radius-control);
+}
+
+.collector-auth-browser-scroll {
+  display: flex;
+  justify-content: center;
+  align-items: flex-start;
+  min-height: 0;
+  overflow: auto;
+  flex: 1 1 auto;
+  overscroll-behavior: contain;
+}
+
+.collector-auth-browser-dialog > :not(.collector-auth-browser-scroll) {
+  flex-shrink: 0;
+}
+
+.collector-auth-browser-tabs,
+.collector-auth-browser-keys {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+
+.collector-auth-browser-tabs select {
+  flex: 1 1 120px;
+  min-width: 0;
+  max-width: 100%;
+  min-height: 40px;
+  color: var(--text);
+  background: var(--app-input);
+}
+
+.collector-auth-browser-keys span {
+  width: 100%;
+  color: var(--text-2);
+  font-size: 0.72rem;
+}
+
+.collector-auth-browser-keys button {
+  min-height: 36px;
+  flex: 1 1 auto;
 }
 
 .webnovel-metadata-extension-settings.is-disabled .extension-detail-section {
@@ -1755,14 +1801,14 @@
 
   .collector-auth-browser-dialog {
     width: 100%;
-    max-height: 100dvh;
-    min-height: 100dvh;
+    height: 100%;
+    min-height: 0;
     border: 0;
     border-radius: 0;
   }
 
   .collector-auth-browser-frame {
-    min-height: 280px;
+    min-height: 0;
   }
 
   .collector-auth-browser-dialog > footer > button {

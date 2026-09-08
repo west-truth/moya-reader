@@ -1,4 +1,10 @@
 import { persistentId128 } from '@noveldesk/text-core/hash';
+import type { Chapter } from '../../domain/types';
+
+export function archivePageSourceIdentity(chapter: Chapter | undefined, sourceRevision: string): string {
+  // Ordinary CBZ textHash describes the page title, not its image bytes.
+  return chapter?.documentSectionSourceContentHash ?? sourceRevision;
+}
 
 export const ARCHIVE_THUMBNAIL_VERSION = 'browser-image-thumbnail-v1';
 export const ARCHIVE_THUMBNAIL_MAX_WIDTH = 112;

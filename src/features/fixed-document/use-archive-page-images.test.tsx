@@ -69,7 +69,7 @@ describe('archive image hook lifecycle', () => {
     });
   });
 
-  it('uses the stable chapter hash for legacy pages without a section content hash', async () => {
+  it('reloads legacy images when the source changes even with identical page title hashes', async () => {
     let url = 0;
     vi.spyOn(URL, 'createObjectURL').mockImplementation(() => `blob:legacy-page-${++url}`);
     vi.spyOn(URL, 'revokeObjectURL').mockImplementation(() => {});
@@ -77,7 +77,7 @@ describe('archive image hook lifecycle', () => {
     const getEmbeddedResource = vi.fn(async () => ({ blob: new Blob(['image']) }));
     const repository = { getParagraphPage } as unknown as ReaderRepository;
     const assets = { getEmbeddedResource } as unknown as BookAssetRepository;
-    let chapters = [testChapter(1, { textHash: 'legacy-page-original' })];
+    const chapters = [testChapter(1, { textHash: 'legacy-page-original' })];
     let revision = 'source-1';
     let snapshot!: ArchivePageSnapshot;
     function Harness() {
@@ -99,17 +99,11 @@ describe('archive image hook lifecycle', () => {
     });
     const original = snapshot.pages.get(0)?.url;
 
-    chapters = [...chapters, testChapter(2, { textHash: 'legacy-page-next' })];
-    revision = 'source-after-append';
-    await act(async () => renderer.update(<Harness />));
-    expect(snapshot.pages.get(0)?.url).toBe(original);
-    expect(getEmbeddedResource).toHaveBeenCalledOnce();
-
-    chapters = [testChapter(1, { textHash: 'legacy-page-replaced' }), chapters[1]!];
     revision = 'source-after-replacement';
     await act(async () => renderer.update(<Harness />));
     expect(snapshot.pages.get(0)?.url).not.toBe(original);
     expect(getEmbeddedResource).toHaveBeenCalledTimes(2);
+    expect(URL.revokeObjectURL).toHaveBeenCalledWith(original);
     await act(async () => renderer.unmount());
   });
 

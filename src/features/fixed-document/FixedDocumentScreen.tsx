@@ -83,6 +83,7 @@ import {
 } from './ocr/ocr-language-model-cache';
 import {
   archiveFullImageWindow,
+  archivePageSourceIdentity,
   archiveThumbnailFingerprint,
   archiveThumbnailPageHash,
   renderArchiveThumbnail,
@@ -2649,13 +2650,10 @@ export default function FixedDocumentScreen({
                       ) : novel.format === 'image_archive' ? (
                         <ArchiveThumbnailPreview
                           bookId={novel.id}
-                          sourceIdentity={
-                            chapter.documentSectionSourceContentHash ??
-                            chapter.textHash ??
-                            novel.activeContentRevisionId ??
-                            novel.sourceContentHash ??
-                            novel.rawTextHash
-                          }
+                          sourceIdentity={archivePageSourceIdentity(
+                            chapter,
+                            novel.activeContentRevisionId ?? novel.sourceContentHash ?? novel.rawTextHash,
+                          )}
                           chapterId={chapter.id}
                           pageIndex={index}
                           repository={repository}

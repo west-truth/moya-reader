@@ -174,6 +174,7 @@ describe('webnovel metadata collector gateway', () => {
           'X-Moya-Frame-Revision': '7',
           'X-Moya-Frame-Width': '1280',
           'X-Moya-Frame-Height': '800',
+          'X-Moya-Browser-Metadata': '{"pageId":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","tabs":[]}',
         },
       });
     });
@@ -195,6 +196,9 @@ describe('webnovel metadata collector gateway', () => {
     expect(frameResponse.headers['x-moya-frame-revision']).toBe('7');
     expect(frameResponse.headers['x-moya-frame-width']).toBe('1280');
     expect(frameResponse.headers['x-moya-frame-height']).toBe('800');
+    expect(frameResponse.headers['x-moya-browser-metadata']).toBe(
+      '{"pageId":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","tabs":[]}',
+    );
     expect(actionResponse.statusCode).toBe(204);
     for (const [, init] of fetchImpl.mock.calls) {
       expect(new Headers(init?.headers).has('cookie')).toBe(false);

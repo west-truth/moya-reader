@@ -2,12 +2,20 @@ import { describe, expect, it } from 'vitest';
 import { comicPageAssetId } from '@noveldesk/fixed-document-core/comic-source';
 import {
   archiveFullImageWindow,
+  archivePageSourceIdentity,
   archiveThumbnailDimensions,
   archiveThumbnailFingerprint,
   archiveThumbnailPageHash,
 } from './archive-thumbnail';
+import { testChapter } from '../book-workspace/book-workspace-test-fixtures';
 
 describe('archive thumbnail policy', () => {
+  it('invalidates a legacy thumbnail source despite an unchanged page title hash', () => {
+    const page = testChapter(1, { textHash: 'same-title' });
+    expect(archivePageSourceIdentity(page, 'old')).not.toBe(archivePageSourceIdentity(page, 'replacement'));
+    const episode = { ...page, documentSectionSourceContentHash: 'immutable-episode' };
+    expect(archivePageSourceIdentity(episode, 'old')).toBe(archivePageSourceIdentity(episode, 'appended'));
+  });
   it('fits portrait and landscape images inside the rail box', () => {
     expect(archiveThumbnailDimensions(1_000, 2_000)).toEqual({ width: 71, height: 142 });
     expect(archiveThumbnailDimensions(2_000, 1_000)).toEqual({ width: 112, height: 56 });

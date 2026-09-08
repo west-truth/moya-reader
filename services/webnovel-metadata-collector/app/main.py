@@ -1,5 +1,6 @@
 from contextlib import asynccontextmanager
 import hmac
+import json
 import os
 from pathlib import Path
 from urllib.parse import urlparse
@@ -96,7 +97,8 @@ app.add_middleware(
     allow_credentials=False,
     allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
     allow_headers=["Content-Type", SESSION_TOKEN_HEADER],
-    expose_headers=["Content-Length", "Content-Type", "Cache-Control"],
+    expose_headers=["Content-Length", "Content-Type", "Cache-Control", "X-Moya-Frame-Revision",
+                    "X-Moya-Frame-Width", "X-Moya-Frame-Height", "X-Moya-Browser-Metadata"],
 )
 web_root = Path(__file__).parent / "web"
 
@@ -265,6 +267,8 @@ async def update_auth_platform(
     _require_local_request(request)
     _require_auth_platform(platform)
     if payload.enabled:
+        if auth_sessions.remote_auth and auth_sessions.status().get("active_platform") not in {None, platform}:
+            raise HTTPException(status_code=409, detail="현재 로그인 중인 플랫폼에서 완료해 주세요.")
         try:
             await auth_sessions.finish_login()
         except AuthFeatureUnavailable as exc:
@@ -281,7 +285,7 @@ async def close_auth_browser(
     _require_local_request(request)
     if payload.requested:
         try:
-            await auth_sessions.close_browser()
+            await auth_sessions.close_login()
         except AuthFeatureUnavailable as exc:
             raise HTTPException(status_code=409, detail=str(exc)) from exc
     return AuthStatusResponse(**auth_sessions.status())
@@ -314,6 +318,7 @@ async def remote_auth_browser_frame(
             "X-Moya-Frame-Revision": str(frame["revision"]),
             "X-Moya-Frame-Width": str(frame["width"]),
             "X-Moya-Frame-Height": str(frame["height"]),
+            "X-Moya-Browser-Metadata": json.dumps(frame.get("metadata", {}), ensure_ascii=True, separators=(",", ":")),
         },
     )
 
@@ -332,6 +337,7 @@ async def remote_auth_browser_action(
             text=payload.text,
             key=payload.key,
             delta_y=payload.delta_y,
+            page_id=payload.page_id,
         )
     except AuthFeatureUnavailable as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
