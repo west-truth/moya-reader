@@ -56,6 +56,7 @@ export function useScrollChapterBoundary(input: {
   onNextChapterRef.current = input.onNextChapter;
 
   const setArmed = useCallback((next: boolean) => {
+    if (armedRef.current === next) return;
     armedRef.current = next;
     setArmedState(next);
   }, []);
@@ -105,11 +106,15 @@ export function useScrollChapterBoundary(input: {
   );
 
   const releasePull = useCallback(() => {
+    const content = input.contentRef.current;
+    // Scroll and pointercancel also arrive during ordinary native scrolling. Only release
+    // an actual boundary pull; a zero-distance transform still composites the entire chapter.
+    if (!content?.classList.contains('reader-boundary-motion') || content.classList.contains('is-boundary-release'))
+      return;
     window.clearTimeout(wheelReleaseTimerRef.current);
     window.clearTimeout(motionCleanupTimerRef.current);
     wheelReleaseTimerRef.current = undefined;
-    const content = input.contentRef.current;
-    if (!content || window.matchMedia?.('(prefers-reduced-motion: reduce)').matches) {
+    if (window.matchMedia?.('(prefers-reduced-motion: reduce)').matches) {
       clearPullMotion();
       return;
     }

@@ -1,5 +1,19 @@
 # 독서·가져오기 UX 검증
 
+## iPad 지속 스크롤 후속 교정 (2026-09-09)
+
+- 일반 scroll/pointercancel마다 전체 본문에 다음 화 당기기 복귀 transform을 적용하던 경로를 제거했다.
+  실제 당기기만 복귀하며, 모드 가시성 변경은 문단 높이 캐시를 보존한다. 행 등록 시 중복 동기 측정을 제거했다.
+- 다양한 길이의 문단을 위로 스크롤하는 60프레임 검사에서 기존 코드의 본문 속성 변경 123회를 재현했다.
+  수정 후 iPad WebKit 834×1194와 Android 프로필 Chromium 393×727에서 속성 변경과 transform 모두 0회,
+  전환 전후 문단 높이 보존, 제한된 가상 행 수를 확인했다.
+- 실행: `node scripts/performance/reader-position-smoke.mjs --scroll-stability-only`.
+  iPad는 `READER_UI_BROWSER_ENGINE=webkit`, Android 프로필은 `--android`를 사용한다.
+- Reader UX 85개 테스트, Edge 실제 Reader 위치·resize·완독 복원 검사, WebKit 자동 모드 전환,
+  WebKit/Edge 약한·강한 회차 경계 입력, 타입 검사와 Web 빌드를 통과했다.
+- 공통 Reader 변경은 Android에도 적용되며 Android 네이티브 코드는 변경하지 않았다. 합성 입력·device profile은
+  실제 iPad/Android 관성 스크롤이나 GPU 성능 검증이 아니다. 물리 기기에서의 체감 확인은 남아 있다.
+
 ## 텍스트 소스·회차 목록·동기화 변경 검증 (2026-09-05)
 
 - 공개용 `pnpm check:web-server` 통과: 90개 Vitest 파일에서 738개 통과/3개 생략, 전체 타입 검사,

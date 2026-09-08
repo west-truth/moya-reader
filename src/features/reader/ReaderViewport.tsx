@@ -253,11 +253,9 @@ function VirtualizedReaderViewportComponent({
   });
   const measureVirtualRow = useCallback(
     (element: Element | null) => {
+      // Let the virtualizer defer row measurement during native scrolling. An immediate
+      // resizeItem here bypasses that scheduling and forces layout for every mounted row.
       virtualizer.measureElement(element);
-      if (!element) return;
-      const index = Number((element as HTMLElement).dataset.index);
-      if (!Number.isInteger(index)) return;
-      virtualizer.resizeItem(index, Math.ceil(element.getBoundingClientRect().height));
     },
     [virtualizer],
   );
@@ -540,7 +538,7 @@ function VirtualizedReaderViewportComponent({
       const targetIndex = clamp(anchor.blockIndex ?? 0, 0, Math.max(0, chapter.paragraphCount - 1));
       await pages.loadIndexes([targetIndex]);
       virtualizer.scrollToIndex(targetIndex, { align: 'start', behavior: 'auto' });
-      // The activation layout effect has already invalidated virtual sizes. Re-measuring every
+      // Retain measurements across flow switches. Re-measuring every
       // mounted row for up to 40 frames made this handoff visibly stall on iPad WebKit. Measure
       // the target row once, then apply at most two exact range corrections.
       const targetElement = () => {
@@ -589,18 +587,11 @@ function VirtualizedReaderViewportComponent({
   }, [apiRef, chapter.id, onApiReady]);
 
   useLayoutEffect(() => {
-    if (!isActive) return;
+    // Both flow layers stay mounted at the same width. A visibility switch is not a layout
+    // change: clearing sizes here makes upward scrolling rediscover every previous row.
     virtualizer.measure();
     measureMountedRows();
-  }, [
-    chapter.id,
-    isActive,
-    measureMountedRows,
-    settings.fontSize,
-    settings.lineHeight,
-    settings.paragraphSpacing,
-    virtualizer,
-  ]);
+  }, [chapter.id, measureMountedRows, settings.fontSize, settings.lineHeight, settings.paragraphSpacing, virtualizer]);
 
   useLayoutEffect(() => {
     const documentElement = documentRef.current;
