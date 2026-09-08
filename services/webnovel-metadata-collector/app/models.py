@@ -1,7 +1,7 @@
 from datetime import datetime
 from typing import Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, SecretStr
 
 
 NovelStatus = Literal["ongoing", "completed", "hiatus", "unknown"]
@@ -76,6 +76,15 @@ class AuthPlatformUpdate(BaseModel):
     enabled: bool
 
 
+class NovelpiaCredentialsRequest(BaseModel):
+    email: str = Field(min_length=3, max_length=320)
+    password: SecretStr = Field(min_length=1, max_length=512)
+
+
+class NovelpiaLoginKeyRequest(BaseModel):
+    login_key: SecretStr = Field(min_length=40, max_length=256)
+
+
 class AuthActionRequest(BaseModel):
     requested: bool = True
     viewport_width: int | None = Field(default=None, ge=360, le=1280)
@@ -90,6 +99,7 @@ class AuthStatusResponse(BaseModel):
     last_error: str | None = None
     session_saved_at: str | None = None
     active_platform: str | None = None
+    remembered_credential_platforms: list[str] = Field(default_factory=list)
 
 
 class RemoteBrowserAction(BaseModel):

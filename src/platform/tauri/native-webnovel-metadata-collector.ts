@@ -89,6 +89,14 @@ export class NativeWebNovelMetadataCollectorClient implements WebNovelMetadataCo
     return this.client().then((client) => client.setAuthPlatformEnabled(platform, enabled, signal));
   }
 
+  configureNovelpiaCredentials(email: string, password: string, signal?: AbortSignal) {
+    return this.client().then((client) => client.configureNovelpiaCredentials(email, password, signal));
+  }
+
+  configureNovelpiaLoginKey(loginKey: string, signal?: AbortSignal) {
+    return this.client().then((client) => client.configureNovelpiaLoginKey(loginKey, signal));
+  }
+
   closeAuthBrowser(signal?: AbortSignal) {
     return this.client().then((client) => client.closeAuthBrowser(signal));
   }

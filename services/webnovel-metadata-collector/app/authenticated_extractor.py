@@ -31,7 +31,7 @@ class AuthenticatedExtractor(BaseExtractor):
             return await self.extractor.search_adult(query)
 
         if isinstance(self.extractor, NovelpiaExtractor):
-            payload = await self.sessions.fetch_json(
+            payload = await self.sessions.fetch_novelpia_json(
                 self.extractor.search_url,
                 params=self.extractor.search_params(query, novel_age=19),
                 headers={
@@ -97,11 +97,18 @@ class AuthenticatedExtractor(BaseExtractor):
                 self.extractor.parse_detail_payload(overview, about, candidate)
             )
 
-        html = await self.sessions.fetch_text(
-            candidate.source_url,
-            headers={"Accept": "text/html,application/xhtml+xml"},
-            referer=candidate.source_url,
-        )
+        if isinstance(self.extractor, NovelpiaExtractor):
+            html = await self.sessions.fetch_novelpia_text(
+                candidate.source_url,
+                headers={"Accept": "text/html,application/xhtml+xml"},
+                referer=candidate.source_url,
+            )
+        else:
+            html = await self.sessions.fetch_text(
+                candidate.source_url,
+                headers={"Accept": "text/html,application/xhtml+xml"},
+                referer=candidate.source_url,
+            )
         if isinstance(self.extractor, NaverSeriesExtractor):
             return self._with_adult_tag(
                 self.extractor.parse_detail_html(html, candidate)

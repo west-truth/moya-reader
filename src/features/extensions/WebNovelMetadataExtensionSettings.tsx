@@ -15,6 +15,7 @@ import {
 } from '../../services/webnovel-metadata-collector-client';
 import type { WebNovelMetadataCollectorBroker } from '../../services/webnovel-metadata-collector-broker';
 import type { BookEnrichmentAutomationController } from '../book-enrichment/useBookEnrichmentAutomation';
+import { NovelpiaAuthSettings } from './NovelpiaAuthSettings';
 import { RemoteCollectorAuthBrowser } from './RemoteCollectorAuthBrowser';
 
 const platformLabels: Record<WebNovelMetadataCollectorAuthPlatform, string> = {
@@ -64,6 +65,8 @@ export function WebNovelMetadataExtensionSettings({
   const connected = snapshot.connectionState === 'connected';
   const managed = broker.connectionMode === 'managed';
   const remoteAuthBrowser = snapshot.health?.capabilities.adultAuth.browserPresentation === 'remote_frame';
+  const directLoginPlatforms = snapshot.health?.capabilities.adultAuth.directLoginPlatforms ?? [];
+  const authPlatforms = snapshot.health?.capabilities.adultAuth.platforms ?? WEBNOVEL_METADATA_COLLECTOR_AUTH_PLATFORMS;
 
   useEffect(() => setEndpoint(snapshot.settings.endpoint), [snapshot.settings.endpoint]);
   useEffect(() => {
@@ -104,6 +107,10 @@ export function WebNovelMetadataExtensionSettings({
     run(`enable-${platform}`, () => broker.setAuthPlatformEnabled(platform, true));
   const disableLogin = (platform: WebNovelMetadataCollectorAuthPlatform) =>
     run(`disable-${platform}`, () => broker.setAuthPlatformEnabled(platform, false));
+  const connectNovelpiaCredentials = (email: string, password: string) =>
+    run('novelpia-credentials', () => broker.configureNovelpiaCredentials(email, password));
+  const connectNovelpiaLoginKey = (loginKey: string) =>
+    run('novelpia-login-key', () => broker.configureNovelpiaLoginKey(loginKey));
 
   const progress = automation.progress;
   const result = automation.result;
@@ -275,8 +282,8 @@ export function WebNovelMetadataExtensionSettings({
           <div>
             <strong id="webnovel-adult-heading">19세 작품 검색</strong>
             <span>
-              {remoteAuthBrowser
-                ? '로그인 연결을 서버에 보관해 다른 기기에서도 재사용합니다. 이 서버의 정보 수집기가 연결을 공유합니다.'
+              {remoteAuthBrowser || directLoginPlatforms.length > 0
+                ? '플랫폼에 맞는 로그인 연결을 서버에 보관해 다른 기기에서도 재사용합니다.'
                 : '전용 브라우저에서 직접 로그인·성인 인증하고, Moya에는 계정이나 쿠키를 전달하지 않습니다.'}
             </span>
           </div>
@@ -299,11 +306,26 @@ export function WebNovelMetadataExtensionSettings({
         {!connected ? (
           <p className="field-help">먼저 위에서 로컬 도우미 연결을 확인해 주세요.</p>
         ) : snapshot.health?.capabilities.adultAuth.available !== true ? (
-          <p className="field-help warning">현재 도우미 환경에서는 전용 로그인 브라우저를 사용할 수 없습니다.</p>
+          <p className="field-help warning">현재 도우미 환경에서는 인증 검색을 사용할 수 없습니다.</p>
         ) : (
           <div className="extension-auth-platforms">
-            {WEBNOVEL_METADATA_COLLECTOR_AUTH_PLATFORMS.map((platform) => {
+            {authPlatforms.map((platform) => {
               const enabled = snapshot.auth?.enabledPlatforms.includes(platform) === true;
+              if (platform === 'novelpia' && directLoginPlatforms.includes(platform)) {
+                return (
+                  <NovelpiaAuthSettings
+                    key={platform}
+                    enabled={enabled}
+                    credentialsRemembered={snapshot.auth?.rememberedCredentialPlatforms?.includes(platform) === true}
+                    busy={Boolean(operation)}
+                    disabled={!extensionEnabled || !connected}
+                    connectCredentials={connectNovelpiaCredentials}
+                    connectLoginKey={connectNovelpiaLoginKey}
+                    enableSaved={() => finishLogin(platform)}
+                    disable={() => disableLogin(platform)}
+                  />
+                );
+              }
               return (
                 <div key={platform} className="extension-auth-platform-row">
                   <div>

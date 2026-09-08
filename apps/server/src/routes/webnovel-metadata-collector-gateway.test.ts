@@ -24,7 +24,7 @@ async function appWith(fetchImpl: typeof fetch, configured = true, remoteAuth = 
   return app;
 }
 
-function healthBody(adultAvailable = true, browserPresentation = 'local_window') {
+function healthBody(adultAvailable = true, browserPresentation = 'local_window', directLoginPlatforms: string[] = []) {
   return {
     status: 'ok',
     service: 'webnovel-metadata-collector',
@@ -45,6 +45,7 @@ function healthBody(adultAvailable = true, browserPresentation = 'local_window')
         available: adultAvailable,
         browser_presentation: browserPresentation,
         platforms: ['naver_series', 'kakao_page', 'novelpia', 'ridi'],
+        direct_login_platforms: directLoginPlatforms,
       },
     },
   };
@@ -93,6 +94,23 @@ describe('webnovel metadata collector gateway', () => {
     });
   });
 
+  it('advertises direct LOGINKEY auth without requiring a browser presentation', async () => {
+    const fetchImpl = vi.fn<typeof fetch>(async () =>
+      Response.json(healthBody(true, 'local_window', ['novelpia']), {
+        headers: { 'Content-Type': 'application/json' },
+      }),
+    );
+    const app = await appWith(fetchImpl, true, true);
+
+    const response = await app.inject({ method: 'GET', url: '/api/integrations/webnovel-metadata/health' });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json().capabilities.adult_auth).toMatchObject({
+      available: true,
+      direct_login_platforms: ['novelpia'],
+    });
+  });
+
   it('keeps auth routes unavailable when the optional auth profile is not enabled', async () => {
     const fetchImpl = vi.fn<typeof fetch>();
     const app = await appWith(fetchImpl);
@@ -104,6 +122,34 @@ describe('webnovel metadata collector gateway', () => {
 
     expect(response.statusCode).toBe(503);
     expect(fetchImpl).not.toHaveBeenCalled();
+  });
+
+  it('forwards Novelpia credentials only in the bounded collector request body', async () => {
+    const authStatus = {
+      available: true,
+      browser_running: false,
+      browser_presentation: 'remote_frame',
+      enabled_platforms: ['novelpia'],
+      remembered_credential_platforms: ['novelpia'],
+    };
+    const fetchImpl = vi.fn<typeof fetch>(async () => Response.json(authStatus));
+    const app = await appWith(fetchImpl, true, true);
+    const payload = { email: 'reader@example.com', password: 'private-password' };
+
+    const response = await app.inject({
+      method: 'POST',
+      url: '/api/integrations/webnovel-metadata/api/v1/auth/novelpia/credentials',
+      headers: { cookie: 'moya_session=private', authorization: 'Bearer private' },
+      payload,
+    });
+
+    expect(response.statusCode).toBe(200);
+    const [url, init] = fetchImpl.mock.calls[0] ?? [];
+    expect(String(url)).toBe('http://metadata-collector:8000/api/v1/auth/novelpia/credentials');
+    expect(JSON.parse(String(init?.body))).toEqual(payload);
+    expect(new Headers(init?.headers).has('cookie')).toBe(false);
+    expect(new Headers(init?.headers).has('authorization')).toBe(false);
+    expect(response.body).not.toContain('private-password');
   });
 
   it('forwards bounded batch JSON without browser cookies or authorization', async () => {

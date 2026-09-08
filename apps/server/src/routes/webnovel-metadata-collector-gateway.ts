@@ -77,7 +77,10 @@ function projectRemoteAdultAuth(body: Buffer, enabled: boolean): Buffer {
   }
   const adultAuthRecord = adultAuth as Record<string, unknown>;
   const presentation = adultAuthRecord.browser_presentation;
-  const available = enabled && adultAuthRecord.available === true && presentation === 'remote_frame';
+  const directLoginPlatforms = adultAuthRecord.direct_login_platforms;
+  const hasDirectLogin = Array.isArray(directLoginPlatforms) && directLoginPlatforms.length > 0;
+  const available =
+    enabled && adultAuthRecord.available === true && (presentation === 'remote_frame' || hasDirectLogin);
   return Buffer.from(
     JSON.stringify({
       ...record,
@@ -313,6 +316,48 @@ export async function registerWebNovelMetadataCollectorGateway(
         reply,
         baseUrl,
         path: `/api/v1/auth/${encodeURIComponent(request.params.platform)}`,
+        init: {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(request.body),
+        },
+        timeoutMs: AUTH_TIMEOUT_MS,
+        maximumBytes: AUTH_RESPONSE_LIMIT,
+        fetchImpl,
+      });
+    },
+  );
+
+  app.post(
+    `${GATEWAY_PREFIX}/api/v1/auth/novelpia/credentials`,
+    { bodyLimit: AUTH_ACTION_BODY_LIMIT },
+    async (request, reply) => {
+      if (!requireRemoteAuth(reply)) return reply;
+      return proxyCollectorRequest({
+        reply,
+        baseUrl,
+        path: '/api/v1/auth/novelpia/credentials',
+        init: {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(request.body),
+        },
+        timeoutMs: AUTH_TIMEOUT_MS,
+        maximumBytes: AUTH_RESPONSE_LIMIT,
+        fetchImpl,
+      });
+    },
+  );
+
+  app.put(
+    `${GATEWAY_PREFIX}/api/v1/auth/novelpia/login-key`,
+    { bodyLimit: AUTH_ACTION_BODY_LIMIT },
+    async (request, reply) => {
+      if (!requireRemoteAuth(reply)) return reply;
+      return proxyCollectorRequest({
+        reply,
+        baseUrl,
+        path: '/api/v1/auth/novelpia/login-key',
         init: {
           method: 'PUT',
           headers: { 'Content-Type': 'application/json' },

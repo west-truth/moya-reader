@@ -34,6 +34,7 @@ describe('WebNovelMetadataExtensionSettings', () => {
             available: true,
             browserPresentation: 'local_window' as const,
             platforms: ['naver_series', 'kakao_page', 'novelpia', 'ridi'] as const,
+            directLoginPlatforms: ['novelpia'] as const,
           },
         },
       },
@@ -42,6 +43,7 @@ describe('WebNovelMetadataExtensionSettings', () => {
         browserRunning: false,
         browserPresentation: 'local_window' as const,
         enabledPlatforms: [],
+        rememberedCredentialPlatforms: [],
       },
     };
     const broker = {
@@ -52,6 +54,8 @@ describe('WebNovelMetadataExtensionSettings', () => {
       connect: vi.fn(),
       openAuthBrowser: vi.fn(),
       setAuthPlatformEnabled: vi.fn(),
+      configureNovelpiaCredentials: vi.fn(),
+      configureNovelpiaLoginKey: vi.fn(),
       closeAuthBrowser: vi.fn(),
       clearAuthSession: vi.fn(),
       refreshAuthStatus: vi.fn(),
@@ -78,8 +82,10 @@ describe('WebNovelMetadataExtensionSettings', () => {
     expect(markup).toContain('전체 라이브러리 자동 채우기');
     expect(markup).toContain('부족한 정보 자동 채우기');
     expect(markup).toContain('19세 검색 결과 포함');
+    expect(markup).toContain('노벨피아');
+    expect(markup).toContain('로그인 설정');
     expect(markup).toContain('로그인 완료·사용');
-    expect(markup).toContain('Moya에는 계정이나 쿠키를 전달하지 않습니다.');
+    expect(markup).toContain('로그인 연결을 서버에 보관');
     expect(markup).toContain('검색할 작품 제목과 작가명이 전송됩니다.');
   });
 
@@ -191,7 +197,7 @@ describe('WebNovelMetadataExtensionSettings', () => {
       />,
     );
 
-    expect(markup).toContain('서버의 전용 브라우저에서 로그인');
+    expect(markup).toContain('로그인 연결을 서버에 보관');
     expect(markup).toContain('네이버 시리즈');
     expect(markup).not.toContain('로그인 완료·사용');
     expect(markup).not.toContain('도우미 주소');

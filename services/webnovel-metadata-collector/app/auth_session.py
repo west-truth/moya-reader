@@ -13,6 +13,13 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import parse_qsl, urlencode, urlparse, urlunparse
 
+from app.novelpia_auth import (
+    NovelpiaAdultVerificationRequired,
+    NovelpiaAuthError,
+    NovelpiaAuthManager,
+    NovelpiaLoginRequired,
+)
+
 try:
     from playwright.async_api import Error as PlaywrightError
     from playwright.async_api import TimeoutError as PlaywrightTimeoutError
@@ -110,7 +117,10 @@ class AuthSessionManager:
         self.profile_dir = data_dir / "browser-profile"
         self.settings_path = data_dir / "settings.json"
         self.session_path = data_dir / "session-cookies.json"
+        self.novelpia_auth = NovelpiaAuthManager(data_dir / "novelpia-auth.json")
         self.enabled_platforms = self._load_enabled_platforms()
+        if not self.novelpia_auth.configured:
+            self.enabled_platforms.discard("novelpia")
         self._playwright: Any = None
         self._context: Any = None
         self._context_headless: bool | None = None
@@ -143,7 +153,18 @@ class AuthSessionManager:
 
     @property
     def available(self) -> bool:
+        # Novelpia uses a direct, persisted LOGINKEY flow and does not require Chromium.
+        return bool(self.supported_platforms)
+
+    @property
+    def browser_available(self) -> bool:
         return async_playwright is not None
+
+    @property
+    def supported_platforms(self) -> tuple[str, ...]:
+        if self.browser_available:
+            return AUTH_PLATFORMS
+        return ("novelpia",)
 
     @property
     def browser_presentation(self) -> str:
@@ -168,15 +189,100 @@ class AuthSessionManager:
         self._save_settings()
 
     def status(self) -> dict[str, Any]:
+        session_saved_at = self._load_session().get("saved_at")
+        if self.novelpia_auth.saved_at and (
+            not isinstance(session_saved_at, str)
+            or self.novelpia_auth.saved_at > session_saved_at
+        ):
+            session_saved_at = self.novelpia_auth.saved_at
         return {
             "available": self.available,
             "browser_running": self.browser_running,
             "browser_presentation": self.browser_presentation,
             "enabled_platforms": sorted(self.enabled_platforms),
             "last_error": self.last_error,
-            "session_saved_at": self._load_session().get("saved_at"),
+            "session_saved_at": session_saved_at,
             "active_platform": self._active_platform if self.browser_running else None,
+            "remembered_credential_platforms": (
+                ["novelpia"] if self.novelpia_auth.remembers_credentials else []
+            ),
         }
+
+    async def configure_novelpia_credentials(self, email: str, password: str) -> None:
+        try:
+            await self.novelpia_auth.configure_credentials(email, password)
+        except (NovelpiaAuthError, TimeoutError) as exc:
+            self.last_error = str(exc)
+            raise AuthFeatureUnavailable(str(exc)) from exc
+        self.enabled_platforms.add("novelpia")
+        self._save_settings()
+        self.last_error = None
+
+    async def configure_novelpia_login_key(self, login_key: str) -> None:
+        try:
+            await self.novelpia_auth.configure_login_key(login_key)
+        except (NovelpiaAuthError, TimeoutError) as exc:
+            self.last_error = str(exc)
+            raise AuthFeatureUnavailable(str(exc)) from exc
+        self.enabled_platforms.add("novelpia")
+        self._save_settings()
+        self.last_error = None
+
+    async def ensure_novelpia_enabled(self) -> None:
+        try:
+            await self.novelpia_auth.ensure_ready(force=True)
+        except (NovelpiaAuthError, TimeoutError) as exc:
+            self.enabled_platforms.discard("novelpia")
+            self._save_settings()
+            self.last_error = str(exc)
+            raise AuthFeatureUnavailable(str(exc)) from exc
+        self.enabled_platforms.add("novelpia")
+        self._save_settings()
+        self.last_error = None
+
+    async def fetch_novelpia_text(
+        self,
+        url: str,
+        *,
+        params: dict[str, Any] | None = None,
+        headers: dict[str, str] | None = None,
+        referer: str | None = None,
+    ) -> str:
+        try:
+            return await self.novelpia_auth.fetch_text(
+                url,
+                params=params,
+                headers=headers,
+                referer=referer,
+            )
+        except (NovelpiaAuthError, TimeoutError) as exc:
+            if isinstance(exc, (NovelpiaLoginRequired, NovelpiaAdultVerificationRequired)):
+                self.enabled_platforms.discard("novelpia")
+                self._save_settings()
+            self.last_error = str(exc)
+            raise AuthFeatureUnavailable(str(exc)) from exc
+
+    async def fetch_novelpia_json(
+        self,
+        url: str,
+        *,
+        params: dict[str, Any] | None = None,
+        headers: dict[str, str] | None = None,
+        referer: str | None = None,
+    ) -> dict[str, Any]:
+        try:
+            return await self.novelpia_auth.fetch_json(
+                url,
+                params=params,
+                headers=headers,
+                referer=referer,
+            )
+        except (NovelpiaAuthError, TimeoutError) as exc:
+            if isinstance(exc, (NovelpiaLoginRequired, NovelpiaAdultVerificationRequired)):
+                self.enabled_platforms.discard("novelpia")
+                self._save_settings()
+            self.last_error = str(exc)
+            raise AuthFeatureUnavailable(str(exc)) from exc
 
     async def open_login(
         self, platform: str, *, viewport_width: int | None = None, viewport_height: int | None = None,
@@ -192,7 +298,11 @@ class AuthSessionManager:
         viewport_height: int | None = None,
     ) -> None:
         self._validate_platform(platform)
-        if not self.available:
+        if platform == "novelpia":
+            raise AuthFeatureUnavailable(
+                "노벨피아는 이메일 또는 LOGINKEY로 연결해 주세요."
+            )
+        if not self.browser_available:
             raise AuthFeatureUnavailable(
                 "인증 검색을 사용하려면 `pip install -e .[auth]`가 필요합니다."
             )
@@ -432,6 +542,7 @@ class AuthSessionManager:
         self.enabled_platforms.clear()
         self.session_path.unlink(missing_ok=True)
         self.session_path.with_suffix(".tmp").unlink(missing_ok=True)
+        self.novelpia_auth.clear()
         self._save_settings()
 
     async def aclose(self) -> None:
@@ -439,6 +550,7 @@ class AuthSessionManager:
         if self._playwright is not None:
             await self._playwright.stop()
             self._playwright = None
+        await self.novelpia_auth.aclose()
 
     async def fetch_text(
         self,
