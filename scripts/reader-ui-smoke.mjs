@@ -28,6 +28,7 @@ const keepServer = hasArg('--keep-server');
 const skipScreenshots = hasArg('--no-screenshots');
 const initialContentOnly = hasArg('--initial-content-only');
 const chapterBoundaryOnly = hasArg('--chapter-boundary-only');
+const flowTransitionOnly = hasArg('--flow-transition-only');
 const mobileViewport = hasArg('--mobile');
 const tabletViewport = hasArg('--tablet');
 const novelFile = argValue('--novel-file', process.env.READER_UI_NOVEL_FILE ?? '');
@@ -689,14 +690,15 @@ async function runReaderSmoke() {
     await assertNoHorizontalOverflow(page, 'desktop reader');
     await screenshot(page, 'reader-ui-smoke-desktop');
 
-    await page.getByPlaceholder('본문 검색').fill('빗소리');
-    await page
-      .getByText(/현재 화 검색|결과/)
-      .first()
-      .waitFor({ state: 'visible', timeout: timeoutMs });
-    await assertNoHorizontalOverflow(page, 'desktop reader search');
-
-    await page.getByPlaceholder('본문 검색').fill('');
+    if (!tabletViewport && !mobileViewport) {
+      await page.getByPlaceholder('본문 검색').fill('빗소리');
+      await page
+        .getByText(/현재 화 검색|결과/)
+        .first()
+        .waitFor({ state: 'visible', timeout: timeoutMs });
+      await assertNoHorizontalOverflow(page, 'desktop reader search');
+      await page.getByPlaceholder('본문 검색').fill('');
+    }
     const chapterBeforePageIntent = await page.locator('.reader-title span').innerText();
     const lastFullyVisibleBlock = await page.evaluate(() => {
       const root = document.querySelector('[data-reader-layer="scroll"].is-active');
@@ -842,6 +844,7 @@ async function runReaderSmoke() {
         const scroll = document.querySelector('[data-reader-layer="scroll"]');
         samples.push({
           frame,
+          at: performance.now(),
           settling: screen?.getAttribute('data-flow-transition-settling') === 'true',
           pageVisibility: paginated ? getComputedStyle(paginated).visibility : 'missing',
           scrollVisibility: scroll ? getComputedStyle(scroll).visibility : 'missing',
@@ -857,14 +860,26 @@ async function runReaderSmoke() {
     await page.waitForTimeout(220);
     const flowSwapSamples = await page.evaluate(() => window.__readerFlowSwapSamples ?? []);
     const settlingSamples = flowSwapSamples.filter((sample) => sample.settling);
+    const firstSettlingSample = settlingSamples[0];
+    const firstRevealedSample = flowSwapSamples.find(
+      (sample) => !sample.settling && sample.scrollVisibility === 'visible',
+    );
+    const settlingDurationMs =
+      firstSettlingSample && firstRevealedSample ? firstRevealedSample.at - firstSettlingSample.at : Number.NaN;
+    log(`Page-to-scroll handoff settled in ${Math.round(settlingDurationMs)}ms / ${settlingSamples.length} frames`);
     const reverseSamples = flowSwapSamples
       .filter((sample) => !sample.settling && sample.scrollVisibility === 'visible')
       .map((sample) => sample.scrollTop);
     if (
       settlingSamples.length === 0 ||
+      settlingSamples.length > 8 ||
+      !Number.isFinite(settlingDurationMs) ||
+      settlingDurationMs > 180 ||
       settlingSamples.some((sample) => sample.pageVisibility !== 'visible' || sample.scrollVisibility !== 'hidden')
     ) {
-      throw new Error(`Page-to-scroll exposed an unsettled layer: ${JSON.stringify(flowSwapSamples)}`);
+      throw new Error(
+        `Page-to-scroll exposed or retained an unsettled layer: ${JSON.stringify({ settlingDurationMs, flowSwapSamples })}`,
+      );
     }
     if ((await page.locator('.reader-flow-pill').innerText()) !== '스크롤') {
       throw new Error('Wheel input did not return automatic mode to continuous scroll');
@@ -967,6 +982,10 @@ async function runReaderSmoke() {
     }
     await page.locator('.reader-paginated-root.is-active').dispatchEvent('wheel', { deltaY: 90 });
     await page.locator('[data-reader-layer="scroll"].is-active').waitFor({ state: 'visible', timeout: timeoutMs });
+    if (flowTransitionOnly) {
+      log(`Focused flow transition passed (${tabletViewport ? 'tablet' : mobileViewport ? 'mobile' : 'desktop'})`);
+      return;
+    }
 
     await page.getByRole('button', { name: '읽기 설정 열기' }).click();
     await page.getByRole('tab', { name: /^본문/u }).click();
