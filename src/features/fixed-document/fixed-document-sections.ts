@@ -7,6 +7,13 @@ export interface FixedDocumentSection {
   readonly pageCount: number;
 }
 
+export interface FixedDocumentSeekWindow {
+  readonly startPageIndex: number;
+  readonly pageCount: number;
+  readonly pageNumber: number;
+  readonly progressPercent: number;
+}
+
 function legacySectionTitle(chapterTitle: string): string | undefined {
   const match = /^(.*?)\s*·\s*[1-9][0-9]*페이지$/u.exec(chapterTitle.trim());
   return match?.[1]?.trim() || undefined;
@@ -55,4 +62,25 @@ export function projectFixedDocumentSections(
   });
 
   return sections.map(({ explicitId: _explicitId, titleKey: _titleKey, ...section }) => section);
+}
+
+export function fixedDocumentSeekWindow(
+  totalPages: number,
+  pageIndex: number,
+  section?: Pick<FixedDocumentSection, 'startPageIndex' | 'pageCount'>,
+): FixedDocumentSeekWindow {
+  const normalizedTotal = Math.max(0, Math.trunc(totalPages));
+  const requestedStart = Math.max(0, Math.trunc(section?.startPageIndex ?? 0));
+  const startPageIndex = Math.min(requestedStart, Math.max(0, normalizedTotal - 1));
+  const requestedCount = Math.max(0, Math.trunc(section?.pageCount ?? normalizedTotal));
+  const pageCount = Math.min(requestedCount, Math.max(0, normalizedTotal - startPageIndex));
+  const pageOffset = pageCount > 0 ? Math.min(pageCount - 1, Math.max(0, Math.trunc(pageIndex) - startPageIndex)) : 0;
+  const pageNumber = pageCount > 0 ? pageOffset + 1 : 1;
+
+  return {
+    startPageIndex,
+    pageCount,
+    pageNumber,
+    progressPercent: pageCount > 0 ? (pageNumber / pageCount) * 100 : 0,
+  };
 }

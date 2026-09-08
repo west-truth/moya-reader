@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { Chapter } from '../../domain/types';
-import { projectFixedDocumentSections } from './fixed-document-sections';
+import { fixedDocumentSeekWindow, projectFixedDocumentSections } from './fixed-document-sections';
 
 function chapter(index: number, input: Partial<Chapter>): Chapter {
   return {
@@ -83,5 +83,39 @@ describe('projectFixedDocumentSections', () => {
       { title: '1화', startPageIndex: 0, pageCount: 2 },
       { title: '2화', startPageIndex: 2, pageCount: 1 },
     ]);
+  });
+});
+
+describe('fixedDocumentSeekWindow', () => {
+  it('projects a global comic page into the current release', () => {
+    expect(
+      fixedDocumentSeekWindow(120, 46, {
+        startPageIndex: 40,
+        pageCount: 20,
+      }),
+    ).toEqual({
+      startPageIndex: 40,
+      pageCount: 20,
+      pageNumber: 7,
+      progressPercent: 35,
+    });
+  });
+
+  it('keeps a standalone document on the whole-document range', () => {
+    expect(fixedDocumentSeekWindow(120, 46)).toEqual({
+      startPageIndex: 0,
+      pageCount: 120,
+      pageNumber: 47,
+      progressPercent: (47 / 120) * 100,
+    });
+  });
+
+  it('bounds stale section metadata to the available pages', () => {
+    expect(fixedDocumentSeekWindow(45, 99, { startPageIndex: 40, pageCount: 20 })).toEqual({
+      startPageIndex: 40,
+      pageCount: 5,
+      pageNumber: 5,
+      progressPercent: 100,
+    });
   });
 });

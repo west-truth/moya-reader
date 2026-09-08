@@ -124,7 +124,7 @@ import {
   shouldAnchorContinuousPageResize,
   type ContinuousImageDimensions,
 } from './continuous-scroll';
-import { projectFixedDocumentSections } from './fixed-document-sections';
+import { fixedDocumentSeekWindow, projectFixedDocumentSections } from './fixed-document-sections';
 import { useArchivePageImages } from './use-archive-page-images';
 import {
   fixedDocumentPanAxis,
@@ -2087,7 +2087,11 @@ export default function FixedDocumentScreen({
     turnPage,
   ]);
 
-  const progressPercent = totalPages > 0 ? ((pageIndex + 1) / totalPages) * 100 : 0;
+  const seekWindow = fixedDocumentSeekWindow(
+    totalPages,
+    pageIndex,
+    novel.format === 'image_archive' ? currentDocumentSection : undefined,
+  );
   const ocrCandidatePages = [...textPageStates]
     .filter(([, state]) => state === 'ocr_candidate' || state === 'failed')
     .map(([index]) => index)
@@ -3783,27 +3787,27 @@ export default function FixedDocumentScreen({
       )}
       <footer className="fixed-doc-footer">
         <span>
-          {pageIndex + 1} / {totalPages}
+          {seekWindow.pageNumber} / {seekWindow.pageCount}
         </span>
         {novel.format === 'image_archive' ? (
           <input
             className="fixed-doc-page-seek"
             type="range"
             min={1}
-            max={Math.max(1, totalPages)}
-            value={pageIndex + 1}
-            disabled={totalPages <= 1}
+            max={Math.max(1, seekWindow.pageCount)}
+            value={seekWindow.pageNumber}
+            disabled={seekWindow.pageCount <= 1}
             aria-label="만화 페이지 빠르게 이동"
-            aria-valuetext={`${pageIndex + 1} / ${totalPages} 페이지`}
-            style={{ '--fixed-doc-progress': `${progressPercent}%` } as CSSProperties}
-            onChange={(event) => goToPage(Number(event.target.value) - 1)}
+            aria-valuetext={`${seekWindow.pageNumber} / ${seekWindow.pageCount} 페이지`}
+            style={{ '--fixed-doc-progress': `${seekWindow.progressPercent}%` } as CSSProperties}
+            onChange={(event) => goToPage(seekWindow.startPageIndex + Number(event.target.value) - 1)}
           />
         ) : (
           <div>
-            <i style={{ width: `${progressPercent}%` }} />
+            <i style={{ width: `${seekWindow.progressPercent}%` }} />
           </div>
         )}
-        <span>{Math.round(progressPercent)}%</span>
+        <span>{Math.round(seekWindow.progressPercent)}%</span>
       </footer>
     </main>
   );
