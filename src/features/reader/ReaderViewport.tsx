@@ -747,7 +747,7 @@ function VirtualizedReaderViewportComponent({
       onKeyUp={updateSelection}
       onMouseUp={updateSelection}
       onPointerDown={(event) => {
-        const shouldCaptureBoundaryGesture = scrollChapterBoundary.onPointerDown(event.clientY);
+        const shouldCaptureBoundaryGesture = scrollChapterBoundary.onPointerDown(event.clientY, event.pointerType);
         gestureHandlers.onPointerDown(event);
         if (shouldCaptureBoundaryGesture) {
           try {
@@ -758,7 +758,7 @@ function VirtualizedReaderViewportComponent({
         }
       }}
       onPointerMove={(event) => {
-        if (scrollChapterBoundary.onPointerMove(event.clientY)) event.preventDefault();
+        if (scrollChapterBoundary.onPointerMove(event.clientY, event.pointerType)) event.preventDefault();
       }}
       onPointerUp={(event) => {
         gestureHandlers.onPointerUp(event);

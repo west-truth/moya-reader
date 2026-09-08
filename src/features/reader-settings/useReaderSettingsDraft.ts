@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type Dispatch, type SetStateAction } from 'react';
 import type { ReaderSettings } from '../../domain/types';
+import { sharedReaderSettingsEqual } from '../../repositories/reader-settings-scope';
 import type { ReaderRepository } from '../../repositories/reader-repository';
 import { clamp } from '../../utils/format';
 import {
@@ -46,16 +47,18 @@ export function useReaderSettingsDraft(options: ReaderSettingsDraftOptions) {
         delayMs: options.debounceMs ?? 320,
         write: (settings) => options.repository.saveSettings(settings),
         onCommitted: (settings) => {
+          const sharedChanged = !sharedReaderSettingsEqual(persistedRef.current, settings);
           persistedRef.current = settings;
           if (mountedRef.current) {
             setPersistedState(settings);
             setSaveError(false);
           }
-          void Promise.resolve(optionsRef.current.onSaved()).catch(() => {
-            if (mountedRef.current) {
-              optionsRef.current.notify('설정은 저장했지만 동기화 상태를 갱신하지 못했습니다.', 'warning');
-            }
-          });
+          if (sharedChanged)
+            void Promise.resolve(optionsRef.current.onSaved()).catch(() => {
+              if (mountedRef.current) {
+                optionsRef.current.notify('설정은 저장했지만 동기화 상태를 갱신하지 못했습니다.', 'warning');
+              }
+            });
         },
         onError: (error) => {
           if (mountedRef.current) setSaveError(true);

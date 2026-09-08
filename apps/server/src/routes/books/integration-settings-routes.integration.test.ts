@@ -71,6 +71,27 @@ describeWithPostgres('self-host integration revision CAS with real PostgreSQL', 
         });
         expect(stale.statusCode).toBe(409);
         expect(stale.json().settings.revision).toBe(2);
+
+        await pool.query(`create table sync_events (
+          id text primary key, user_id text, device_id text, type text, book_id text,
+          entity_id text, payload jsonb, revision jsonb, created_at timestamptz
+        )`);
+        await pool.query(`update reader_settings set settings = settings || $1::jsonb`, [
+          JSON.stringify({ fontSize: 23, theme: 'sepia', ttsBookOverrides: { book: { rate: 1.2 } } }),
+        ]);
+        const saved = await app.inject({
+          method: 'PUT',
+          url: '/api/settings',
+          payload: { fontSize: 13, theme: 'light', ttsSpeed: 1.5 },
+        });
+        expect(saved.statusCode).toBe(200);
+        const raw = (await pool.query('select settings from reader_settings')).rows[0].settings;
+        // Keep the legacy seed for devices opening the updated app for the first time.
+        expect(raw).toMatchObject({ fontSize: 23, theme: 'sepia', ttsSpeed: 1.5, _moyaIntegrations: { revision: 2 } });
+        expect(raw).not.toHaveProperty('ttsBookOverrides');
+        const event = (await pool.query('select payload from sync_events')).rows[0].payload;
+        expect(event.settings).not.toHaveProperty('fontSize');
+        expect(event.settings).not.toHaveProperty('theme');
       } finally {
         await app.close();
       }

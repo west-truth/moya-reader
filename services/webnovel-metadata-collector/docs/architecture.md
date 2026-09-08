@@ -259,7 +259,7 @@ async def get_detail(candidate: SearchCandidate) -> NovelMetadata
 | 문피아 | 모바일 검색 HTML | 상세 HTML의 JSON-LD와 태그 | 지원하지 않음 | 검색 또는 JSON-LD 이미지 URL |
 | 네이버 시리즈 | 검색 HTML | 상세 HTML, OG 메타, 작품 정보와 전체 소개 | 인증 브라우저로 같은 HTML 요청 | `pstatic.net` 썸네일의 `type` 크기 제한 제거, 성인 자리표시자 제외 |
 | 카카오페이지 | BFF JSON 검색 API | overview/about JSON API | 인증 브라우저로 같은 JSON API 요청 | 이미지 리소스 ID를 CDN URL로 변환 |
-| 노벨피아 | `/proc/novel` JSON 응답 | 상세 HTML에서 실제 표지 보완 | 인증 브라우저로 `novel_age=19` 검색 | 상세 표지를 우선하고 알려진 자리표시자 제외 |
+| 노벨피아 | `/proc/novel` JSON 응답 | 상세 HTML에서 실제 표지 보완 | 검증된 `LOGINKEY`로 성인 모드 활성화 후 `novel_age=19` 검색 | 상세 표지를 우선하고 알려진 자리표시자 제외 |
 | 리디 | 공개 검색 JSON API | 검색 응답에 필요한 정보가 있어 별도 네트워크 상세 요청 없음 | 같은 공개 검색 API에서 성인 제외 옵션을 끈 뒤 성인 후보만 분리 | `xxlarge` CDN URL 생성 |
 
 플랫폼 HTML 구조나 비공개에 가까운 웹 API 응답이 바뀌면 해당 플랫폼 파일의 파서만 수정하는 것을 원칙으로 한다.
@@ -279,7 +279,9 @@ async def get_detail(candidate: SearchCandidate) -> NovelMetadata
 
 ## 9. 선택적 인증 검색 구조
 
-인증 기능은 `playwright` 선택 의존성이 설치된 경우에만 사용할 수 있다.
+브라우저 인증 기능은 `playwright` 선택 의존성이 설치된 경우에만 사용할 수 있다. 노벨피아의 직접 LOGINKEY
+인증은 기본 `httpx` 경로를 사용하므로 Playwright 없이도 수집기 안에서 동작한다. Self-host Moya gateway에서
+인증 API를 노출하려면 기존 auth deployment opt-in은 계속 필요하다.
 
 ### 9.1 로그인과 세션 저장
 
@@ -289,17 +291,23 @@ async def get_detail(candidate: SearchCandidate) -> NovelMetadata
 4. `로그인 완료·사용`을 켜면 로그인 창을 종료하고 같은 프로필을 Playwright 영구 컨텍스트로 열 수 있는지 확인한다.
 5. 이후 인증 검색은 같은 쿠키와 저장소가 있는 headless 컨텍스트를 사용한다.
 
-프로그램은 아이디와 비밀번호를 입력받거나 저장하지 않는다. 다만 전용 브라우저 프로필에는 로그인 쿠키가 저장되므로 민감한 로컬 데이터로 취급해야 한다.
+일반 플랫폼은 아이디와 비밀번호를 입력받거나 저장하지 않는다. 노벨피아 이메일 방식은 키 만료 자동 복구를 위해
+계정 정보를 `novelpia-auth.json`에 저장한다. 전용 브라우저 프로필, 쿠키와 이 파일은 모두 민감한 로컬 데이터로
+취급한다.
 
 Windows 기본 저장 위치는 다음과 같다.
 
 ```text
 %LOCALAPPDATA%\WebNovelMetadataCollector\auth\
 ├─ browser-profile\
+├─ session-cookies.json
+├─ novelpia-auth.json
 └─ settings.json
 ```
 
-`settings.json`에는 활성화한 플랫폼 이름만 저장한다. Windows가 아니거나 `LOCALAPPDATA`가 없으면 `~/.webnovel-metadata-collector/auth`를 사용한다.
+`settings.json`에는 활성화한 플랫폼 이름만 저장한다. `novelpia-auth.json`에는 LOGINKEY와 이메일 방식에서 입력한
+계정 정보가 저장된다. 파일은 원자적으로 교체하고 POSIX에서는 `0600` 권한으로 생성한다. Windows가 아니거나
+`LOCALAPPDATA`가 없으면 `~/.webnovel-metadata-collector/auth`를 사용한다.
 
 ### 9.2 인증 검색 실행
 
@@ -308,7 +316,11 @@ Windows 기본 저장 위치는 다음과 같다.
 - 기존 공개 `SearchService`
 - 활성화된 플랫폼만 포함한 인증 `SearchService`
 
-`AuthenticatedExtractor`는 인증된 응답을 기존 플랫폼 파서에 전달하고, 성인 후보만 남긴 뒤 `19금` 태그를 추가한다. 공개 결과와 인증 결과가 모두 있으면 다음 순서로 하나를 선택한다.
+`AuthenticatedExtractor`는 인증된 응답을 기존 플랫폼 파서에 전달하고, 성인 후보만 남긴 뒤 `19금` 태그를 추가한다.
+노벨피아 요청은 먼저 `/proc/member_adt_mode`의 `OK` 응답을 확인한다. `login` 응답이면 저장된 이메일 계정으로
+새 키를 한 번 발급하고, 자격 증명이 없으면 만료 오류를 반환한다. `auth`는 본인 인증 필요 오류다. 따라서 익명
+세션의 HTTP 200 빈 검색 목록은 인증 검색 성공으로 분류되지 않는다. 공개 결과와 인증 결과가 모두 있으면 다음
+순서로 하나를 선택한다.
 
 1. 문자 그대로 제목이 일치하는 응답
 2. `exact_title_and_author` → `exact_title` → `fuzzy_title`

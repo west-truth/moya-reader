@@ -83,6 +83,12 @@ export interface WebNovelMetadataCollectorClientPort {
     enabled: boolean,
     signal?: AbortSignal,
   ): Promise<WebNovelMetadataCollectorAuthStatus>;
+  configureNovelpiaCredentials(
+    email: string,
+    password: string,
+    signal?: AbortSignal,
+  ): Promise<WebNovelMetadataCollectorAuthStatus>;
+  configureNovelpiaLoginKey(loginKey: string, signal?: AbortSignal): Promise<WebNovelMetadataCollectorAuthStatus>;
   closeAuthBrowser(signal?: AbortSignal): Promise<WebNovelMetadataCollectorAuthStatus>;
   clearAuthSession(signal?: AbortSignal): Promise<WebNovelMetadataCollectorAuthStatus>;
   authBrowserFrame(
@@ -412,6 +418,18 @@ export class WebNovelMetadataCollectorBroker {
     signal?: AbortSignal,
   ): Promise<WebNovelMetadataCollectorAuthStatus> {
     return this.runAuth((client) => client.setAuthPlatformEnabled(platform, enabled, signal));
+  }
+
+  configureNovelpiaCredentials(
+    email: string,
+    password: string,
+    signal?: AbortSignal,
+  ): Promise<WebNovelMetadataCollectorAuthStatus> {
+    return this.runAuth((client) => client.configureNovelpiaCredentials(email, password, signal));
+  }
+
+  configureNovelpiaLoginKey(loginKey: string, signal?: AbortSignal): Promise<WebNovelMetadataCollectorAuthStatus> {
+    return this.runAuth((client) => client.configureNovelpiaLoginKey(loginKey, signal));
   }
 
   closeAuthBrowser(signal?: AbortSignal): Promise<WebNovelMetadataCollectorAuthStatus> {

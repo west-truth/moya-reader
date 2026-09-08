@@ -11,9 +11,9 @@ export function useReaderGestureHandlers(input: {
   readonly bindings: GestureBindings;
   readonly viewportWidth: () => number;
   readonly actions: ReaderActionHandlers;
-  readonly onVerticalScrollIntent?: (deltaY: number) => void;
+  readonly onVerticalScrollIntent?: (deltaY: number, pointerType: string) => void;
 }) {
-  const startRef = useRef<{ x: number; y: number; at: number; ignored: boolean }>();
+  const startRef = useRef<{ x: number; y: number; at: number; ignored: boolean; pointerType: string }>();
 
   const onPointerDown = useCallback((event: PointerEvent<HTMLElement>) => {
     startRef.current = {
@@ -21,6 +21,7 @@ export function useReaderGestureHandlers(input: {
       y: event.clientY,
       at: performance.now(),
       ignored: gestureTargetIsInteractive(event.target) || Boolean(window.getSelection()?.toString()),
+      pointerType: event.pointerType,
     };
   }, []);
 
@@ -38,7 +39,7 @@ export function useReaderGestureHandlers(input: {
         Math.abs(deltaY) > Math.abs(deltaX) * 1.2 &&
         performance.now() - start.at <= 1_000
       ) {
-        input.onVerticalScrollIntent(-deltaY);
+        input.onVerticalScrollIntent(-deltaY, start.pointerType);
         return;
       }
       const action = gestureAction({

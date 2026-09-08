@@ -612,6 +612,90 @@
   gap: 7px;
 }
 
+.extension-auth-platform-card {
+  overflow: hidden;
+  background: var(--app-surface-muted);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-control);
+}
+
+.extension-auth-platform-card > .extension-auth-platform-row {
+  background: transparent;
+  border: 0;
+  border-radius: 0;
+}
+
+.extension-direct-auth-editor {
+  display: grid;
+  gap: 10px;
+  padding: 10px;
+  border-top: 1px solid var(--border);
+}
+
+.extension-auth-methods {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 4px;
+  padding: 3px;
+  background: var(--app-input);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-control);
+}
+
+.extension-auth-methods > button {
+  min-height: 34px;
+  padding: 5px 8px;
+  color: var(--text-2);
+  font-size: 0.68rem;
+  background: transparent;
+  border: 0;
+  border-radius: calc(var(--radius-control) - 3px);
+}
+
+.extension-auth-methods > button.is-active {
+  color: var(--text);
+  background: var(--app-surface);
+  box-shadow: 0 0 0 1px var(--border);
+}
+
+.extension-direct-auth-form {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  align-items: end;
+  gap: 8px;
+}
+
+.extension-direct-auth-form > label {
+  display: grid;
+  gap: 5px;
+  color: var(--text-2);
+  font-size: 0.68rem;
+}
+
+.extension-direct-auth-form input {
+  width: 100%;
+  min-width: 0;
+  min-height: 38px;
+  padding: 0 10px;
+  color: var(--text);
+  background: var(--app-input);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-control);
+}
+
+.extension-direct-auth-form > p {
+  grid-column: 1 / -1;
+  margin: 0;
+  color: var(--text-3);
+  font-size: 0.65rem;
+  line-height: 1.5;
+}
+
+.extension-direct-auth-form > button {
+  grid-column: 1 / -1;
+  justify-self: start;
+}
+
 .extension-wide-toggle {
   align-items: flex-start;
   padding: 9px 10px;
@@ -1789,6 +1873,15 @@
 
   .extension-auth-platform-row .extension-inline-actions > button {
     flex: 1 1 auto;
+  }
+
+  .extension-direct-auth-form {
+    grid-template-columns: 1fr;
+  }
+
+  .extension-direct-auth-form > button {
+    width: 100%;
+    min-height: 42px;
   }
 
   .extension-batch-progress {

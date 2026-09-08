@@ -1,4 +1,5 @@
 import 'fake-indexeddb/auto';
+import { defaultSettings } from '../repositories/reader-defaults';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { LocalOutboxSyncService, SyncEventSource } from '../sync/local-outbox-sync-service';
 import {
@@ -328,7 +329,7 @@ describe('LocalOutboxSyncService', () => {
 
   it('keeps only server-rejected events in conflict when a push response includes rejected ids', async () => {
     await saveImportedNovel(parsedNovel('novel-partial-reject'));
-    await saveSettings({ ...(await getSettings()), fontSize: 23 });
+    await saveSettings({ ...(await getSettings()), ttsSpeed: 1.3 });
     const source: SyncEventSource = {
       async pushSync(events) {
         expect(events.map((event) => event.type)).toEqual(['book_imported', 'settings_updated']);
@@ -611,8 +612,8 @@ describe('LocalOutboxSyncService', () => {
       paragraphIndex: 1,
       offsetInParagraph: 2,
     });
-    await saveSettings({ ...(await getSettings()), fontSize: 21 });
-    await saveSettings({ ...(await getSettings()), fontSize: 25 });
+    await saveSettings({ ...(await getSettings()), ttsSpeed: 1.1 });
+    await saveSettings({ ...(await getSettings()), ttsSpeed: 1.5 });
     const pushed: SyncEvent[] = [];
     const source: SyncEventSource = {
       async pushSync(events) {
@@ -639,7 +640,7 @@ describe('LocalOutboxSyncService', () => {
       },
     });
     expect(pushed.find((event) => event.type === 'settings_updated')?.payload).toMatchObject({
-      settings: { fontSize: 25 },
+      settings: { ttsSpeed: 1.5 },
     });
     expect((await listSyncOutbox('sent')).map((item) => item.event.type)).toEqual([
       'book_imported',
@@ -776,7 +777,7 @@ describe('LocalOutboxSyncService', () => {
 
     expect(await listSyncOutbox('failed')).toEqual([]);
     expect(await listSyncOutbox('sent')).toHaveLength(1);
-    expect(settings).toMatchObject({ fontSize: 24, theme: 'dark' });
+    expect(settings).toMatchObject({ fontSize: defaultSettings.fontSize, theme: defaultSettings.theme });
     expect(state).toMatchObject({ mode: 'connected', status: 'idle', pendingCount: 0, lastRemoteCursor: 9 });
   });
 
@@ -834,7 +835,7 @@ describe('LocalOutboxSyncService', () => {
     const state = await new LocalOutboxSyncService(source).flushPending();
     const settings = await getSettings();
 
-    expect(settings).toMatchObject({ fontSize: 22, theme: 'sepia' });
+    expect(settings).toMatchObject({ fontSize: defaultSettings.fontSize, theme: defaultSettings.theme });
     expect(state).toMatchObject({ mode: 'connected', status: 'idle', lastRemoteCursor: 7, pendingCount: 0 });
   });
 
@@ -869,7 +870,7 @@ describe('LocalOutboxSyncService', () => {
     const state = await new LocalOutboxSyncService(source).flushPending();
 
     expect(calls).toEqual([0, 500]);
-    expect(await getSettings()).toMatchObject({ fontSize: 26, theme: 'sepia' });
+    expect(await getSettings()).toMatchObject({ fontSize: defaultSettings.fontSize, theme: defaultSettings.theme });
     expect(state).toMatchObject({ status: 'idle', lastRemoteCursor: 501 });
   });
 

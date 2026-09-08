@@ -165,10 +165,6 @@
   overscroll-behavior-y: contain;
 }
 
-.reader-scroll[data-reader-layer='scroll'].is-next-chapter-armed {
-  touch-action: pan-up;
-}
-
 .reader-scroll[data-reader-layer='scroll']::-webkit-scrollbar {
   display: none;
   width: 0;

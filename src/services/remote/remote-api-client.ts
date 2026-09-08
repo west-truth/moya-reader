@@ -624,6 +624,9 @@ export const DEFAULT_REMOTE_REQUEST_TIMEOUT_MS = 30_000;
 export const DEFAULT_REMOTE_LARGE_UPLOAD_TIMEOUT_MS = 15 * 60_000;
 
 export class RemoteApiClient {
+  get readerSettingsScope(): string {
+    return `hosted:${this.baseUrl.replace(/\/$/, '')}`;
+  }
   private readonly bookTransport: RemoteBookTransport;
   private readonly searchTransport: RemoteSearchTransport;
   private readonly syncTransport: RemoteSyncTransport;
@@ -1030,7 +1033,7 @@ export class RemoteApiClient {
     return this.request('/settings');
   }
 
-  saveSettings(settings: ReaderSettings): Promise<{ ok: true }> {
+  saveSettings(settings: Partial<ReaderSettings>): Promise<{ ok: true }> {
     return this.request('/settings', { method: 'PUT', body: JSON.stringify({ ...defaultSettings, ...settings }) });
   }
 

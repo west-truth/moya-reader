@@ -36,6 +36,7 @@ function healthResponse(): Response {
         available: true,
         browser_presentation: 'remote_frame',
         platforms: ['naver_series', 'kakao_page', 'novelpia', 'ridi'],
+        direct_login_platforms: ['novelpia'],
       },
     },
   });
@@ -211,13 +212,14 @@ describe('WebNovelMetadataCollectorClient', () => {
     });
   });
 
-  it('maps the manual adult-auth operations without accepting secret credentials', async () => {
+  it('maps browser and direct Novelpia adult-auth operations', async () => {
     const fetchMock = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) =>
       jsonResponse({
         available: true,
         browser_running: true,
         browser_presentation: 'local_window',
         enabled_platforms: ['ridi'],
+        remembered_credential_platforms: [],
         last_error: null,
       }),
     );
@@ -228,15 +230,23 @@ describe('WebNovelMetadataCollectorClient', () => {
       enabledPlatforms: ['ridi'],
     });
     await client.setAuthPlatformEnabled('ridi', true);
+    await client.configureNovelpiaCredentials('reader@example.com', 'private-password');
+    await client.configureNovelpiaLoginKey('a'.repeat(32) + '_' + 'b'.repeat(32));
     await client.closeAuthBrowser();
     await client.clearAuthSession();
 
     expect(fetchMock.mock.calls.map(([url, request]) => [String(url), (request as RequestInit).method])).toEqual([
       ['http://127.0.0.1:8000/api/v1/auth/ridi/open', 'POST'],
       ['http://127.0.0.1:8000/api/v1/auth/ridi', 'PUT'],
+      ['http://127.0.0.1:8000/api/v1/auth/novelpia/credentials', 'POST'],
+      ['http://127.0.0.1:8000/api/v1/auth/novelpia/login-key', 'PUT'],
       ['http://127.0.0.1:8000/api/v1/auth/browser/close', 'POST'],
       ['http://127.0.0.1:8000/api/v1/auth/session', 'DELETE'],
     ]);
+    expect(JSON.parse(String((fetchMock.mock.calls[2]![1] as RequestInit).body))).toEqual({
+      email: 'reader@example.com',
+      password: 'private-password',
+    });
   });
 
   it('reads bounded remote-browser JPEG frames and sends typed actions', async () => {

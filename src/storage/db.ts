@@ -1,3 +1,5 @@
+import { sharedReaderSettings } from '../repositories/reader-settings-scope';
+import { preserveLocalReaderSettings } from './device-reader-settings-store';
 import type {
   Bookmark,
   Character,
@@ -1211,12 +1213,13 @@ async function applyRemoteSyncEvent(tx: IDBTransaction, event: SyncEvent): Promi
   }
 
   if (event.type === 'settings_updated') {
+    await preserveLocalReaderSettings(tx.objectStore('settings'));
     const settings = {
       ...defaultSettings,
       ...recordValue(recordValue(event.payload).settings),
       id: defaultSettings.id,
     } as ReaderSettings;
-    tx.objectStore('settings').put(settings);
+    tx.objectStore('settings').put(sharedReaderSettings(settings));
     return;
   }
 

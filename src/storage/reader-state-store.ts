@@ -1,5 +1,11 @@
 import type { Novel, ReaderSettings } from '../domain/types';
-import { defaultSettings } from '../repositories/reader-defaults';
+import { sharedReaderSettings, sharedReaderSettingsEqual } from '../repositories/reader-settings-scope';
+import {
+  deviceSettingsInStore,
+  loadDeviceReaderSettings,
+  LOCAL_READER_SETTINGS_SCOPE,
+} from './device-reader-settings-store';
+import { defaultSettings, normalizeReaderSettings } from '../repositories/reader-defaults';
 import { bookProgressFromChapterProgress } from './content-revision-remote-state';
 import { storedNovel } from './content-revision-store';
 import { ContentRevisionConflictError } from './content-revisions';
@@ -194,32 +200,27 @@ export async function addNovelReadingTime(novelId: string, seconds: number, read
 
 export async function getSettings(): Promise<ReaderSettings> {
   const settings = await getItem<ReaderSettings>('settings', defaultSettings.id);
+  const preferences = await loadDeviceReaderSettings(LOCAL_READER_SETTINGS_SCOPE, settings ?? defaultSettings);
   return {
-    ...defaultSettings,
-    ...settings,
-    ttsPlayback: {
-      ...defaultSettings.ttsPlayback,
-      ...settings?.ttsPlayback,
-      rate: settings?.ttsPlayback?.rate ?? settings?.ttsSpeed ?? defaultSettings.ttsPlayback.rate,
-    },
-    readingProfile: { ...defaultSettings.readingProfile, ...settings?.readingProfile },
-    aiWorkflows: {
-      ...defaultSettings.aiWorkflows!,
-      ...settings?.aiWorkflows,
-      bookOverrides: {
-        ...defaultSettings.aiWorkflows?.bookOverrides,
-        ...settings?.aiWorkflows?.bookOverrides,
-      },
-    },
-    gestureBindings: { ...defaultSettings.gestureBindings, ...settings?.gestureBindings },
+    ...normalizeReaderSettings(settings),
+    ...preferences,
   };
 }
 
 export async function saveSettings(settings: ReaderSettings): Promise<void> {
   const db = await openReaderDb();
   const tx = db.transaction(['settings', 'devices', 'sync_outbox', 'sync_state'], 'readwrite');
+  const existing = await requestToPromise<ReaderSettings | undefined>(
+    tx.objectStore('settings').get(defaultSettings.id),
+  );
+  await deviceSettingsInStore(tx.objectStore('settings'), LOCAL_READER_SETTINGS_SCOPE, settings, true);
+  if (sharedReaderSettingsEqual(normalizeReaderSettings(existing), settings)) {
+    await transactionDone(tx);
+    return;
+  }
   const next = { ...settings, cloudVaultUpdatedAt: new Date().toISOString() } satisfies ReaderSettings;
-  tx.objectStore('settings').put(next);
-  await queueSyncEventInTransaction(tx, 'settings_updated', jsonValue({ settings: next }), { entityId: settings.id });
+  const shared = sharedReaderSettings(next);
+  tx.objectStore('settings').put(shared);
+  await queueSyncEventInTransaction(tx, 'settings_updated', jsonValue({ settings: shared }), { entityId: settings.id });
   await transactionDone(tx);
 }

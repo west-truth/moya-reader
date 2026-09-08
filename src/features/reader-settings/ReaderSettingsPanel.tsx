@@ -76,7 +76,7 @@ const SETTINGS_SECTIONS: readonly SettingsSection[] = [
     id: 'extensions',
     label: '익스텐션',
     detail: '내장, 커뮤니티, 권한',
-    description: '기능별 제공 범위와 요청 권한을 확인하고 이 기기에서 켜거나 끕니다.',
+    description: '기능별 제공 범위와 요청 권한을 확인하고 켜거나 끕니다.',
     icon: Puzzle,
   },
   {
@@ -117,7 +117,7 @@ function saveStatusLabel(controller: ReaderSettingsController): string {
   if (controller.saveError) return '저장하지 못했습니다.';
   if (controller.saveStatus === 'saving') return '변경 사항을 저장하는 중입니다.';
   if (controller.isDirty) return '변경 사항을 곧 자동 저장합니다.';
-  return '변경 사항은 이 기기에 자동 저장됩니다.';
+  return '변경 사항은 자동 저장됩니다.';
 }
 
 export default function ReaderSettingsPanel(props: ReaderSettingsPanelProps) {
@@ -198,6 +198,13 @@ export default function ReaderSettingsPanel(props: ReaderSettingsPanelProps) {
             <header className="reader-settings-page-title">
               <h2>{current.label}</h2>
               <span>{current.description}</span>
+              <span>
+                {readingTab
+                  ? '이 기기에 저장됩니다.'
+                  : tab === 'sources' || tab === 'extensions'
+                    ? '공통 설정은 서버 연결 시 다른 기기에도 반영됩니다.'
+                    : null}
+              </span>
             </header>
             <div
               id={`reader-settings-panel-${tab}`}

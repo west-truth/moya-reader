@@ -163,6 +163,52 @@ def test_remote_auth_frame_and_action_routes(monkeypatch: pytest.MonkeyPatch) ->
     assert actions == [("click", 120.0, 850.0)]
 
 
+def test_novelpia_direct_auth_routes_keep_secrets_out_of_responses(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    received: list[tuple[str, str]] = []
+
+    async def credentials(email: str, password: str) -> None:
+        received.append((email, password))
+
+    async def login_key(value: str) -> None:
+        received.append(("LOGINKEY", value))
+
+    monkeypatch.setattr(main.auth_sessions, "configure_novelpia_credentials", credentials)
+    monkeypatch.setattr(main.auth_sessions, "configure_novelpia_login_key", login_key)
+    monkeypatch.setattr(
+        main.auth_sessions,
+        "status",
+        lambda: {
+            "available": True,
+            "browser_running": False,
+            "browser_presentation": "remote_frame",
+            "enabled_platforms": ["novelpia"],
+            "remembered_credential_platforms": ["novelpia"],
+        },
+    )
+
+    with TestClient(main.app) as client:
+        email_response = client.post(
+            "/api/v1/auth/novelpia/credentials",
+            json={"email": "reader@example.com", "password": "private-password"},
+        )
+        key_response = client.put(
+            "/api/v1/auth/novelpia/login-key",
+            json={"login_key": "a" * 32 + "_" + "b" * 32},
+        )
+
+    assert email_response.status_code == 200
+    assert key_response.status_code == 200
+    assert received == [
+        ("reader@example.com", "private-password"),
+        ("LOGINKEY", "a" * 32 + "_" + "b" * 32),
+    ]
+    combined = email_response.text + key_response.text
+    assert "private-password" not in combined
+    assert "a" * 32 not in combined
+
+
 def test_cover_reference_store_is_allowlisted_bounded_and_expiring() -> None:
     now = [100.0]
     store = CoverReferenceStore(

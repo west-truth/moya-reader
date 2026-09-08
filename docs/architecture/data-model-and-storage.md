@@ -1,7 +1,19 @@
 # 데이터 모델과 저장소
 
 Status: current
-Last verified: 2026-08-31
+Last verified: 2026-09-08
+
+## 기기별 독서 설정
+
+화면·본문·조작 설정과 책별 본문 설정은 브라우저 IndexedDB에 저장하며 새로고침·재시작 후에도 유지합니다.
+처음에는 기존 설정을 한 번 이어받고, 이후 다른 기기의 변경이나 백업 복원으로 덮어쓰지 않습니다. 같은 기기여도
+브라우저/접속 주소가 다르면 별도 저장소를 사용합니다. 사이트 데이터를 지우면 기기 설정도 삭제됩니다.
+
+`repositories/reader-settings-scope`가 공통 필드를 명시하고, `storage/device-reader-settings-store`가 기존 settings
+store의 `device-reader-settings:v1:<scope>` 레코드를 관리합니다. 스키마 변경은 필요하지 않습니다. 기기 설정만
+변경하면 서버 저장·sync outbox·설정 저장 후 sync 재조회가 발생하지 않습니다. AI·듣기 공통 설정은 동기화를
+유지하되 시스템 음성 URI는 기기에 남깁니다. 소스·익스텐션은 기존 `/api/integration-settings` 서버 동기화를 유지합니다.
+서버에 남은 과거 화면 설정은 아직 이전하지 않은 기기의 초기값으로만 사용하며 새 설정 저장에서는 갱신하지 않습니다.
 
 ## Comic chapter originals (2026-08-31)
 

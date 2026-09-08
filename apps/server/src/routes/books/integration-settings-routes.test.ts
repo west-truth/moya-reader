@@ -86,6 +86,10 @@ describe('self-host integration settings routes', () => {
       String(sql).includes("jsonb_build_object('_moyaIntegrations'"),
     );
     expect(readerSettingsUpsert).toBeDefined();
+    const saved = JSON.parse(readerSettingsUpsert![1]![1] as string);
+    expect(saved).not.toHaveProperty('readingProfile');
+    expect(saved).not.toHaveProperty('fontSize');
+    expect(saved).toHaveProperty('ttsPlayback');
     await app.close();
   });
 

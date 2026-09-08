@@ -2,7 +2,7 @@ import { spawn } from 'node:child_process';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import process from 'node:process';
-import { chromium } from 'playwright-core';
+import { chromium, devices, webkit } from 'playwright-core';
 import { findTemporaryLoopbackPort } from './lib/temporary-loopback-port.mjs';
 
 const args = process.argv.slice(2).filter((arg) => arg !== '--');
@@ -21,12 +21,15 @@ const externalBaseUrl = argValue('--url', process.env.READER_UI_SMOKE_URL ?? '')
 const ownedPort = externalBaseUrl ? undefined : await findTemporaryLoopbackPort();
 const baseUrl = externalBaseUrl || `http://127.0.0.1:${ownedPort}`;
 const explicitChannel = argValue('--channel', process.env.READER_UI_BROWSER_CHANNEL ?? '');
+const browserEngine = argValue('--browser', process.env.READER_UI_BROWSER_ENGINE ?? 'chromium');
 const timeoutMs = Number(argValue('--timeout-ms', process.env.READER_UI_SMOKE_TIMEOUT_MS ?? '45000'));
 const headed = hasArg('--headed');
 const keepServer = hasArg('--keep-server');
 const skipScreenshots = hasArg('--no-screenshots');
 const initialContentOnly = hasArg('--initial-content-only');
+const chapterBoundaryOnly = hasArg('--chapter-boundary-only');
 const mobileViewport = hasArg('--mobile');
+const tabletViewport = hasArg('--tablet');
 const novelFile = argValue('--novel-file', process.env.READER_UI_NOVEL_FILE ?? '');
 let importedChapterCount = 0;
 const screenshotDir = path.resolve(
@@ -112,6 +115,12 @@ async function withServer(callback) {
 }
 
 async function launchBrowser() {
+  if (browserEngine === 'webkit') {
+    const browser = await webkit.launch({ headless: !headed });
+    log('Using browser engine: webkit');
+    return browser;
+  }
+  if (browserEngine !== 'chromium') throw new Error(`Unsupported reader UI browser engine: ${browserEngine}`);
   const channels = explicitChannel ? [explicitChannel] : ['msedge', 'chrome', 'chromium'];
   const errors = [];
   for (const channel of channels) {
@@ -126,6 +135,33 @@ async function launchBrowser() {
   throw new Error(
     `Could not launch Edge/Chrome for reader UI smoke. Set READER_UI_BROWSER_CHANNEL or install a Playwright-compatible browser.\n${errors.join('\n')}`,
   );
+}
+
+async function dispatchTouch(root, type, clientY) {
+  await root.evaluate(
+    (element, input) => {
+      const touches =
+        input.clientY === undefined ? [] : [{ identifier: 1, target: element, clientX: 195, clientY: input.clientY }];
+      const event = new Event(input.type, { bubbles: true, cancelable: true });
+      Object.defineProperties(event, {
+        touches: { value: touches },
+        targetTouches: { value: touches },
+        changedTouches: { value: touches },
+      });
+      element.dispatchEvent(event);
+    },
+    { type, clientY },
+  );
+}
+
+async function emulateSafariWithoutIdleCallback(context) {
+  if (browserEngine !== 'webkit') return;
+  await context.addInitScript(() => {
+    Object.defineProperties(globalThis, {
+      requestIdleCallback: { configurable: true, value: undefined },
+      cancelIdleCallback: { configurable: true, value: undefined },
+    });
+  });
 }
 
 async function screenshot(page, name) {
@@ -395,6 +431,7 @@ async function assertPaginatedPageFitsViewport(page, label) {
     const contentBottom = blocks.reduce((bottom, block) => Math.max(bottom, block.bottom), Math.round(stageRect.top));
     return {
       missing: false,
+      ready: pageElement.hasAttribute('data-page-start-index') && blocks.length > 0,
       rootHeight: rootRect.height,
       stageHeight: stageRect.height,
       stageTop: Math.round(stageRect.top),
@@ -404,7 +441,7 @@ async function assertPaginatedPageFitsViewport(page, label) {
       contentFillRatio: stageRect.height > 0 ? (contentBottom - stageRect.top) / stageRect.height : 0,
     };
   });
-  if (layout.missing || layout.clipped || layout.stageHeight < layout.rootHeight * 0.55) {
+  if (layout.missing || !layout.ready || layout.clipped || layout.stageHeight < layout.rootHeight * 0.55) {
     throw new Error(`${label} has a clipped or undersized page stage: ${JSON.stringify(layout)}`);
   }
   return layout;
@@ -445,7 +482,12 @@ async function assertChapterHeading(page, label) {
 
 async function assertScrollChapterBoundary(browser) {
   log('Checking deliberate scroll-end next-chapter gesture');
-  const context = await browser.newContext({ viewport: { width: 1280, height: 720 }, deviceScaleFactor: 1 });
+  const context = await browser.newContext({
+    ...(browserEngine === 'webkit' ? devices['iPad Pro 11'] : {}),
+    viewport: { width: 1280, height: 720 },
+    deviceScaleFactor: 1,
+  });
+  await emulateSafariWithoutIdleCallback(context);
   const page = await context.newPage();
   try {
     await openSampleReader(page);
@@ -525,7 +567,7 @@ async function assertScrollChapterBoundary(browser) {
     }
 
     const secondTitle = await page.locator('.reader-title span').innerText();
-    await page.setViewportSize({ width: 390, height: 844 });
+    await page.setViewportSize({ width: 834, height: 1194 });
     await page.waitForTimeout(150);
     const secondRoot = page.locator('[data-reader-layer="scroll"].is-active');
     for (let attempt = 0; attempt < 4; attempt += 1) {
@@ -542,28 +584,9 @@ async function assertScrollChapterBoundary(browser) {
       { timeout: 1_500 },
     );
     log('Scroll chapter boundary armed for touch input');
-    const armedTouchAction = await secondRoot.evaluate((element) => getComputedStyle(element).touchAction);
-    if (armedTouchAction !== 'pan-up') {
-      throw new Error(`Armed touch boundary did not retain the pointer gesture: ${JSON.stringify(armedTouchAction)}`);
-    }
-    await secondRoot.dispatchEvent('pointerdown', {
-      pointerId: 20,
-      pointerType: 'touch',
-      clientX: 195,
-      clientY: 620,
-    });
-    await secondRoot.dispatchEvent('pointermove', {
-      pointerId: 20,
-      pointerType: 'touch',
-      clientX: 195,
-      clientY: 590,
-    });
-    await secondRoot.dispatchEvent('pointerup', {
-      pointerId: 20,
-      pointerType: 'touch',
-      clientX: 195,
-      clientY: 590,
-    });
+    await dispatchTouch(secondRoot, 'touchstart', 620);
+    await dispatchTouch(secondRoot, 'touchmove', 590);
+    await dispatchTouch(secondRoot, 'touchend');
     await page.waitForTimeout(220);
     if ((await page.locator('.reader-title span').innerText()).trim() !== secondTitle.trim()) {
       throw new Error('A weak boundary touch gesture changed chapter');
@@ -576,18 +599,8 @@ async function assertScrollChapterBoundary(browser) {
       { timeout: 1_500 },
     );
     log('Weak touch pull released without changing chapter');
-    await secondRoot.dispatchEvent('pointerdown', {
-      pointerId: 21,
-      pointerType: 'touch',
-      clientX: 195,
-      clientY: 620,
-    });
-    await secondRoot.dispatchEvent('pointermove', {
-      pointerId: 21,
-      pointerType: 'touch',
-      clientX: 195,
-      clientY: 540,
-    });
+    await dispatchTouch(secondRoot, 'touchstart', 620);
+    await dispatchTouch(secondRoot, 'touchmove', 540);
     await page.waitForTimeout(40);
     const touchPull = await secondRoot.locator('.reader-document').evaluate((element) => ({
       className: element.className,
@@ -596,12 +609,7 @@ async function assertScrollChapterBoundary(browser) {
     if (!touchPull.className.includes('is-touch-pull') || touchPull.transform === 'none') {
       throw new Error(`Touch boundary gesture did not follow the pointer: ${JSON.stringify(touchPull)}`);
     }
-    await secondRoot.dispatchEvent('pointerup', {
-      pointerId: 21,
-      pointerType: 'touch',
-      clientX: 195,
-      clientY: 540,
-    });
+    await dispatchTouch(secondRoot, 'touchend');
     log('Strong touch input dispatched');
     await page.waitForFunction(
       (previousTitle) => document.querySelector('.reader-title span')?.textContent?.trim() !== previousTitle,
@@ -634,10 +642,24 @@ async function assertScrollChapterBoundary(browser) {
 
 async function runReaderSmoke() {
   const browser = await launchBrowser();
+  if (chapterBoundaryOnly) {
+    try {
+      await assertScrollChapterBoundary(browser);
+    } finally {
+      await browser.close();
+    }
+    return;
+  }
   const context = await browser.newContext({
-    viewport: mobileViewport ? { width: 390, height: 844 } : { width: 1440, height: 960 },
+    ...(browserEngine === 'webkit' && tabletViewport ? devices['iPad Pro 11'] : {}),
+    viewport: mobileViewport
+      ? { width: 390, height: 844 }
+      : tabletViewport
+        ? { width: 834, height: 1194 }
+        : { width: 1440, height: 960 },
     deviceScaleFactor: 1,
   });
+  await emulateSafariWithoutIdleCallback(context);
   const page = await context.newPage();
   const browserErrors = [];
   page.on('pageerror', (error) => browserErrors.push(error.message));
@@ -658,7 +680,7 @@ async function runReaderSmoke() {
       await assertChromeOverlayKeepsReaderFrame(page);
       await assertPaginatedChromeOverlayKeepsReaderFrame(page);
       log(
-        `Initial content rendered without input and overlay controls kept scroll/page frames fixed (${mobileViewport ? 'mobile' : 'desktop'})`,
+        `Initial content rendered without input and overlay controls kept scroll/page frames fixed (${mobileViewport ? 'mobile' : tabletViewport ? 'tablet' : 'desktop'})`,
       );
       return;
     }

@@ -18,6 +18,7 @@ import {
   type ReaderChapterHeadingData,
 } from './ReaderChapterHeading';
 import type { ReaderViewportApi, ReaderViewportLayerProps } from './ReaderViewport';
+import { scheduleIdleWork } from './idle-work';
 import { useReaderGestureHandlers } from './use-reader-gestures';
 import { useReaderPositionPersistence } from './use-reader-progress';
 import {
@@ -830,10 +831,10 @@ export function PaginatedReaderViewport(
         await loadSharedParagraphPage(repository, contentRevisionId, chapterId, pageIndex).catch(() => []);
       }
     };
-    const idleId = globalThis.requestIdleCallback(() => void warm(), { timeout: 1_500 });
+    const cancelIdleWork = scheduleIdleWork(() => void warm(), 1_500);
     return () => {
       cancelled = true;
-      globalThis.cancelIdleCallback(idleId);
+      cancelIdleWork();
     };
   }, [chapter.index, chapters, complete, contentRevisionId, isActive, repository]);
 

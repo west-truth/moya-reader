@@ -59,17 +59,6 @@
   border-color: var(--border);
 }
 
-.library-search kbd {
-  margin-left: auto;
-  padding: 2px 6px;
-  color: var(--muted);
-  background: var(--app-surface-muted);
-  border: 1px solid var(--border);
-  border-radius: 3px;
-  font: inherit;
-  font-size: 0.65rem;
-}
-
 .library-topbar-actions {
   min-width: 0;
   display: flex;
@@ -2083,6 +2072,33 @@
   .library-batch-bar {
     left: 18px;
     right: 18px;
+  }
+
+  .library-screen .books-grid {
+    grid-template-columns: repeat(auto-fill, minmax(164px, 1fr));
+    gap: 26px 18px;
+  }
+}
+
+@media (min-width: 700px) and (max-width: 1023px) {
+  .library-topbar {
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: 12px;
+    padding-inline: 16px;
+  }
+
+  .library-topbar-actions {
+    gap: 6px;
+  }
+
+  .library-topbar-secondary-action {
+    width: 38px;
+    padding-inline: 0;
+    gap: 0;
+  }
+
+  .library-topbar-secondary-action > span {
+    display: none;
   }
 }
 

@@ -722,7 +722,7 @@ describe('IndexedDB reader storage', () => {
     await saveNote(note);
     await saveNote({ ...note, body: 'sync note updated', updatedAt: '2026-07-04T00:04:30.000Z' });
     await deleteNote(note.id);
-    await saveSettings({ ...defaultSettings, fontSize: defaultSettings.fontSize + 1 });
+    await saveSettings({ ...defaultSettings, ttsSpeed: defaultSettings.ttsSpeed + 0.1 });
 
     const position = await getReadingPosition('novel-a');
     expect(position).toMatchObject({
