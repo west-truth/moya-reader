@@ -44,6 +44,8 @@ import { LibraryMobileHeader, LibrarySidebar } from '../library/LibraryChrome';
 import { BookCover } from '../library/BookCover';
 import { importTaskIsActive, importTaskLabel, type ImportTaskView } from '../import/import-task-projection';
 import { SourceReleasePanel } from './SourceReleasePanel';
+import { SourceReleaseMenu } from './SourceReleaseMenu';
+import { SourceDownloadRecovery } from './SourceDownloadRecovery';
 import { navigateAppBack } from '../navigation/browser-navigation';
 import type {
   ExternalSourceController,
@@ -243,7 +245,10 @@ function ItemAction({
             <BookOpen size={16} />
           </button>
         )}
-        <ReleaseDownloadAction item={item} controller={controller} task={task} />
+        {(item.importState !== 'imported' || (task && importTaskIsActive(task)) || !controller.renameRelease) && (
+          <ReleaseDownloadAction item={item} controller={controller} task={task} />
+        )}
+        {controller.renameRelease && <SourceReleaseMenu item={item} controller={controller} />}
       </div>
     );
   }
@@ -722,6 +727,7 @@ export default function SourceHubScreen({
           </header>
 
           <div ref={scrollRef} className={`source-hub-scroll${hasWorkHero ? ' is-work-detail' : ''}`}>
+            <SourceDownloadRecovery controller={controller} />
             {hasWorkHero ? (
               <section className="book-detail-hero source-hub-book-detail" aria-labelledby="source-work-title">
                 <button

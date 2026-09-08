@@ -1373,6 +1373,10 @@ export default function App() {
     notify: showToast,
   });
   const externalSourceFeature = useExternalSourceController({
+    readingTarget:
+      (view === 'reader' || view === 'document') && selectedNovel && currentChapter?.documentSectionId
+        ? { novelId: selectedNovel.id, sectionId: currentChapter.documentSectionId }
+        : undefined,
     registry: externalSourceRegistry,
     hostContext: externalSourceHostContext,
     state: externalSourceState,
@@ -6174,6 +6178,7 @@ export default function App() {
             chapters={chapters}
             readingPosition={localReadingPosition}
             initialChapterId={bookWorkspaceState.fixedDocumentOpenChapterId}
+            entryRequestVersion={bookWorkspaceState.fixedDocumentOpenRequestVersion}
             repository={readerRepository}
             assets={bookAssetRepository}
             onBack={() =>

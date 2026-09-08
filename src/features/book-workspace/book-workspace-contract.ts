@@ -48,6 +48,7 @@ export interface BookWorkspaceState {
   readonly readerOpenRequestVersion: number;
   /** One-shot fixed-document entry target used by logical comic/webtoon releases. */
   readonly fixedDocumentOpenChapterId?: string;
+  readonly fixedDocumentOpenRequestVersion?: number;
 }
 
 export interface BookWorkspaceAnnotations {

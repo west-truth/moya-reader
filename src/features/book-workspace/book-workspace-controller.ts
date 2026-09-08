@@ -219,6 +219,7 @@ export class BookWorkspaceController {
       bookTitleDraft: novel.title,
       bookTitleEditing: false,
       fixedDocumentOpenChapterId: documentEntryChapter?.id,
+      fixedDocumentOpenRequestVersion: (this.state.fixedDocumentOpenRequestVersion ?? 0) + 1,
     });
     this.ports.adjacent.applyBookAnnotations(annotations);
     this.updateState({

@@ -1285,3 +1285,115 @@
     display: none;
   }
 }
+
+.source-auto-download-option {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 14px;
+}
+.source-auto-download-option small {
+  color: var(--muted);
+}
+
+.source-release-menu {
+  display: flex;
+}
+.source-release-popover {
+  position: fixed;
+  z-index: 160;
+  width: 224px;
+  padding: 5px;
+  background: var(--app-surface);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  box-shadow: 0 8px 30px #0004;
+}
+.source-release-popover button {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  min-height: 42px;
+  padding: 8px 10px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text);
+  text-align: left;
+}
+.source-release-popover button:hover,
+.source-release-popover button:focus-visible {
+  background: var(--app-surface-muted);
+}
+.source-release-popover hr {
+  margin: 4px;
+  border: 0;
+  border-top: 1px solid var(--border);
+}
+.source-release-title-dialog {
+  width: min(440px, calc(100vw - 24px));
+}
+.source-release-title-dialog form {
+  padding: 16px;
+}
+.source-release-title-dialog label {
+  display: grid;
+  gap: 8px;
+}
+.source-release-title-dialog input {
+  width: 100%;
+  min-width: 0;
+}
+.source-release-title-actions {
+  display: flex;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 18px;
+}
+.source-release-title-actions > :first-child {
+  margin-right: auto;
+}
+.source-download-recovery {
+  margin: 12px 0;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--app-surface-muted);
+}
+.source-download-recovery summary {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 12px;
+  cursor: pointer;
+}
+.source-download-recovery summary::after {
+  content: '⌄';
+  margin-left: auto;
+}
+.source-download-recovery-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 12px;
+  border-top: 1px solid var(--border);
+}
+.source-download-recovery-row > span {
+  flex: 1;
+  min-width: 0;
+  display: grid;
+  gap: 4px;
+}
+.source-download-recovery-row strong {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.source-download-recovery-row small {
+  color: var(--muted);
+}
+.source-download-recovery-row button {
+  flex-shrink: 0;
+}
