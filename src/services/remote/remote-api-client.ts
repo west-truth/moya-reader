@@ -641,7 +641,7 @@ export class RemoteApiClient {
   /** The text-source broker owns bounded body consumption and keeps this signal alive until it finishes. */
   async fetchTextSourceGateway(path: string, signal: AbortSignal): Promise<Response> {
     if (
-      !/^\/v1\/(?:health|sources(?:\/[A-Za-z0-9_-]{1,128}(?:\/works(?:\/[A-Za-z0-9_-]{1,128}(?:\/releases(?:\/[A-Za-z0-9_-]{1,128}\/content)?)?)?)?)?)(?:\?[^#]*)?$/u.test(
+      !/^\/v1\/(?:health|sources(?:\/[A-Za-z0-9_-]{1,128}(?:\/works(?:\/[A-Za-z0-9_-]{1,128}(?:\/cover|\/releases(?:\/[A-Za-z0-9_-]{1,128}\/content)?)?)?)?)?)(?:\?[^#]*)?$/u.test(
         path,
       )
     ) {
