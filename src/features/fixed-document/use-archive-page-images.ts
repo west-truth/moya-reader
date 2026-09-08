@@ -7,7 +7,9 @@ import { ArchivePageLoader, type ArchivePageSnapshot } from './archive-page-load
 const EMPTY_SNAPSHOT: ArchivePageSnapshot = { pages: new Map(), errors: new Map() };
 
 function pageIdentity(chapter: Chapter | undefined, sourceRevision: string): string {
-  return `${chapter?.id ?? 'missing'}:${chapter?.documentSectionSourceContentHash ?? sourceRevision}`;
+  return `${chapter?.id ?? 'missing'}:${
+    chapter?.documentSectionSourceContentHash ?? chapter?.textHash ?? sourceRevision
+  }`;
 }
 
 export function useArchivePageImages(input: {

@@ -69,10 +69,54 @@ describe('archive image hook lifecycle', () => {
     });
   });
 
+  it('uses the stable chapter hash for legacy pages without a section content hash', async () => {
+    let url = 0;
+    vi.spyOn(URL, 'createObjectURL').mockImplementation(() => `blob:legacy-page-${++url}`);
+    vi.spyOn(URL, 'revokeObjectURL').mockImplementation(() => {});
+    const getParagraphPage = vi.fn(async () => ({ paragraphs: [{ assetId: 'page' }] }));
+    const getEmbeddedResource = vi.fn(async () => ({ blob: new Blob(['image']) }));
+    const repository = { getParagraphPage } as unknown as ReaderRepository;
+    const assets = { getEmbeddedResource } as unknown as BookAssetRepository;
+    let chapters = [testChapter(1, { textHash: 'legacy-page-original' })];
+    let revision = 'source-1';
+    let snapshot!: ArchivePageSnapshot;
+    function Harness() {
+      snapshot = useArchivePageImages({
+        enabled: true,
+        bookId: 'book',
+        sourceRevision: revision,
+        chapters,
+        currentPage: 0,
+        wantedPages: new Set([0]),
+        repository,
+        assets,
+      });
+      return null;
+    }
+    let renderer!: ReactTestRenderer;
+    await act(async () => {
+      renderer = create(<Harness />);
+    });
+    const original = snapshot.pages.get(0)?.url;
+
+    chapters = [...chapters, testChapter(2, { textHash: 'legacy-page-next' })];
+    revision = 'source-after-append';
+    await act(async () => renderer.update(<Harness />));
+    expect(snapshot.pages.get(0)?.url).toBe(original);
+    expect(getEmbeddedResource).toHaveBeenCalledOnce();
+
+    chapters = [testChapter(1, { textHash: 'legacy-page-replaced' }), chapters[1]!];
+    revision = 'source-after-replacement';
+    await act(async () => renderer.update(<Harness />));
+    expect(snapshot.pages.get(0)?.url).not.toBe(original);
+    expect(getEmbeddedResource).toHaveBeenCalledTimes(2);
+    await act(async () => renderer.unmount());
+  });
+
   it('forwards cancellation through metadata and asset loads and clears a replaced source', async () => {
     vi.spyOn(URL, 'createObjectURL').mockReturnValue('blob:ready');
     vi.spyOn(URL, 'revokeObjectURL').mockImplementation(() => {});
-    const chapters = [testChapter(1), testChapter(2)];
+    let chapters = [testChapter(1), testChapter(2)];
     const getParagraphPage = vi.fn(async (chapterId: string) => ({ paragraphs: [{ assetId: `asset:${chapterId}` }] }));
     const requests: Array<{ signal: AbortSignal; resolve: (value: unknown) => void }> = [];
     const getEmbeddedResource = vi.fn(
@@ -107,6 +151,7 @@ describe('archive image hook lifecycle', () => {
       requests[0]!.resolve({ blob: new Blob(['page']) });
     });
     expect(snapshot.pages.has(0)).toBe(true);
+    chapters = chapters.map((chapter) => ({ ...chapter, textHash: `${chapter.textHash}:replacement` }));
     revision = 'replacement';
     await act(async () => {
       renderer.update(<Harness />);
