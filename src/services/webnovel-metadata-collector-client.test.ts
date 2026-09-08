@@ -249,6 +249,11 @@ describe('WebNovelMetadataCollectorClient', () => {
           'X-Moya-Frame-Revision': '4',
           'X-Moya-Frame-Width': '1280',
           'X-Moya-Frame-Height': '800',
+          'X-Moya-Browser-Metadata': JSON.stringify({
+            pageId: 'a'.repeat(32),
+            inputType: 'password',
+            tabs: [{ id: 'a'.repeat(32), host: 'login.example.test' }],
+          }),
         },
       });
     });
@@ -258,10 +263,19 @@ describe('WebNovelMetadataCollectorClient', () => {
       revision: 4,
       width: 1280,
       height: 800,
+      pageId: 'a'.repeat(32),
+      inputType: 'password',
+      tabs: [{ id: 'a'.repeat(32), host: 'login.example.test' }],
     });
     await client.authBrowserAction({ action: 'scroll', deltaY: 320 });
 
     expect(String(fetchMock.mock.calls[0]![0])).toContain('after_revision=3');
     expect(JSON.parse(String(fetchMock.mock.calls[1]![1]?.body))).toEqual({ action: 'scroll', delta_y: 320 });
+    await client.authBrowserAction({ action: 'fill', text: '', pageId: 'a'.repeat(32) });
+    expect(JSON.parse(String(fetchMock.mock.calls[2]![1]?.body))).toEqual({
+      action: 'fill',
+      text: '',
+      page_id: 'a'.repeat(32),
+    });
   });
 });

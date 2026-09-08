@@ -66,6 +66,9 @@ export function WebNovelMetadataExtensionSettings({
   const remoteAuthBrowser = snapshot.health?.capabilities.adultAuth.browserPresentation === 'remote_frame';
 
   useEffect(() => setEndpoint(snapshot.settings.endpoint), [snapshot.settings.endpoint]);
+  useEffect(() => {
+    if (snapshot.auth?.browserRunning && snapshot.auth.activePlatform) setRemotePlatform(snapshot.auth.activePlatform);
+  }, [snapshot.auth?.activePlatform, snapshot.auth?.browserRunning]);
 
   const run = async (name: string, action: () => Promise<unknown>) => {
     if (operation) return false;
@@ -273,7 +276,7 @@ export function WebNovelMetadataExtensionSettings({
             <strong id="webnovel-adult-heading">19세 작품 검색</strong>
             <span>
               {remoteAuthBrowser
-                ? '서버의 전용 브라우저에서 로그인하며 계정 정보는 Moya 설정에 저장하지 않습니다.'
+                ? '로그인 연결을 서버에 보관해 다른 기기에서도 재사용합니다. 이 서버의 정보 수집기가 연결을 공유합니다.'
                 : '전용 브라우저에서 직접 로그인·성인 인증하고, Moya에는 계정이나 쿠키를 전달하지 않습니다.'}
             </span>
           </div>
@@ -290,6 +293,9 @@ export function WebNovelMetadataExtensionSettings({
             <small>로그인 사용을 설정한 플랫폼만 인증 세션을 사용합니다.</small>
           </span>
         </label>
+        {snapshot.auth?.sessionSavedAt && (
+          <p className="field-help">로그인 연결 저장됨 · 사이트에서 인증이 만료되면 다시 로그인해 주세요.</p>
+        )}
         {!connected ? (
           <p className="field-help">먼저 위에서 로컬 도우미 연결을 확인해 주세요.</p>
         ) : snapshot.health?.capabilities.adultAuth.available !== true ? (

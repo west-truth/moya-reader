@@ -48,6 +48,8 @@ export interface WebNovelMetadataCollectorAuthStatus {
   readonly browserPresentation: WebNovelMetadataCollectorBrowserPresentation;
   readonly enabledPlatforms: readonly WebNovelMetadataCollectorAuthPlatform[];
   readonly lastError?: string;
+  readonly sessionSavedAt?: string;
+  readonly activePlatform?: WebNovelMetadataCollectorAuthPlatform;
 }
 
 export interface WebNovelMetadataCollectorNovelMetadata {
@@ -117,14 +119,71 @@ export interface WebNovelMetadataCollectorBrowserFrame {
   readonly revision: number;
   readonly width: number;
   readonly height: number;
+  readonly pageId?: string;
+  readonly inputType?: string;
+  readonly tabs?: readonly { readonly id: string; readonly host: string }[];
+  readonly fields?: readonly {
+    readonly x: number;
+    readonly y: number;
+    readonly width: number;
+    readonly height: number;
+    readonly type: string;
+  }[];
 }
 
-export type WebNovelMetadataCollectorBrowserAction =
+function parseBrowserMetadata(
+  raw: string | null,
+): Pick<WebNovelMetadataCollectorBrowserFrame, 'pageId' | 'tabs' | 'inputType' | 'fields'> {
+  if (!raw) return {};
+  if (raw.length > 8_192) throw invalidResponse('auth browser metadata is too large.');
+  let metadata: unknown;
+  try {
+    metadata = JSON.parse(raw);
+  } catch {
+    throw invalidResponse('auth browser metadata is invalid.');
+  }
+  if (!isRecord(metadata)) throw invalidResponse('auth browser metadata is invalid.');
+  if (!metadata.pageId) return {};
+  const validId = (id: unknown): id is string => typeof id === 'string' && /^[a-f0-9]{32}$/.test(id);
+  if (
+    !validId(metadata.pageId) ||
+    !Array.isArray(metadata.tabs) ||
+    metadata.tabs.length > 12 ||
+    metadata.tabs.some(
+      (tab: unknown) => !isRecord(tab) || !validId(tab.id) || typeof tab.host !== 'string' || tab.host.length > 253,
+    )
+  ) {
+    throw invalidResponse('auth browser tabs are invalid.');
+  }
+  const inputType =
+    typeof metadata.inputType === 'string' &&
+    ['text', 'password', 'email', 'tel', 'number', 'search', 'url'].includes(metadata.inputType)
+      ? metadata.inputType
+      : undefined;
+  const fields = Array.isArray(metadata.fields)
+    ? (metadata.fields
+        .slice(0, 24)
+        .filter(
+          (field) =>
+            isRecord(field) &&
+            ['x', 'y', 'width', 'height'].every(
+              (key) =>
+                typeof field[key] === 'number' && Number.isFinite(field[key]) && field[key] >= 0 && field[key] <= 4096,
+            ) &&
+            typeof field.type === 'string' &&
+            ['text', 'password', 'email', 'tel', 'number', 'search', 'url'].includes(field.type),
+        ) as WebNovelMetadataCollectorBrowserFrame['fields'])
+    : undefined;
+  return { pageId: metadata.pageId, tabs: metadata.tabs as { id: string; host: string }[], inputType, fields };
+}
+
+export type WebNovelMetadataCollectorBrowserAction = { readonly pageId?: string } & (
   | { readonly action: 'click'; readonly x: number; readonly y: number }
-  | { readonly action: 'text'; readonly text: string }
+  | { readonly action: 'text' | 'fill'; readonly text: string }
   | { readonly action: 'key'; readonly key: string }
   | { readonly action: 'scroll'; readonly deltaY: number }
-  | { readonly action: 'back' | 'forward' | 'reload' };
+  | { readonly action: 'back' | 'forward' | 'reload' | 'select_tab' | 'close_tab' }
+);
 
 export interface WebNovelMetadataCollectorResolveInput {
   readonly query: string;
@@ -455,6 +514,8 @@ function validateAuthStatus(input: unknown): WebNovelMetadataCollectorAuthStatus
       ) ?? 'local_window',
     enabledPlatforms: enabledPlatforms as WebNovelMetadataCollectorAuthPlatform[],
     lastError: optionalString(input, 'last_error', 500),
+    sessionSavedAt: optionalString(input, 'session_saved_at', 64),
+    activePlatform: optionalEnum<WebNovelMetadataCollectorAuthPlatform>(input, 'active_platform', AUTH_PLATFORM_SET),
   };
 }
 
@@ -774,8 +835,8 @@ export class WebNovelMetadataCollectorClient {
     platform: WebNovelMetadataCollectorAuthPlatform,
     signal?: AbortSignal,
   ): Promise<WebNovelMetadataCollectorAuthStatus> {
-    const viewportWidth = Math.max(360, Math.min(1_280, Math.floor(globalThis.innerWidth || 1_280)));
-    const viewportHeight = Math.max(480, Math.min(900, Math.floor(globalThis.innerHeight || 800)));
+    const viewportWidth = Math.max(360, Math.min(1_080, Math.floor((globalThis.innerWidth || 1_280) - 24)));
+    const viewportHeight = Math.max(480, Math.min(900, Math.floor((globalThis.innerHeight || 1_080) - 280)));
     return this.authMutation(
       `api/v1/auth/${platform}/open`,
       'POST',
@@ -859,11 +920,16 @@ export class WebNovelMetadataCollectorClient {
     }
     const binary = new ArrayBuffer(bytes.byteLength);
     new Uint8Array(binary).set(bytes);
-    return { blob: new Blob([binary], { type: 'image/jpeg' }), revision, width, height };
+    const metadata = parseBrowserMetadata(response.headers.get('x-moya-browser-metadata'));
+    return { blob: new Blob([binary], { type: 'image/jpeg' }), revision, width, height, ...metadata };
   }
 
   async authBrowserAction(action: WebNovelMetadataCollectorBrowserAction, signal?: AbortSignal): Promise<void> {
-    const payload = action.action === 'scroll' ? { action: action.action, delta_y: action.deltaY } : action;
+    const { pageId, ...body } = action;
+    const payload = {
+      ...(body.action === 'scroll' ? { action: body.action, delta_y: body.deltaY } : body),
+      page_id: pageId,
+    };
     const response = await fetchWithTimeout(
       this.fetchImpl,
       serviceUrl(this.endpoint, 'api/v1/auth/browser/action'),

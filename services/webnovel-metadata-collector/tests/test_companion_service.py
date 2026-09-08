@@ -133,6 +133,7 @@ def test_remote_auth_frame_and_action_routes(monkeypatch: pytest.MonkeyPatch) ->
             "revision": 4,
             "width": 1280,
             "height": 900,
+            "metadata": {"pageId": "a" * 32, "inputType": "password", "tabs": []},
         }
 
     actions: list[tuple[str, float | None, float | None]] = []
@@ -156,6 +157,7 @@ def test_remote_auth_frame_and_action_routes(monkeypatch: pytest.MonkeyPatch) ->
     assert frame.headers["x-moya-frame-revision"] == "4"
     assert frame.headers["x-moya-frame-width"] == "1280"
     assert frame.headers["x-moya-frame-height"] == "900"
+    assert frame.headers["x-moya-browser-metadata"].startswith('{"pageId":')
     assert unchanged.status_code == 204
     assert action.status_code == 204
     assert actions == [("click", 120.0, 850.0)]

@@ -17,7 +17,12 @@ const AUTH_TIMEOUT_MS = 40_000;
 const AUTH_FRAME_TIMEOUT_MS = 12_000;
 const COVER_REF_PATTERN = /^[A-Za-z0-9_-]{8,256}$/;
 const AUTH_PLATFORMS = new Set(['naver_series', 'kakao_page', 'novelpia', 'ridi']);
-const AUTH_FRAME_HEADERS = ['x-moya-frame-revision', 'x-moya-frame-width', 'x-moya-frame-height'] as const;
+const AUTH_FRAME_HEADERS = [
+  'x-moya-frame-revision',
+  'x-moya-frame-width',
+  'x-moya-frame-height',
+  'x-moya-browser-metadata',
+] as const;
 
 export interface WebNovelMetadataCollectorGatewayOptions {
   readonly fetchImpl?: typeof fetch;

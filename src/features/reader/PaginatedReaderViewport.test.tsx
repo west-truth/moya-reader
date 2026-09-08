@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { ReaderPageBoundary } from '../../domain/types';
 import { defaultSettings } from '../../repositories/reader-defaults';
 import { loadReaderPageMap, type StoredReaderPageMap } from '../../storage/reader-page-map-store';
+import { testChapter, testNovel } from '../book-workspace/book-workspace-test-fixtures';
 import { PaginatedReaderViewport } from './PaginatedReaderViewport';
 import { ReaderScreenHandle } from './reader-screen-contract';
 import type { ReaderViewportApi, ReaderViewportLayerProps } from './ReaderViewport';
@@ -23,6 +24,92 @@ afterEach(() => {
 });
 
 describe('inactive pagination work', () => {
+  it('keeps the visible page map when only the book revision changes', async () => {
+    const idleCallbacks: Array<() => void> = [];
+    vi.stubGlobal('requestIdleCallback', (callback: () => void) => idleCallbacks.push(callback));
+    vi.stubGlobal('cancelIdleCallback', vi.fn());
+    vi.stubGlobal('window', { clearTimeout: vi.fn(), cancelAnimationFrame: vi.fn() });
+    vi.stubGlobal('document', { fonts: { ready: Promise.resolve() } });
+    vi.stubGlobal(
+      'ResizeObserver',
+      class {
+        observe() {}
+        disconnect() {}
+      },
+    );
+    const chapter = testChapter(1, {
+      id: 'stable-pagination-fixture',
+      novelId: 'book',
+      paragraphCount: 1,
+      textHash: 'unchanged-body',
+    });
+    const paragraph = {
+      id: 'paragraph',
+      novelId: 'book',
+      chapterId: chapter.id,
+      index: 1,
+      text: '원문',
+      createdAt: '2026-09-08T00:00:00.000Z',
+      updatedAt: '2026-09-08T00:00:00.000Z',
+    };
+    const anchor = {
+      bookId: 'book',
+      contentRevisionId: 'revision-1',
+      sectionId: chapter.id,
+      blockId: 'paragraph',
+      blockIndex: 0,
+      offset: 0,
+    };
+    vi.mocked(loadReaderPageMap).mockResolvedValue({
+      id: 'stable-pagination-map',
+      chapterId: chapter.id,
+      contentRevisionId: anchor.contentRevisionId,
+      layoutKey: 'fixture-layout',
+      rendererVersion: 'fixture-renderer',
+      boundaries: [{ index: 0, start: anchor, end: { ...anchor, offset: 2 } }],
+      createdAt: '2026-09-08T00:00:00.000Z',
+      lastAccessedAt: '2026-09-08T00:00:00.000Z',
+    });
+    const props = {
+      chapter,
+      chapters: [chapter],
+      repository: { getParagraphPage: vi.fn(async () => ({ paragraphs: [paragraph] })) },
+      settings: defaultSettings,
+      mode: 'read',
+      search: { highlightQuery: '' },
+      screenHandle: new ReaderScreenHandle(),
+      apiRef: {},
+      onApiReady: vi.fn(),
+      onVisualLocation: vi.fn(),
+      onPaginationFailure: vi.fn(),
+      isActive: true,
+    } as unknown as ReaderViewportLayerProps & { onPaginationFailure: () => void };
+    let renderer!: ReactTestRenderer;
+    const render = (revision: string, textHash = chapter.textHash) => (
+      <PaginatedReaderViewport
+        {...props}
+        novel={testNovel({ id: 'book', activeContentRevisionId: revision, totalChapters: 1 })}
+        chapter={{ ...chapter, textHash }}
+      />
+    );
+    try {
+      await act(async () => {
+        renderer = create(render('revision-1'), {
+          createNodeMock: () => ({ clientWidth: 800, clientHeight: 600 }),
+        });
+      });
+      expect(loadReaderPageMap).toHaveBeenCalledTimes(1);
+
+      await act(async () => renderer.update(render('revision-2')));
+      expect(loadReaderPageMap).toHaveBeenCalledTimes(1);
+
+      await act(async () => renderer.update(render('revision-2', 'changed-body')));
+      expect(loadReaderPageMap).toHaveBeenCalledTimes(2);
+    } finally {
+      act(() => renderer?.unmount());
+    }
+  });
+
   it('pauses layout and adjacent reads while hidden, then reuses the anchor on activation', async () => {
     const idleCallbacks: Array<() => void> = [];
     vi.stubGlobal('requestIdleCallback', (callback: () => void) => idleCallbacks.push(callback));

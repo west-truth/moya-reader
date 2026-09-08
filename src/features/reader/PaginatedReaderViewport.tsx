@@ -281,7 +281,31 @@ export function PaginatedReaderViewport(
   const [transitionDirection, setTransitionDirection] = useState<-1 | 1>();
   const [transitionSequence, setTransitionSequence] = useState(0);
   activeChapterIdRef.current = chapter.id;
-  const contentRevisionId = novel.activeContentRevisionId ?? `${novel.id}:${chapter.textHash}`;
+  const renderedRevisionRef = useRef({
+    novelId: novel.id,
+    chapterId: chapter.id,
+    textHash: chapter.textHash,
+    paragraphCount: chapter.paragraphCount,
+    contentRevisionId: novel.activeContentRevisionId ?? `${novel.id}:${chapter.textHash}`,
+  });
+  const renderedRevision = renderedRevisionRef.current;
+  if (
+    renderedRevision.novelId !== novel.id ||
+    renderedRevision.chapterId !== chapter.id ||
+    renderedRevision.textHash !== chapter.textHash ||
+    renderedRevision.paragraphCount !== chapter.paragraphCount
+  ) {
+    renderedRevisionRef.current = {
+      novelId: novel.id,
+      chapterId: chapter.id,
+      textHash: chapter.textHash,
+      paragraphCount: chapter.paragraphCount,
+      contentRevisionId: novel.activeContentRevisionId ?? `${novel.id}:${chapter.textHash}`,
+    };
+  }
+  // Appending another release changes the book revision while this chapter's body remains identical.
+  // Keep the active page map stable so a background download cannot blank and repaginate the current page.
+  const contentRevisionId = renderedRevisionRef.current.contentRevisionId;
   const { schedule: schedulePosition, flush: flushPosition } = useReaderPositionPersistence({
     isActive,
     positionPersistence,
@@ -351,7 +375,7 @@ export function PaginatedReaderViewport(
     requestedPageRef.current = 0;
     setPageFragments([]);
     setOutgoingFragments([]);
-  }, [chapter.id]);
+  }, [chapter.id, chapter.paragraphCount, chapter.textHash]);
 
   useEffect(() => {
     const stage = stageRef.current;

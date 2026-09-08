@@ -88,12 +88,15 @@ class AuthStatusResponse(BaseModel):
     browser_presentation: Literal["local_window", "remote_frame"]
     enabled_platforms: list[str] = Field(default_factory=list)
     last_error: str | None = None
+    session_saved_at: str | None = None
+    active_platform: str | None = None
 
 
 class RemoteBrowserAction(BaseModel):
-    action: Literal["click", "text", "key", "scroll", "back", "forward", "reload"]
+    action: Literal["click", "text", "fill", "key", "scroll", "back", "forward", "reload", "select_tab", "close_tab"]
+    page_id: str | None = Field(default=None, pattern=r"^[a-f0-9]{32}$")
     x: float | None = Field(default=None, ge=0, le=1280)
     y: float | None = Field(default=None, ge=0, le=900)
-    text: str | None = Field(default=None, min_length=1, max_length=2048)
+    text: str | None = Field(default=None, max_length=2048)
     key: str | None = Field(default=None, min_length=1, max_length=32)
     delta_y: float | None = Field(default=None, ge=-4000, le=4000)
