@@ -3006,7 +3006,9 @@ export function useExternalSourceController(options: UseExternalSourceController
       const input = { parentRef: link.collectionRemoteId };
       const id = cachePageId(sourceId, connection.accountConnectionId, input);
       const cached = await optionsRef.current.state.getCachePage(id);
-      let catalog = cached?.completeSeries ? cached.items : undefined;
+      const cachedCatalogIsFresh =
+        cached?.completeSeries === true && !cached.nextCursor && Date.parse(cached.expiresAt) > Date.now();
+      let catalog = cachedCatalogIsFresh ? cached.items : undefined;
       if (!catalog) {
         const read = (cursor?: string) =>
           optionsRef.current.registry.listExternalSource(sourceId, context, { ...input, cursor }, signal);

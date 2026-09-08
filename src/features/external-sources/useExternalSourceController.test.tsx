@@ -564,6 +564,39 @@ describe('text serial download task parity', () => {
       act(() => h.renderer.unmount());
     }
   });
+  it('refreshes an expired complete catalog before deciding that there is no next release', async () => {
+    const h = await createDocumentHarness();
+    try {
+      await act(async () => h.controller.importItem(h.controller.items[0]!));
+      const bookId = (await h.libraryBooks())[0]!.id;
+      const currentRelease = h.controller.items[0]!;
+      vi.spyOn(h.sourceState, 'getCachePage').mockResolvedValue({
+        id: 'expired-series-catalog',
+        connectorId: SOURCE_ID,
+        accountConnectionId: ITEM_KEY.accountConnectionId,
+        queryFingerprint: 'expired',
+        items: [currentRelease],
+        completeSeries: true,
+        fetchedAt: '2000-01-01T00:00:00.000Z',
+        expiresAt: '2000-01-01T00:15:00.000Z',
+        schemaVersion: 1,
+      });
+      vi.mocked(h.registry.listExternalSource).mockClear();
+      h.download.mockClear();
+
+      await act(async () => h.controller.setAutoDownloadNext?.(true));
+      await h.read(bookId, externalItemSectionId(currentRelease));
+      await act(async () => {
+        await vi.waitFor(() => expect(h.download).toHaveBeenCalledTimes(1));
+      });
+
+      expect(h.registry.listExternalSource).toHaveBeenCalled();
+      expect(h.download.mock.calls[0]![2].key.remoteId).toBe('work-2');
+      expect(h.openNovel).not.toHaveBeenCalled();
+    } finally {
+      act(() => h.renderer.unmount());
+    }
+  });
   it('holds a fast second text release until the first finishes, then commits in chapter order', async () => {
     const h = await createDocumentHarness();
     const normal = h.download.getMockImplementation()!;
