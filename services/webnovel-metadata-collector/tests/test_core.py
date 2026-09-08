@@ -426,6 +426,12 @@ def test_authenticated_extractors_keep_only_adult_candidates() -> None:
                 }
             }
 
+        async def fetch_novelpia_json(self, url, **kwargs):
+            return await self.fetch_json(url, **kwargs)
+
+        async def fetch_novelpia_text(self, url, **kwargs):
+            return await self.fetch_text(url, **kwargs)
+
         async def fetch_text(self, url, **kwargs):
             return """
             <ul class="lst_list"><li>

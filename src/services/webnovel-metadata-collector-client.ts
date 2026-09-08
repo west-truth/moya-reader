@@ -38,6 +38,7 @@ export interface WebNovelMetadataCollectorHealth {
       readonly available: boolean;
       readonly browserPresentation: WebNovelMetadataCollectorBrowserPresentation;
       readonly platforms: readonly WebNovelMetadataCollectorAuthPlatform[];
+      readonly directLoginPlatforms: readonly WebNovelMetadataCollectorAuthPlatform[];
     };
   };
 }
@@ -50,6 +51,7 @@ export interface WebNovelMetadataCollectorAuthStatus {
   readonly lastError?: string;
   readonly sessionSavedAt?: string;
   readonly activePlatform?: WebNovelMetadataCollectorAuthPlatform;
+  readonly rememberedCredentialPlatforms: readonly WebNovelMetadataCollectorAuthPlatform[];
 }
 
 export interface WebNovelMetadataCollectorNovelMetadata {
@@ -288,6 +290,11 @@ function stringArray(value: unknown, field: string, maximumItems: number, maximu
   });
 }
 
+function optionalStringArray(value: unknown, field: string, maximumItems: number, maximumLength: number): string[] {
+  if (value === undefined || value === null) return [];
+  return stringArray(value, field, maximumItems, maximumLength);
+}
+
 function optionalEnum<T extends string>(record: JsonRecord, key: string, allowed: ReadonlySet<string>): T | undefined {
   const value = record[key];
   if (value === undefined || value === null) return undefined;
@@ -465,6 +472,10 @@ function validateHealth(input: unknown): WebNovelMetadataCollectorHealth {
   if (platforms.some((value) => !AUTH_PLATFORM_SET.has(value))) {
     throw invalidResponse('adult auth platforms are invalid.');
   }
+  const directLoginPlatforms = optionalStringArray(adultAuth.direct_login_platforms, 'direct login platforms', 8, 64);
+  if (directLoginPlatforms.some((value) => !AUTH_PLATFORM_SET.has(value))) {
+    throw invalidResponse('direct login platforms are invalid.');
+  }
   const maxBytes = integer(coverRef, 'max_bytes', 1, MAX_COVER_INPUT_BYTES);
   const browserPresentation =
     optionalEnum<WebNovelMetadataCollectorBrowserPresentation>(
@@ -492,6 +503,7 @@ function validateHealth(input: unknown): WebNovelMetadataCollectorHealth {
         available: requiredBoolean(adultAuth, 'available'),
         browserPresentation,
         platforms: platforms as WebNovelMetadataCollectorAuthPlatform[],
+        directLoginPlatforms: directLoginPlatforms as WebNovelMetadataCollectorAuthPlatform[],
       },
     },
   };
@@ -502,6 +514,15 @@ function validateAuthStatus(input: unknown): WebNovelMetadataCollectorAuthStatus
   const enabledPlatforms = stringArray(input.enabled_platforms, 'enabled platforms', 8, 64);
   if (enabledPlatforms.some((value) => !AUTH_PLATFORM_SET.has(value))) {
     throw invalidResponse('enabled platforms are invalid.');
+  }
+  const rememberedCredentialPlatforms = optionalStringArray(
+    input.remembered_credential_platforms,
+    'remembered credential platforms',
+    8,
+    64,
+  );
+  if (rememberedCredentialPlatforms.some((value) => !AUTH_PLATFORM_SET.has(value))) {
+    throw invalidResponse('remembered credential platforms are invalid.');
   }
   return {
     available: requiredBoolean(input, 'available'),
@@ -516,6 +537,7 @@ function validateAuthStatus(input: unknown): WebNovelMetadataCollectorAuthStatus
     lastError: optionalString(input, 'last_error', 500),
     sessionSavedAt: optionalString(input, 'session_saved_at', 64),
     activePlatform: optionalEnum<WebNovelMetadataCollectorAuthPlatform>(input, 'active_platform', AUTH_PLATFORM_SET),
+    rememberedCredentialPlatforms: rememberedCredentialPlatforms as WebNovelMetadataCollectorAuthPlatform[],
   };
 }
 
@@ -853,6 +875,21 @@ export class WebNovelMetadataCollectorClient {
     return this.authMutation(`api/v1/auth/${platform}`, 'PUT', { enabled }, signal);
   }
 
+  async configureNovelpiaCredentials(
+    email: string,
+    password: string,
+    signal?: AbortSignal,
+  ): Promise<WebNovelMetadataCollectorAuthStatus> {
+    return this.authMutation('api/v1/auth/novelpia/credentials', 'POST', { email, password }, signal);
+  }
+
+  async configureNovelpiaLoginKey(
+    loginKey: string,
+    signal?: AbortSignal,
+  ): Promise<WebNovelMetadataCollectorAuthStatus> {
+    return this.authMutation('api/v1/auth/novelpia/login-key', 'PUT', { login_key: loginKey }, signal);
+  }
+
   async closeAuthBrowser(signal?: AbortSignal): Promise<WebNovelMetadataCollectorAuthStatus> {
     return this.authMutation('api/v1/auth/browser/close', 'POST', { requested: true }, signal);
   }
@@ -957,7 +994,7 @@ export class WebNovelMetadataCollectorClient {
   private async authMutation(
     path: string,
     method: 'POST' | 'PUT',
-    body: Readonly<Record<string, boolean | number>>,
+    body: Readonly<Record<string, boolean | number | string>>,
     signal?: AbortSignal,
   ): Promise<WebNovelMetadataCollectorAuthStatus> {
     return validateAuthStatus(

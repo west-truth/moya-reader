@@ -79,9 +79,9 @@ frame으로 전용 Chromium을 보고 click/text/key/scroll/navigation을 전달
 이 route를 보호하고 browser cookie/Authorization을 collector에 넘기지 않는다. 로그인 입력 자체는 HTTPS Moya
 연결을 거쳐 브라우저로 전달되므로 평문 HTTP 외부 접속에서는 사용하면 안 된다.
 
-profile/cookie는 private `metadata-collector-data` volume에만 남고 Moya 설정, Cloud Vault와 기기 동기화에는
-포함되지 않는다. 현재 self-host는 소유자 한 명과 profile 하나를 전제로 한다. `로그인 완료`는 platform 사용
-설정일 뿐 실제 성인 인증 성공 증명이 아니며 실제 19세 결과는 해당 계정으로 확인해야 한다.
+profile/cookie와 노벨피아 인증 정보는 private `metadata-collector-data` volume에만 남고 Moya 설정, Cloud Vault와
+기기 동기화에는 포함되지 않는다. 현재 self-host는 소유자 한 명과 인증 상태 하나를 전제로 한다. 브라우저 방식의
+`로그인 완료`는 platform 사용 설정이며, 노벨피아는 아래의 실제 성인 모드 확인을 통과한 경우에만 활성화된다.
 
 ### 원격 로그인과 서버 보관 (2026-09-08)
 
@@ -100,6 +100,18 @@ profile/cookie는 private `metadata-collector-data` volume에만 남고 Moya 설
   연결을 삭제하지 않는다. 이 인증은 수집기 설치 단위로 공유되며 Moya 사용자별 격리 프로필 기능은 아니다.
 - `로그인 연결 저장됨`은 저장 완료를 뜻한다. 사이트에서 세션을 만료·철회하면 다시 로그인해야 한다.
   소셜 제공자가 자동화 브라우저를 거부하는 경우 성공을 보장하지 않으며, 인증/성인 확인은 사용자가 완료한다.
+
+### 노벨피아 LOGINKEY 인증 (2026-09-08)
+
+- 노벨피아는 원격 브라우저 대신 이메일 계정 또는 `LOGINKEY` 직접 입력을 사용한다. 이메일 방식은
+  `/proc/login`으로 키를 활성화하고, 소셜 계정은 사용자가 로그인된 브라우저에서 확인한 키를 입력한다.
+- 이메일·비밀번호, 발급된 키는 `/data/auth/novelpia-auth.json`에 소유자 전용 권한으로 저장된다. 이메일 방식은
+  키가 만료되면 저장된 계정으로 한 번 자동 재로그인한다. `LOGINKEY` 방식은 새 키를 다시 입력해야 한다.
+- 연결과 19세 검색 전에는 `/proc/member_adt_mode` 응답을 확인해 성인 모드를 활성화한다. 응답이 `login`이면 로그인
+  만료, `auth`이면 본인 인증 필요로 처리한다. 이 검증을 통과하기 전에는 노벨피아를 활성 플랫폼으로 표시하지
+  않으며, 익명 검색의 빈 목록을 인증된 검색 결과로 취급하지 않는다.
+- 인증 요청 본문은 기존 HTTPS Moya gateway를 통과하지만 Moya DB, 브라우저 저장소, Cloud Vault에는 남기지
+  않는다. 서버 관리자와 해당 private volume에 접근할 수 있는 사용자는 저장된 계정 정보를 읽을 수 있다.
 
 개발 검증: 수집기 폴더에서 `MOYA_TEST_AUTH_BROWSER=1 python -m pytest`로 실제 Chromium 기반의 격리된
 입력·팝업·재시작 복구 검증을 실행한다. 루트의 `node scripts/performance/remote-auth-smoke.mjs`는 격리 Edge에서
@@ -230,7 +242,7 @@ Vite 등 로컬 개발 Web과 Tauri desktop에서 capability와 공개 검색을
 - 검색 결과별 제목 일치 점수 반환
 - 플랫폼 요청 실패 시 오류 상태를 포함한 유효한 JSON 반환
 - 브라우저에서 검색 결과와 표지를 확인하는 단일 화면
-- 전용 브라우저에서 사용자가 직접 로그인한 세션을 이용하는 선택적 19세 작품 검색
+- 전용 브라우저 세션 또는 노벨피아 LOGINKEY를 이용하는 선택적 19세 작품 검색
 - 네이버 시리즈, 카카오페이지, 노벨피아, 리디 인증 검색을 플랫폼별로 켜고 끄는 설정
 - 인증 검색으로 확인한 19세 작품에만 공통 `19금` 태그 반환
 
@@ -238,19 +250,23 @@ Vite 등 로컬 개발 Web과 Tauri desktop에서 capability와 공개 검색을
 
 검색과 상세 조회는 이미지를 미리 다운로드하거나 캐시하지 않는다. resolve가 발급한 짧은 수명의 ref를 사용자가
 요청했을 때만 위의 제한된 endpoint가 표지 binary를 전달한다. 기본 검색은 로그인 없이 동작한다. 선택적 인증
-검색도 로그인·성인 인증·CAPTCHA를 자동화하거나 우회하지 않으며, 사용자가 전용 브라우저에서 직접 인증한
-세션만 사용한다. Desktop은 전용 Chrome/Edge에 직접 입력하고, self-host는 HTTPS Moya gateway를 거쳐 전용
-Chromium에 입력을 전달한다. 어느 경로도 계정 입력을 Moya 설정/DB에 저장하지 않는다.
+검색은 로그인·성인 인증·CAPTCHA를 우회하지 않는다. 일반 플랫폼은 사용자가 전용 브라우저에서 직접 인증한
+세션을 사용한다. 노벨피아 이메일 계정은 수집기가 사이트 로그인 요청으로 `LOGINKEY`를 발급받아 재사용하며,
+소셜 계정은 사용자가 직접 확인한 `LOGINKEY`를 사용한다. 계정 입력은 Moya 설정/DB에 저장하지 않는다.
 
 ## 선택적 인증 검색
 
-웹 화면의 `인증 검색 설정`에서 플랫폼별로 다음 순서로 연결한다.
+웹 화면의 `인증 검색 설정`에서 일반 플랫폼은 다음 순서로 연결한다.
 
 1. `로그인 창 열기`를 누른다. Desktop은 일반 Chrome/Edge 전용 창을, auth self-host는 Moya 안의 전용 Chromium
    화면을 연다.
 2. 해당 플랫폼에서 사용자가 직접 로그인과 성인 인증을 마친다.
 3. 화면에서 `로그인 완료·사용`을 체크한다. 프로그램이 로그인 창 종료와 프로필 준비를 끝낸 뒤 검색 가능 상태를 표시한다.
 4. `검색할 때 19세 작품 포함`이 켜진 상태에서 검색한다. 이 선택은 다음 실행에도 유지된다.
+
+노벨피아는 `로그인 설정`에서 이메일·비밀번호 또는 소셜 계정의 `LOGINKEY`를 입력한다. 수집기가 실제 로그인과
+성인 모드 활성화 응답을 검증한 뒤 바로 사용 상태로 바꾼다. 이메일 계정은 만료 시 자동 재로그인하고, 수동 키는
+만료 사실을 명확히 반환한다.
 
 Desktop 인증 브라우저 프로필은 Windows의 `%LOCALAPPDATA%\WebNovelMetadataCollector\auth` 아래에 저장된다.
 로그인 단계는 Playwright가 제어하지 않는 일반 브라우저로 수행하고, 완료 뒤 인증 검색에서 같은 전용 프로필을
@@ -264,10 +280,9 @@ Desktop 인증 브라우저 프로필은 Windows의 `%LOCALAPPDATA%\WebNovelMeta
 요청만으로 표지를 별도 다운로드하지 않으며, cover-ref endpoint를 호출했을 때만 제한된 검사를 수행한다. 개인
 사용 범위에서는 메타데이터와 이미지 캐시를 사용하지 않는다.
 
-Moya에 연결할 때도 인증 API는 동일한 broker 경계를 사용한다. Desktop에서는 Moya가 비밀번호·cookie를
-입력받거나 읽지 않는다. Self-host에서는 로그인 입력이 기존 인증된 HTTPS gateway를 통과하지만 저장되지 않고,
-cookie/profile은 collector volume 밖으로 나오지 않는다. 현재는 명시적인 session 만료 판정 대신 검색 오류,
-수동 `상태 새로고침`과 `다시 로그인`을 제공하며, 저장 session 삭제는 별도 확인을 받는다. 상태 문구도 실제 성인
-결과 성공을 단정하지 않고 `19세 검색 사용 설정됨`으로 표시한다.
+Moya에 연결할 때도 인증 API는 동일한 broker 경계를 사용한다. 일반 플랫폼의 cookie/profile과 노벨피아의
+계정/LOGINKEY는 collector volume 밖으로 나오지 않는다. 노벨피아는 실제 성인 모드 응답으로 만료와 본인 인증
+필요를 구분하고, 일반 플랫폼은 검색 오류·수동 `상태 새로고침`·`다시 로그인`을 제공한다. 저장 session 삭제는
+별도 확인을 받아 모든 브라우저 프로필과 노벨피아 인증 파일을 함께 지운다.
 
 현재 모듈 책임, 후보 선정 순서, 요청 흐름과 오류 계약은 [프로그램 구조](docs/architecture.md)를 참고한다. 구현 범위와 이후 순서는 [구현 계획](docs/implementation-plan.md)을 참고한다. 19세 인증 수집의 플랫폼별 장애 원인과 해결 내역은 [19세 작품 인증 수집 기록](docs/adult-authentication.md)에 계속 누적한다. 소설 뷰어에서 로컬 API와 인증 상태를 연결할 때는 [소설 뷰어용 19세 인증 API 연동](docs/viewer-auth-integration.md)을 따른다.

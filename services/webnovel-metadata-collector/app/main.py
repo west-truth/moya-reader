@@ -36,6 +36,8 @@ from app.models import (
     AuthActionRequest,
     AuthPlatformUpdate,
     AuthStatusResponse,
+    NovelpiaCredentialsRequest,
+    NovelpiaLoginKeyRequest,
     RemoteBrowserAction,
     ResolveResponse,
     SearchResponse,
@@ -147,7 +149,8 @@ async def health() -> dict[str, object]:
                 "version": 1,
                 "available": auth_sessions.available,
                 "browser_presentation": auth_sessions.browser_presentation,
-                "platforms": list(AUTH_PLATFORMS),
+                "platforms": list(auth_sessions.supported_platforms),
+                "direct_login_platforms": ["novelpia"],
             },
         },
     }
@@ -267,13 +270,56 @@ async def update_auth_platform(
     _require_local_request(request)
     _require_auth_platform(platform)
     if payload.enabled:
-        if auth_sessions.remote_auth and auth_sessions.status().get("active_platform") not in {None, platform}:
+        if platform == "novelpia":
+            try:
+                await auth_sessions.ensure_novelpia_enabled()
+            except AuthFeatureUnavailable as exc:
+                raise HTTPException(status_code=409, detail=str(exc)) from exc
+        elif auth_sessions.remote_auth and auth_sessions.status().get("active_platform") not in {None, platform}:
             raise HTTPException(status_code=409, detail="현재 로그인 중인 플랫폼에서 완료해 주세요.")
-        try:
-            await auth_sessions.finish_login()
-        except AuthFeatureUnavailable as exc:
-            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        elif platform != "novelpia":
+            try:
+                await auth_sessions.finish_login()
+            except AuthFeatureUnavailable as exc:
+                raise HTTPException(status_code=409, detail=str(exc)) from exc
     auth_sessions.set_enabled(platform, payload.enabled)
+    return AuthStatusResponse(**auth_sessions.status())
+
+
+@app.post(
+    "/api/v1/auth/novelpia/credentials",
+    response_model=AuthStatusResponse,
+)
+async def configure_novelpia_credentials(
+    payload: NovelpiaCredentialsRequest,
+    request: Request,
+) -> AuthStatusResponse:
+    _require_local_request(request)
+    try:
+        await auth_sessions.configure_novelpia_credentials(
+            payload.email,
+            payload.password.get_secret_value(),
+        )
+    except AuthFeatureUnavailable as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    return AuthStatusResponse(**auth_sessions.status())
+
+
+@app.put(
+    "/api/v1/auth/novelpia/login-key",
+    response_model=AuthStatusResponse,
+)
+async def configure_novelpia_login_key(
+    payload: NovelpiaLoginKeyRequest,
+    request: Request,
+) -> AuthStatusResponse:
+    _require_local_request(request)
+    try:
+        await auth_sessions.configure_novelpia_login_key(
+            payload.login_key.get_secret_value()
+        )
+    except (AuthFeatureUnavailable, ValueError) as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
     return AuthStatusResponse(**auth_sessions.status())
 
 

@@ -183,9 +183,9 @@ def test_completed_login_checkpoints_session_cookies_and_clear_removes_them(tmp_
 
     async def run():
         await manager.finish_login()
-        manager.set_enabled("novelpia", True)
+        manager.set_enabled("ridi", True)
         restarted = AuthSessionManager(tmp_path)
-        assert restarted.is_enabled("novelpia")
+        assert restarted.is_enabled("ridi")
         assert restarted.status()["session_saved_at"]
         payload = restarted._load_session()
         assert [cookie["name"] for cookie in payload["cookies"]] == ["session"]

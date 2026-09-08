@@ -39,7 +39,13 @@ const health: WebNovelMetadataCollectorHealth = {
       maxBytes: 10 * 1024 * 1024,
       contentTypes: ['image/jpeg', 'image/png', 'image/webp'],
     },
-    adultAuth: { version: 1, available: true, browserPresentation: 'local_window', platforms: ['ridi'] },
+    adultAuth: {
+      version: 1,
+      available: true,
+      browserPresentation: 'local_window',
+      platforms: ['ridi'],
+      directLoginPlatforms: [],
+    },
   },
 };
 
@@ -81,6 +87,7 @@ function clientPort(overrides: Partial<WebNovelMetadataCollectorClientPort> = {}
     browserRunning: false,
     browserPresentation: 'local_window' as const,
     enabledPlatforms: ['ridi'] as const,
+    rememberedCredentialPlatforms: [] as const,
   };
   return {
     health: vi.fn(async () => health),
@@ -94,6 +101,8 @@ function clientPort(overrides: Partial<WebNovelMetadataCollectorClientPort> = {}
     authStatus: vi.fn(async () => auth),
     openAuthBrowser: vi.fn(async () => ({ ...auth, browserRunning: true })),
     setAuthPlatformEnabled: vi.fn(async () => auth),
+    configureNovelpiaCredentials: vi.fn(async () => auth),
+    configureNovelpiaLoginKey: vi.fn(async () => auth),
     closeAuthBrowser: vi.fn(async () => auth),
     clearAuthSession: vi.fn(async () => ({ ...auth, enabledPlatforms: [] })),
     authBrowserFrame: vi.fn(async () => undefined),
