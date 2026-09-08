@@ -1,4 +1,4 @@
-import { isValidElement, type ReactElement, type ReactNode } from 'react';
+import type { ReactElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { act, create, type ReactTestRenderer } from 'react-test-renderer';
 import { describe, expect, it, vi } from 'vitest';
@@ -6,27 +6,21 @@ import type { Novel } from '../../domain/types';
 import { LibraryScreen, type LibraryScreenActions, type LibraryScreenModel } from './LibraryScreen';
 import { buildLibraryCollectionModel, type NovelReadStateSelectors } from './library-screen-model';
 
-type HostElement = ReactElement<Record<string, unknown>, string>;
+interface HostElement {
+  readonly type: string;
+  readonly props: Record<string, unknown>;
+}
 
-function collectHostElements(node: ReactNode): HostElement[] {
-  if (Array.isArray(node)) return node.flatMap(collectHostElements);
-  if (!isValidElement(node)) return [];
-
-  const element = node as ReactElement<Record<string, unknown>>;
-  if (typeof element.type === 'function') {
-    const Component = element.type as (props: Record<string, unknown>) => ReactNode;
-    if (
-      Component.name === 'LibraryMobileHeader' ||
-      Component.name === 'LibraryInspector' ||
-      Component.name === 'ActiveLibraryBatchBar' ||
-      Component.name === 'BookCover'
-    )
-      return [];
-    return collectHostElements(Component(element.props));
-  }
-
-  const children = collectHostElements(element.props.children as ReactNode);
-  return typeof element.type === 'string' ? [element as HostElement, ...children] : children;
+function collectHostElements(element: ReactElement): HostElement[] {
+  let renderer!: ReactTestRenderer;
+  act(() => {
+    renderer = create(element);
+  });
+  const elements = renderer.root
+    .findAll((node) => typeof node.type === 'string')
+    .map((node) => ({ type: node.type as string, props: node.props as Record<string, unknown> }));
+  act(() => renderer.unmount());
+  return elements;
 }
 
 function renderedText(node: { children: readonly unknown[] }): string {
@@ -215,16 +209,16 @@ describe('LibraryScreen', () => {
     const screenActions = actions();
     const unavailableMarkup = renderToStaticMarkup(<LibraryScreen model={model([novel()])} actions={screenActions} />);
     const elements = collectHostElements(
-      LibraryScreen({
-        model: model([novel()], {
+      <LibraryScreen
+        model={model([novel()], {
           externalSources: {
             active: false,
             busy: false,
             sources: [{ id: 'fixture.source', title: '개발용 작품', kind: 'catalog' }],
           },
-        }),
-        actions: screenActions,
-      }),
+        })}
+        actions={screenActions}
+      />,
     );
     const externalSources = elements.find(
       (element) => element.type === 'button' && element.props['aria-label'] === '개발용 작품 소스 열기',
@@ -241,7 +235,7 @@ describe('LibraryScreen', () => {
 
   it('uses one atomic home action from the desktop brand', () => {
     const screenActions = actions();
-    const elements = collectHostElements(LibraryScreen({ model: model([novel()]), actions: screenActions }));
+    const elements = collectHostElements(<LibraryScreen model={model([novel()])} actions={screenActions} />);
     const home = elements.find(
       (element) => element.type === 'button' && element.props['aria-label'] === '라이브러리 메인',
     );
@@ -317,10 +311,10 @@ describe('LibraryScreen', () => {
       <LibraryScreen model={model([], { bootstrap: { status: 'loading' } })} actions={screenActions} />,
     );
     const failedElements = collectHostElements(
-      LibraryScreen({
-        model: model([], { bootstrap: { status: 'failed', message: '저장소 오류' } }),
-        actions: screenActions,
-      }),
+      <LibraryScreen
+        model={model([], { bootstrap: { status: 'failed', message: '저장소 오류' } })}
+        actions={screenActions}
+      />,
     );
     const retryButton = failedElements.find(
       (element) => element.type === 'button' && element.props.className === 'primary-btn',
@@ -331,10 +325,10 @@ describe('LibraryScreen', () => {
     expect(loadingMarkup).not.toContain('TXT 파일을 책장에 추가하세요');
     expect(
       renderToStaticMarkup(
-        LibraryScreen({
-          model: model([], { bootstrap: { status: 'failed', message: '저장소 오류' } }),
-          actions: screenActions,
-        }),
+        <LibraryScreen
+          model={model([], { bootstrap: { status: 'failed', message: '저장소 오류' } })}
+          actions={screenActions}
+        />,
       ),
     ).toContain('저장소 오류');
     (retryButton!.props.onClick as () => void)();
@@ -405,7 +399,7 @@ describe('LibraryScreen', () => {
       });
       const screenActions = actions();
       const screenModel = model([reading], { viewMode });
-      const hostElements = collectHostElements(LibraryScreen({ model: screenModel, actions: screenActions }));
+      const hostElements = collectHostElements(<LibraryScreen model={screenModel} actions={screenActions} />);
       const article = hostElements.find((element) => element.type === 'article');
       const openButton = hostElements.find(
         (element) => element.type === 'button' && element.props.className === 'book-card-open',
@@ -507,7 +501,7 @@ describe('LibraryScreen', () => {
         busy: false,
       },
     });
-    const elements = collectHostElements(LibraryScreen({ model: screenModel, actions: screenActions }));
+    const elements = collectHostElements(<LibraryScreen model={screenModel} actions={screenActions} />);
     const itemButton = elements.find(
       (element) => element.type === 'button' && element.props['aria-label'] === '선택 테스트 선택',
     );
@@ -532,7 +526,7 @@ describe('LibraryScreen', () => {
         readState,
       }),
     });
-    const elements = collectHostElements(LibraryScreen({ model: screenModel, actions: screenActions }));
+    const elements = collectHostElements(<LibraryScreen model={screenModel} actions={screenActions} />);
     const itemButton = elements.find(
       (element) => element.type === 'button' && element.props['aria-label'] === '휴지통 작품 작품 상세 열기',
     );
@@ -555,6 +549,7 @@ describe('LibraryScreen', () => {
 
     expect(markup).toContain('type="search"');
     expect(markup).toContain('aria-label="책장 검색"');
+    expect(markup).not.toContain('Ctrl K');
     expect(markup).toContain('aria-label="책장 필터"');
     expect(markup).toContain('aria-label="책장 정렬"');
     expect(markup).toContain('role="group" aria-label="책장 보기 방식"');
@@ -585,7 +580,7 @@ describe('LibraryScreen', () => {
 
   it('provides a compact filter selector for narrow layouts', () => {
     const screenActions = actions();
-    const hostElements = collectHostElements(LibraryScreen({ model: model([novel()]), actions: screenActions }));
+    const hostElements = collectHostElements(<LibraryScreen model={model([novel()])} actions={screenActions} />);
     const mobileFilter = hostElements.find(
       (element) => element.type === 'select' && element.props['aria-label'] === '책장 필터',
     );
@@ -638,7 +633,7 @@ describe('LibraryScreen', () => {
         shelfBookCounts: new Map(),
       },
     });
-    const hostElements = collectHostElements(LibraryScreen({ model: screenModel, actions: screenActions }));
+    const hostElements = collectHostElements(<LibraryScreen model={screenModel} actions={screenActions} />);
     const openButton = hostElements.find(
       (element) => element.type === 'button' && element.props['aria-label'] === '모바일 작품 작품 상세 열기',
     );
@@ -700,7 +695,7 @@ describe('LibraryScreen', () => {
       lastReadAt: '2026-07-09T12:00:00.000Z',
     });
     const screenActions = actions();
-    const elements = collectHostElements(LibraryScreen({ model: model([fixed]), actions: screenActions }));
+    const elements = collectHostElements(<LibraryScreen model={model([fixed])} actions={screenActions} />);
     const body = elements.find(
       (element) => element.type === 'button' && element.props['aria-label'] === '고정 문서 문서 열기',
     );

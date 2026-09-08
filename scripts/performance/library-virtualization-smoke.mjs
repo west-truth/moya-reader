@@ -49,14 +49,44 @@ try {
   });
   await page.goto(`${baseUrl}/__library-virtualization`);
   await page.waitForFunction(() => document.querySelectorAll('.book-card').length > 0);
+  assert.equal(await page.getByText('Ctrl K', { exact: true }).count(), 0);
+  await page.setViewportSize({ width: 834, height: 1194 });
+  await page.evaluate(() => {
+    document.body.tabIndex = -1;
+    document.body.focus();
+  });
+  await page.keyboard.press('Control+K');
+  assert.equal(await page.evaluate(() => document.activeElement?.getAttribute('aria-label')), '책장 검색');
   const evidence = [];
   for (const viewport of [
     { width: 1440, height: 900 },
     { width: 834, height: 1194 },
+    { width: 768, height: 1024 },
     { width: 1194, height: 834 },
     { width: 390, height: 844 },
   ]) {
     await page.setViewportSize(viewport);
+    let topbar;
+    if (viewport.width >= 700) {
+      topbar = await page.evaluate(() => {
+        const header = document.querySelector('.library-topbar');
+        const search = document.querySelector('.library-search');
+        const actions = document.querySelector('.library-topbar-actions');
+        const headerRect = header.getBoundingClientRect();
+        const searchRect = search.getBoundingClientRect();
+        const actionsRect = actions.getBoundingClientRect();
+        return {
+          gap: actionsRect.left - searchRect.right,
+          leftInset: searchRect.left - headerRect.left,
+          rightInset: headerRect.right - actionsRect.right,
+          overflow: header.scrollWidth - header.clientWidth,
+        };
+      });
+      assert.ok(topbar.gap >= 10, `Tablet library header controls overlap by ${-topbar.gap}px`);
+      assert.ok(topbar.leftInset >= 15, `Tablet library search escaped its header by ${-topbar.leftInset}px`);
+      assert.ok(topbar.rightInset >= 15, `Tablet library actions escaped their header by ${-topbar.rightInset}px`);
+      assert.ok(topbar.overflow <= 1, `Tablet library header overflowed by ${topbar.overflow}px`);
+    }
     for (const viewMode of ['grid', 'list']) {
       await page.evaluate((mode) => globalThis.libraryFixture.update({ viewMode: mode, query: '' }), viewMode);
       const selector = viewMode === 'grid' ? '.book-card' : '.book-list-row';
@@ -94,7 +124,15 @@ try {
       await page.waitForFunction(() => document.querySelectorAll('.book-card, .book-list-row').length === 100);
       assert.equal(await page.getByRole('heading', { name: 'Synthetic novel 0000', exact: true }).count(), 1);
       assert.equal(await page.locator('.library-main').evaluate((element) => element.scrollTop), 0);
-      evidence.push({ ...viewport, viewMode, mounted, gridRemainder, lastItemReachable: true, queryReset: true });
+      evidence.push({
+        ...viewport,
+        viewMode,
+        mounted,
+        gridRemainder,
+        topbar,
+        lastItemReachable: true,
+        queryReset: true,
+      });
     }
   }
   await page.evaluate(() => globalThis.libraryFixture.update({ query: '', selectionMode: true }));
@@ -125,7 +163,15 @@ try {
   assert.deepEqual(errors, []);
   console.log(
     JSON.stringify(
-      { evidence, all1000Selected: true, resizeFocusPreserved: true, sequentialTab: true, browserErrors: errors },
+      {
+        evidence,
+        searchShortcutFocused: true,
+        shortcutHintHidden: true,
+        all1000Selected: true,
+        resizeFocusPreserved: true,
+        sequentialTab: true,
+        browserErrors: errors,
+      },
       null,
       2,
     ),

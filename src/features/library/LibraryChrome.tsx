@@ -23,7 +23,7 @@ import {
   Upload,
   X,
 } from 'lucide-react';
-import { useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { ModalDrawer } from '../../shared/ui/ModalDrawer';
 import { formatCount } from '../../utils/format';
 import type { LibraryScreenProps } from './library-screen-contract';
@@ -40,6 +40,34 @@ const systemViews: Array<{ value: LibraryFilter; label: string; icon: typeof Lib
 
 function goLibraryHome({ actions }: LibraryScreenProps): void {
   actions.presentation.goHome();
+}
+
+function LibrarySearchShortcut() {
+  useEffect(() => {
+    if (typeof document === 'undefined') return;
+
+    const focusSearch = (event: KeyboardEvent) => {
+      if (
+        event.defaultPrevented ||
+        event.altKey ||
+        event.shiftKey ||
+        (!event.ctrlKey && !event.metaKey) ||
+        event.key.toLowerCase() !== 'k'
+      )
+        return;
+
+      const input = document.querySelector<HTMLInputElement>('.library-search input');
+      if (!input || input.offsetParent === null) return;
+      event.preventDefault();
+      input.focus();
+      input.select();
+    };
+
+    document.addEventListener('keydown', focusSearch);
+    return () => document.removeEventListener('keydown', focusSearch);
+  }, []);
+
+  return null;
 }
 
 function FilterNavigation({ model, actions, close }: LibraryScreenProps & { close?: () => void }) {
@@ -199,6 +227,7 @@ export function LibrarySidebar(props: LibraryScreenProps) {
 export function LibraryHeader({ model, actions }: LibraryScreenProps) {
   return (
     <header className="library-topbar">
+      <LibrarySearchShortcut />
       <label className="search-box library-search">
         <Search size={17} />
         <input
@@ -208,7 +237,6 @@ export function LibraryHeader({ model, actions }: LibraryScreenProps) {
           placeholder="책장 검색"
           aria-label="책장 검색"
         />
-        <kbd>Ctrl K</kbd>
       </label>
       <div className="library-topbar-actions">
         <button
@@ -225,11 +253,23 @@ export function LibraryHeader({ model, actions }: LibraryScreenProps) {
             <small>{model.sync.label}</small>
           </span>
         </button>
-        <button className="ghost-btn" type="button" onClick={actions.header.openBackup} aria-label="백업 및 복원 열기">
-          <DatabaseBackup size={17} /> 백업
+        <button
+          className="ghost-btn library-topbar-secondary-action"
+          type="button"
+          onClick={actions.header.openBackup}
+          title="백업 및 복원"
+          aria-label="백업 및 복원 열기"
+        >
+          <DatabaseBackup size={17} /> <span>백업</span>
         </button>
-        <button className="ghost-btn" type="button" onClick={actions.header.openImport} aria-label="책 가져오기">
-          <Upload size={17} /> 가져오기
+        <button
+          className="ghost-btn library-topbar-secondary-action"
+          type="button"
+          onClick={actions.header.openImport}
+          title="책 가져오기"
+          aria-label="책 가져오기"
+        >
+          <Upload size={17} /> <span>가져오기</span>
         </button>
         <button
           className="icon-btn"
