@@ -2084,6 +2084,11 @@
     left: 18px;
     right: 18px;
   }
+
+  .library-screen .books-grid {
+    grid-template-columns: repeat(auto-fill, minmax(164px, 1fr));
+    gap: 26px 18px;
+  }
 }
 
 @media (max-width: 699px) {

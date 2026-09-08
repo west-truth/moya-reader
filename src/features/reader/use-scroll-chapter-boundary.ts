@@ -43,6 +43,9 @@ export function useScrollChapterBoundary(input: {
   const armTimerRef = useRef<number>();
   const pointerStartedArmedRef = useRef(false);
   const pointerStartYRef = useRef<number>();
+  const touchStartedArmedRef = useRef(false);
+  const touchStartYRef = useRef<number>();
+  const touchLastYRef = useRef<number>();
   const transitioningRef = useRef(false);
   const wheelIntentRef = useRef({ delta: 0, lastAt: 0 });
   const wheelReleaseTimerRef = useRef<number>();
@@ -230,7 +233,8 @@ export function useScrollChapterBoundary(input: {
   );
 
   const onPointerDown = useCallback(
-    (clientY: number): boolean => {
+    (clientY: number, pointerType: string): boolean => {
+      if (pointerType === 'touch') return false;
       const root = input.rootRef.current;
       const ready = Boolean(
         input.enabled && armedRef.current && root && isAtScrollEnd(root) && !transitioningRef.current,
@@ -244,7 +248,8 @@ export function useScrollChapterBoundary(input: {
   );
 
   const onPointerMove = useCallback(
-    (clientY: number): boolean => {
+    (clientY: number, pointerType: string): boolean => {
+      if (pointerType === 'touch') return false;
       if (!pointerStartedArmedRef.current || transitioningRef.current || pointerStartYRef.current === undefined)
         return false;
       const delta = pointerStartYRef.current - clientY;
@@ -255,7 +260,8 @@ export function useScrollChapterBoundary(input: {
   );
 
   const onVerticalGesture = useCallback(
-    (deltaY: number) => {
+    (deltaY: number, pointerType: string) => {
+      if (pointerType === 'touch') return;
       const root = input.rootRef.current;
       const canCommit =
         input.enabled &&
@@ -288,6 +294,9 @@ export function useScrollChapterBoundary(input: {
     resetWheelIntent();
     pointerStartedArmedRef.current = false;
     pointerStartYRef.current = undefined;
+    touchStartedArmedRef.current = false;
+    touchStartYRef.current = undefined;
+    touchLastYRef.current = undefined;
     setArmed(false);
     return () => {
       clearMotionTimers();
@@ -319,6 +328,68 @@ export function useScrollChapterBoundary(input: {
       observer?.disconnect();
     };
   }, [disarm, input.chapterId, input.contentRef, input.enabled, input.rootRef, scheduleArm]);
+
+  useEffect(() => {
+    if (!input.enabled) return;
+    const root = input.rootRef.current;
+    if (!root) return;
+
+    const resetTouch = () => {
+      touchStartedArmedRef.current = false;
+      touchStartYRef.current = undefined;
+      touchLastYRef.current = undefined;
+    };
+    const onTouchStart = (event: TouchEvent) => {
+      if (event.touches.length !== 1) {
+        resetTouch();
+        return;
+      }
+      const clientY = event.touches[0].clientY;
+      const ready = isAtScrollEnd(root) && armedRef.current && !transitioningRef.current;
+      touchStartedArmedRef.current = ready;
+      touchStartYRef.current = clientY;
+      touchLastYRef.current = clientY;
+      if (isAtScrollEnd(root) && !armedRef.current) scheduleArm();
+    };
+    const onTouchMove = (event: TouchEvent) => {
+      if (!touchStartedArmedRef.current || touchStartYRef.current === undefined || event.touches.length !== 1) return;
+      const clientY = event.touches[0].clientY;
+      touchLastYRef.current = clientY;
+      const delta = touchStartYRef.current - clientY;
+      if (delta <= 0) return;
+      event.preventDefault();
+      setPullMotion(pullOffset(delta, TOUCH_COMMIT_THRESHOLD_PX), 'touch');
+    };
+    const onTouchEnd = () => {
+      const startedArmed = touchStartedArmedRef.current;
+      const delta = (touchStartYRef.current ?? 0) - (touchLastYRef.current ?? touchStartYRef.current ?? 0);
+      resetTouch();
+      if (startedArmed && delta >= TOUCH_COMMIT_THRESHOLD_PX && isAtScrollEnd(root) && !transitioningRef.current) {
+        commitNextChapter();
+        return;
+      }
+      if (isAtScrollEnd(root)) {
+        releasePull();
+        scheduleArm();
+      }
+    };
+    const onTouchCancel = () => {
+      resetTouch();
+      releasePull();
+    };
+
+    root.addEventListener('touchstart', onTouchStart, { passive: true });
+    root.addEventListener('touchmove', onTouchMove, { passive: false });
+    root.addEventListener('touchend', onTouchEnd, { passive: true });
+    root.addEventListener('touchcancel', onTouchCancel, { passive: true });
+    return () => {
+      root.removeEventListener('touchstart', onTouchStart);
+      root.removeEventListener('touchmove', onTouchMove);
+      root.removeEventListener('touchend', onTouchEnd);
+      root.removeEventListener('touchcancel', onTouchCancel);
+      resetTouch();
+    };
+  }, [commitNextChapter, input.enabled, input.rootRef, releasePull, scheduleArm, setPullMotion]);
 
   return { armed, onScroll, onWheel, onPointerDown, onPointerMove, onPointerEnd, onVerticalGesture };
 }

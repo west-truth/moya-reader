@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { build } from 'vite';
-import { chromium } from 'playwright-core';
+import { chromium, webkit } from 'playwright-core';
 import { findTemporaryLoopbackPort } from '../lib/temporary-loopback-port.mjs';
 
 // Isolated, synthetic component gate: no App bootstrap, user IndexedDB, or provider requests.
@@ -18,7 +18,10 @@ const baseUrl = `http://127.0.0.1:${await findTemporaryLoopbackPort()}`;
 let browser;
 try {
   console.log('Production library fixture built.');
-  browser = await chromium.launch({ channel: process.env.READER_UI_BROWSER_CHANNEL || 'msedge', headless: true });
+  browser =
+    process.env.READER_UI_BROWSER_ENGINE === 'webkit'
+      ? await webkit.launch({ headless: true })
+      : await chromium.launch({ channel: process.env.READER_UI_BROWSER_CHANNEL || 'msedge', headless: true });
   const page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
   await page.route('**/*', (route) => {
     const url = new URL(route.request().url());
@@ -49,6 +52,8 @@ try {
   const evidence = [];
   for (const viewport of [
     { width: 1440, height: 900 },
+    { width: 834, height: 1194 },
+    { width: 1194, height: 834 },
     { width: 390, height: 844 },
   ]) {
     await page.setViewportSize(viewport);
@@ -58,6 +63,20 @@ try {
       await page.waitForFunction((selector) => document.querySelectorAll(selector).length > 0, selector);
       const mounted = await page.locator(selector).count();
       assert.ok(mounted < 120, `Expected bounded ${viewMode} cards, saw ${mounted}`);
+      let gridRemainder;
+      if (viewMode === 'grid' && viewport.width >= 700 && viewport.width <= 1279) {
+        gridRemainder = await page
+          .locator('.library-virtual-row')
+          .first()
+          .evaluate((element) => {
+            const row = element.getBoundingClientRect();
+            const cards = [...element.querySelectorAll('.book-card')]
+              .map((card) => card.getBoundingClientRect())
+              .filter((card) => Math.abs(card.top - row.top) <= 2);
+            return row.right - Math.max(...cards.map((card) => card.right));
+          });
+        assert.ok(Math.abs(gridRemainder) <= 2, `Tablet cover grid left ${gridRemainder}px unused`);
+      }
       for (let attempt = 0; attempt < 8; attempt += 1) {
         await page.locator('.library-main').evaluate((element) => {
           element.scrollTop = element.scrollHeight;
@@ -75,7 +94,7 @@ try {
       await page.waitForFunction(() => document.querySelectorAll('.book-card, .book-list-row').length === 100);
       assert.equal(await page.getByRole('heading', { name: 'Synthetic novel 0000', exact: true }).count(), 1);
       assert.equal(await page.locator('.library-main').evaluate((element) => element.scrollTop), 0);
-      evidence.push({ ...viewport, viewMode, mounted, lastItemReachable: true, queryReset: true });
+      evidence.push({ ...viewport, viewMode, mounted, gridRemainder, lastItemReachable: true, queryReset: true });
     }
   }
   await page.evaluate(() => globalThis.libraryFixture.update({ query: '', selectionMode: true }));

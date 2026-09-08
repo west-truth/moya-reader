@@ -91,6 +91,7 @@ import {
 import { renderPdfGeneratedCover } from './pdf-generated-cover';
 import { pdfThumbnailFingerprint, renderPdfThumbnail } from './pdf-thumbnail';
 import { runDocumentThumbnailBatch, type DocumentThumbnailBatchProgress } from './document-thumbnail-batch';
+import { fixedDocumentSidebarStartsOpen } from './fixed-document-responsive';
 import { needsPdfOcr, normalizeOcrPageRange } from './ocr/ocr-range-plan';
 import { BookSourcePdfRangeTransport } from './pdf-range-transport';
 import { extractPdfNativeText, pdfNativeTextRevisionId } from './text/pdf-native-text';
@@ -674,7 +675,9 @@ export default function FixedDocumentScreen({
   const totalPages = sortedChapters.length;
   const [pageIndex, setPageIndex] = useState(() => initialPage(sortedChapters, readingPosition, initialChapterId));
   const [pageDraft, setPageDraft] = useState(String(pageIndex + 1));
-  const [sidebarOpen, setSidebarOpen] = useState(true);
+  const [sidebarOpen, setSidebarOpen] = useState(() =>
+    fixedDocumentSidebarStartsOpen(typeof window === 'undefined' ? 1_280 : window.innerWidth),
+  );
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [mobileThumbnailOpen, setMobileThumbnailOpen] = useState(false);
   const [immersive, setImmersive] = useState(false);
@@ -2145,7 +2148,8 @@ export default function FixedDocumentScreen({
       at: performance.now(),
       immersiveEligible: true,
     };
-    if (activePointersRef.current.size === 1 && continuousView) scrollSectionBoundary.onPointerDown(event.clientY);
+    if (activePointersRef.current.size === 1 && continuousView)
+      scrollSectionBoundary.onPointerDown(event.clientY, event.pointerType);
     if (activePointersRef.current.size === 2) {
       pointerPanAxisRef.current = undefined;
       const [first, second] = [...activePointersRef.current.values()];
@@ -2191,7 +2195,7 @@ export default function FixedDocumentScreen({
       }
       return;
     }
-    if (continuousView && scrollSectionBoundary.onPointerMove(event.clientY)) {
+    if (continuousView && scrollSectionBoundary.onPointerMove(event.clientY, event.pointerType)) {
       event.preventDefault();
       return;
     }
@@ -2251,7 +2255,7 @@ export default function FixedDocumentScreen({
     };
     if (continuousView) {
       if (!cancelled && start && !wasPinching && zoom <= 1.02)
-        scrollSectionBoundary.onVerticalGesture(start.y - event.clientY);
+        scrollSectionBoundary.onVerticalGesture(start.y - event.clientY, event.pointerType);
       scrollSectionBoundary.onPointerEnd();
       if (shouldToggleImmersive) toggleImmersiveFromViewport();
       return;

@@ -45,7 +45,7 @@ try {
     }
   });
   const page = await context.newPage();
-  page.setDefaultTimeout(8000);
+  page.setDefaultTimeout(15000);
   const errors = [];
   page.on('pageerror', (error) => errors.push(error.message));
   await page.goto(origin);
@@ -71,7 +71,35 @@ try {
     buffer: Buffer.from(await zip.close()),
   });
   await page.getByRole('button', { name: '가져오기 시작', exact: true }).click();
+  await page.locator('.source-hub-reading-button').click();
+  try {
+    await page.locator('.fixed-doc-viewport img').first().waitFor({ timeout: 15000 });
+  } catch (error) {
+    console.error(
+      JSON.stringify({ pageErrors: errors, body: (await page.locator('body').innerText()).slice(0, 2_000) }, null, 2),
+    );
+    throw error;
+  }
+  await page.setViewportSize({ width: 834, height: 1194 });
+  await page.locator('.fixed-doc-title-group button').first().click();
+  await page.locator('.source-hub-reading-button').click();
   await page.locator('.fixed-doc-viewport img').first().waitFor();
+  const sidebarToggle = page.locator('.fixed-doc-toolbar > button').first();
+  assert.equal(await sidebarToggle.getAttribute('aria-pressed'), 'false', 'Tablet thumbnails should start collapsed');
+  assert.equal(
+    await page.locator('.fixed-doc-sidebar').count(),
+    0,
+    'Tablet thumbnail rail should not consume reading space',
+  );
+  await sidebarToggle.click();
+  await page.locator('.fixed-doc-sidebar').waitFor({ state: 'visible' });
+  assert.equal(
+    await sidebarToggle.getAttribute('aria-pressed'),
+    'true',
+    'Tablet thumbnail rail should remain user-toggleable',
+  );
+  await sidebarToggle.click();
+  assert.equal(await page.locator('.fixed-doc-sidebar').count(), 0);
   await page.setViewportSize({ width: 1280, height: 900 });
   const currentPage = page.getByRole('textbox', { name: '현재 페이지', exact: true });
   const waitForPage = (value) =>
@@ -119,6 +147,8 @@ try {
         pointerPageButtons: true,
         spaceActivatesButton: true,
         invalidPagePreserved: true,
+        tabletThumbnailsStartCollapsed: true,
+        tabletThumbnailToggle: true,
         mobileFitWidthPan: scrollTop,
         verticalPanPreservesPage: true,
         browserErrors: errors,
