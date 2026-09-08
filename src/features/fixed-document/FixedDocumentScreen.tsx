@@ -334,7 +334,7 @@ function PdfThumbnailPreview({
 
 function ArchiveThumbnailPreview({
   bookId,
-  sourceRevision,
+  sourceIdentity,
   chapterId,
   pageIndex,
   repository,
@@ -342,7 +342,7 @@ function ArchiveThumbnailPreview({
   onPageHint,
 }: {
   readonly bookId: string;
-  readonly sourceRevision: string;
+  readonly sourceIdentity: string;
   readonly chapterId: string;
   readonly pageIndex: number;
   readonly repository: ReaderRepository;
@@ -393,7 +393,7 @@ function ArchiveThumbnailPreview({
       controller.abort();
       if (objectUrl) URL.revokeObjectURL(objectUrl);
     };
-  }, [assets, bookId, chapterId, onPageHint, pageIndex, repository, sourceRevision]);
+  }, [assets, bookId, chapterId, onPageHint, pageIndex, repository, sourceIdentity]);
   return url ? <img src={url} alt="" draggable={false} /> : <span>{pageIndex + 1}</span>;
 }
 
@@ -2645,7 +2645,13 @@ export default function FixedDocumentScreen({
                       ) : novel.format === 'image_archive' ? (
                         <ArchiveThumbnailPreview
                           bookId={novel.id}
-                          sourceRevision={novel.activeContentRevisionId ?? novel.sourceContentHash ?? novel.rawTextHash}
+                          sourceIdentity={
+                            chapter.documentSectionSourceContentHash ??
+                            chapter.textHash ??
+                            novel.activeContentRevisionId ??
+                            novel.sourceContentHash ??
+                            novel.rawTextHash
+                          }
                           chapterId={chapter.id}
                           pageIndex={index}
                           repository={repository}
