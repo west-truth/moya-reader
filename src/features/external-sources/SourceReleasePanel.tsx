@@ -117,6 +117,17 @@ export function SourceReleasePanel({
           이 페이지 선택
         </label>
       </div>
+      {controller.setAutoDownloadNext && controller.activeSourceId && (
+        <label className="source-auto-download-option">
+          <input
+            type="checkbox"
+            checked={controller.autoDownloadNext ?? false}
+            onChange={(event) => controller.setAutoDownloadNext?.(event.target.checked)}
+          />
+          읽는 동안 다음 회차 자동 다운로드
+          <small>다음 한 회차만 미리 받으며 읽는 위치는 유지합니다.</small>
+        </label>
+      )}
       <div className="chapter-toolbar">
         <label className="chapter-search">
           <Search size={16} />
@@ -251,6 +262,40 @@ export function SourceReleasePanel({
           <span>
             전체 {formatCount(selectedTotal)}화 선택 · 이 페이지 {selectedHere}화
           </span>
+          {controller.setReleasesRead && (
+            <>
+              <button
+                type="button"
+                className="ghost-btn"
+                disabled={controller.busy}
+                onClick={() =>
+                  void controller
+                    .setReleasesRead?.(
+                      items.filter((item) => item.selected),
+                      true,
+                    )
+                    .catch(() => undefined)
+                }
+              >
+                읽음
+              </button>
+              <button
+                type="button"
+                className="ghost-btn"
+                disabled={controller.busy}
+                onClick={() =>
+                  void controller
+                    .setReleasesRead?.(
+                      items.filter((item) => item.selected),
+                      false,
+                    )
+                    .catch(() => undefined)
+                }
+              >
+                안 읽음
+              </button>
+            </>
+          )}
           <button
             type="button"
             className="ghost-btn"

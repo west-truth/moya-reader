@@ -1,4 +1,9 @@
 import type { ExternalSourceLink } from '../external-sources/contracts';
+import {
+  validReleasePreference,
+  normalizeReleasePreference,
+  type SourceReleasePreference,
+} from '../external-sources/source-user-state';
 import type { ExtensionEnablementDocumentV1 } from '../extensions/extension-enablement-store';
 import type { WebNovelMetadataCollectorAutomaticApply } from '../services/webnovel-metadata-collector-broker';
 import type { ExternalSourceSubscriptionRecord } from '../external-sources/local-state';
@@ -27,6 +32,7 @@ export interface ExternalSourceSharedConnectionV1 {
 }
 
 export interface ExternalSourceSharedStateV1 {
+  readonly releasePreferences?: readonly SourceReleasePreference[];
   readonly schemaVersion: typeof EXTERNAL_SOURCE_SHARED_STATE_SCHEMA_VERSION;
   readonly connections: readonly ExternalSourceSharedConnectionV1[];
   readonly links: readonly ExternalSourceLink[];
@@ -273,6 +279,14 @@ function externalSources(value: unknown): ExternalSourceSharedStateV1 | undefine
   const connections = input.connections.map(sharedConnection);
   const links = input.links.map(sourceLink);
   const subscriptions = input.subscriptions.map(subscription);
+  const releasePreferences = input.releasePreferences;
+  if (
+    releasePreferences !== undefined &&
+    (!Array.isArray(releasePreferences) ||
+      releasePreferences.length > 50_000 ||
+      !releasePreferences.every(validReleasePreference))
+  )
+    return undefined;
   if (
     !connections.every((item): item is ExternalSourceSharedConnectionV1 => Boolean(item)) ||
     !links.every((item): item is ExternalSourceLink => Boolean(item)) ||
@@ -280,7 +294,15 @@ function externalSources(value: unknown): ExternalSourceSharedStateV1 | undefine
   ) {
     return undefined;
   }
-  return { schemaVersion: 1, connections, links, subscriptions };
+  return {
+    schemaVersion: 1,
+    connections,
+    links,
+    subscriptions,
+    ...(releasePreferences
+      ? { releasePreferences: (releasePreferences as SourceReleasePreference[]).map(normalizeReleasePreference) }
+      : {}),
+  };
 }
 
 export function normalizeSelfHostIntegrationSettings(value: unknown): SelfHostIntegrationSettingsV1 | undefined {
@@ -354,7 +376,8 @@ export function hasMeaningfulSelfHostIntegrationState(
     !metadataIsDefault(settings.webNovelMetadata) ||
     settings.externalSources.connections.length > 0 ||
     settings.externalSources.links.length > 0 ||
-    settings.externalSources.subscriptions.length > 0
+    settings.externalSources.subscriptions.length > 0 ||
+    (settings.externalSources.releasePreferences?.length ?? 0) > 0
   );
 }
 
@@ -390,6 +413,16 @@ export function mergeInitialSelfHostIntegrationSettings(
         : remote.webNovelMetadata,
     externalSources: {
       schemaVersion: 1,
+      ...(local.externalSources.releasePreferences || remote.externalSources.releasePreferences
+        ? {
+            releasePreferences: latestById(
+              local.externalSources.releasePreferences ?? [],
+              remote.externalSources.releasePreferences ?? [],
+              (item) => item.id,
+              (item) => item.updatedAt,
+            ),
+          }
+        : {}),
       connections: latestById(
         local.externalSources.connections,
         remote.externalSources.connections,

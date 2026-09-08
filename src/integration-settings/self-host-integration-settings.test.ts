@@ -1,10 +1,34 @@
 import { describe, expect, it } from 'vitest';
+import { releasePreferenceId } from '../external-sources/source-user-state';
 import {
   mergeInitialSelfHostIntegrationSettings,
   normalizeSelfHostIntegrationSettings,
 } from './self-host-integration-settings';
 
 const now = '2026-09-04T00:00:00.000Z';
+
+it('round-trips personal release state through hosted normalization and strips unknown fields', () => {
+  const source = { connectorId: 'fixture.source', remoteId: 'chapter-1' };
+  const preference = {
+    id: releasePreferenceId(source),
+    kind: 'releasePreference',
+    source,
+    title: '개인 제목',
+    read: false,
+    readChangedAt: now,
+    updatedAt: now,
+  };
+  const document = validDocument();
+  const normalize = (record: unknown) =>
+    normalizeSelfHostIntegrationSettings({
+      ...document,
+      externalSources: { ...document.externalSources, releasePreferences: [record] },
+    });
+  expect(normalize({ ...preference, unknownField: 'discard' })?.externalSources.releasePreferences).toEqual([
+    preference,
+  ]);
+  expect(normalize({ ...preference, read: 'false' })).toBeUndefined();
+});
 
 function validDocument() {
   return {

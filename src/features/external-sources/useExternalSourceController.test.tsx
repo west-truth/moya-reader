@@ -22,6 +22,8 @@ import type { ImportService } from '../../services/import/import-service';
 import type { BookAssetRepository } from '../../repositories/book-asset-repository';
 import { buildSeriesImageArchive, readSeriesImageArchiveManifest } from '../../services/import/series-image-archive';
 import { testChapter } from '../book-workspace/book-workspace-test-fixtures';
+import { externalItemSectionId } from './serial-work-projection';
+import { sourceDownloadQueueId } from '../../external-sources/source-user-state';
 import { TextServerRequestError, textServerErrorMessage } from '../../external-sources/text-server/text-server-errors';
 import {
   useExternalSourceController,
@@ -251,8 +253,15 @@ async function createHarness(input: {
   const onLibraryItemCommitted = vi.fn(async () => undefined);
   const onLibraryChanged = vi.fn(async () => undefined);
   let controller!: ExternalSourceController;
-  function Harness({ libraryRevision = 0 }: { libraryRevision?: number }) {
+  function Harness({
+    libraryRevision = 0,
+    readingTarget,
+  }: {
+    libraryRevision?: number;
+    readingTarget?: { novelId: string; sectionId: string };
+  }) {
     controller = useExternalSourceController({
+      readingTarget,
       registry,
       hostContext: { brokers: { get: () => undefined } },
       state: input.sourceState ?? state,
@@ -322,6 +331,9 @@ async function createHarness(input: {
       return catalogPreference;
     },
     renderer,
+    read: async (novelId: string, sectionId: string) => {
+      await act(async () => renderer.update(<Harness readingTarget={{ novelId, sectionId }} />));
+    },
     refreshLibrary: async (libraryRevision: number) => {
       await act(async () => renderer.update(<Harness libraryRevision={libraryRevision} />));
     },
@@ -409,6 +421,149 @@ async function createDocumentHarness() {
 }
 
 describe('text serial download task parity', () => {
+  it('recovers only missing comic releases after restart and never opens the resumed work', async () => {
+    await resetExternalSourceLocalStateForTests();
+    const store = new ExternalSourceLocalStateStore();
+    await store.saveLink({
+      id: 'external-link::fixture.source::fixture-account::work-1',
+      source: ITEM_KEY,
+      localBookId: 'book-1',
+      collectionRemoteId: 'manga:1',
+      importedRemoteRevision: 'remote-r2',
+      linkedAt: new Date().toISOString(),
+    });
+    const queue = {
+      id: sourceDownloadQueueId(ITEM_KEY, 'manga:1'),
+      kind: 'downloadQueue' as const,
+      connectorId: SOURCE_ID,
+      accountConnectionId: ITEM_KEY.accountConnectionId,
+      collectionRemoteId: 'manga:1',
+      title: 'Work',
+      updatedAt: new Date().toISOString(),
+      items: [1, 2].map((n) => ({
+        key: { ...ITEM_KEY, remoteId: `work-${n}` },
+        title: `${n}`,
+        sectionId: `work-${n}`,
+        remoteRevision: 'remote-r2',
+      })),
+    };
+    await store.saveDownloadQueue(queue);
+    const h = await createHarness({
+      downloadedContent: '',
+      downloadedFile: await singlePageComicFile(),
+      sourceState: new ExternalSourceLocalStateStore(),
+      serial: true,
+      serialCount: 2,
+      supportsIncrementalImageSeriesAppend: true,
+      supportsExpectedSourceContentHash: true,
+      novelOverrides: { format: 'image_archive', documentSectionCount: 1 },
+      chapters: [testChapter(1, { documentSectionId: 'work-1' })],
+    });
+    try {
+      await act(async () => {
+        await vi.waitFor(() => expect(h.controller.recoverableDownloads?.[0]?.items).toHaveLength(1));
+      });
+      const status = h.registry.getExternalSourceStatus(SOURCE_ID, {} as never);
+      const changedAccount = vi.spyOn(h.registry, 'getExternalSourceStatus').mockReturnValue({
+        ...status,
+        accountConnectionId: 'different-account',
+      });
+      await act(async () => h.controller.resumeDownloadQueue?.(h.controller.recoverableDownloads![0]!));
+      expect(h.registry.downloadExternalSource).not.toHaveBeenCalled();
+      expect((await store.listDownloadQueues())[0]!.items).toHaveLength(1);
+      changedAccount.mockRestore();
+      await act(async () => h.controller.resumeDownloadQueue?.(h.controller.recoverableDownloads![0]!));
+      expect(vi.mocked(h.registry.downloadExternalSource).mock.calls.map((call) => call[2].key.remoteId)).toEqual([
+        'work-2',
+      ]);
+      expect(h.openNovel).not.toHaveBeenCalled();
+      expect(await store.listDownloadQueues()).toEqual([]);
+    } finally {
+      act(() => h.renderer.unmount());
+    }
+  });
+
+  it('keeps personal titles and prior-release read changes after refreshing the remote catalog', async () => {
+    await resetExternalSourceLocalStateForTests();
+    const store = new ExternalSourceLocalStateStore();
+    const h = await createHarness({ downloadedContent: '', serial: true, serialCount: 13, sourceState: store });
+    try {
+      await act(async () => h.controller.renameRelease?.(h.controller.items[4]!, 'Personal chapter'));
+      await act(async () => h.controller.markPreviousReleasesRead?.(h.controller.items[10]!));
+      expect(h.controller.items.slice(0, 10).every((item) => item.readingState === 'read')).toBe(true);
+      expect(h.controller.items[10]!.readingState).toBe('unread');
+      await act(async () => h.controller.setReleasesRead?.([h.controller.items[0]!, h.controller.items[9]!], false));
+      await act(async () => h.controller.refresh());
+      expect(h.controller.items[4]!.title).toBe('Personal chapter');
+      expect(h.controller.items[4]!.release?.title).toBe('5화');
+      expect(h.controller.items[0]!.readingState).toBe('unread');
+      expect(h.controller.items[9]!.readingState).toBe('unread');
+      expect(h.registry.downloadExternalSource).not.toHaveBeenCalled();
+      expect(h.openNovel).not.toHaveBeenCalled();
+    } finally {
+      act(() => h.renderer.unmount());
+    }
+  });
+  it.each([false, true])(
+    'prefetches the immediate comic release only when missing (already stored: %s)',
+    async (alreadyStored) => {
+      const h = await createHarness({
+        downloadedContent: '',
+        downloadedFile: await singlePageComicFile(),
+        serial: true,
+        serialCount: 3,
+        initialLinkOverrides: { collectionRemoteId: 'manga:1' },
+        supportsIncrementalImageSeriesAppend: true,
+        supportsExpectedSourceContentHash: true,
+        novelOverrides: { format: 'image_archive', documentSectionCount: 1 },
+        chapters: [
+          testChapter(1, { documentSectionId: 'work-1' }),
+          ...(alreadyStored ? [testChapter(2, { documentSectionId: 'work-2' })] : []),
+        ],
+      });
+      try {
+        await act(async () => h.controller.setAutoDownloadNext?.(true));
+        await h.read('book-1', 'work-1');
+        if (!alreadyStored) {
+          await act(async () => {
+            await vi.waitFor(() => expect(h.registry.downloadExternalSource).toHaveBeenCalledTimes(1));
+          });
+          await act(async () => {
+            await vi.waitFor(() => expect(h.controller.importBusy).toBe(false));
+          });
+          expect(vi.mocked(h.registry.downloadExternalSource).mock.calls[0]![2].key.remoteId).toBe('work-2');
+        } else {
+          expect(h.registry.downloadExternalSource).not.toHaveBeenCalled();
+        }
+        expect(h.openNovel).not.toHaveBeenCalled();
+      } finally {
+        act(() => h.renderer.unmount());
+      }
+    },
+  );
+  it('automatically gets only the next text release without opening it or chaining further', async () => {
+    const h = await createDocumentHarness();
+    try {
+      await act(async () => h.controller.importItem(h.controller.items[0]!));
+      const bookId = (await h.libraryBooks())[0]!.id;
+      const sectionId = externalItemSectionId(h.controller.items[0]!);
+      h.download.mockClear();
+      await act(async () => h.controller.setAutoDownloadNext?.(true));
+      await h.read(bookId, sectionId);
+      await act(async () => {
+        await vi.waitFor(() => expect(h.download).toHaveBeenCalledTimes(1));
+      });
+      await act(async () => {
+        await vi.waitFor(() => expect(h.controller.importBusy).toBe(false));
+      });
+      expect(h.download.mock.calls.map((call) => call[2].key.remoteId)).toEqual(['work-2']);
+      expect(h.openNovel).not.toHaveBeenCalled();
+      await h.read(bookId, sectionId);
+      expect(h.download).toHaveBeenCalledTimes(1);
+    } finally {
+      act(() => h.renderer.unmount());
+    }
+  });
   it('holds a fast second text release until the first finishes, then commits in chapter order', async () => {
     const h = await createDocumentHarness();
     const normal = h.download.getMockImplementation()!;
@@ -1295,6 +1450,7 @@ describe('useExternalSourceController remote updates', () => {
     releaseSecond();
     await act(async () => importPromise);
     expect(harness.controller.selectedBatchActive).toBe(false);
+    expect(harness.openNovel).toHaveBeenCalledTimes(1);
     await act(async () => harness.renderer.unmount());
   });
 

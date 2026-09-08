@@ -1,3 +1,4 @@
+import { useFixedDocumentEntry, useFixedDocumentPageAnchor } from './use-fixed-document-entry';
 import {
   ArrowDown,
   ArrowLeft,
@@ -181,6 +182,7 @@ export interface FixedDocumentScreenProps {
   readonly chapters: readonly Chapter[];
   readonly readingPosition?: ReadingPosition;
   readonly initialChapterId?: string;
+  readonly entryRequestVersion?: number;
   readonly repository: ReaderRepository;
   readonly assets: BookAssetRepository;
   readonly onBack: () => void;
@@ -650,6 +652,7 @@ export default function FixedDocumentScreen({
   chapters,
   readingPosition,
   initialChapterId,
+  entryRequestVersion,
   repository,
   assets,
   onBack,
@@ -1027,21 +1030,8 @@ export default function FixedDocumentScreen({
     [continuousView, continuousVirtualIndexByPage, continuousVirtualizer, seamlessContinuousView, totalPages],
   );
 
-  const explicitEntryTarget = initialChapterId
-    ? `${novel.id}:${novel.activeContentRevisionId ?? ''}:${initialChapterId}`
-    : undefined;
-  const appliedEntryTargetRef = useRef<string>();
-  useEffect(() => {
-    if (!explicitEntryTarget) {
-      appliedEntryTargetRef.current = undefined;
-      return;
-    }
-    if (appliedEntryTargetRef.current === explicitEntryTarget) return;
-    const targetPage = sortedChapters.findIndex((chapter) => chapter.id === initialChapterId);
-    if (targetPage < 0) return;
-    appliedEntryTargetRef.current = explicitEntryTarget;
-    goToPage(targetPage);
-  }, [explicitEntryTarget, goToPage, initialChapterId, sortedChapters]);
+  useFixedDocumentEntry(novel.id, initialChapterId, sortedChapters, goToPage, entryRequestVersion);
+  useFixedDocumentPageAnchor(novel.id, sortedChapters, pageIndex, goToPage);
 
   const turnPage = useCallback(
     (step: -1 | 1) => {

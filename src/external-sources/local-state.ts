@@ -8,6 +8,8 @@ import type {
   ExternalSourceSelectionRecord,
 } from './contracts';
 import { createExternalSourceCredentialKey } from './device-credential-crypto';
+import { externalItemKeyId } from './contracts';
+import type { SourceDownloadQueue, SourceReleasePreference } from './source-user-state';
 import type {
   ExternalSourceSharedConnectionV1,
   ExternalSourceSharedStateV1,
@@ -171,6 +173,12 @@ export function externalSourceSubscriptionId(
 }
 
 export interface ExternalSourceLocalState {
+  listReleasePreferences?(): Promise<SourceReleasePreference[]>;
+  saveReleasePreferences?(records: readonly SourceReleasePreference[]): Promise<void>;
+  listDownloadQueues?(): Promise<SourceDownloadQueue[]>;
+  saveDownloadQueue?(queue: SourceDownloadQueue): Promise<void>;
+  deleteDownloadQueue?(id: string): Promise<void>;
+  pruneDownloadQueue?(id: string, completed: SourceDownloadQueue['items']): Promise<SourceDownloadQueue | undefined>;
   getOrCreateCredentialKey(): Promise<CryptoKey>;
   getCredential(connectorId: string): Promise<ExternalSourceCredentialRecord | undefined>;
   saveCredential(record: ExternalSourceCredentialRecord): Promise<void>;
@@ -212,6 +220,78 @@ export interface ExternalSourceLocalState {
 }
 
 export class ExternalSourceLocalStateStore implements ExternalSourceLocalState {
+  async listReleasePreferences(): Promise<SourceReleasePreference[]> {
+    const db = await openExternalSourceDb();
+    if (!db.objectStoreNames.contains('browsePreferences')) return [];
+    const rows = await requestToPromise<SourceReleasePreference[]>(
+      db.transaction('browsePreferences').objectStore('browsePreferences').getAll(),
+    );
+    return rows.filter((row) => row.kind === 'releasePreference');
+  }
+
+  async saveReleasePreferences(records: readonly SourceReleasePreference[]): Promise<void> {
+    const db = await openExternalSourceDb();
+    const tx = db.transaction('browsePreferences', 'readwrite');
+    records.forEach((record) => tx.objectStore('browsePreferences').put(record));
+    await transactionDone(tx);
+    this.publishSharedChange();
+  }
+
+  async listDownloadQueues(): Promise<SourceDownloadQueue[]> {
+    const db = await openExternalSourceDb();
+    if (!db.objectStoreNames.contains('browsePreferences')) return [];
+    const rows = await requestToPromise<SourceDownloadQueue[]>(
+      db.transaction('browsePreferences').objectStore('browsePreferences').getAll(),
+    );
+    return rows.filter((row) => row.kind === 'downloadQueue');
+  }
+
+  async saveDownloadQueue(queue: SourceDownloadQueue): Promise<void> {
+    if (queue.items.length > 50_000) throw new Error('한 작품의 대기열은 50,000회차까지 저장할 수 있습니다.');
+    const db = await openExternalSourceDb();
+    const tx = db.transaction('browsePreferences', 'readwrite');
+    const store = tx.objectStore('browsePreferences');
+    const previous = await requestToPromise<SourceDownloadQueue | undefined>(store.get(queue.id));
+    const merged = new Map(previous?.items.map((item) => [externalItemKeyId(item.key), item]));
+    queue.items.forEach((item) => merged.set(externalItemKeyId(item.key), item));
+    if (merged.size > 50_000) {
+      tx.abort();
+      throw new Error('대기열 회차 한도를 초과했습니다.');
+    }
+    store.put({ ...queue, items: [...merged.values()] });
+    await transactionDone(tx);
+  }
+
+  async pruneDownloadQueue(
+    id: string,
+    completed: SourceDownloadQueue['items'],
+  ): Promise<SourceDownloadQueue | undefined> {
+    const db = await openExternalSourceDb();
+    const tx = db.transaction('browsePreferences', 'readwrite');
+    const store = tx.objectStore('browsePreferences');
+    const current = await requestToPromise<SourceDownloadQueue | undefined>(store.get(id));
+    const done = new Map(completed.map((item) => [externalItemKeyId(item.key), item]));
+    const next = current
+      ? {
+          ...current,
+          items: current.items.filter((item) => {
+            const matched = done.get(externalItemKeyId(item.key));
+            return !matched || matched.remoteRevision !== item.remoteRevision;
+          }),
+        }
+      : undefined;
+    if (next?.items.length) store.put(next);
+    else store.delete(id);
+    await transactionDone(tx);
+    return next?.items.length ? next : undefined;
+  }
+
+  async deleteDownloadQueue(id: string): Promise<void> {
+    const db = await openExternalSourceDb();
+    const tx = db.transaction('browsePreferences', 'readwrite');
+    tx.objectStore('browsePreferences').delete(id);
+    await transactionDone(tx);
+  }
   private readonly sharedChangeListeners = new Set<() => void>();
   private readonly sharedConnections = new Map<string, ExternalSourceSharedConnectionV1>();
 
@@ -573,6 +653,7 @@ export class ExternalSourceLocalStateStore implements ExternalSourceLocalState {
   }
 
   async exportSharedState(): Promise<ExternalSourceSharedStateV1> {
+    const releasePreferences = await this.listReleasePreferences();
     const db = await openExternalSourceDb();
     const tx = db.transaction(['links', 'subscriptions'], 'readonly');
     const [links, subscriptions] = await Promise.all([
@@ -581,6 +662,7 @@ export class ExternalSourceLocalStateStore implements ExternalSourceLocalState {
     ]);
     return {
       schemaVersion: 1,
+      ...(releasePreferences.length ? { releasePreferences } : {}),
       connections: [...this.sharedConnections.values()].sort((left, right) =>
         left.connectorId.localeCompare(right.connectorId),
       ),
@@ -593,7 +675,13 @@ export class ExternalSourceLocalStateStore implements ExternalSourceLocalState {
 
   async replaceSharedState(snapshot: ExternalSourceSharedStateV1): Promise<void> {
     const db = await openExternalSourceDb();
-    const tx = db.transaction(['links', 'subscriptions'], 'readwrite');
+    const hasPreferences = db.objectStoreNames.contains('browsePreferences');
+    if (!hasPreferences && snapshot.releasePreferences?.length)
+      throw new Error('회차 설정 저장소를 사용할 수 없습니다.');
+    const tx = db.transaction(
+      ['links', 'subscriptions', ...(hasPreferences ? ['browsePreferences'] : [])],
+      'readwrite',
+    );
     const linkStore = tx.objectStore('links');
     const pendingLinks = (await requestToPromise<ExternalSourceLink[]>(linkStore.getAll())).filter(
       (link) => link.pendingImport,
@@ -604,6 +692,12 @@ export class ExternalSourceLocalStateStore implements ExternalSourceLocalState {
     snapshot.links.forEach((link) => linkStore.put(link));
     pendingLinks.forEach((link) => linkStore.put(link));
     snapshot.subscriptions.forEach((subscription) => subscriptionStore.put(subscription));
+    if (hasPreferences) {
+      const preferences = tx.objectStore('browsePreferences');
+      const rows = await requestToPromise<SourceReleasePreference[]>(preferences.getAll());
+      rows.filter((row) => row.kind === 'releasePreference').forEach((row) => preferences.delete(row.id));
+      snapshot.releasePreferences?.forEach((row) => preferences.put(row));
+    }
     await transactionDone(tx);
     this.sharedConnections.clear();
     snapshot.connections.forEach((connection) => this.sharedConnections.set(connection.connectorId, connection));
