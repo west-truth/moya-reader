@@ -799,6 +799,7 @@ export async function activateStagedContentRevision(
     embeddedAssetIds?: readonly string[];
     embeddedAssetPageIndexes?: Readonly<Record<string, number>>;
     preserveExistingEmbeddedAssets?: boolean;
+    replaceEmbeddedAssets?: boolean;
     preserveExistingCover?: boolean;
   },
 ): Promise<void> {
@@ -901,9 +902,9 @@ export async function activateStagedContentRevision(
         sourceContentHash: asset.contentHash,
       };
     }
-    if (input.embeddedAssetIds?.length) {
+    if (input.embeddedAssetIds?.length || input.replaceEmbeddedAssets) {
       const { assets, preservedCover } = await activateEmbeddedAssetsInTransaction(tx, {
-        assetIds: input.embeddedAssetIds,
+        assetIds: input.embeddedAssetIds ?? [],
         pageIndexes: input.embeddedAssetPageIndexes,
         bookId: input.novel.id,
         contentRevisionId: storedRevision.id,

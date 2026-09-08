@@ -23,6 +23,7 @@ export interface BookWorkspaceNoticeAction {
 }
 
 export interface BookWorkspaceState {
+  readonly navigationPending?: boolean;
   readonly view: BookWorkspaceView;
   readonly novels: Novel[];
   readonly selectedNovel?: Novel;

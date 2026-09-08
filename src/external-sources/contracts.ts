@@ -85,6 +85,8 @@ export interface ExternalSourceCollectionDescriptor {
   readonly tags?: readonly string[];
   readonly status?: string;
   readonly sourceLabel?: string;
+  /** Optional source limit. Hosts download at most two releases concurrently. */
+  readonly maxConcurrentDownloads?: 1 | 2;
   /** Required for v2 serial sources; absent on legacy v1 catalog records. */
   readonly seriesProfile?: ExternalSeriesProfile;
 }

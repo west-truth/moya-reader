@@ -24,6 +24,7 @@ function control(overrides: Partial<ExternalSourceController> = {}): ExternalSou
     busy: false,
     blockingBusy: false,
     importBusy: false,
+    breadcrumbs: [],
     loadMore: vi.fn(async () => undefined),
     selectAllSupported: vi.fn(),
     ...overrides,

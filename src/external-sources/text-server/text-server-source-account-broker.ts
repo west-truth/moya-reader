@@ -307,6 +307,9 @@ export class TextServerSourceAccountBroker implements ExternalSourceBroker {
   async list(input: ExternalSourceListInput, signal: AbortSignal): Promise<ExternalItemPage> {
     const { client, requestSignal } = this.connected(input.accountConnectionId, signal);
     const location = input.parentRef ? parseNavigation(input.parentRef) : [];
+    if (location.length === 0 && input.query?.trim()) {
+      return this.searchAllSources(input, requestSignal);
+    }
     if (location.length === 0) {
       const sources = page(await client.json(query('/v1/sources', input), requestSignal), input.cursor);
       this.sourceTitles.clear();
@@ -363,6 +366,12 @@ export class TextServerSourceAccountBroker implements ExternalSourceBroker {
     )
       throw new Error('텍스트 서버 작품 형식이 일치하지 않습니다.');
     const releases = page(releaseValue, input.cursor);
+    if (
+      workRecord.maxConcurrentDownloads !== undefined &&
+      workRecord.maxConcurrentDownloads !== 1 &&
+      workRecord.maxConcurrentDownloads !== 2
+    )
+      throw new Error('텍스트 서버 다운로드 동시 처리 제한이 올바르지 않습니다.');
     return {
       detail: {
         ...work,
@@ -393,6 +402,7 @@ export class TextServerSourceAccountBroker implements ExternalSourceBroker {
           importability: 'supported',
           collection: {
             remoteId: navigation([sourceId!, workId!]),
+            maxConcurrentDownloads: workRecord.maxConcurrentDownloads as 1 | 2 | undefined,
             title: work.title,
             author: work.author,
             description: work.description,
@@ -404,6 +414,72 @@ export class TextServerSourceAccountBroker implements ExternalSourceBroker {
           release: { title, sourceOrder: release.sourceOrder },
         };
       }),
+    };
+  }
+
+  /** Search each provider through the same work-list contract, with resumable bounded pages. */
+  private async searchAllSources(input: ExternalSourceListInput, signal: AbortSignal): Promise<ExternalItemPage> {
+    const searchQuery = text(input.query!.trim(), 200);
+    let state: { query: string; sourceCursor?: string; index: number; workCursor?: string; sourceId?: string } = {
+      query: searchQuery,
+      index: 0,
+    };
+    if (input.cursor) {
+      if (!input.cursor.startsWith('text-search:') || input.cursor.length > 4096)
+        throw new Error('검색을 처음부터 다시 실행해 주세요.');
+      const value = record(JSON.parse(input.cursor.slice(12)));
+      if (
+        value.query !== searchQuery ||
+        !Number.isSafeInteger(value.index) ||
+        Number(value.index) < 0 ||
+        Number(value.index) > 1000
+      )
+        throw new Error('검색을 처음부터 다시 실행해 주세요.');
+      state = {
+        query: searchQuery,
+        index: Number(value.index),
+        sourceCursor: optionalText(value.sourceCursor, 512),
+        workCursor: optionalText(value.workCursor, 512),
+        sourceId: value.sourceId === undefined ? undefined : id(value.sourceId),
+      };
+    }
+    const { client } = this.connected(input.accountConnectionId, signal);
+    const sources = page(
+      await client.json(query('/v1/sources', { cursor: state.sourceCursor }), signal),
+      state.sourceCursor,
+    );
+    if (state.sourceId && sources.items[state.index]?.id !== state.sourceId)
+      throw new Error('소스 목록이 변경되었습니다. 검색을 다시 실행해 주세요.');
+    // At most one source page and three provider searches per call. Never traverse full work catalogs.
+    let checkedSources = 0;
+    for (let index = state.index; index < sources.items.length; index += 1) {
+      signal.throwIfAborted();
+      const source = sources.items[index]!;
+      if (source.available === false || (Array.isArray(source.capabilities) && !source.capabilities.includes('search')))
+        continue;
+      const sourceId = id(source.id);
+      this.sourceTitles.set(sourceId, text(source.title));
+      const works = await this.list(
+        { ...input, parentRef: navigation([sourceId]), cursor: index === state.index ? state.workCursor : undefined },
+        signal,
+      );
+      checkedSources += 1;
+      const next = works.nextCursor
+        ? { ...state, index, sourceId, workCursor: works.nextCursor }
+        : index + 1 < sources.items.length
+          ? { query: searchQuery, sourceCursor: state.sourceCursor, index: index + 1 }
+          : sources.nextCursor
+            ? { query: searchQuery, sourceCursor: sources.nextCursor, index: 0 }
+            : undefined;
+      if (works.items.length || works.nextCursor || checkedSources >= 3)
+        return { ...works, nextCursor: next ? `text-search:${JSON.stringify(next)}` : undefined };
+    }
+    return {
+      items: [],
+      browse: { activeMode: 'search', availableModes: ['search'] },
+      nextCursor: sources.nextCursor
+        ? `text-search:${JSON.stringify({ query: searchQuery, sourceCursor: sources.nextCursor, index: 0 })}`
+        : undefined,
     };
   }
 

@@ -5,7 +5,7 @@ import type { BookWorkspaceController } from './book-workspace-controller';
 export function shouldOpenSourceSeriesDetails(novel: Novel, linkedSeriesBookIds: ReadonlySet<string>): boolean {
   return (
     novel.format === 'image_archive' ||
-    (novel.format === 'txt' && (novel.documentSectionCount ?? 0) > 0 && linkedSeriesBookIds.has(novel.id))
+    (novel.format === 'txt' && novel.documentSectionCount !== undefined && linkedSeriesBookIds.has(novel.id))
   );
 }
 

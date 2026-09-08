@@ -153,11 +153,20 @@ export function validatePage(value, input, kind) {
 export function validateWork(value, workId) {
   const output = work(value);
   resultCondition(
+    value.maxConcurrentDownloads === undefined ||
+      value.maxConcurrentDownloads === 1 ||
+      value.maxConcurrentDownloads === 2,
+  );
+  resultCondition(
     output.id === workId &&
       record(value.seriesProfile) &&
       Object.entries(TXT_PROFILE).every(([key, expected]) => value.seriesProfile[key] === expected),
   );
-  return boundedMetadata({ ...output, seriesProfile: TXT_PROFILE });
+  return boundedMetadata({
+    ...output,
+    seriesProfile: TXT_PROFILE,
+    ...(value.maxConcurrentDownloads === undefined ? {} : { maxConcurrentDownloads: value.maxConcurrentDownloads }),
+  });
 }
 export function validateContent(value) {
   resultCondition(record(value) && value.bytes instanceof Uint8Array && value.bytes.byteLength > 0);

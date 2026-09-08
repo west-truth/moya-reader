@@ -11,6 +11,7 @@ import type { ExternalSourceController } from '../external-sources/useExternalSo
 import { useResponsiveLayoutMode } from './useResponsiveLayoutMode';
 import { importTaskIsActive, type ImportTaskView } from '../import/import-task-projection';
 import { continueLibraryBook, openLibraryBook } from './book-workspace-source-navigation';
+import { navigateAppBack } from '../navigation/browser-navigation';
 
 const ChaptersScreen = lazy(() =>
   import('../chapters/ChaptersScreen').then((module) => ({ default: module.ChaptersScreen })),
@@ -388,7 +389,7 @@ export function BookWorkspaceScreens({
                   }}
                   actions={{
                     navigation: {
-                      backToLibrary: () => controller.setView('library'),
+                      backToLibrary: () => navigateAppBack(() => controller.setView('library')),
                       continueReading: () => controller.continueReading(),
                       openSettings,
                       openSync,

@@ -79,6 +79,7 @@ function controller(overrides: Partial<ExternalSourceController> = {}): External
     importItem: vi.fn(async () => undefined),
     importAndOpen: vi.fn(async () => undefined),
     importSelected: vi.fn(async () => undefined),
+    deleteDownloads: vi.fn(async () => undefined),
     openImported: vi.fn(async () => undefined),
     dismissTask: vi.fn(),
     cancel: vi.fn(),
@@ -138,7 +139,7 @@ const library = {
 } as unknown as LibraryScreenProps;
 
 describe('SourceHubScreen', () => {
-  it('keeps saved reading available but verifies originals only through the matching connected source account', () => {
+  it('keeps saved reading and download deletion available regardless of source connection', () => {
     for (const mode of ['connected', 'offline', 'different-account', 'local'] as const) {
       const item = {
         key: {
@@ -186,19 +187,15 @@ describe('SourceHubScreen', () => {
       const read = markup.match(/<button[^>]*aria-label="1화 보기"[^>]*>/u)?.[0];
       expect(read).toBeDefined();
       expect(read).not.toContain('disabled');
-      const verify = markup.match(/<button[^>]*aria-label="1화 원문 확인"[^>]*>/u)?.[0];
-      if (mode === 'local') expect(verify).toBeUndefined();
-      else {
-        expect(verify).toBeDefined();
-        expect(verify?.includes('disabled')).toBe(mode !== 'connected');
-        if (mode === 'offline') expect(verify).toContain('작품 소스에 다시 연결');
-        if (mode === 'different-account') expect(verify).toContain('이 회차를 가져온 계정');
-      }
+      const remove = markup.match(/<button[^>]*aria-label="1화 다운로드 삭제"[^>]*>/u)?.[0];
+      expect(remove).toBeDefined();
+      expect(remove).not.toContain('disabled');
+      expect(markup).not.toContain('원문 확인');
     }
   });
 
   it.each(['document_series', 'image_series'] as const)(
-    'selects only pending releases and retains saved reading separately from updates for %s',
+    'selects downloaded and pending releases with distinct bulk actions for %s',
     (kind) => {
       const seriesProfile =
         kind === 'document_series'
@@ -221,19 +218,20 @@ describe('SourceHubScreen', () => {
       const markup = renderToStaticMarkup(
         <SourceHubScreen controller={view} library={library} openSourceSettings={vi.fn()} />,
       );
-      expect(markup).not.toContain('aria-label="1화 선택"');
+      expect(markup).toContain('aria-label="1화 선택"');
       expect(markup).toContain('aria-label="2화 선택"');
       expect(markup).toContain('aria-label="3화 선택"');
-      expect(markup).toContain('2개 선택');
+      expect(markup).toContain('3개 선택');
       expect(markup).toContain('aria-label="1화 보기"');
       expect(markup).toContain('aria-label="2화 보기"');
-      expect(markup).toContain('aria-label="2화 업데이트"');
+      expect(markup).toContain('aria-label="2화 다운로드 삭제"');
+      expect(markup).toContain('선택 다운로드 삭제 (2)');
       expect(markup).not.toContain('선택 회차 가져오기·원문 확인');
-      expect(markup.includes('aria-label="1화 원문 확인"')).toBe(kind === 'document_series');
+      expect(markup).not.toContain('원문 확인');
     },
   );
 
-  it('routes saved TXT reading and explicit source verification through separate actions', async () => {
+  it('routes saved TXT reading and download deletion through separate actions', async () => {
     const item = {
       key: { connectorId: 'fixture.source', remoteId: 'release:one' },
       kind: 'file' as const,
@@ -263,8 +261,9 @@ describe('SourceHubScreen', () => {
       await act(async () => renderer.root.findByProps({ 'aria-label': '1화 보기' }).props.onClick());
       expect(view.openImported).toHaveBeenCalledWith(item);
       expect(view.importItem).not.toHaveBeenCalled();
-      await act(async () => renderer.root.findByProps({ 'aria-label': '1화 원문 확인' }).props.onClick());
-      expect(view.importItem).toHaveBeenCalledWith(item);
+      await act(async () => renderer.root.findByProps({ 'aria-label': '1화 다운로드 삭제' }).props.onClick());
+      expect(view.deleteDownloads).toHaveBeenCalledWith([item]);
+      expect(view.importItem).not.toHaveBeenCalled();
       expect(view.importSelected).not.toHaveBeenCalled();
     } finally {
       await act(async () => renderer.unmount());

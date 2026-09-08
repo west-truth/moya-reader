@@ -247,16 +247,24 @@ describe('source series pagination integration', () => {
       await act(async () => h.renderer.unmount());
     }
   });
-  it('preserves selections on other pages and excludes saved releases from page selection', async () => {
+  it('preserves selections on other pages and includes saved releases for bulk deletion', async () => {
     const h = await fixture();
     h.setPage(async () => ({ detail: { title: 'Work' }, items: [1, 2, 3, 4, 5, 6].map((id) => release(id)) }));
     await act(async () => h.controller.showLocalSeries(h.novel));
     const keys = h.controller.items.map((item) => externalItemKeyId(item.key));
     await act(async () => h.controller.selectAllSupported(true, keys.slice(0, 4)));
-    expect(h.controller.items.filter((item) => item.selected).map((item) => item.key.remoteId)).toEqual(['release-4']);
+    expect(h.controller.items.filter((item) => item.selected).map((item) => item.key.remoteId)).toEqual([
+      'release-1',
+      'release-2',
+      'release-3',
+      'release-4',
+    ]);
     await act(async () => h.controller.selectAllSupported(true, keys.slice(4)));
     await act(async () => h.controller.selectAllSupported(false, [keys[3]!]));
     expect(h.controller.items.filter((item) => item.selected).map((item) => item.key.remoteId)).toEqual([
+      'release-1',
+      'release-2',
+      'release-3',
       'release-5',
       'release-6',
     ]);

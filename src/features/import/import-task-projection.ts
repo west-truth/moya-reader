@@ -4,6 +4,7 @@ export type ImportTaskPhase =
   | 'queued'
   | 'preparing'
   | 'downloading'
+  | 'downloaded'
   | 'verifying'
   | 'uploading'
   | 'analyzing'
@@ -63,6 +64,8 @@ export function importTaskLabel(task: ImportTaskView): string {
       return task.percent === undefined ? '준비 중' : `준비 ${task.percent}%`;
     case 'downloading':
       return '다운로드 중';
+    case 'downloaded':
+      return '저장 대기';
     case 'verifying':
       return task.percent === undefined ? '확인 중' : `확인 ${task.percent}%`;
     case 'uploading':

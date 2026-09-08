@@ -75,10 +75,26 @@ export class BookWorkspaceController {
     return this.navigationGeneration === generation;
   }
 
+  private async navigate(action: (generation: number) => Promise<unknown>): Promise<void> {
+    const generation = this.beginNavigation();
+    this.updateState({ navigationPending: true });
+    try {
+      await action(generation);
+    } finally {
+      if (this.navigationIsCurrent(generation)) this.updateState({ navigationPending: false });
+    }
+  }
+
+  /** Invalidates outstanding opens before a browser history restoration. */
+  readonly cancelNavigation = (): void => {
+    this.beginNavigation();
+    if (this.state.navigationPending) this.updateState({ navigationPending: false });
+  };
+
   readonly setView = (update: BookWorkspaceUpdate<BookWorkspaceView>): void => {
     const view = resolveUpdate(update, this.state.view);
     if (view !== this.state.view) this.beginNavigation();
-    this.updateState({ view });
+    this.updateState({ view, ...(this.state.navigationPending ? { navigationPending: false } : undefined) });
   };
 
   readonly setNovels = (update: BookWorkspaceUpdate<Novel[]>): void => {
@@ -92,6 +108,9 @@ export class BookWorkspaceController {
     const selectionTitleChanged = previous?.id !== selectedNovel?.id || previous?.title !== selectedNovel?.title;
     this.updateState({
       selectedNovel,
+      ...(previous?.id !== selectedNovel?.id && this.state.navigationPending
+        ? { navigationPending: false }
+        : undefined),
       ...(selectionTitleChanged ? { bookTitleDraft: selectedNovel?.title ?? '', bookTitleEditing: false } : undefined),
     });
   };
@@ -142,6 +161,7 @@ export class BookWorkspaceController {
       previousNovel?.id !== selectedNovel?.id || previousNovel?.title !== selectedNovel?.title;
     this.updateState({
       ...replacement,
+      ...(this.state.navigationPending ? { navigationPending: false } : undefined),
       ...(selectionTitleChanged ? { bookTitleDraft: selectedNovel?.title ?? '', bookTitleEditing: false } : undefined),
     });
   };
@@ -166,6 +186,7 @@ export class BookWorkspaceController {
     prefetched?: { chapters: Chapter[]; readingPosition?: ReadingPosition },
     documentSectionId?: string,
     documentSectionTitle?: string,
+    chapterControls?: Pick<BookWorkspaceState, 'chapterQuery' | 'chapterReadFilter' | 'chapterSort'>,
   ): Promise<boolean> {
     const [chapters, annotations, readingPosition] = await Promise.all([
       prefetched ? Promise.resolve(prefetched.chapters) : this.ports.repository.listChapters(novel.id),
@@ -193,6 +214,7 @@ export class BookWorkspaceController {
       chapterQuery: '',
       chapterReadFilter: 'all',
       chapterSort: 'asc',
+      ...chapterControls,
       outlineQuery: '',
       bookTitleDraft: novel.title,
       bookTitleEditing: false,
@@ -208,8 +230,13 @@ export class BookWorkspaceController {
     return true;
   }
 
-  readonly openNovel = async (novel: Novel): Promise<void> => {
-    await this.openNovelForNavigation(novel, this.beginNavigation());
+  readonly openNovel = async (
+    novel: Novel,
+    chapterControls?: Pick<BookWorkspaceState, 'chapterQuery' | 'chapterReadFilter' | 'chapterSort'>,
+  ): Promise<void> => {
+    await this.navigate((generation) =>
+      this.openNovelForNavigation(novel, generation, undefined, undefined, undefined, chapterControls),
+    );
   };
 
   readonly openDocumentSection = async (
@@ -217,21 +244,22 @@ export class BookWorkspaceController {
     documentSectionId: string,
     documentSectionTitle?: string,
   ): Promise<void> => {
-    const generation = this.beginNavigation();
-    const opened = await this.openNovelForNavigation(
-      novel,
-      generation,
-      undefined,
-      documentSectionId,
-      documentSectionTitle,
-    );
-    if (!opened || !this.navigationIsCurrent(generation) || isFixedDocumentFormat(novel.format)) return;
-    const chapter = this.state.chapters.find((candidate) => candidate.documentSectionId === documentSectionId);
-    if (!chapter) {
-      this.ports.environment.notify('선택한 회차를 찾을 수 없습니다. 작품 목록을 새로고침해 주세요.', 'warning');
-      return;
-    }
-    await this.openChapterForNavigation(chapter, { novel }, generation);
+    await this.navigate(async (generation) => {
+      const opened = await this.openNovelForNavigation(
+        novel,
+        generation,
+        undefined,
+        documentSectionId,
+        documentSectionTitle,
+      );
+      if (!opened || !this.navigationIsCurrent(generation) || isFixedDocumentFormat(novel.format)) return;
+      const chapter = this.state.chapters.find((candidate) => candidate.documentSectionId === documentSectionId);
+      if (!chapter) {
+        this.ports.environment.notify('선택한 회차를 찾을 수 없습니다. 작품 목록을 새로고침해 주세요.', 'warning');
+        return;
+      }
+      await this.openChapterForNavigation(chapter, { novel }, generation);
+    });
   };
 
   private async openChapterForNavigation(
@@ -272,52 +300,56 @@ export class BookWorkspaceController {
   }
 
   readonly openChapter = async (chapter: Chapter, options: BookWorkspaceReaderOpenOptions = {}): Promise<void> => {
-    await this.openChapterForNavigation(chapter, options, this.beginNavigation());
+    await this.navigate((generation) => this.openChapterForNavigation(chapter, options, generation));
   };
 
   readonly continueReading = async (novel: Novel | undefined = this.state.selectedNovel): Promise<void> => {
     if (!novel) return;
-    const generation = this.beginNavigation();
-    const [freshNovel, readingPosition] = await Promise.all([
-      this.ports.repository.getNovel(novel.id),
-      this.ports.repository.getReadingPosition(novel.id),
-    ]);
-    if (!this.navigationIsCurrent(generation)) return;
-    novel = freshNovel ?? novel;
-    const chapters =
-      this.state.chapters.length > 0 &&
-      this.state.selectedNovel?.id === novel.id &&
-      this.state.selectedNovel.activeContentRevisionId === novel.activeContentRevisionId
-        ? this.state.chapters
-        : await this.ports.repository.listChapters(novel.id);
-    if (!this.navigationIsCurrent(generation)) return;
-    const chapter = selectContinueChapter(chapters, novel, readingPosition);
-    if (this.state.selectedNovel?.id !== novel.id) {
-      const opened = await this.openNovelForNavigation(novel, generation, { chapters, readingPosition });
-      if (!opened) return;
-    } else {
-      this.updateState({ selectedNovel: novel, chapters, localReadingPosition: readingPosition });
-    }
-    if (isFixedDocumentFormat(novel.format)) {
-      this.updateState({
-        currentChapter: chapters.find((candidate) => candidate.id === readingPosition?.chapterId) ?? chapters[0],
-        fixedDocumentOpenChapterId: undefined,
-        view: 'document',
-      });
-      return;
-    }
-    if (chapter) {
-      await this.openChapterForNavigation(chapter, { restore: true, novel, position: readingPosition }, generation);
-    }
+    const target = novel;
+    await this.navigate(async (generation) => {
+      let novel = target;
+      const [freshNovel, readingPosition] = await Promise.all([
+        this.ports.repository.getNovel(novel.id),
+        this.ports.repository.getReadingPosition(novel.id),
+      ]);
+      if (!this.navigationIsCurrent(generation)) return;
+      novel = freshNovel ?? novel;
+      const chapters =
+        this.state.chapters.length > 0 &&
+        this.state.selectedNovel?.id === novel.id &&
+        this.state.selectedNovel.activeContentRevisionId === novel.activeContentRevisionId
+          ? this.state.chapters
+          : await this.ports.repository.listChapters(novel.id);
+      if (!this.navigationIsCurrent(generation)) return;
+      const chapter = selectContinueChapter(chapters, novel, readingPosition);
+      if (this.state.selectedNovel?.id !== novel.id) {
+        const opened = await this.openNovelForNavigation(novel, generation, { chapters, readingPosition });
+        if (!opened) return;
+      } else {
+        this.updateState({ selectedNovel: novel, chapters, localReadingPosition: readingPosition });
+      }
+      if (isFixedDocumentFormat(novel.format)) {
+        this.updateState({
+          currentChapter: chapters.find((candidate) => candidate.id === readingPosition?.chapterId) ?? chapters[0],
+          fixedDocumentOpenChapterId: undefined,
+          view: 'document',
+        });
+        return;
+      }
+      if (chapter) {
+        await this.openChapterForNavigation(chapter, { restore: true, novel, position: readingPosition }, generation);
+      }
+    });
   };
 
   readonly openChapterFromList = async (chapter: Chapter, restore = false): Promise<void> => {
-    const generation = this.beginNavigation();
-    const novel = this.state.selectedNovel;
-    const position = restore && novel ? await this.ports.repository.getReadingPosition(novel.id) : undefined;
-    if (!this.navigationIsCurrent(generation)) return;
-    if (position) this.updateState({ localReadingPosition: position });
-    await this.openChapterForNavigation(chapter, { restore, novel, position }, generation);
+    await this.navigate(async (generation) => {
+      const novel = this.state.selectedNovel;
+      const position = restore && novel ? await this.ports.repository.getReadingPosition(novel.id) : undefined;
+      if (!this.navigationIsCurrent(generation)) return;
+      if (position) this.updateState({ localReadingPosition: position });
+      await this.openChapterForNavigation(chapter, { restore, novel, position }, generation);
+    });
   };
 
   readonly returnToChapters = async (): Promise<void> => {

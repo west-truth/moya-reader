@@ -102,7 +102,7 @@ async function runBrowserImageSeriesAppendPipeline(input: BrowserImportPipelineI
   for (let attempt = 0; attempt < 3; attempt += 1) {
     throwIfCancelled(input);
     const snapshot = await getActiveBookSourceSnapshot(bookId);
-    if (!snapshot || snapshot.novel.format !== 'image_archive' || !snapshot.novel.documentSectionCount) {
+    if (!snapshot || snapshot.novel.format !== 'image_archive' || snapshot.novel.documentSectionCount === undefined) {
       throw new Error('기존 만화 작품의 원본을 찾지 못해 회차를 추가할 수 없습니다.');
     }
     const mergeController = new AbortController();

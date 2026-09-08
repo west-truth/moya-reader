@@ -219,6 +219,8 @@ import {
   suwayomiBuiltInExternalSource,
 } from './external-sources/suwayomi/suwayomi-external-source';
 import { appPublicRuntimeConfig } from './config/public-runtime-config';
+import { useAppBrowserNavigation } from './features/navigation/useAppBrowserNavigation';
+import { navigateAppBack } from './features/navigation/browser-navigation';
 import {
   dispatchAndroidBackEscape,
   dismissTopAppBackLayer,
@@ -5584,6 +5586,16 @@ export default function App() {
   ];
   const closeActiveAppLayer = () => Boolean(dismissTopAppBackLayer(appBackLayers));
 
+  useAppBrowserNavigation({
+    enabled: platformRuntime.kind === 'browser',
+    workspace: bookWorkspace,
+    state: bookWorkspaceState,
+    sources: externalSourceFeature,
+    getNovel: (id) => readerRepository.getNovel(id),
+    layers: appBackLayers,
+    notify: (message) => showToast(message, 'warning'),
+  });
+
   useAndroidAppEvents(platformRuntime, {
     onBack: () => {
       if (dispatchAndroidBackEscape()) return true;
@@ -5635,7 +5647,7 @@ export default function App() {
 
   readerScreenHandle.setActions({
     openChapter: (chapter, options = {}) => bookWorkspace.openChapter(chapter, { ...options, novel: selectedNovel }),
-    returnToChapters: () => returnToSourceSeriesDetails(bookWorkspace, externalSourceFeature),
+    returnToChapters: () => navigateAppBack(() => returnToSourceSeriesDetails(bookWorkspace, externalSourceFeature)),
     openSettings: openReaderSettings,
     openSync: () => setSyncPanelOpen(true),
     toggleAddon: () => setAddonOpen((open) => !open),
@@ -5969,7 +5981,8 @@ export default function App() {
             projection: bookWorkspaceProjection,
             annotationCount: bookmarks.length + highlights.length + notes.length,
             syncLabel,
-            returnToChapters: () => returnToSourceSeriesDetails(bookWorkspace, externalSourceFeature),
+            returnToChapters: () =>
+              navigateAppBack(() => returnToSourceSeriesDetails(bookWorkspace, externalSourceFeature)),
             openSettings: openReaderSettings,
             openSync: () => setSyncPanelOpen(true),
           },
@@ -6163,12 +6176,14 @@ export default function App() {
             initialChapterId={bookWorkspaceState.fixedDocumentOpenChapterId}
             repository={readerRepository}
             assets={bookAssetRepository}
-            onBack={() => {
-              bookWorkspace.setView('library');
-              if (shouldOpenSourceSeriesDetails(selectedNovel, externalSourceFeature.linkedSeriesBookIds)) {
-                void externalSourceFeature.showLocalSeries(selectedNovel);
-              }
-            }}
+            onBack={() =>
+              navigateAppBack(() => {
+                bookWorkspace.setView('library');
+                if (shouldOpenSourceSeriesDetails(selectedNovel, externalSourceFeature.linkedSeriesBookIds)) {
+                  void externalSourceFeature.showLocalSeries(selectedNovel);
+                }
+              })
+            }
             onPageSettled={bookWorkspace.saveFixedDocumentPage}
             onGeneratedCover={(cover) => {
               const applyCover = (current: Novel) =>
