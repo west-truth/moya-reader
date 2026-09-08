@@ -23,3 +23,22 @@ export const defaultSettings: ReaderSettings = {
   gestureBindings: DEFAULT_GESTURE_BINDINGS,
   keepScreenChrome: false,
 };
+
+export function normalizeReaderSettings(settings: Partial<ReaderSettings> = {}): ReaderSettings {
+  return {
+    ...defaultSettings,
+    ...settings,
+    ttsPlayback: {
+      ...defaultSettings.ttsPlayback,
+      ...settings.ttsPlayback,
+      rate: settings.ttsPlayback?.rate ?? settings.ttsSpeed ?? defaultSettings.ttsPlayback.rate,
+    },
+    readingProfile: { ...defaultSettings.readingProfile, ...settings.readingProfile },
+    aiWorkflows: {
+      ...defaultSettings.aiWorkflows!,
+      ...settings.aiWorkflows,
+      bookOverrides: { ...defaultSettings.aiWorkflows?.bookOverrides, ...settings.aiWorkflows?.bookOverrides },
+    },
+    gestureBindings: { ...defaultSettings.gestureBindings, ...settings.gestureBindings },
+  };
+}

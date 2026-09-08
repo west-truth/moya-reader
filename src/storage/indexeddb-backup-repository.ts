@@ -1,4 +1,7 @@
 import type { Novel, ParagraphPage } from '../domain/types';
+import { isDeviceReaderSettingsRecord, preserveLocalReaderSettings } from './device-reader-settings-store';
+import { sharedReaderSettings } from '../repositories/reader-settings-scope';
+import type { ReaderSettings } from '../domain/types';
 import { sha256 } from '../domain/hash';
 import type {
   BackupConflictResolution,
@@ -247,7 +250,14 @@ async function readAllBackupStores(): Promise<{
   const storeEntries = await Promise.all(
     availableStores.map(async (name) => {
       const rows = await requestToPromise<Record<string, unknown>[]>(tx.objectStore(name).getAll());
-      return [name, rows] as const;
+      return [
+        name,
+        name === 'settings'
+          ? rows
+              .filter((row) => !isDeviceReaderSettingsRecord(row.id))
+              .map((row) => (row.id === 'reader-settings' ? sharedReaderSettings(row as Partial<ReaderSettings>) : row))
+          : rows,
+      ] as const;
     }),
   );
   const blobs = await requestToPromise<StoredBookAssetBlob[]>(tx.objectStore(BOOK_ASSET_STORES.blobs).getAll());
@@ -486,7 +496,15 @@ export class IndexedDbBackupRepository implements BackupRepository {
       for (const [storeName, records] of restoredStores) {
         if (!tx.objectStoreNames.contains(storeName)) continue;
         const store = tx.objectStore(storeName);
+        if (storeName === 'settings') await preserveLocalReaderSettings(store);
         records.forEach((record) => {
+          if (storeName === 'settings') {
+            if (isDeviceReaderSettingsRecord(record.id)) return;
+            if (record.id === 'reader-settings') {
+              store.put(sharedReaderSettings(record as Partial<ReaderSettings>));
+              return;
+            }
+          }
           if (storeName === 'book_content_paragraph_pages') {
             const page = record as unknown as RevisionParagraphPageRow;
             store.put({ ...page, paragraphIds: page.paragraphs.map((paragraph) => paragraph.id) });

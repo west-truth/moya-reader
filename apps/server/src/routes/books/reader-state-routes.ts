@@ -1,4 +1,5 @@
 import type { FastifyInstance } from 'fastify';
+import { sharedReaderSettings } from '../../../../../src/repositories/reader-settings-scope.js';
 import pg from 'pg';
 import type { ServerConfig } from '../../config.js';
 import { defaultSettings } from '../../../../../src/repositories/reader-defaults';
@@ -212,13 +213,13 @@ export async function registerReaderStateRoutes(
   app.put<{ Body: Record<string, unknown> }>('/api/settings', async (request, reply) => {
     const parsed = validateSettingsBody(request.body);
     if (!parsed.ok) return reply.code(400).send({ error: parsed.error });
-    const settings = parsed.value;
+    const settings = sharedReaderSettings(parsed.value);
     await pool.query(
       `
         insert into reader_settings (user_id, settings, updated_at)
         values ($1, $2, now())
         on conflict (user_id) do update
-          set settings = excluded.settings || case
+          set settings = (reader_settings.settings - array['ttsSpeed', 'ttsPlayback', 'ttsBookOverrides', 'aiWorkflows', 'cloudVaultUpdatedAt']) || excluded.settings || case
                 when reader_settings.settings ? '_moyaIntegrations'
                   then jsonb_build_object('_moyaIntegrations', reader_settings.settings -> '_moyaIntegrations')
                 else '{}'::jsonb

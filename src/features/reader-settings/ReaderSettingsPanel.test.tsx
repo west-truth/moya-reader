@@ -49,7 +49,8 @@ describe('ReaderSettingsPanel', () => {
     expect(markup).toContain('Dropbox, 작품 저장소');
     expect(markup).toContain('테마, 글꼴, 밝기');
     expect(markup).toContain('글자, 여백, 읽기 방식');
-    expect(markup).toContain('변경 사항은 이 기기에 자동 저장됩니다.');
+    expect(markup).toContain('변경 사항은 자동 저장됩니다.');
+    expect(markup).toContain('이 기기에 저장됩니다.');
     expect(markup).toContain('미드나이트');
     expect(markup).toContain('그래파이트');
     expect(markup).toContain('웜 페이퍼');

@@ -8,7 +8,7 @@ const scopeRows = [
   { key: 'annotations', label: '메모와 표시', description: '북마크, 하이라이트, 메모' },
   { key: 'statistics', label: '독서 통계', description: '독서 시간과 세션 기록' },
   { key: 'aiTtsArtifacts', label: 'AI · TTS 작업 결과', description: '등장인물, 화자 보정, 음성 배정' },
-  { key: 'readerSettings', label: '읽기 화면 설정', description: '기기마다 다를 수 있어 기본 제외' },
+  { key: 'readerSettings', label: 'AI·듣기 공통 설정', description: '화면·본문·조작 설정은 이 기기에 유지' },
   {
     key: 'sourceFiles',
     label: '작품 파일과 표지',

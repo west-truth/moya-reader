@@ -88,9 +88,12 @@ describe('sync reader event routes', () => {
 
     expect(client.query).toHaveBeenCalledWith(expect.stringContaining("jsonb_build_object('_moyaIntegrations'"), [
       'user_test',
-      JSON.stringify((event.payload as { settings: unknown }).settings),
+      expect.any(String),
       event.createdAt,
     ]);
+    const saved = JSON.parse(vi.mocked(client.query).mock.calls[0][1]![1] as string);
+    expect(saved).not.toHaveProperty('theme');
+    expect(saved.id).toBe('reader-settings');
   });
 
   it('materializes fixed-document annotation updates and tombstones', async () => {

@@ -1,4 +1,8 @@
-import { describe, expect, it, vi } from 'vitest';
+import 'fake-indexeddb/auto';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { resetReaderDbForTests } from '../storage/db';
+
+beforeEach(() => resetReaderDbForTests());
 import { ParsedNovel } from '../domain/types';
 import { ResourceRevisionConflictError } from '../domain/resource-revisions';
 import {

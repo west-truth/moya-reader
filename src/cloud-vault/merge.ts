@@ -1,3 +1,4 @@
+import { sharedReaderSettings } from '../repositories/reader-settings-scope';
 import type {
   Bookmark,
   Character,
@@ -285,6 +286,7 @@ export function mergeCloudVaultSnapshots(
     tombstones.filter((item) => item.entityType === 'shelf_membership').map((item) => [item.entityId, item]),
   );
   const settingsFromLocal = newer(local.settingsUpdatedAt, remote.settingsUpdatedAt);
+  const selectedSettings = settingsFromLocal ? local.settings : remote.settings;
   return {
     format: CLOUD_VAULT_FORMAT,
     version: CLOUD_VAULT_VERSION,
@@ -309,7 +311,7 @@ export function mergeCloudVaultSnapshots(
       return !tombstone || !tombstoneWins(membership.createdAt, tombstone);
     }),
     tombstones,
-    settings: settingsFromLocal ? local.settings : remote.settings,
+    settings: selectedSettings ? sharedReaderSettings(selectedSettings) : undefined,
     settingsUpdatedAt: settingsFromLocal ? local.settingsUpdatedAt : remote.settingsUpdatedAt,
   };
 }

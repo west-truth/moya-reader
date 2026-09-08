@@ -1,4 +1,5 @@
 import 'fake-indexeddb/auto';
+import { defaultSettings } from '../repositories/reader-defaults';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { sha256 } from '../domain/hash';
 import { runBrowserImportPipeline } from '../services/import/browser-import-pipeline';
@@ -245,7 +246,7 @@ describe('IndexedDbBackupRepository', () => {
     const [restoredNovel] = await getNovels();
     expect(restoredNovel).toMatchObject({ id: novel.id, sourceAssetId: expect.any(String) });
     expect(await getBookmarks(novel.id)).toEqual([expect.objectContaining({ id: 'bookmark_backup' })]);
-    expect(await getSettings()).toMatchObject({ theme: 'sepia', fontSize: 21 });
+    expect(await getSettings()).toMatchObject({ theme: defaultSettings.theme, fontSize: defaultSettings.fontSize });
     expect(await getListeningPosition(novel.id)).toMatchObject({
       queueItemFingerprint: 'queue_backup',
       anchor: { kind: 'reflowable_text', startOffset: 2, endOffset: 6 },

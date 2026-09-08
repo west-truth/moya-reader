@@ -36,7 +36,9 @@ import {
   mapServerReadingPosition,
 } from '../services/remote/remote-api-client';
 import type { RemoteMutationResult } from '../services/remote/remote-api-contracts';
-import { defaultSettings } from './reader-defaults';
+import { normalizeReaderSettings } from './reader-defaults';
+import { sharedReaderSettings, sharedReaderSettingsEqual, type SharedReaderSettings } from './reader-settings-scope';
+import { loadDeviceReaderSettings } from '../storage/device-reader-settings-store';
 import { ResourceRevisionConflictError, type ResourceMutationOptions } from '../domain/resource-revisions';
 import { normalizeVoiceCastingWorkspace } from '../providers/voice-casting';
 
@@ -140,6 +142,7 @@ async function pollImportResult(client: RemoteApiClient, jobId: string): Promise
 }
 
 export class RemoteReaderRepository implements ReaderRepository {
+  private sharedSettings?: SharedReaderSettings;
   readonly capabilities = {
     backend: 'hosted',
     readingTimePersistence: 'session_only',
@@ -292,29 +295,24 @@ export class RemoteReaderRepository implements ReaderRepository {
 
   async getSettings(): Promise<ReaderSettings> {
     const response = await this.client.getSettings();
+    const settings = normalizeReaderSettings(response.settings);
+    this.sharedSettings = sharedReaderSettings(settings);
+    const preferences = await loadDeviceReaderSettings(this.client.readerSettingsScope, response.settings);
     return {
-      ...defaultSettings,
-      ...response.settings,
-      ttsPlayback: {
-        ...defaultSettings.ttsPlayback,
-        ...response.settings.ttsPlayback,
-        rate: response.settings.ttsPlayback?.rate ?? response.settings.ttsSpeed ?? defaultSettings.ttsPlayback.rate,
-      },
-      readingProfile: { ...defaultSettings.readingProfile, ...response.settings.readingProfile },
-      aiWorkflows: {
-        ...defaultSettings.aiWorkflows!,
-        ...response.settings.aiWorkflows,
-        bookOverrides: {
-          ...defaultSettings.aiWorkflows?.bookOverrides,
-          ...response.settings.aiWorkflows?.bookOverrides,
-        },
-      },
-      gestureBindings: { ...defaultSettings.gestureBindings, ...response.settings.gestureBindings },
+      ...settings,
+      ...preferences,
     };
   }
 
   async saveSettings(settings: ReaderSettings): Promise<void> {
-    await this.client.saveSettings(settings);
+    await loadDeviceReaderSettings(this.client.readerSettingsScope, settings, true);
+    if (!this.sharedSettings) {
+      this.sharedSettings = sharedReaderSettings(normalizeReaderSettings((await this.client.getSettings()).settings));
+    }
+    if (sharedReaderSettingsEqual(this.sharedSettings, settings)) return;
+    const shared = sharedReaderSettings(settings);
+    await this.client.saveSettings(shared);
+    this.sharedSettings = shared;
   }
 
   async listBookmarks(novelId: string): Promise<Bookmark[]> {

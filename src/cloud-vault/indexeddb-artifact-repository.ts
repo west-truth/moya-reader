@@ -1,3 +1,5 @@
+import { sharedReaderSettings } from '../repositories/reader-settings-scope';
+import { preserveLocalReaderSettings } from '../storage/device-reader-settings-store';
 import type {
   Bookmark,
   Chapter,
@@ -416,7 +418,7 @@ export class IndexedDbCloudVaultArtifactRepository implements CloudVaultArtifact
       input.scope.library && this.catalog
         ? await Promise.all([this.catalog.listShelves(), this.catalog.listShelfMemberships()])
         : [[], []];
-    const settings = input.scope.readerSettings ? await this.reader.getSettings() : undefined;
+    const settings = input.scope.readerSettings ? sharedReaderSettings(await this.reader.getSettings()) : undefined;
     const settingsUpdatedAt = input.scope.readerSettings
       ? (settings?.cloudVaultUpdatedAt ??
         maxTimestamp(
@@ -517,8 +519,9 @@ export class IndexedDbCloudVaultArtifactRepository implements CloudVaultArtifact
     }
     appliedRecords += await this.applyTombstones(tx, snapshot.tombstones, localByHash, localByVaultId, snapshot.scope);
     if (snapshot.scope.readerSettings && snapshot.settings) {
+      await preserveLocalReaderSettings(tx.objectStore('settings'));
       tx.objectStore('settings').put({
-        ...snapshot.settings,
+        ...sharedReaderSettings(snapshot.settings),
         cloudVaultUpdatedAt: snapshot.settingsUpdatedAt ?? snapshot.settings.cloudVaultUpdatedAt,
       });
       appliedRecords += 1;

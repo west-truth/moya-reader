@@ -215,7 +215,7 @@ export interface CloudVaultSnapshotV1 {
   readonly shelves: readonly Shelf[];
   readonly shelfMemberships: readonly CloudVaultShelfMembershipV1[];
   readonly tombstones: readonly CloudVaultTombstoneV1[];
-  readonly settings?: ReaderSettings;
+  readonly settings?: Partial<ReaderSettings>;
   readonly settingsUpdatedAt?: string;
 }
 

@@ -1,7 +1,14 @@
 # Cloud Vault 동기화 아키텍처
 
 Status: metadata v1, per-book AI/TTS encrypted objects, Web content objects, revision-aware foreground auto sync implemented
-Last updated: 2026-08-31
+Last updated: 2026-09-08
+
+## 기기별 독서 설정 제외
+
+`readerSettings` 선택 항목은 AI·듣기 공통 설정만 동기화합니다. 화면·본문·조작, 책별 본문 설정과 시스템 음성 URI는
+기기 IndexedDB에 남깁니다. 과거 전체 설정 snapshot이나 ZIP 백업을 복원해도 현재 기기의 설정은 유지합니다.
+기기 설정 레코드는 새 백업에서 제외하며, 빈 기기로 복원하면 기본값으로 시작합니다. 작품·읽기 위치·읽음 상태·주석의
+기존 동기화는 유지됩니다.
 
 ## 만화 회차별 원본
 

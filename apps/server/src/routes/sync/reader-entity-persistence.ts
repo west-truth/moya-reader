@@ -1,4 +1,6 @@
 import pg from 'pg';
+import { sharedReaderSettings } from '../../../../../src/repositories/reader-settings-scope.js';
+import { defaultSettings } from '../../../../../src/repositories/reader-defaults.js';
 import type { SyncEvent } from '@noveldesk/contracts/sync';
 import {
   analysisStatusValue,
@@ -128,13 +130,13 @@ export async function persistReaderSyncEvent(
   }
 
   if (event.type === 'settings_updated') {
-    const settings = record(payload.settings);
+    const settings = sharedReaderSettings({ ...defaultSettings, ...record(payload.settings) });
     await client.query(
       `
         insert into reader_settings (user_id, settings, updated_at)
         values ($1, $2, $3)
         on conflict (user_id) do update
-          set settings = excluded.settings || case
+          set settings = (reader_settings.settings - array['ttsSpeed', 'ttsPlayback', 'ttsBookOverrides', 'aiWorkflows', 'cloudVaultUpdatedAt']) || excluded.settings || case
                 when reader_settings.settings ? '_moyaIntegrations'
                   then jsonb_build_object('_moyaIntegrations', reader_settings.settings -> '_moyaIntegrations')
                 else '{}'::jsonb
