@@ -9,6 +9,7 @@ import '../../src/styles/reader-shell.css';
 import '../../src/styles/reader-content.css';
 
 const singleParagraph = new URLSearchParams(location.search).has('single');
+const variableParagraphs = new URLSearchParams(location.search).has('variable');
 const chapter = {
   id: `position-chapter-${singleParagraph ? 1 : 120}`,
   novelId: 'position-book',
@@ -27,7 +28,10 @@ const novel = {
 let offset = 0;
 const paragraphs = Array.from({ length: chapter.paragraphCount }, (_, index) => {
   const text =
-    `문단 ${index + 1}. ` + '이것은 독서 위치를 확인하기 위한 합성 본문입니다. '.repeat(singleParagraph ? 80 : 5);
+    `문단 ${index + 1}. ` +
+    '이것은 독서 위치를 확인하기 위한 합성 본문입니다. '.repeat(
+      singleParagraph ? 80 : variableParagraphs ? 1 + (index % 12) : 5,
+    );
   const startOffsetInChapter = offset;
   offset += text.length;
   return {

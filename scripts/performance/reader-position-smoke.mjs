@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { build } from 'vite';
-import { chromium } from 'playwright-core';
+import { chromium, devices, webkit } from 'playwright-core';
 import { findTemporaryLoopbackPort } from '../lib/temporary-loopback-port.mjs';
 
 // Production ReaderViewport and CSS with synthetic data; no App, user storage, or provider requests.
@@ -13,11 +13,22 @@ const output = bundle.output;
 const entry = output.find((asset) => asset.type === 'chunk' && asset.isEntry);
 const styles = output.filter((asset) => asset.fileName.endsWith('.css'));
 const assets = new Map(output.map((asset) => [`/${asset.fileName}`, asset]));
-const html = `<!doctype html><html><head>${styles.map((style) => `<link rel="stylesheet" href="/${style.fileName}">`).join('')}</head><body><div id="root"></div><script type="module" src="/${entry.fileName}"></script></body></html>`;
+const html = `<!doctype html><html><head><meta name="viewport" content="width=device-width, initial-scale=1">${styles.map((style) => `<link rel="stylesheet" href="/${style.fileName}">`).join('')}</head><body><div id="root"></div><script type="module" src="/${entry.fileName}"></script></body></html>`;
 const baseUrl = `http://127.0.0.1:${await findTemporaryLoopbackPort()}`;
-const browser = await chromium.launch({ channel: process.env.READER_UI_BROWSER_CHANNEL || 'msedge', headless: true });
+const scrollStabilityOnly = process.argv.includes('--scroll-stability-only');
+const browserEngine = process.env.READER_UI_BROWSER_ENGINE || 'chromium';
+const browser =
+  browserEngine === 'webkit'
+    ? await webkit.launch({ headless: true })
+    : await chromium.launch({ channel: process.env.READER_UI_BROWSER_CHANNEL || 'msedge', headless: true });
 try {
-  const context = await browser.newContext({ viewport: { width: 1200, height: 900 }, serviceWorkers: 'block' });
+  const profile =
+    browserEngine === 'webkit' ? devices['iPad Pro 11'] : process.argv.includes('--android') ? devices['Pixel 5'] : {};
+  const context = await browser.newContext({
+    viewport: { width: 1200, height: 900 },
+    ...profile,
+    serviceWorkers: 'block',
+  });
   await context.route('**/*', (route) => {
     const path = new URL(route.request().url()).pathname;
     if (path === '/reader-position') return route.fulfill({ contentType: 'text/html', body: html });
@@ -35,7 +46,62 @@ try {
   });
   const evidence = [];
   const errors = [];
-  for (const single of [false, true]) {
+  if (scrollStabilityOnly) {
+    const page = await context.newPage();
+    page.on('pageerror', (error) => errors.push(error.message));
+    await page.goto(`${baseUrl}/reader-position?variable=1`);
+    await page.waitForFunction(() => globalThis.readerFixture?.api()?.flow === 'scroll');
+    await page.evaluate(() => readerFixture.api().scrollToParagraphIndex(75, 'start', 'auto'));
+    await page.waitForTimeout(500);
+    const heightBefore = await page.locator('.reader-virtual-list').evaluate((element) => element.style.height);
+    await page.evaluate(() => readerFixture.setFlow('paginated'));
+    await page.waitForFunction(() => readerFixture.api()?.flow === 'paginated');
+    await page.waitForTimeout(300);
+    await page.evaluate(() => readerFixture.setFlow('scroll'));
+    await page.waitForFunction(() => readerFixture.api()?.flow === 'scroll');
+    await page.waitForTimeout(300);
+    const heightAfter = await page.locator('.reader-virtual-list').evaluate((element) => element.style.height);
+    assert.equal(heightAfter, heightBefore, 'A flow switch must preserve measured paragraph heights');
+    const stability = await page.evaluate(async () => {
+      const root = document.querySelector('[data-reader-layer="scroll"]');
+      const content = root.querySelector('.reader-document');
+      let motionMutations = 0;
+      let transformedFrames = 0;
+      const observer = new MutationObserver((records) => {
+        motionMutations += records.length;
+      });
+      observer.observe(content, { attributes: true, attributeFilter: ['class', 'style'] });
+      // Native momentum cannot be synthesized in WebKit. Exercise the app's scroll and pointer-cancel
+      // path, including remounting differently sized rows above the viewport, without claiming device FPS.
+      root.dispatchEvent(new PointerEvent('pointercancel', { bubbles: true, pointerType: 'touch' }));
+      for (let frame = 0; frame < 60; frame += 1) {
+        root.scrollTop -= 35;
+        await new Promise(requestAnimationFrame);
+        if (getComputedStyle(content).transform !== 'none') transformedFrames += 1;
+      }
+      observer.disconnect();
+      return { motionMutations, transformedFrames, mountedRows: root.querySelectorAll('[data-index]').length };
+    });
+    evidence.push({
+      browserEngine,
+      viewport: page.viewportSize(),
+      measuredHeightPreserved: heightAfter === heightBefore,
+      ...stability,
+    });
+    assert.equal(
+      stability.motionMutations,
+      0,
+      'Ordinary upward scrolling must not animate or restyle the chapter body',
+    );
+    assert.equal(
+      stability.transformedFrames,
+      0,
+      'Ordinary scrolling must not promote the full chapter to a transformed layer',
+    );
+    assert.ok(stability.mountedRows < 80, 'Scroll rows must remain bounded');
+    await page.close();
+  }
+  for (const single of scrollStabilityOnly ? [] : [false, true]) {
     const page = await context.newPage();
     page.on('pageerror', (error) => errors.push(error.message));
     await page.goto(`${baseUrl}/reader-position${single ? '?single=1' : ''}`);
