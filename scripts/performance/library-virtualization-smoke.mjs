@@ -60,6 +60,10 @@ try {
   const evidence = [];
   for (const viewport of [
     { width: 1440, height: 900 },
+    { width: 1536, height: 960 },
+    { width: 1366, height: 768 },
+    { width: 1280, height: 800 },
+    { width: 1024, height: 768 },
     { width: 834, height: 1194 },
     { width: 768, height: 1024 },
     { width: 1194, height: 834 },
@@ -94,7 +98,7 @@ try {
       const mounted = await page.locator(selector).count();
       assert.ok(mounted < 120, `Expected bounded ${viewMode} cards, saw ${mounted}`);
       let gridRemainder;
-      if (viewMode === 'grid' && viewport.width >= 700 && viewport.width <= 1279) {
+      if (viewMode === 'grid' && viewport.width >= 700) {
         gridRemainder = await page
           .locator('.library-virtual-row')
           .first()
@@ -105,7 +109,7 @@ try {
               .filter((card) => Math.abs(card.top - row.top) <= 2);
             return row.right - Math.max(...cards.map((card) => card.right));
           });
-        assert.ok(Math.abs(gridRemainder) <= 2, `Tablet cover grid left ${gridRemainder}px unused`);
+        assert.ok(Math.abs(gridRemainder) <= 2, `Cover grid left ${gridRemainder}px unused at ${viewport.width}px`);
       }
       for (let attempt = 0; attempt < 8; attempt += 1) {
         await page.locator('.library-main').evaluate((element) => {

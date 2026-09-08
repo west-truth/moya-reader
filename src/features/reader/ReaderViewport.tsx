@@ -212,8 +212,8 @@ function hasReadableContent(paragraph: Paragraph): boolean {
   return paragraph.text.replace(/[\s\u200b-\u200d\u2060\ufeff]/gu, '').length > 0;
 }
 
-function nextPaint(): Promise<void> {
-  return new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
+function nextFrame(): Promise<void> {
+  return new Promise((resolve) => requestAnimationFrame(() => resolve()));
 }
 
 function VirtualizedReaderViewportComponent({
@@ -539,40 +539,42 @@ function VirtualizedReaderViewportComponent({
       if (anchor.sectionId !== chapter.id) return false;
       const targetIndex = clamp(anchor.blockIndex ?? 0, 0, Math.max(0, chapter.paragraphCount - 1));
       await pages.loadIndexes([targetIndex]);
-      virtualizer.measure();
-      await nextPaint();
-      measureMountedRows();
       virtualizer.scrollToIndex(targetIndex, { align: 'start', behavior: 'auto' });
-      let stableFrames = 0;
-      for (let attempt = 0; attempt < 20; attempt += 1) {
-        await nextPaint();
-        measureMountedRows();
+      // The activation layout effect has already invalidated virtual sizes. Re-measuring every
+      // mounted row for up to 40 frames made this handoff visibly stall on iPad WebKit. Measure
+      // the target row once, then apply at most two exact range corrections.
+      const targetElement = () => {
         const root = rootRef.current;
-        if (!root) return false;
-        const paragraphElement =
+        if (!root) return undefined;
+        return (
           [...root.querySelectorAll<HTMLElement>('[data-paragraph-id]')].find(
             (element) => element.dataset.paragraphId === anchor.blockId,
-          ) ?? root.querySelector<HTMLElement>(`[data-index="${targetIndex}"] [data-paragraph-id]`);
-        if (!paragraphElement) {
-          virtualizer.scrollToIndex(targetIndex, { align: 'start', behavior: 'auto' });
-          continue;
-        }
+          ) ?? root.querySelector<HTMLElement>(`[data-index="${targetIndex}"] [data-paragraph-id]`)
+        );
+      };
+      await nextFrame();
+      let paragraphElement = targetElement();
+      if (!paragraphElement) {
+        virtualizer.scrollToIndex(targetIndex, { align: 'start', behavior: 'auto' });
+        await nextFrame();
+        paragraphElement = targetElement();
+      }
+      if (!paragraphElement) return false;
+      const targetRow = paragraphElement.closest<HTMLElement>('.reader-virtual-row[data-index]');
+      if (targetRow) virtualizer.resizeItem(targetIndex, Math.ceil(targetRow.getBoundingClientRect().height));
+      virtualizer.scrollToIndex(targetIndex, { align: 'start', behavior: 'auto' });
+      for (let attempt = 0; attempt < 2; attempt += 1) {
+        await nextFrame();
+        const root = rootRef.current;
+        if (!root) return false;
+        paragraphElement = targetElement();
+        if (!paragraphElement) return false;
         const range = sourceRange(paragraphElement, anchor.offset, anchor.offset + 1);
         const rect = range?.getBoundingClientRect() ?? paragraphElement.getBoundingClientRect();
         const correction = rect.top - (readerContentTop(root) + offsetFromTop);
-        if (Math.abs(correction) <= 1) {
-          stableFrames += 1;
-          if (stableFrames >= 2) return true;
-          continue;
-        }
-        stableFrames = 0;
+        if (Math.abs(correction) <= 1) return true;
         root.scrollTop += correction;
       }
-      const root = rootRef.current;
-      if (!root) return false;
-      virtualizer.scrollToIndex(targetIndex, { align: 'start', behavior: 'auto' });
-      await nextPaint();
-      root.scrollTop = Math.max(0, root.scrollTop - offsetFromTop);
       return true;
     },
     getParagraphAtIndex: pages.getParagraphAt,
@@ -589,15 +591,7 @@ function VirtualizedReaderViewportComponent({
   useLayoutEffect(() => {
     if (!isActive) return;
     virtualizer.measure();
-    let settleFrame = 0;
-    const measureFrame = window.requestAnimationFrame(() => {
-      measureMountedRows();
-      settleFrame = window.requestAnimationFrame(measureMountedRows);
-    });
-    return () => {
-      window.cancelAnimationFrame(measureFrame);
-      window.cancelAnimationFrame(settleFrame);
-    };
+    measureMountedRows();
   }, [
     chapter.id,
     isActive,
