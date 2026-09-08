@@ -6,7 +6,7 @@
   min-width: 0;
   min-height: var(--app-topbar-height);
   display: grid;
-  grid-template-columns: minmax(180px, 0.7fr) minmax(280px, 1fr) auto;
+  grid-template-columns: minmax(180px, 1fr) auto;
   align-items: center;
   gap: 18px;
   padding: 10px 22px;
@@ -71,6 +71,11 @@
   border: 1px solid var(--border);
   border-radius: var(--radius-control);
 }
+
+.source-hub-catalog-search {
+  margin: 12px 0;
+  width: 100%;
+}
 .source-hub-detail-context {
   min-width: 0;
   min-height: 38px;
@@ -101,6 +106,7 @@
   padding: 0 10px;
 }
 .source-hub-topbar-actions {
+  grid-column: -2 / -1;
   gap: 7px;
 }
 
@@ -1131,7 +1137,28 @@
   }
   .source-hub-book-detail .detail-hero-actions > .primary-btn {
     width: auto;
-    flex: 1;
+    flex: 0 1 auto;
+  }
+  .source-hub-book-detail .detail-hero-actions > button {
+    max-width: 100%;
+    min-height: 44px;
+    flex-shrink: 0;
+    white-space: normal;
+    overflow-wrap: anywhere;
+  }
+  .source-hub-book-detail .detail-hero-actions > button > svg {
+    flex-shrink: 0;
+  }
+  .source-hub-book-detail .detail-hero-actions > .source-hub-reading-button {
+    width: 44px;
+    min-width: 44px;
+    height: 44px;
+    flex: 0 0 44px;
+    padding: 0;
+    justify-content: center;
+  }
+  .source-hub-reading-label {
+    display: none;
   }
   .source-hub-batch-bar {
     right: 8px;
@@ -1155,5 +1182,106 @@
   }
   .source-hub-card-cover {
     height: 110px;
+  }
+}
+
+.source-hub-items-heading {
+  flex-wrap: wrap;
+}
+.source-hub-layout-options {
+  display: inline-flex;
+  flex-wrap: wrap;
+  padding: 3px;
+  gap: 3px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-control);
+  background: var(--app-surface);
+}
+.source-hub-layout-options button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  min-height: 36px;
+  padding: 0 10px;
+  color: var(--text-2);
+  background: transparent;
+  border: 0;
+  border-radius: calc(var(--radius-control) - 3px);
+  cursor: pointer;
+  font-size: var(--ui-label-size);
+}
+.source-hub-layout-options button[aria-pressed='true'] {
+  color: var(--primary);
+  background: color-mix(in srgb, var(--primary) 12%, transparent);
+}
+.source-hub-card-grid[data-layout='covers'] {
+  grid-template-columns: repeat(auto-fill, minmax(164px, 1fr));
+}
+.source-hub-card-grid[data-layout='covers'] .source-hub-card {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  gap: 12px;
+  padding: 12px;
+}
+.source-hub-card-grid[data-layout='covers'] .source-hub-card-cover {
+  width: 100%;
+  height: auto;
+  aspect-ratio: 2 / 3;
+  flex-shrink: 0;
+}
+.source-hub-card-grid[data-layout='covers'] .source-hub-card-copy {
+  flex: 1;
+  gap: 4px;
+}
+.source-hub-card-grid[data-layout='covers'] .source-hub-card-actions {
+  padding-top: 10px;
+}
+.source-hub-card-grid[data-layout='list'] {
+  grid-template-columns: minmax(0, 1fr);
+  gap: 8px;
+}
+.source-hub-card-grid[data-layout='list'] .source-hub-card {
+  grid-template-columns: 52px minmax(0, 1fr);
+  min-height: 98px;
+  padding: 10px 12px;
+  align-items: center;
+}
+.source-hub-card-grid[data-layout='list'] .source-hub-card-cover {
+  height: 78px;
+}
+.source-hub-card-grid[data-layout='list'] .source-hub-card-copy {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  column-gap: 12px;
+}
+.source-hub-card-grid[data-layout='list'] .source-hub-card-copy > :not(.source-hub-card-actions) {
+  grid-column: 1;
+}
+.source-hub-card-grid[data-layout='list'] .source-hub-card-actions {
+  grid-column: 2;
+  grid-row: 1 / span 5;
+  margin: 0;
+}
+@media (max-width: 699px) {
+  .source-hub-layout-options button {
+    min-height: 44px;
+  }
+  .source-hub-card-grid[data-layout='covers'] {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 10px;
+  }
+  .source-hub-card-grid[data-layout='covers'] .source-hub-card {
+    padding: 9px;
+  }
+  .source-hub-card-grid[data-layout='list'] .source-hub-card-actions button {
+    width: 44px;
+    height: 44px;
+    padding: 0;
+  }
+  .source-hub-card-grid[data-layout='list'] .source-hub-card-actions button span {
+    display: none;
   }
 }

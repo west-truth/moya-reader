@@ -8,6 +8,7 @@ import {
   externalItemKeyId,
   externalSourceLinkId,
   type ExternalItemSummary,
+  type DownloadedExternalSource,
   type ExternalSourceLink,
   type TrustedExternalSourceHostContext,
 } from '../contracts';
@@ -19,6 +20,7 @@ import {
 } from '../link-import-reconciliation';
 import { assembleDocumentSeries } from './document-series-assembler';
 import { externalDocumentCollectionId } from './document-series-identity';
+import { seriesDownloadRef } from './series-download-queue';
 
 type DocumentItem = ExternalItemSummary & Required<Pick<ExternalItemSummary, 'collection' | 'release'>>;
 const MAX_BATCH_RELEASES = 50;
@@ -33,6 +35,8 @@ export interface DocumentSeriesImportOptions {
   assets?: BookAssetRepository;
   importService: ImportService;
   signal: AbortSignal;
+  /** Host-owned bounded prefetch; storage and activation remain serialized here. */
+  download?(item: DocumentItem): Promise<DownloadedExternalSource>;
   getNovel(id: string): Promise<Novel | undefined>;
   onProgress(value: {
     received: number;
@@ -152,19 +156,14 @@ export async function importDocumentSeries(options: DocumentSeriesImportOptions)
       let release = carried;
       carried = undefined;
       if (!release) {
-        const downloaded = await options.registry.downloadExternalSource(
-          options.sourceId,
-          options.hostContext,
-          {
-            key: item.key,
-            fileName: item.importFileName ?? `${item.release.title}.txt`,
-            mimeType: item.mimeType,
-            remoteRevision: item.remoteRevision,
-            byteLength: item.byteLength,
-            context: { expectedProfile: profile, connectionGeneration: generation, maxBytes: 2 * 1024 * 1024 },
-          },
-          options.signal,
-        );
+        const downloaded = options.download
+          ? await options.download(item)
+          : await options.registry.downloadExternalSource(
+              options.sourceId,
+              options.hostContext,
+              seriesDownloadRef(item, generation),
+              options.signal,
+            );
         const content = downloaded.content;
         if (content?.kind !== 'document') throw new Error('텍스트 소스가 올바른 TXT 본문을 반환하지 않았습니다.');
         options.signal.throwIfAborted();

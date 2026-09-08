@@ -106,4 +106,6 @@ export interface BookAssetRepository {
   removeCover(bookId: string, expectedMetadataRevision?: number): Promise<void>;
   getEmbeddedResource(bookId: string, assetId: string, signal?: AbortSignal): Promise<ExportedBookResource | undefined>;
   getComicSourcePart?(bookId: string, contentHash: string): Promise<ExportedBookResource | undefined>;
+  /** Local revision history cleanup after explicit download removal; hosted uses object GC. */
+  cleanupRemovedDownloads?(bookId: string, expectedRevision: string): Promise<void>;
 }

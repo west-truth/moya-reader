@@ -33,6 +33,20 @@ const normalize = (result: ExternalSourceDownloadResult, maxBytes?: number) =>
   );
 
 describe('external source normalization', () => {
+  it('preserves source download limits and rejects unsupported values', () => {
+    const limited = { ...item, collection: { ...item.collection!, maxConcurrentDownloads: 1 as const } };
+    expect(
+      normalizeExternalSourcePage(descriptor, { items: [limited] }, 'account').items[0]?.collection
+        ?.maxConcurrentDownloads,
+    ).toBe(1);
+    expect(() =>
+      normalizeExternalSourcePage(
+        descriptor,
+        { items: [{ ...limited, collection: { ...limited.collection, maxConcurrentDownloads: 3 as unknown as 1 } }] },
+        'account',
+      ),
+    ).toThrow('동시 처리 제한');
+  });
   it('preserves exact UTF-8 bytes and exposes the same File through legacy and typed fields', async () => {
     const file = new File(['\ufeff제목\r\n\u00a0 문단  \n\n'], '1화.txt', { type: 'text/plain;charset=utf-8' });
     const result = await normalize({ content: content(file), remoteRevision: 'r1' });

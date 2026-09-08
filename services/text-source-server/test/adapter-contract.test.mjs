@@ -34,6 +34,19 @@ function wrapped(overrides) {
   return createAdapterRegistry([adapter(overrides)]).get('fixture');
 }
 
+test('optional work download concurrency is bounded and survives the adapter contract', async () => {
+  for (const limit of [undefined, 1, 2, 0, 3, '1']) {
+    const source = wrapped({
+      getWork: async () => ({ ...work, seriesProfile: TXT_PROFILE, maxConcurrentDownloads: limit }),
+    });
+    if (limit === undefined || limit === 1 || limit === 2) {
+      assert.equal((await source.getWork({ workId: 'work' })).maxConcurrentDownloads, limit);
+    } else {
+      await assert.rejects(source.getWork({ workId: 'work' }));
+    }
+  }
+});
+
 test('registry rejects incompatible, incomplete and duplicate trusted adapters before serving', () => {
   for (const override of [
     { apiVersion: 2 },

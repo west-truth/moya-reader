@@ -1,5 +1,12 @@
 # 텍스트 소스 어댑터 작성
 
+## 선택형 다운로드 동시 처리 제한 (2026-09-08)
+
+`getWork` 결과에 `maxConcurrentDownloads?: 1 | 2`를 반환할 수 있다. Moya는 기본 최대 2개 회차를 미리 받고
+회차 순서대로 하나씩 저장한다. 공급자/소스가 동시 요청을 지원하지 않으면 각 작품에 1을 반환한다. 이 필드는
+adapter 검증 → 작품 상세 HTTP 응답 → Moya collection 계약으로 전달된다. 미지정 서버와의 protocol/ABI 1
+호환성은 유지한다. 한 앱 대기열의 제한이며 서버 전체 또는 여러 사용자의 요청 수를 제한하는 기능은 아니다.
+
 ## 선택형 표지 조회 (2026-09-05)
 
 - ABI/protocol 1에 선택형 `cover-read` capability와 `getCover({ workId, signal })`를 추가했다.

@@ -80,9 +80,7 @@ export function assertComicSourceManifest(value: unknown): asserts value is Comi
   if (
     candidate.storageVersion !== 1 ||
     !Array.isArray(candidate.sourceParts) ||
-    !Array.isArray(candidate.sourcePages) ||
-    !candidate.sourceParts.length ||
-    !candidate.sourcePages.length
+    !Array.isArray(candidate.sourcePages)
   ) {
     throw new Error('지원하지 않는 만화 회차 원본 목록입니다.');
   }
@@ -170,6 +168,46 @@ async function writeManifest(manifest: ComicSourceManifest): Promise<Blob> {
   return writer.close();
 }
 
+const REMOVAL_ENTRY = 'moya-comic-removal.json';
+
+/** A small mutation delta; the importer owns locking, revision fencing and asset GC. */
+export async function buildComicRemovalDelta(bookId: string, sectionIds: readonly string[]): Promise<File> {
+  const writer = new ZipWriter(new BlobWriter('application/vnd.comicbook+zip'));
+  await writer.add(REMOVAL_ENTRY, new TextReader(JSON.stringify({ version: 1, bookId, sectionIds })), ZIP_OPTIONS);
+  return new File([await writer.close()], 'remove-chapters.cbz', { type: 'application/vnd.comicbook+zip' });
+}
+
+async function readRemovalDelta(blob: Blob, bookId: string): Promise<readonly string[] | undefined> {
+  const reader = new ZipReader(new BlobReader(blob));
+  try {
+    const entries = await reader.getEntries();
+    const entry = entries.find((value) => value.filename === REMOVAL_ENTRY);
+    if (!entry) return undefined;
+    if (
+      entries.length !== 1 ||
+      entry.directory ||
+      !entry.getData ||
+      entry.encrypted ||
+      entry.uncompressedSize > 1024 * 1024
+    )
+      throw new Error('회차 삭제 요청이 올바르지 않습니다.');
+    const value = JSON.parse(await (await entry.getData(new BlobWriter())).text());
+    if (
+      value.version !== 1 ||
+      value.bookId !== bookId ||
+      !Array.isArray(value.sectionIds) ||
+      !value.sectionIds.length ||
+      value.sectionIds.length > MAX_COMIC_SOURCE_PARTS ||
+      !value.sectionIds.every((id: unknown) => typeof id === 'string' && id.length > 0 && id.length <= 1024) ||
+      new Set(value.sectionIds).size !== value.sectionIds.length
+    )
+      throw new Error('회차 삭제 대상이 올바르지 않습니다.');
+    return value.sectionIds;
+  } finally {
+    await reader.close();
+  }
+}
+
 function orderChapters(
   left: SeriesImageArchiveManifest['chapters'][number],
   right: SeriesImageArchiveManifest['chapters'][number],
@@ -235,6 +273,57 @@ export async function planComicSourceAppend(input: {
   input.signal.throwIfAborted();
   const stored = await readComicSourceManifest(input.existingSource);
   const base = stored ?? (await archiveManifest(input.existingSource, input.existingSourceHash, input.signal));
+  const removed = await readRemovalDelta(input.delta, input.bookId);
+  if (removed) {
+    const ids = new Set(removed);
+    if (removed.some((id) => !base.chapters.some((chapter) => chapter.remoteId === id)))
+      throw new Error('삭제할 회차가 변경되었습니다. 목록을 다시 확인해 주세요.');
+    const chapters = base.chapters.filter((chapter) => !ids.has(chapter.remoteId));
+    const names = new Set(chapters.flatMap((chapter) => chapter.entryNames));
+    const sourcePages = base.sourcePages.filter((page) => names.has(pageName(page)));
+    const hashes = new Set(sourcePages.map((page) => page.partHash));
+    const manifest: ComicSourceManifest = {
+      ...base,
+      chapters,
+      sourcePages,
+      sourceParts: base.sourceParts.filter((part) => hashes.has(part.contentHash)),
+    };
+    const existingPages = new Map(
+      input.existingAssets
+        ?.filter((asset) => asset.kind === 'document_page')
+        .map((asset) => [asset.pageIndex, asset.id]),
+    );
+    const pageIds = new Map(
+      base.sourcePages.map((page, index) => {
+        const id = existingPages.get(stored ? index : page.sourcePageIndex);
+        if (input.existingAssets && !id) throw new Error('기존 페이지 연결을 확인하지 못했습니다.');
+        return [pageName(page), id ?? comicPageAssetId(input.bookId, page)];
+      }),
+    );
+    const pageAssetIds = sourcePages.map((page) => pageIds.get(pageName(page))!);
+    const source = await writeManifest(manifest);
+    return {
+      manifest,
+      source,
+      sourceContentHash: integrityHash(new Uint8Array(await source.arrayBuffer())),
+      changedSectionIds: removed,
+      replacedSectionIds: removed,
+      pageAssetIds,
+      retainedPageIds: pageAssetIds,
+      retainedPartIds: manifest.sourceParts
+        .filter((part) => stored?.sourceParts.some((old) => old.contentHash === part.contentHash))
+        .map(
+          (part) =>
+            input.existingAssets?.find(
+              (asset) => asset.kind === 'source_part' && asset.contentHash === part.contentHash,
+            )?.id ?? comicPartAssetId(input.bookId, part.contentHash),
+        ),
+      newParts:
+        !stored && hashes.has(input.existingSourceHash)
+          ? new Map([[input.existingSourceHash, input.existingSource]])
+          : new Map(),
+    };
+  }
   const delta = await archiveManifest(input.delta, input.deltaHash, input.signal);
   const targetsBook = delta.targetBookId === input.bookId;
   if (

@@ -8,7 +8,12 @@ import { registerReaderStateRoutes } from '../routes/books/reader-state-routes.j
 import { drainObjectDeleteOutbox } from './object-delete-outbox.js';
 import { exportHostedBackup, restoreHostedBackup } from './hosted-backup-service.js';
 import { registerEpubResourceRoutes } from '../routes/books/epub-resource-routes.js';
-import { readComicSourceManifest, packageComicSource } from '@noveldesk/fixed-document-core/comic-source';
+import {
+  readComicSourceManifest,
+  packageComicSource,
+  buildComicRemovalDelta,
+} from '@noveldesk/fixed-document-core/comic-source';
+import { buildDocumentSeriesArchive, REMOTE_DOCUMENT_IDENTITY_SCHEME } from '@noveldesk/document-series-core';
 import { startPostgresIntegrationHarness, withPostgresSchema } from './id-v2-migration/postgres-integration-harness.js';
 import {
   fixturePng,
@@ -41,6 +46,87 @@ async function assertActiveObjects(pool: pg.Pool, fixture: ImportPageFixture) {
 }
 
 describe.skipIf(!harness || Boolean(benchmark))('append page reuse with real PostgreSQL and S3 transport', () => {
+  test('deletes comic downloads, collects unused objects, preserves surviving pages and re-downloads an empty book', async () => {
+    await withPostgresSchema(harness!, 'comic_removal', async (pool) => {
+      await withImportPageFixture(pool, async (fixture) => {
+        await fixture.import(await fixtureSeries([{ number: 1, pages: [fixturePng(1)] }]));
+        await fixture.import(await fixtureSeries([{ number: 2, pages: [fixturePng(2)] }]), true);
+        const before = await pages(pool);
+        const remove = async (ids: string[]) =>
+          fixture.import(Buffer.from(await (await buildComicRemovalDelta('book_fixture', ids)).arrayBuffer()), true);
+        const manifestObject = (await pool.query('select storage_key from book_objects')).rows[0]!;
+        const manifest = (await readComicSourceManifest(
+          new Blob([new Uint8Array(fixture.objects.get(manifestObject.storage_key)!.bytes)]),
+        ))!;
+        const sectionIds = manifest.chapters.map((chapter) => chapter.remoteId);
+        await remove([sectionIds[0]!]);
+        expect(await pages(pool)).toEqual([before[1]]);
+        await remove([sectionIds[1]!]);
+        expect(await pages(pool)).toEqual([]);
+        expect((await drainObjectDeleteOutbox(pool, fixture.config, 1000)).failed).toBe(0);
+        for (const old of before) expect(fixture.objects.has(old.storage_key)).toBe(false);
+        expect(
+          (await pool.query("select count(*)::int as count from book_assets where kind = 'source_part'")).rows[0]!
+            .count,
+        ).toBe(0);
+        expect(
+          (
+            await pool.query(
+              "select total_chapters, document_section_count from library_books where id = 'book_fixture'",
+            )
+          ).rows[0],
+        ).toMatchObject({ total_chapters: 0, document_section_count: 0 });
+        await fixture.import(await fixtureSeries([{ number: 2, pages: [fixturePng(2)] }]), true);
+        expect(await pages(pool)).toHaveLength(1);
+      });
+    });
+  }, 30_000);
+
+  test('supports removing all remote TXT releases with revision fencing and a retained Library book', async () => {
+    await withPostgresSchema(harness!, 'text_removal', async (pool) => {
+      await withImportPageFixture(pool, async (fixture) => {
+        const blob = new Blob(['text chapter']);
+        const source = {
+          id: 'one',
+          title: 'One',
+          fileName: 'one.txt',
+          contentType: 'text/plain',
+          contentHash: integrityHash(new Uint8Array(await blob.arrayBuffer())),
+          sourceOrder: 1,
+          format: 'txt' as const,
+          encoding: 'utf-8' as const,
+          chapterSplitMode: 'single' as const,
+          includedChapterIndices: [1],
+          blob,
+        };
+        const archive = (sources: (typeof source)[]) =>
+          buildDocumentSeriesArchive({
+            collection: { id: 'text-work', title: 'Text', format: 'txt' },
+            identityScheme: REMOTE_DOCUMENT_IDENTITY_SCHEME,
+            sources,
+          });
+        const initial = await archive([source]);
+        const options = { fileName: initial.name, contentType: initial.type };
+        await fixture.import(Buffer.from(await initial.arrayBuffer()), false, 'book_fixture', options);
+        const revision = (
+          await pool.query("select active_content_revision_id from library_books where id = 'book_fixture'")
+        ).rows[0]!.active_content_revision_id;
+        const empty = await archive([]);
+        await fixture.import(Buffer.from(await empty.arrayBuffer()), false, 'book_fixture', {
+          ...options,
+          expectedBase: { kind: 'revision', contentRevisionId: revision },
+        });
+        expect(
+          (
+            await pool.query(
+              "select total_chapters, document_section_count from library_books where id = 'book_fixture'",
+            )
+          ).rows[0],
+        ).toMatchObject({ total_chapters: 0, document_section_count: 0 });
+        expect((await pool.query('select count(*)::int as count from paragraph_search')).rows[0]!.count).toBe(0);
+      });
+    });
+  }, 30_000);
   test('rebuilds paragraph search rows during a hosted replace restore', async () => {
     await withPostgresSchema(harness!, 'hosted_search_restore', async (pool) => {
       await withImportPageFixture(pool, async (fixture) => {

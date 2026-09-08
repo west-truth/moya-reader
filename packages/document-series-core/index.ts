@@ -183,7 +183,7 @@ export function isRemoteDocumentSeriesImport(parsed: Pick<ParsedNovelImport, 'no
   return (
     parsed.novel.format === 'txt' &&
     parsed.novel.sourceContentType === DOCUMENT_SERIES_CONTENT_TYPE &&
-    parsed.chapters.length > 0 &&
+    (parsed.chapters.length > 0 || parsed.novel.documentSectionCount === 0) &&
     parsed.chapters.every(
       (chapter) =>
         Boolean(chapter.documentSectionId) &&
@@ -276,7 +276,7 @@ export function isDocumentSeriesManifest(value: unknown): value is DocumentSerie
     !collection.title ||
     (collection.format !== 'txt' && collection.format !== 'markdown' && collection.format !== 'epub') ||
     !Array.isArray(candidate.sources) ||
-    candidate.sources.length === 0 ||
+    (!remote && candidate.sources.length === 0) ||
     candidate.sources.length > (remote ? REMOTE_DOCUMENT_LIMITS.sourceCount : MAX_SOURCE_COUNT) ||
     (remote && collection.format !== 'txt')
   ) {
@@ -376,7 +376,7 @@ export async function buildDocumentSeriesArchive(input: DocumentSeriesArchiveInp
   const remote = input.identityScheme === REMOTE_DOCUMENT_IDENTITY_SCHEME;
   if (input.identityScheme !== undefined && !remote) throw new Error('지원하지 않는 연재 문서 identity입니다.');
   if (
-    !input.sources.length ||
+    (!remote && !input.sources.length) ||
     input.sources.length > (remote ? REMOTE_DOCUMENT_LIMITS.sourceCount : MAX_SOURCE_COUNT)
   ) {
     throw new Error('연재 문서 원본 수가 안전 한도를 벗어났습니다.');
@@ -615,7 +615,7 @@ export async function materializeDocumentSeriesArchive(
     }
     parsedSources.push({ descriptor, parsed, selected, assetIds, chapterIds });
   }
-  if (!chapters.length) throw new Error('연재 문서에 표시할 회차가 없습니다.');
+  if (!remote && !chapters.length) throw new Error('연재 문서에 표시할 회차가 없습니다.');
   const chapterById = new Map(chapters.map((chapter) => [chapter.id, chapter]));
   let consumed = false;
   const now = new Date().toISOString();

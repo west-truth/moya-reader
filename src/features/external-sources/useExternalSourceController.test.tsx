@@ -409,6 +409,44 @@ async function createDocumentHarness() {
 }
 
 describe('text serial download task parity', () => {
+  it('holds a fast second text release until the first finishes, then commits in chapter order', async () => {
+    const h = await createDocumentHarness();
+    const normal = h.download.getMockImplementation()!;
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    h.download.mockImplementation(async (...args) => {
+      if (args[2].key.remoteId === 'work-1') await gate;
+      return normal(...args);
+    });
+    let pending: Promise<void> | undefined;
+    try {
+      await act(async () => h.controller.selectAllSupported(true));
+      await act(async () => {
+        pending = h.controller.importSelected();
+        await vi.waitFor(() => expect(h.controller.tasks[1]?.phase).toBe('downloaded'));
+      });
+      expect(h.download).toHaveBeenCalledTimes(2);
+      expect(h.importFile).not.toHaveBeenCalled();
+      expect(await h.sourceState.listLinks()).toEqual([]);
+      release();
+      await act(async () => pending);
+      expect(h.importFile).toHaveBeenCalledTimes(3);
+      expect(h.importFile.mock.calls.map(([request]) => request.expectedBase)).toEqual([
+        { kind: 'absent' },
+        { kind: 'revision', contentRevisionId: 'revision-1' },
+        { kind: 'revision', contentRevisionId: 'revision-2' },
+      ]);
+      expect((await h.sourceState.listLinks()).every((link) => !link.pendingImport)).toBe(true);
+    } finally {
+      release();
+      await pending;
+      await act(async () => h.renderer.unmount());
+      await resetExternalSourceLocalStateForTests();
+    }
+  });
+
   it('retains authoritative reconciliation when committed text still has a pending link', async () => {
     const h = await createDocumentHarness();
     const finalize = vi
@@ -493,9 +531,11 @@ describe('text serial download task parity', () => {
       await act(async () => h.controller.selectAllSupported(true));
       await act(async () => {
         pending = h.controller.importSelected();
-        await vi.waitFor(() => expect(h.download).toHaveBeenCalledTimes(2));
+        await vi.waitFor(() =>
+          expect(h.controller.items.find((item) => item.key.remoteId === 'work-1')?.importState).toBe('imported'),
+        );
       });
-      expect(h.download.mock.calls.map((call) => call[2].key.remoteId)).toEqual(['work-1', 'work-2']);
+      expect(h.download.mock.calls.map((call) => call[2].key.remoteId)).toEqual(['work-1', 'work-2', 'work-3']);
       expect(h.importFile).toHaveBeenCalledOnce();
       expect(h.controller.importBusy).toBe(true);
       const first = h.controller.items.find((item) => item.key.remoteId === 'work-1')!;
@@ -549,6 +589,8 @@ describe('text serial download task parity', () => {
       expect(harness.controller.tasks).toEqual([]);
       await act(async () => harness.controller.selectAllSupported(true));
       expect(harness.controller.items.filter((item) => item.selected).map((item) => item.key.remoteId)).toEqual([
+        'work-1',
+        'work-2',
         'work-3',
       ]);
     } finally {
@@ -625,6 +667,35 @@ describe('text serial download task parity', () => {
 });
 
 describe('useExternalSourceController remote updates', () => {
+  it('restores catalog metadata without fetching again or rolling back a completed import', async () => {
+    const h = await createHarness({ downloadedContent: 'updated text' });
+    try {
+      const snapshot = h.controller.captureNavigation!();
+      const calls = vi.mocked(h.registry.listExternalSource).mock.calls.length;
+      await act(async () => h.controller.importSelected());
+      const committed = h.currentLink;
+      await act(async () => h.controller.close());
+      await act(async () => h.controller.restoreNavigation!(snapshot));
+      expect(h.controller.open).toBe(true);
+      expect(h.controller.items[0]?.title).toBe(snapshot.items[0]?.title);
+      expect(h.currentLink).toBe(committed);
+      expect(h.controller.items[0]?.importState).toBe('imported');
+      expect(h.registry.listExternalSource).toHaveBeenCalledTimes(calls);
+    } finally {
+      await act(async () => h.renderer.unmount());
+    }
+  });
+
+  it('does not restore another connection generation from navigation history', async () => {
+    const h = await createHarness({ downloadedContent: 'text' });
+    try {
+      const snapshot = h.controller.captureNavigation!();
+      await act(async () => h.controller.restoreNavigation!({ ...snapshot, generation: 'expired' }));
+      expect(h.controller.open).toBe(false);
+    } finally {
+      await act(async () => h.renderer.unmount());
+    }
+  });
   it('opens the stored release even when a remote update is available', async () => {
     const harness = await createHarness({ downloadedContent: '새 본문', serial: true });
     try {
@@ -750,7 +821,7 @@ describe('useExternalSourceController remote updates', () => {
   );
 
   it.each(['success', 'failure', 'cancel'] as const)(
-    'imports selected serial chapters sequentially with safe %s handling',
+    'commits prefetched serial chapters sequentially with safe %s handling',
     async (mode) => {
       await resetExternalSourceLocalStateForTests();
       const state = new ExternalSourceLocalStateStore();
@@ -797,8 +868,6 @@ describe('useExternalSourceController remote updates', () => {
       }));
       const download = vi.mocked(harness.registry.downloadExternalSource);
       download.mockImplementation(async () => {
-        // No later release is downloaded until the previous one has committed.
-        expect(download.mock.calls.length).toBe(attempted + 1);
         return { file: await singlePageComicFile(), remoteRevision: 'remote-r2' };
       });
       try {
@@ -1209,7 +1278,7 @@ describe('useExternalSourceController remote updates', () => {
     expect(firstRelease.importState).toBe('imported');
     expect(harness.controller.tasks).toMatchObject([
       { externalItemKey: 'fixture.source::fixture-account::work-1', phase: 'complete' },
-      { externalItemKey: 'fixture.source::fixture-account::work-2', phase: 'queued' },
+      { externalItemKey: 'fixture.source::fixture-account::work-2', phase: 'downloading' },
     ]);
     await act(async () => harness.controller.openImported(firstRelease));
     expect(harness.openNovel).toHaveBeenCalledWith(

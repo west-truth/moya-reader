@@ -459,6 +459,7 @@ async function activateStagedContentRevision(input: {
   sourceAssetId?: string;
   embeddedAssetIds?: readonly string[];
   embeddedAssetPageIndexes?: Readonly<Record<string, number>>;
+  replaceEmbeddedAssets?: boolean;
   preserveExistingEmbeddedAssets?: boolean;
   preserveExistingCover?: boolean;
 }): Promise<void> {
@@ -471,6 +472,7 @@ async function activateStagedContentRevision(input: {
     sourceAssetId: input.sourceAssetId,
     embeddedAssetIds: input.embeddedAssetIds,
     embeddedAssetPageIndexes: input.embeddedAssetPageIndexes,
+    replaceEmbeddedAssets: input.replaceEmbeddedAssets,
     preserveExistingEmbeddedAssets: input.preserveExistingEmbeddedAssets,
     preserveExistingCover: input.preserveExistingCover,
     queueBookImported: input.emitBookImported
@@ -1846,6 +1848,7 @@ async function stageAndActivateImportedNovel(input: {
           shouldCancel: input.options.shouldCancel,
           sourceAssetId: stagedSourceAssetId,
           embeddedAssetIds: [...stagedEmbeddedAssetIds, ...(input.options.retainedEmbeddedAssetIds ?? [])],
+          replaceEmbeddedAssets: input.options.retainedEmbeddedAssetIds !== undefined,
           embeddedAssetPageIndexes: input.options.embeddedAssetPageIndexes,
           preserveExistingEmbeddedAssets: Boolean(appendDelta) || input.options.preserveExistingEmbeddedAssets,
           preserveExistingCover: input.options.preserveExistingCover,

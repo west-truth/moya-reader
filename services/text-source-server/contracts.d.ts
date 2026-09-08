@@ -63,7 +63,7 @@ export interface TextSourceAdapter {
   getWork(input: {
     workId: string;
     signal?: AbortSignal;
-  }): Promise<TextSourceWork & { seriesProfile: TextSourceProfile }>;
+  }): Promise<TextSourceWork & { seriesProfile: TextSourceProfile; maxConcurrentDownloads?: 1 | 2 }>;
   listReleases(input: TextSourcePageInput & { workId: string }): Promise<TextSourcePage<TextSourceRelease>>;
   getContent(input: { workId: string; releaseId: string; signal?: AbortSignal }): Promise<TextSourceContent>;
 }

@@ -1,4 +1,5 @@
 import type { BookAssetRepository } from './book-asset-repository';
+import { cleanupRemovedDownloads } from '../storage/removed-download-cleanup';
 import {
   exportBookSource,
   getActiveBookCover,
@@ -15,6 +16,9 @@ import {
 } from '../storage/book-asset-store';
 
 export class IndexedDbBookAssetRepository implements BookAssetRepository {
+  cleanupRemovedDownloads(bookId: string, expectedRevision: string) {
+    return cleanupRemovedDownloads(bookId, expectedRevision);
+  }
   getComicSourcePart(bookId: string, contentHash: string) {
     return getComicSourcePart(bookId, contentHash);
   }

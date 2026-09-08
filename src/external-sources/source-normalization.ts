@@ -82,6 +82,11 @@ export function normalizeExternalSourcePage(
         invalid('목록의 연결 정보가 다릅니다.');
       if (!item.release) return item;
       if (!item.collection?.remoteId) invalid('회차의 작품 정보가 없습니다.');
+      if (
+        item.collection.maxConcurrentDownloads !== undefined &&
+        ![1, 2].includes(item.collection.maxConcurrentDownloads)
+      )
+        invalid('회차 다운로드 동시 처리 제한이 올바르지 않습니다.');
       const profile = descriptor.schemaVersion === 2 ? item.collection.seriesProfile : legacyImageProfile(item);
       if (!profile) {
         if (descriptor.schemaVersion === 2) invalid('회차의 연재 형식이 없습니다.');

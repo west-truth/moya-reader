@@ -1,5 +1,6 @@
 import { AlertTriangle, LoaderCircle, RefreshCw, Search } from 'lucide-react';
-import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { useEffect, useMemo, useRef, type ReactNode } from 'react';
+import { useNavigationViewState } from '../navigation/navigation-view-state';
 import { externalItemKeyId } from '../../external-sources/contracts';
 import { formatCount } from '../../utils/format';
 import { ChapterPagination } from '../chapters/ChapterPagination';
@@ -21,11 +22,16 @@ export function SourceReleasePanel({
   items: readonly ExternalSourceItemView[];
   renderItem(item: ExternalSourceItemView): ReactNode;
 }) {
-  const [query, setQuery] = useState('');
-  const [readFilter, setReadFilter] = useState<ReleaseReadFilter>('all');
-  const [sort, setSort] = useState<ReleaseSort>('asc');
+  const location = JSON.stringify([
+    'source-releases',
+    controller.activeSourceId,
+    controller.breadcrumbs.map((item) => item.parentRef),
+  ]);
+  const [query, setQuery] = useNavigationViewState(`${location}:query`, '');
+  const [readFilter, setReadFilter] = useNavigationViewState<ReleaseReadFilter>(`${location}:filter`, 'all');
+  const [sort, setSort] = useNavigationViewState<ReleaseSort>(`${location}:sort`, 'asc');
   const sorted = useMemo(() => filterAndSortReleases(items, query, readFilter, sort), [items, query, readFilter, sort]);
-  const [requestedPage, setRequestedPage] = useState(1);
+  const [requestedPage, setRequestedPage] = useNavigationViewState(`${location}:page`, 1);
   const page = paginateReleases(sorted, requestedPage);
   const headingRef = useRef<HTMLHeadingElement>(null);
   const panelRef = useRef<HTMLElement>(null);
@@ -34,16 +40,18 @@ export function SourceReleasePanel({
 
   useEffect(() => {
     if (requestedPage !== page.page) setRequestedPage(page.page);
-  }, [requestedPage, page.page]);
+  }, [requestedPage, page.page, setRequestedPage]);
 
   const selectable = page.items.filter(
     (item) =>
       item.importability !== 'unsupported' &&
-      (item.importState === 'available' || item.importState === 'update_available'),
+      (item.importState === 'available' || item.importState === 'update_available' || item.importState === 'imported'),
   );
   const selectedHere = selectable.filter((item) => item.selected).length;
   const selectedTotal = items.filter(
-    (item) => item.selected && (item.importState === 'available' || item.importState === 'update_available'),
+    (item) =>
+      item.selected &&
+      (item.importState === 'available' || item.importState === 'update_available' || item.importState === 'imported'),
   ).length;
   const selectionRef = useRef<HTMLInputElement>(null);
   useEffect(() => {
@@ -75,6 +83,11 @@ export function SourceReleasePanel({
             {formatCount(items.length)}화{partial ? ' 불러옴' : ''}
           </span>
           {controller.catalogLoading && <span role="status">목차 확인 중</span>}
+          {controller.deletingDownloads && (
+            <span role="status">
+              <LoaderCircle size={14} className="spin" /> 다운로드 삭제 중
+            </span>
+          )}
           {controller.catalogUpdateAvailable && (
             <button
               type="button"

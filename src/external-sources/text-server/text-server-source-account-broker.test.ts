@@ -57,6 +57,97 @@ async function fixture() {
 }
 
 describe('TextServerSourceAccountBroker', () => {
+  it.each([1, 2, 3])('propagates supported work concurrency limits and rejects invalid values (%s)', async (limit) => {
+    const f = await fixture();
+    await f.broker.connect({ endpoint: 'https://text.test' });
+    const original = f.fetchImpl.getMockImplementation()!;
+    f.fetchImpl.mockImplementation(async (input) =>
+      new URL(String(input)).pathname === '/v1/sources/source/works/work'
+        ? json({ id: 'work', title: '작품', seriesProfile: TEXT_SERVER_PROFILE, maxConcurrentDownloads: limit })
+        : original(input),
+    );
+    const result = f.broker.list(
+      {
+        accountConnectionId: f.broker.status().accountConnectionId,
+        parentRef: `text:${JSON.stringify(['source', 'work'])}`,
+      },
+      new AbortController().signal,
+    );
+    if (limit === 3) await expect(result).rejects.toThrow('동시 처리 제한');
+    else expect((await result).items[0]?.collection?.maxConcurrentDownloads).toBe(limit);
+  });
+  it('searches works from the server root, continues provider pages and rejects cursors for another query', async () => {
+    const f = await fixture();
+    await f.broker.connect({ endpoint: 'https://text.test' });
+    const accountConnectionId = f.broker.status().accountConnectionId;
+    const signal = new AbortController().signal;
+    f.fetchImpl.mockImplementation(async (input) => {
+      const url = new URL(String(input));
+      if (url.pathname === '/v1/sources')
+        return json({
+          items: [
+            { id: 'unsupported', title: 'No search', capabilities: ['txt-content'] },
+            { id: 'one', title: 'First source', capabilities: ['search'] },
+            { id: 'two', title: 'Second source', capabilities: ['search'] },
+          ],
+        });
+      expect(url.searchParams.get('query')).toBe('some work');
+      if (url.pathname === '/v1/sources/one/works')
+        return json(
+          url.searchParams.has('cursor')
+            ? { items: [{ id: 'last', title: 'Last first-source work' }] }
+            : { items: [{ id: 'first', title: 'First work', hasCover: true }], nextCursor: 'opaque-next' },
+        );
+      if (url.pathname === '/v1/sources/two/works')
+        return json({ items: [{ id: 'first', title: 'Other source work' }] });
+      throw new Error(`Unexpected route ${url.pathname}`);
+    });
+    const first = await f.broker.list({ accountConnectionId, query: 'some work' }, signal);
+    expect(first.items[0]?.navigationRef).toBe('text:["one","first"]');
+    expect(first.items[0]?.coverRef).toBeDefined();
+    const second = await f.broker.list({ accountConnectionId, query: 'some work', cursor: first.nextCursor }, signal);
+    expect(second.items[0]?.navigationRef).toBe('text:["one","last"]');
+    const third = await f.broker.list({ accountConnectionId, query: 'some work', cursor: second.nextCursor }, signal);
+    expect(third.items[0]?.navigationRef).toBe('text:["two","first"]');
+    expect(third.nextCursor).toBeUndefined();
+    await expect(
+      f.broker.list({ accountConnectionId, query: 'different', cursor: first.nextCursor }, signal),
+    ).rejects.toThrow();
+    expect(f.fetchImpl.mock.calls.some(([url]) => /releases|content/u.test(String(url)))).toBe(false);
+  });
+
+  it('keeps empty root search results body-free and abortable', async () => {
+    const f = await fixture();
+    await f.broker.connect({ endpoint: 'https://text.test' });
+    const accountConnectionId = f.broker.status().accountConnectionId;
+    f.fetchImpl.mockResolvedValueOnce(json({ items: [{ id: 'source', title: 'Source' }] }));
+    f.fetchImpl.mockResolvedValueOnce(json({ items: [] }));
+    expect((await f.broker.list({ accountConnectionId, query: 'absent' }, new AbortController().signal)).items).toEqual(
+      [],
+    );
+    const cancelled = new AbortController();
+    cancelled.abort();
+    await expect(f.broker.list({ accountConnectionId, query: 'absent' }, cancelled.signal)).rejects.toThrow();
+  });
+  it('bounds empty root searches and resumes remaining sources', async () => {
+    const f = await fixture();
+    await f.broker.connect({ endpoint: 'https://text.test' });
+    const accountConnectionId = f.broker.status().accountConnectionId;
+    const signal = new AbortController().signal;
+    f.fetchImpl.mockClear();
+    f.fetchImpl.mockImplementation(async (input) =>
+      new URL(String(input)).pathname === '/v1/sources'
+        ? json({ items: [1, 2, 3, 4].map((n) => ({ id: `s${n}`, title: `Source ${n}` })) })
+        : json({ items: [] }),
+    );
+    const first = await f.broker.list({ accountConnectionId, query: 'absent' }, signal);
+    expect(first.items).toEqual([]);
+    expect(first.nextCursor).toBeDefined();
+    expect(f.fetchImpl).toHaveBeenCalledTimes(4);
+    const next = await f.broker.list({ accountConnectionId, query: 'absent', cursor: first.nextCursor }, signal);
+    expect(next.nextCursor).toBeUndefined();
+    expect(f.fetchImpl).toHaveBeenCalledTimes(6);
+  });
   it('returns artwork references without blocking metadata, reads images with auth and revokes them on disconnect', async () => {
     const f = await fixture();
     await f.broker.connect({ endpoint: 'https://text.test', token: 'private-token' });
@@ -141,7 +232,7 @@ describe('TextServerSourceAccountBroker', () => {
     const signal = new AbortController().signal;
     const accountConnectionId = f.broker.status().accountConnectionId;
     const query = '검색한 작품';
-    const sources = await f.broker.list({ accountConnectionId, query }, signal);
+    const sources = await f.broker.list({ accountConnectionId }, signal);
     expect(new URL(String(f.fetchImpl.mock.calls.at(-1)![0])).search).toBe('');
     const works = await f.broker.list(
       { accountConnectionId, parentRef: sources.items[0]!.navigationRef, query, cursor: 'works:next' },

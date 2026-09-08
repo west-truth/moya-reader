@@ -52,6 +52,7 @@ describe('Library source-series navigation', () => {
       sourceDetail: true,
     },
     { name: 'unlinked TXT series', format: 'txt' as const, sections: 2, linked: false, sourceDetail: false },
+    { name: 'empty linked TXT series', format: 'txt' as const, sections: 0, linked: true, sourceDetail: true },
     { name: 'single TXT', format: 'txt' as const, sections: undefined, linked: false, sourceDetail: false },
     { name: 'ordinary linked TXT', format: 'txt' as const, sections: undefined, linked: true, sourceDetail: false },
     { name: 'local comic', format: 'image_archive' as const, sections: undefined, linked: false, sourceDetail: true },

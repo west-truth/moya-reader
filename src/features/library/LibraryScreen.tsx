@@ -1,5 +1,6 @@
 import { FileText, Library, Play, Plus, RotateCcw, Search, Upload } from 'lucide-react';
-import type { DragEvent } from 'react';
+import { useRef, type DragEvent } from 'react';
+import { useNavigationScroll } from '../navigation/navigation-view-state';
 import { formatProgress } from '../../utils/format';
 import { BookCover } from './BookCover';
 import { LibraryBatchBar } from './LibraryBatchBar';
@@ -115,6 +116,12 @@ function LibraryBootstrapState({ model, actions }: LibraryScreenProps) {
 }
 
 export function LibraryScreen({ model, actions }: LibraryScreenProps) {
+  const scrollRef = useRef<HTMLElement>(null);
+  useNavigationScroll(
+    scrollRef,
+    `library:${model.management.activeShelfId ?? ''}:${model.query}:${model.filter}:${model.sort}`,
+    model.bootstrap.status === 'ready',
+  );
   const focusedBook = model.presentation.focusedBookId
     ? model.collection.booksByNovelId.get(model.presentation.focusedBookId)
     : undefined;
@@ -151,7 +158,7 @@ export function LibraryScreen({ model, actions }: LibraryScreenProps) {
           <LibraryMobileHeader model={model} actions={actions} />
           <LibraryHeader model={model} actions={actions} />
           <div className="library-layout">
-            <section className="library-main">
+            <section ref={scrollRef} className="library-main">
               {model.bootstrap.status !== 'ready' ? (
                 <LibraryBootstrapState model={model} actions={actions} />
               ) : (

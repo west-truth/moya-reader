@@ -10,6 +10,35 @@ import {
 } from './book-workspace-test-fixtures';
 
 describe('BookWorkspaceController navigation', () => {
+  it('restores chapter controls before exposing the detail screen', async () => {
+    const novel = testNovel();
+    const harness = createBookWorkspaceTestHarness({ novel, chapters: [testChapter(1)] });
+    const controller = new BookWorkspaceController(harness.ports);
+    const controls = {
+      chapterQuery: 'saved search',
+      chapterReadFilter: 'unread' as const,
+      chapterSort: 'desc' as const,
+    };
+    const rendered: (typeof controls)[] = [];
+    const unsubscribe = controller.subscribe(() => {
+      const state = controller.getSnapshot();
+      if (state.view === 'chapters')
+        rendered.push({
+          chapterQuery: state.chapterQuery,
+          chapterReadFilter: state.chapterReadFilter,
+          chapterSort: state.chapterSort,
+        } as typeof controls);
+    });
+    try {
+      await controller.openNovel(novel, controls);
+      expect(rendered.length).toBeGreaterThan(0);
+      expect(rendered.every((value) => JSON.stringify(value) === JSON.stringify(controls))).toBe(true);
+      expect(controller.getSnapshot().navigationPending).toBe(false);
+    } finally {
+      unsubscribe();
+    }
+  });
+
   it('keeps the newest book selection when an older load resolves last', async () => {
     const firstNovel = testNovel({ id: 'book-1', title: '첫 책' });
     const secondNovel = testNovel({ id: 'book-2', title: '둘째 책' });
@@ -85,7 +114,9 @@ describe('BookWorkspaceController navigation', () => {
     );
 
     const pendingContinue = controller.continueReading();
+    expect(controller.getSnapshot().navigationPending).toBe(true);
     controller.replaceSelection({ selectedNovel: { ...novel }, chapters, localReadingPosition: currentPosition });
+    expect(controller.getSnapshot().navigationPending).toBe(false);
     resolvePosition?.(stalePosition);
     await pendingContinue;
 
