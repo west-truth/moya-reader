@@ -763,10 +763,12 @@ function VirtualizedReaderViewportComponent({
               return (
                 <div
                   key={`${failed ? 'failed' : 'loading'}-${item.index}`}
-                  ref={measureVirtualRow}
+                  ref={failed ? measureVirtualRow : undefined}
                   data-index={item.index}
                   className="reader-virtual-row"
-                  style={{ transform: `translateY(${item.start}px)` }}
+                  // Evicted text keeps its measured size while it reloads. Measuring the
+                  // short skeleton overwrites that size and shifts every later paragraph.
+                  style={{ transform: `translateY(${item.start}px)`, height: failed ? undefined : item.size }}
                 >
                   {failed ? (
                     <div className="reader-paragraph is-error" role="alert">

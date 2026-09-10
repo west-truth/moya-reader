@@ -383,7 +383,7 @@
     <section class="auth-settings">
       <button id="auth-toggle" class="text-button" type="button" aria-expanded="false">인증 검색 설정 ▾</button>
       <div id="auth-panel" class="auth-panel" hidden>
-        <p class="auth-description">19세 작품은 일반 Chrome/Edge의 전용 창에서 사용자가 직접 로그인·성인 인증한 플랫폼만 검색합니다. 로그인 후 전용 창을 닫아야 검색할 수 있으며, 계정 비밀번호는 프로그램이 받거나 저장하지 않습니다.</p>
+        <p class="auth-description">19세 작품 포함과 사용할 플랫폼을 직접 선택해 주세요. 리디·카카오페이지는 로그인 없이 작품 정보를 검색합니다. 그 밖의 플랫폼은 로그인·성인 인증이 필요합니다.</p>
         <label class="adult-option">
           <input id="include-adult" type="checkbox" disabled>
           검색할 때 19세 작품 포함
@@ -481,6 +481,7 @@
     const clearAuthSessionButton = document.querySelector("#clear-auth-session");
     const authMessage = document.querySelector("#auth-message");
     let authStatus = null;
+    let publicSearchPlatforms = new Set();
     let authUpdatePromise = Promise.resolve();
     let authStatusReady = Promise.resolve();
     const adultPreferenceKey = "webnovel.includeAdult";
@@ -570,15 +571,17 @@
       authRows.forEach((row) => {
         const platform = row.dataset.platform;
         const isEnabled = enabled.has(platform);
-        row.querySelector(".auth-platform-state").textContent = isEnabled ? "인증 검색 사용" : "사용 안 함";
+        const isPublic = publicSearchPlatforms.has(platform);
+        row.querySelector(".auth-platform-state").textContent = isPublic
+          ? "로그인 없이 작품 정보 검색"
+          : isEnabled ? "인증 검색 사용" : "사용 안 함";
+        row.querySelector(".open-login").hidden = isPublic;
+        row.querySelector(".auth-enabled").lastChild.textContent = isPublic ? " 사용" : " 로그인 완료·사용";
         row.querySelector(".auth-enabled input").checked = isEnabled;
         row.querySelector(".auth-enabled input").disabled = !authStatus.available;
         row.querySelector(".open-login").disabled = !authStatus.available;
       });
       includeAdultInput.disabled = !authStatus.available || enabled.size === 0;
-      if (!includeAdultInput.disabled && adultPreference === null) {
-        setAdultPreference(true);
-      }
       closeAuthBrowserButton.disabled = !authStatus.browser_running;
       clearAuthSessionButton.disabled = !authStatus.available;
       if (!authStatus.available) {
@@ -592,8 +595,12 @@
 
     async function loadAuthStatus() {
       try {
-        const response = await fetch("/api/v1/auth/status");
+        const [response, health] = await Promise.all([
+          fetch("/api/v1/auth/status"),
+          fetch("/health").then((res) => res.ok ? res.json() : null).catch(() => null),
+        ]);
         if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        publicSearchPlatforms = new Set(health?.capabilities?.adult_auth?.public_search_platforms || []);
         authStatus = await response.json();
         renderAuthStatus();
       } catch {
@@ -636,11 +643,10 @@
               method: "PUT",
               body: JSON.stringify({ enabled }),
             });
-            if (enabled) setAdultPreference(true);
             showAuthMessage(
               enabled
-                ? `${platformLabels[platform]} 로그인을 확인했습니다. 바로 검색할 수 있습니다.`
-                : `${platformLabels[platform]} 인증 검색을 껐습니다.`
+                ? `${platformLabels[platform]} 검색을 켰습니다. ‘19세 작품 포함’을 선택하면 함께 검색합니다.`
+                : `${platformLabels[platform]} 19세 검색을 껐습니다.`
             );
           } catch (error) {
             event.target.checked = !enabled;

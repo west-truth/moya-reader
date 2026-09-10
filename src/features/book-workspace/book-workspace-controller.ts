@@ -3,6 +3,7 @@ import { isFixedDocumentFormat } from '../../domain/book-format';
 import type { ReadingPosition } from '../../sync/types';
 import type { ChapterReadFilter, ChapterSort } from '../chapters/chapters-screen-model';
 import type { LibraryFilter, LibrarySort, LibraryViewMode } from '../library/library-screen-model';
+import { readLibraryViewPreferences, saveLibraryViewPreferences } from '../library/library-view-preferences';
 import type { ReaderMode } from '../reader/reader-screen-contract';
 import {
   INITIAL_BOOK_WORKSPACE_STATE,
@@ -41,9 +42,9 @@ export class BookWorkspaceController {
   private readonly listeners = new Set<Listener>();
   private navigationGeneration = 0;
 
-  constructor(ports: BookWorkspacePorts, initialState: BookWorkspaceState = INITIAL_BOOK_WORKSPACE_STATE) {
+  constructor(ports: BookWorkspacePorts, initialState?: BookWorkspaceState) {
     this.ports = ports;
-    this.state = initialState;
+    this.state = initialState ?? { ...INITIAL_BOOK_WORKSPACE_STATE, ...readLibraryViewPreferences() };
   }
 
   updatePorts(ports: BookWorkspacePorts): void {
@@ -168,8 +169,14 @@ export class BookWorkspaceController {
 
   readonly setLibraryQuery = (libraryQuery: string): void => this.updateState({ libraryQuery });
   readonly setLibraryFilter = (libraryFilter: LibraryFilter): void => this.updateState({ libraryFilter });
-  readonly setLibrarySort = (librarySort: LibrarySort): void => this.updateState({ librarySort });
-  readonly setLibraryViewMode = (libraryViewMode: LibraryViewMode): void => this.updateState({ libraryViewMode });
+  readonly setLibrarySort = (librarySort: LibrarySort): void => {
+    this.updateState({ librarySort });
+    saveLibraryViewPreferences({ librarySort });
+  };
+  readonly setLibraryViewMode = (libraryViewMode: LibraryViewMode): void => {
+    this.updateState({ libraryViewMode });
+    saveLibraryViewPreferences({ libraryViewMode });
+  };
   readonly setChapterQuery = (chapterQuery: string): void => this.updateState({ chapterQuery });
   readonly setChapterReadFilter = (chapterReadFilter: ChapterReadFilter): void =>
     this.updateState({ chapterReadFilter });

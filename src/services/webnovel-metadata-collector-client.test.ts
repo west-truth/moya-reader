@@ -123,6 +123,35 @@ describe('WebNovelMetadataCollectorClient', () => {
     expect(fetchMock.mock.calls[0]![1]).toMatchObject({ credentials: 'same-origin' });
   });
 
+  it('accepts declared public search platforms and rejects unsupported capability values', async () => {
+    const body = await healthResponse().json();
+    const client = new WebNovelMetadataCollectorClient('http://127.0.0.1:8000', async () => jsonResponse(body));
+    expect((await client.health()).capabilities.adultAuth.publicSearchPlatforms).toEqual([]);
+    body.capabilities.adult_auth.public_search_platforms = ['ridi', 'kakao_page'];
+    expect((await client.health()).capabilities.adultAuth.publicSearchPlatforms).toEqual(['ridi', 'kakao_page']);
+    body.capabilities.adult_auth.public_search_platforms = ['unknown'];
+    await expect(client.health()).rejects.toThrow();
+  });
+
+  it.each(['ridi', 'kakao_page'])(
+    'allows explicit public adult metadata from %s without claiming login',
+    async (platform) => {
+      const body = resolveBody({ public_adult_metadata: true }, { platform, tags: ['19금'] });
+      const client = new WebNovelMetadataCollectorClient('http://127.0.0.1:8000', async () => jsonResponse(body));
+      const result = await client.resolve({ query: '테스트 작품', author: '작가', includeAdult: true });
+      expect(result.authenticatedSearch).toBe(false);
+      expect(result.autoApplyEligible).toBe(true);
+      body.metadata_quality = 'partial';
+      expect((await client.resolve({ query: '테스트 작품', includeAdult: true })).autoApplyReasons).toContain(
+        'partial_metadata',
+      );
+      const invalidClient = new WebNovelMetadataCollectorClient('http://127.0.0.1:8000', async () =>
+        jsonResponse({ ...body, public_adult_metadata: 'true' }),
+      );
+      await expect(invalidClient.resolve({ query: '테스트 작품', includeAdult: true })).rejects.toThrow();
+    },
+  );
+
   it('returns structured exact-match automation evidence and blocks unconfirmed adult lookup', async () => {
     const fetchMock = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) => jsonResponse(resolveBody()));
     const client = new WebNovelMetadataCollectorClient('http://127.0.0.1:8000', fetchMock as typeof fetch);

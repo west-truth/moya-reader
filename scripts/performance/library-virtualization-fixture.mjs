@@ -6,6 +6,7 @@ import '../../src/styles/tokens.css';
 import '../../src/styles/base.css';
 import '../../src/styles/shell.css';
 import '../../src/styles/library.css';
+import '../../src/styles/dialogs-import.css';
 
 const novels = Array.from({ length: 1000 }, (_, index) => ({
   id: `synthetic-${index}`,
@@ -26,7 +27,10 @@ const noop = () => {};
 const noActions = new Proxy({}, { get: () => noop });
 function Fixture() {
   const [state, setState] = useState({ query: '', viewMode: 'grid', selectionMode: false });
-  globalThis.libraryFixture = { update: (patch) => setState((previous) => ({ ...previous, ...patch })) };
+  const update = (patch) => setState((previous) => ({ ...previous, ...patch }));
+  globalThis.libraryFixture = { update };
+  globalThis.libraryBatchActions ??= [];
+  globalThis.libraryNavigationActions ??= [];
   const collection = buildLibraryCollectionModel({
     novels,
     query: state.query,
@@ -39,7 +43,14 @@ function Fixture() {
     drop: { active: false, importBusy: false },
     query: state.query,
     sync: { label: 'local', tone: 'local' },
-    externalSources: { active: false, busy: false, sources: [] },
+    externalSources: {
+      active: false,
+      busy: false,
+      sources: [
+        { id: 'fixture.text', title: 'Text source', kind: 'catalog' },
+        { id: 'fixture.comic', title: 'Comic source', kind: 'catalog' },
+      ],
+    },
     importTasks: [],
     filter: 'all',
     sort: 'title',
@@ -48,18 +59,34 @@ function Fixture() {
     presentation: { layoutMode: 'wide', inspectorOpen: false, shelfBookCounts: new Map() },
     management: {
       available: true,
-      shelves: [],
+      shelves: [{ id: 'shelf-1', name: 'Test shelf' }],
       selectionMode: state.selectionMode,
-      selectedBookIds: new Set(state.selectionMode ? novels.map((novel) => novel.id) : []),
+      selectedBookIds: new Set(state.selectionMode ? (state.selectedBookIds ?? novels.map((novel) => novel.id)) : []),
       busy: false,
     },
   };
   const actions = {
     drag: noActions,
-    header: { ...noActions, setQuery: (query) => setState((previous) => ({ ...previous, query })) },
+    header: {
+      ...noActions,
+      setQuery: (query) => setState((previous) => ({ ...previous, query })),
+      openExternalSource: (id) => globalThis.libraryNavigationActions.push(id),
+    },
     presentation: noActions,
-    controls: noActions,
-    books: noActions,
+    controls: {
+      setFilter: (filter) => globalThis.libraryNavigationActions.push(filter),
+      setShelf: (id) => globalThis.libraryNavigationActions.push(id),
+      clearSelection: () => update({ selectionMode: false, selectedBookIds: undefined }),
+      applyBatch: (action) => globalThis.libraryBatchActions.push(action),
+      exportSelectedMetadata: () => globalThis.libraryBatchActions.push({ kind: 'export_metadata' }),
+    },
+    books: {
+      toggleSelected: (novel) => {
+        const selected = new Set(model.management.selectedBookIds);
+        if (!selected.delete(novel.id)) selected.add(novel.id);
+        update({ selectedBookIds: [...selected] });
+      },
+    },
     imports: noActions,
   };
   return React.createElement(LibraryScreen, { model, actions });

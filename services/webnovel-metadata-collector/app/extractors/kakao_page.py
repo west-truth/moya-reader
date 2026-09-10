@@ -20,6 +20,12 @@ class KakaoPageExtractor(BaseExtractor):
     }
 
     async def search(self, query: str) -> list[SearchCandidate]:
+        return await self._search(query, adult_only=False)
+
+    async def search_adult(self, query: str) -> list[SearchCandidate]:
+        return await self._search(query, adult_only=True)
+
+    async def _search(self, query: str, *, adult_only: bool) -> list[SearchCandidate]:
         response = await self._get(
             f"{self.api_base_url}/api/gateway/api/v2/search/series",
             headers=self._headers,
@@ -27,7 +33,7 @@ class KakaoPageExtractor(BaseExtractor):
         )
         response.raise_for_status()
 
-        return self.parse_search_payload(response.json())
+        return self.parse_search_payload(response.json(), adult_only=adult_only)
 
     async def get_detail(self, candidate: SearchCandidate) -> NovelMetadata:
         params = {"series_id": candidate.platform_work_id}

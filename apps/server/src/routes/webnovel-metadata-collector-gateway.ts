@@ -79,8 +79,12 @@ function projectRemoteAdultAuth(body: Buffer, enabled: boolean): Buffer {
   const presentation = adultAuthRecord.browser_presentation;
   const directLoginPlatforms = adultAuthRecord.direct_login_platforms;
   const hasDirectLogin = Array.isArray(directLoginPlatforms) && directLoginPlatforms.length > 0;
+  const publicSearchPlatforms = adultAuthRecord.public_search_platforms;
+  const hasPublicSearch = Array.isArray(publicSearchPlatforms) && publicSearchPlatforms.length > 0;
   const available =
-    enabled && adultAuthRecord.available === true && (presentation === 'remote_frame' || hasDirectLogin);
+    enabled &&
+    adultAuthRecord.available === true &&
+    (presentation === 'remote_frame' || hasDirectLogin || hasPublicSearch);
   return Buffer.from(
     JSON.stringify({
       ...record,

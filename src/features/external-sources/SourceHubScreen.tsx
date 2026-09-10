@@ -40,7 +40,7 @@ import type { ExternalSourceFilterDefinition, ExternalSourceFilterValue } from '
 import { externalItemKeyId } from '../../external-sources/contracts';
 import { formatBytes, formatCount } from '../../utils/format';
 import type { LibraryScreenProps } from '../library/library-screen-contract';
-import { LibraryMobileHeader, LibrarySidebar } from '../library/LibraryChrome';
+import { LibraryMobileHeader, LibraryNavigationButton, LibrarySidebar } from '../library/LibraryChrome';
 import { BookCover } from '../library/BookCover';
 import { importTaskIsActive, importTaskLabel, type ImportTaskView } from '../import/import-task-projection';
 import { SourceReleasePanel } from './SourceReleasePanel';
@@ -678,6 +678,7 @@ export default function SourceHubScreen({
           />
           <header className="source-hub-topbar">
             <div className="source-hub-topbar-title">
+              <LibraryNavigationButton {...library} />
               {activeSource?.kind === 'cloud_file' ? <Cloud size={20} /> : <FileText size={20} />}
               <span>
                 <strong>{seriesNovel ? '작품 상세' : activeSource?.title}</strong>

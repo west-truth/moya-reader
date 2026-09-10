@@ -1,4 +1,5 @@
 import { normalizeSerialWorkKey, parseSerialReleaseName, type SerialReleaseName } from './serial-release-name';
+import { normalizeTitleUnicode } from './title-unicode';
 
 export interface WorkTitleExtraction {
   readonly originalTitle: string;
@@ -23,7 +24,7 @@ function addCandidate(candidates: string[], seen: Set<string>, value: string | u
 }
 
 function sourceFileTitleStem(sourceFileName: string): string {
-  const baseName = sourceFileName.replace(/\\/gu, '/').split('/').at(-1)?.normalize('NFKC').trim() ?? '';
+  const baseName = normalizeTitleUnicode(sourceFileName.replace(/\\/gu, '/').split('/').at(-1) ?? '').trim();
   return baseName
     .replace(/\.[^.]+$/u, '')
     .trim()

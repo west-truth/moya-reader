@@ -53,6 +53,7 @@ class ResolveResponse(BaseModel):
     platform_errors: dict[str, str] = Field(default_factory=dict)
     skipped_platforms: list[str] = Field(default_factory=list)
     authenticated_search: bool = False
+    public_adult_metadata: bool = False
     cover_ref: str | None = None
     fetched_at: datetime
 

@@ -5,6 +5,7 @@ import { describe, expect, it, vi } from 'vitest';
 import type { Novel } from '../../domain/types';
 import { LibraryScreen, type LibraryScreenActions, type LibraryScreenModel } from './LibraryScreen';
 import { buildLibraryCollectionModel, type NovelReadStateSelectors } from './library-screen-model';
+import { LibraryMobileHeader, LibraryNavigationButton } from './LibraryChrome';
 
 interface HostElement {
   readonly type: string;
@@ -157,6 +158,22 @@ function model(novels: Novel[], overrides: Partial<LibraryScreenModel> = {}): Li
 }
 
 describe('LibraryScreen', () => {
+  it.each([undefined, {}])('mounts responsive navigation without browser media APIs: %j', (browserWindow) => {
+    vi.stubGlobal('window', browserWindow);
+    try {
+      const props = { model: model([novel()]), actions: actions() };
+      const elements = collectHostElements(
+        <>
+          <LibraryNavigationButton {...props} />
+          <LibraryMobileHeader {...props} />
+        </>,
+      );
+      expect(elements.filter((element) => element.props['aria-label'] === '라이브러리 메뉴')).toHaveLength(2);
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
   it('renders one explicit sync entry with the current provider state', () => {
     const markup = renderToStaticMarkup(
       <LibraryScreen model={model([], { sync: { label: 'Dropbox · 자동', tone: 'ready' } })} actions={actions()} />,

@@ -1,4 +1,6 @@
 import assert from 'node:assert/strict';
+import { mkdir } from 'node:fs/promises';
+import { join } from 'node:path';
 import { build } from 'vite';
 import { chromium, webkit } from 'playwright-core';
 import { findTemporaryLoopbackPort } from '../lib/temporary-loopback-port.mjs';
@@ -142,7 +144,108 @@ try {
   await page.evaluate(() => globalThis.libraryFixture.update({ query: '', selectionMode: true }));
   await page.waitForFunction(() => document.body.textContent.includes('1000권 선택됨'));
   assert.ok((await page.locator('.book-list-row').count()) < 120);
+  const batchBar = page.getByRole('toolbar', { name: '선택한 책 일괄 작업' });
+  for (const viewport of [
+    { width: 320, height: 640 },
+    { width: 390, height: 844 },
+    { width: 667, height: 375 },
+  ]) {
+    await page.setViewportSize(viewport);
+    await page.getByRole('button', { name: '상세 작업 펼치기' }).waitFor();
+    await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+    assert.equal(await page.getByLabel('일괄 태그').isVisible(), false);
+    assert.ok((await batchBar.boundingBox()).height <= 60, 'Collapsed mobile bar must remain one compact row');
+    for (const label of [
+      '선택한 책 즐겨찾기 설정',
+      '선택한 책 정보 내보내기',
+      '선택한 책 휴지통으로 이동',
+      '선택 종료',
+    ]) {
+      const bounds = await batchBar.getByRole('button', { name: label, exact: true }).boundingBox();
+      assert.ok(bounds && bounds.x >= 0 && bounds.x + bounds.width <= viewport.width, `${label} escaped the viewport`);
+    }
+    for (const expanded of [false, true]) {
+      if (expanded) await page.getByRole('button', { name: '상세 작업 펼치기' }).click();
+      await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+      if (viewport.width === 390 && process.env.LIBRARY_UI_SCREENSHOT_DIR) {
+        await mkdir(process.env.LIBRARY_UI_SCREENSHOT_DIR, { recursive: true });
+        await page.screenshot({
+          path: join(process.env.LIBRARY_UI_SCREENSHOT_DIR, `library-batch-${expanded ? 'expanded' : 'collapsed'}.png`),
+        });
+      }
+      for (const viewMode of ['grid', 'list']) {
+        await page.evaluate((viewMode) => globalThis.libraryFixture.update({ viewMode }), viewMode);
+        await page.waitForFunction(
+          (selector) => document.querySelector(selector) !== null,
+          viewMode === 'grid' ? '.book-card' : '.book-list-row',
+        );
+        // Let the view-mode scroll reset finish before scrolling the new collection.
+        await page.evaluate(
+          () => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))),
+        );
+        await page.locator('.library-main').evaluate((element) => {
+          element.scrollTop = element.scrollHeight;
+        });
+        const last = page.getByRole('button', { name: /Synthetic novel 0999 선택/ });
+        await last.waitFor();
+        await page
+          .waitForFunction(() => {
+            const last = document.querySelector('[data-library-item="999"] button[aria-pressed]');
+            if (!last) return false;
+            const rect = last.getBoundingClientRect();
+            return rect.bottom <= document.querySelector('.library-batch-bar').getBoundingClientRect().top;
+          })
+          .catch(async (error) => {
+            console.error(
+              JSON.stringify(
+                await page.evaluate(() => {
+                  const main = document.querySelector('.library-main');
+                  const last = document.querySelector('[data-library-item="999"] button[aria-pressed]');
+                  return {
+                    mainHeight: main.clientHeight,
+                    scrollTop: main.scrollTop,
+                    scrollHeight: main.scrollHeight,
+                    padding: getComputedStyle(main).paddingBottom,
+                    last: last?.getBoundingClientRect().toJSON(),
+                    bar: document.querySelector('.library-batch-bar').getBoundingClientRect().toJSON(),
+                  };
+                }),
+              ),
+            );
+            throw error;
+          });
+        const selected = await last.getAttribute('aria-pressed');
+        await last.click();
+        assert.notEqual(
+          await last.getAttribute('aria-pressed'),
+          selected,
+          'Last book must remain selectable above the toolbar',
+        );
+      }
+    }
+    assert.ok((await batchBar.boundingBox()).height <= viewport.height * 0.55 + 2);
+    await page.getByRole('button', { name: '상세 작업 접기' }).click();
+  }
+  await page.getByRole('button', { name: '선택한 책 즐겨찾기 설정', exact: true }).click();
+  await page.getByRole('button', { name: '선택한 책 정보 내보내기', exact: true }).click();
+  await page.getByRole('button', { name: '선택한 책 휴지통으로 이동', exact: true }).click();
+  await page.getByRole('button', { name: '상세 작업 펼치기' }).click();
+  await page.getByLabel('일괄 태그').fill('Test tag');
+  await page.getByRole('button', { name: '추가', exact: true }).click();
+  await page.getByRole('button', { name: '선택 책장에 추가', exact: true }).click();
+  assert.deepEqual(await page.evaluate(() => globalThis.libraryBatchActions), [
+    { kind: 'set_favorite', favorite: true },
+    { kind: 'export_metadata' },
+    { kind: 'move_to_trash' },
+    { kind: 'add_tag', tag: 'Test tag' },
+    { kind: 'add_to_shelf', shelfId: 'shelf-1' },
+  ]);
+  await batchBar.getByRole('button', { name: '선택 종료', exact: true }).click();
+  await batchBar.waitFor({ state: 'hidden' });
+  await page.evaluate(() => globalThis.libraryFixture.update({ selectionMode: true }));
+  assert.equal(await page.getByRole('button', { name: '상세 작업 펼치기' }).getAttribute('aria-expanded'), 'false');
   await page.setViewportSize({ width: 1440, height: 900 });
+  assert.equal(await page.getByLabel('일괄 태그').isVisible(), true);
   await page.evaluate(() => globalThis.libraryFixture.update({ selectionMode: false, viewMode: 'grid' }));
   await page.locator('[data-library-item="4"] button').first().focus();
   await page.setViewportSize({ width: 1800, height: 900 });
@@ -172,6 +275,8 @@ try {
         searchShortcutFocused: true,
         shortcutHintHidden: true,
         all1000Selected: true,
+        mobileBatchCollapseAndActions: true,
+        lastBookSelectableWithExpandedBar: true,
         resizeFocusPreserved: true,
         sequentialTab: true,
         browserErrors: errors,

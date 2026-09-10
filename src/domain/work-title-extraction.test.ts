@@ -2,6 +2,14 @@ import { describe, expect, it } from 'vitest';
 import { extractWorkTitle } from './work-title-extraction';
 
 describe('work title extraction', () => {
+  it.each([
+    '마법소녀ㄴ은 은퇴하고 싶다',
+    '마법소녀ㄴ은 은퇴하고 싶다'.normalize('NFKC'),
+    '마법소녀ㄴ은 은퇴하고 싶다'.normalize('NFD'),
+  ])('preserves standalone Hangul in catalog queries from %s', (title) => {
+    expect(extractWorkTitle(title).queryCandidates).toEqual(['마법소녀ㄴ은 은퇴하고 싶다']);
+    expect(extractWorkTitle(`${title} １－２００ 完.txt`).canonicalTitle).toBe('마법소녀ㄴ은 은퇴하고 싶다');
+  });
   it('uses the canonical work title first and preserves the imported title as fallback', () => {
     expect(extractWorkTitle('바바리안 퀘스트 1-315 完')).toMatchObject({
       originalTitle: '바바리안 퀘스트 1-315 完',

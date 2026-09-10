@@ -124,6 +124,25 @@ describe('webnovel metadata collector gateway', () => {
     expect(fetchImpl).not.toHaveBeenCalled();
   });
 
+  it.each([false, true])('projects browser-free public search while preserving the admin gate: %s', async (enabled) => {
+    const body = healthBody(true, 'local_window');
+    const fetchImpl = vi.fn<typeof fetch>(async () =>
+      Response.json({
+        ...body,
+        capabilities: {
+          ...body.capabilities,
+          adult_auth: { ...body.capabilities.adult_auth, public_search_platforms: ['ridi', 'kakao_page'] },
+        },
+      }),
+    );
+    const app = await appWith(fetchImpl, true, enabled);
+    const response = await app.inject({ method: 'GET', url: '/api/integrations/webnovel-metadata/health' });
+    expect(response.json().capabilities.adult_auth).toMatchObject({
+      available: enabled,
+      public_search_platforms: ['ridi', 'kakao_page'],
+    });
+  });
+
   it('forwards Novelpia credentials only in the bounded collector request body', async () => {
     const authStatus = {
       available: true,

@@ -281,11 +281,7 @@ export function WebNovelMetadataExtensionSettings({
         <div className="extension-detail-section-heading">
           <div>
             <strong id="webnovel-adult-heading">19세 작품 검색</strong>
-            <span>
-              {remoteAuthBrowser || directLoginPlatforms.length > 0
-                ? '플랫폼에 맞는 로그인 연결을 서버에 보관해 다른 기기에서도 재사용합니다.'
-                : '전용 브라우저에서 직접 로그인·성인 인증하고, Moya에는 계정이나 쿠키를 전달하지 않습니다.'}
-            </span>
+            <span>플랫폼별 사용 방식을 확인해 주세요. 필요한 로그인 연결을 서버에 보관해 재사용합니다.</span>
           </div>
         </div>
         <label className="reader-settings-toggle extension-wide-toggle">
@@ -297,7 +293,7 @@ export function WebNovelMetadataExtensionSettings({
           />
           <span>
             <strong>19세 검색 결과 포함</strong>
-            <small>로그인 사용을 설정한 플랫폼만 인증 세션을 사용합니다.</small>
+            <small>아래에서 사용 설정한 플랫폼의 19세 작품을 함께 검색합니다.</small>
           </span>
         </label>
         {snapshot.auth?.sessionSavedAt && (
@@ -311,6 +307,28 @@ export function WebNovelMetadataExtensionSettings({
           <div className="extension-auth-platforms">
             {authPlatforms.map((platform) => {
               const enabled = snapshot.auth?.enabledPlatforms.includes(platform) === true;
+              if (snapshot.health?.capabilities.adultAuth.publicSearchPlatforms?.includes(platform)) {
+                return (
+                  <div key={platform} className="extension-auth-platform-row">
+                    <div>
+                      <strong>{platformLabels[platform]}</strong>
+                      <span>로그인 없이 작품 정보 검색</span>
+                    </div>
+                    <label className="reader-settings-toggle">
+                      <input
+                        type="checkbox"
+                        aria-label={`${platformLabels[platform]} 19세 검색 사용`}
+                        checked={enabled}
+                        disabled={!extensionEnabled || Boolean(operation)}
+                        onChange={(event) =>
+                          void (event.target.checked ? finishLogin(platform) : disableLogin(platform))
+                        }
+                      />
+                      <span>사용</span>
+                    </label>
+                  </div>
+                );
+              }
               if (platform === 'novelpia' && directLoginPlatforms.includes(platform)) {
                 return (
                   <NovelpiaAuthSettings

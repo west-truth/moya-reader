@@ -3,6 +3,7 @@ import { createRoot } from 'react-dom/client';
 import { ReaderViewport } from '../../src/features/reader/ReaderViewport.tsx';
 import { ReaderScreenHandle } from '../../src/features/reader/reader-screen-contract.ts';
 import { defaultSettings } from '../../src/repositories/reader-defaults.ts';
+import { PARAGRAPHS_PER_PAGE } from '../../src/repositories/reader-defaults.ts';
 import '../../src/styles/tokens.css';
 import '../../src/styles/base.css';
 import '../../src/styles/reader-shell.css';
@@ -10,12 +11,13 @@ import '../../src/styles/reader-content.css';
 
 const singleParagraph = new URLSearchParams(location.search).has('single');
 const variableParagraphs = new URLSearchParams(location.search).has('variable');
+const longChapter = new URLSearchParams(location.search).has('long');
 const chapter = {
   id: `position-chapter-${singleParagraph ? 1 : 120}`,
   novelId: 'position-book',
   index: 1,
   title: 'Synthetic reader',
-  paragraphCount: singleParagraph ? 1 : 120,
+  paragraphCount: singleParagraph ? 1 : longChapter ? 12000 : 120,
   textHash: 'fixture',
 };
 const novel = {
@@ -47,18 +49,41 @@ const paragraphs = Array.from({ length: chapter.paragraphCount }, (_, index) => 
 });
 const writes = [];
 const observations = { reveals: 0 };
+const pageRequests = [];
+let pausePages = false;
+let pendingPages = [];
 const noop = () => {};
 const screenHandle = new ReaderScreenHandle();
 screenHandle.setActions(new Proxy({}, { get: () => noop }));
 const repository = {
-  getParagraphPage: async () => ({ paragraphs }),
+  getParagraphPage: async (_, pageIndex) => {
+    pageRequests.push(pageIndex);
+    if (pausePages) await new Promise((resolve) => pendingPages.push(resolve));
+    return { paragraphs: paragraphs.slice(pageIndex * PARAGRAPHS_PER_PAGE, (pageIndex + 1) * PARAGRAPHS_PER_PAGE) };
+  },
   getParagraph: async (id) => paragraphs.find((paragraph) => paragraph.id === id),
   saveReadingPosition: async (position) => writes.push({ ...position, activeFlow: globalThis.readerFixture?.flow }),
 };
 function Fixture() {
   const [flow, setFlow] = useState('scroll');
   const apiRef = useRef();
-  globalThis.readerFixture = { setFlow, flow, api: () => apiRef.current, writes, observations };
+  globalThis.readerFixture = {
+    setFlow,
+    flow,
+    api: () => apiRef.current,
+    writes,
+    observations,
+    pageRequests,
+    pausePages: () => {
+      pausePages = true;
+    },
+    resumePages: () => {
+      pausePages = false;
+      const pending = pendingPages;
+      pendingPages = [];
+      pending.forEach((resolve) => resolve());
+    },
+  };
   const style = {
     '--reading-font-size': '20px',
     '--reading-font-weight': 400,

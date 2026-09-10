@@ -27,7 +27,7 @@ class AuthenticatedExtractor(BaseExtractor):
         return []
 
     async def _search_once(self, query: str) -> list[SearchCandidate]:
-        if isinstance(self.extractor, RidiExtractor):
+        if isinstance(self.extractor, (RidiExtractor, KakaoPageExtractor)):
             return await self.extractor.search_adult(query)
 
         if isinstance(self.extractor, NovelpiaExtractor):
@@ -39,15 +39,6 @@ class AuthenticatedExtractor(BaseExtractor):
                     "X-Requested-With": "XMLHttpRequest",
                 },
                 referer=f"{self.extractor.base_url}/search",
-            )
-            return self.extractor.parse_search_payload(payload, adult_only=True)
-
-        if isinstance(self.extractor, KakaoPageExtractor):
-            payload = await self.sessions.fetch_json(
-                f"{self.extractor.api_base_url}/api/gateway/api/v2/search/series",
-                params=self.extractor.search_params(query),
-                headers={"Accept": "application/json"},
-                referer=f"{self.extractor.base_url}/search/result",
             )
             return self.extractor.parse_search_payload(payload, adult_only=True)
 
@@ -72,30 +63,7 @@ class AuthenticatedExtractor(BaseExtractor):
             )
 
         if isinstance(self.extractor, KakaoPageExtractor):
-            requests = [
-                {
-                    "url": (
-                        f"{self.extractor.api_base_url}"
-                        "/api/gateway/api/v1/content/overview"
-                    ),
-                    "params": {"series_id": candidate.platform_work_id},
-                    "headers": {"Accept": "application/json"},
-                    "referer": candidate.source_url,
-                },
-                {
-                    "url": (
-                        f"{self.extractor.api_base_url}"
-                        "/api/gateway/api/v1/content/about"
-                    ),
-                    "params": {"series_id": candidate.platform_work_id},
-                    "headers": {"Accept": "application/json"},
-                    "referer": candidate.source_url,
-                },
-            ]
-            overview, about = await self.sessions.fetch_json_many(requests)
-            return self._with_adult_tag(
-                self.extractor.parse_detail_payload(overview, about, candidate)
-            )
+            return self._with_adult_tag(await self.extractor.get_detail(candidate))
 
         if isinstance(self.extractor, NovelpiaExtractor):
             html = await self.sessions.fetch_novelpia_text(
@@ -126,3 +94,7 @@ class AuthenticatedExtractor(BaseExtractor):
         if any(tag.casefold() == "19금" for tag in item.tags):
             return item
         return item.model_copy(update={"tags": [*item.tags, "19금"]})
+
+    async def aclose(self) -> None:
+        await self.extractor.aclose()
+        await super().aclose()

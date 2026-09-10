@@ -39,6 +39,7 @@ export interface WebNovelMetadataCollectorHealth {
       readonly browserPresentation: WebNovelMetadataCollectorBrowserPresentation;
       readonly platforms: readonly WebNovelMetadataCollectorAuthPlatform[];
       readonly directLoginPlatforms: readonly WebNovelMetadataCollectorAuthPlatform[];
+      readonly publicSearchPlatforms?: readonly WebNovelMetadataCollectorAuthPlatform[];
     };
   };
 }
@@ -476,6 +477,15 @@ function validateHealth(input: unknown): WebNovelMetadataCollectorHealth {
   if (directLoginPlatforms.some((value) => !AUTH_PLATFORM_SET.has(value))) {
     throw invalidResponse('direct login platforms are invalid.');
   }
+  const publicSearchPlatforms = optionalStringArray(
+    adultAuth.public_search_platforms,
+    'public search platforms',
+    8,
+    64,
+  );
+  if (publicSearchPlatforms.some((value) => !AUTH_PLATFORM_SET.has(value) || !platforms.includes(value))) {
+    throw invalidResponse('public search platforms are invalid.');
+  }
   const maxBytes = integer(coverRef, 'max_bytes', 1, MAX_COVER_INPUT_BYTES);
   const browserPresentation =
     optionalEnum<WebNovelMetadataCollectorBrowserPresentation>(
@@ -504,6 +514,7 @@ function validateHealth(input: unknown): WebNovelMetadataCollectorHealth {
         browserPresentation,
         platforms: platforms as WebNovelMetadataCollectorAuthPlatform[],
         directLoginPlatforms: directLoginPlatforms as WebNovelMetadataCollectorAuthPlatform[],
+        publicSearchPlatforms: publicSearchPlatforms as WebNovelMetadataCollectorAuthPlatform[],
       },
     },
   };
@@ -601,6 +612,8 @@ function validateResolveResult(
   const matchType = optionalEnum<WebNovelMetadataCollectorMatchType>(input, 'match_type', MATCH_TYPE_SET);
   const metadataQuality = optionalEnum<WebNovelMetadataCollectorQuality>(input, 'metadata_quality', QUALITY_SET);
   const authenticatedSearch = requiredBoolean(input, 'authenticated_search');
+  const publicAdultMetadata =
+    input.public_adult_metadata === undefined ? false : requiredBoolean(input, 'public_adult_metadata');
   const autoApplyReasons: WebNovelMetadataCollectorAutoApplyReason[] = [];
   if (status === 'not_found') autoApplyReasons.push('no_result');
   if (status === 'ambiguous') autoApplyReasons.push('ambiguous_result');
@@ -612,7 +625,7 @@ function validateResolveResult(
     autoApplyReasons.push('author_not_exact');
   }
   if (status === 'found' && metadataQuality !== 'full') autoApplyReasons.push('partial_metadata');
-  if ((request.includeAdult || metadata?.tags.includes('19금')) && !authenticatedSearch) {
+  if ((request.includeAdult || metadata?.tags.includes('19금')) && !authenticatedSearch && !publicAdultMetadata) {
     autoApplyReasons.push('adult_auth_unconfirmed');
   }
   return {

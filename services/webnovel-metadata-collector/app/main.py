@@ -9,7 +9,7 @@ from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse, Response
 
-from app.auth_session import AUTH_PLATFORMS, AuthFeatureUnavailable, AuthSessionManager
+from app.auth_session import AUTH_PLATFORMS, PUBLIC_ADULT_PLATFORMS, AuthFeatureUnavailable, AuthSessionManager
 from app.authenticated_extractor import AuthenticatedExtractor
 from app.cover_delivery import (
     ALLOWED_COVER_CONTENT_TYPES,
@@ -84,6 +84,8 @@ LOCAL_DEV_ORIGIN_PATTERN = (
 async def lifespan(_: FastAPI):
     yield
     await search_service.aclose()
+    for extractor in resolve_coordinator.authenticated_extractors.values():
+        await extractor.aclose()
     await auth_sessions.aclose()
     await cover_fetcher.aclose()
 
@@ -151,6 +153,7 @@ async def health() -> dict[str, object]:
                 "browser_presentation": auth_sessions.browser_presentation,
                 "platforms": list(auth_sessions.supported_platforms),
                 "direct_login_platforms": ["novelpia"],
+                "public_search_platforms": list(PUBLIC_ADULT_PLATFORMS),
             },
         },
     }
@@ -275,6 +278,8 @@ async def update_auth_platform(
                 await auth_sessions.ensure_novelpia_enabled()
             except AuthFeatureUnavailable as exc:
                 raise HTTPException(status_code=409, detail=str(exc)) from exc
+        elif platform in PUBLIC_ADULT_PLATFORMS:
+            pass  # Search opt-in only; do not close or inspect another platform's login session.
         elif auth_sessions.remote_auth and auth_sessions.status().get("active_platform") not in {None, platform}:
             raise HTTPException(status_code=409, detail="현재 로그인 중인 플랫폼에서 완료해 주세요.")
         elif platform != "novelpia":

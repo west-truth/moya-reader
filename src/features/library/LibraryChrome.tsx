@@ -23,7 +23,7 @@ import {
   Upload,
   X,
 } from 'lucide-react';
-import { useEffect, useRef, useState } from 'react';
+import { type RefObject, useEffect, useRef, useState } from 'react';
 import { ModalDrawer } from '../../shared/ui/ModalDrawer';
 import { formatCount } from '../../utils/format';
 import type { LibraryScreenProps } from './library-screen-contract';
@@ -228,16 +228,19 @@ export function LibraryHeader({ model, actions }: LibraryScreenProps) {
   return (
     <header className="library-topbar">
       <LibrarySearchShortcut />
-      <label className="search-box library-search">
-        <Search size={17} />
-        <input
-          type="search"
-          value={model.query}
-          onChange={(event) => actions.header.setQuery(event.target.value)}
-          placeholder="책장 검색"
-          aria-label="책장 검색"
-        />
-      </label>
+      <div className="library-topbar-search">
+        <LibraryNavigationButton model={model} actions={actions} />
+        <label className="search-box library-search">
+          <Search size={17} />
+          <input
+            type="search"
+            value={model.query}
+            onChange={(event) => actions.header.setQuery(event.target.value)}
+            placeholder="책장 검색"
+            aria-label="책장 검색"
+          />
+        </label>
+      </div>
       <div className="library-topbar-actions">
         <button
           className={`library-sync-entry ${model.sync.tone}`}
@@ -294,6 +297,94 @@ export function LibraryHeader({ model, actions }: LibraryScreenProps) {
   );
 }
 
+function LibraryNavigationDrawer({
+  model,
+  actions,
+  open,
+  close,
+  triggerRef,
+}: LibraryScreenProps & { open: boolean; close(): void; triggerRef: RefObject<HTMLButtonElement> }) {
+  const runGlobal = (action: () => void) => {
+    close();
+    window.setTimeout(action, 0);
+  };
+  return (
+    <ModalDrawer
+      open={open}
+      title={<img src="/branding/moya-wordmark.png" alt="MOYA" />}
+      onClose={close}
+      restoreFocusRef={triggerRef}
+      className="library-mobile-drawer"
+      closeLabel="라이브러리 메뉴 닫기"
+      footer={
+        <>
+          <button type="button" onClick={() => runGlobal(actions.header.openImport)}>
+            <Upload size={17} /> 가져오기
+          </button>
+          <button type="button" onClick={() => runGlobal(actions.header.openLibraryFolders)}>
+            <FolderPlus size={17} /> 폴더 가져오기
+          </button>
+          <button type="button" onClick={() => runGlobal(actions.header.openSync)}>
+            <RotateCcw size={17} /> 동기화
+          </button>
+          <button type="button" onClick={() => runGlobal(actions.header.openBackup)}>
+            <DatabaseBackup size={17} /> 백업 및 복원
+          </button>
+          <button type="button" onClick={() => runGlobal(actions.header.openSettings)}>
+            <Settings size={17} /> 설정
+          </button>
+        </>
+      }
+    >
+      <div className="library-mobile-drawer-scroll">
+        <h2>라이브러리</h2>
+        <FilterNavigation model={model} actions={actions} close={close} />
+        {model.management.available && (
+          <>
+            <h2>책장</h2>
+            <ShelfNavigation model={model} actions={actions} close={close} />
+          </>
+        )}
+        {model.externalSources.sources.length > 0 && (
+          <>
+            <h2>소스</h2>
+            <SourceNavigation model={model} actions={actions} close={close} />
+          </>
+        )}
+      </div>
+    </ModalDrawer>
+  );
+}
+
+export function LibraryNavigationButton(props: LibraryScreenProps) {
+  const [open, setOpen] = useState(false);
+  const triggerRef = useRef<HTMLButtonElement>(null);
+  useEffect(() => {
+    if (typeof window === 'undefined' || typeof window.matchMedia !== 'function') return;
+    const media = window.matchMedia('(min-width: 700px) and (max-width: 1279px)');
+    const onChange = () => {
+      if (!media.matches) setOpen(false);
+    };
+    media.addEventListener('change', onChange);
+    return () => media.removeEventListener('change', onChange);
+  }, []);
+  return (
+    <>
+      <button
+        ref={triggerRef}
+        type="button"
+        className="library-navigation-button"
+        onClick={() => setOpen(true)}
+        aria-label="라이브러리 메뉴"
+        aria-expanded={open}
+      >
+        <Menu size={20} />
+      </button>
+      <LibraryNavigationDrawer {...props} open={open} close={() => setOpen(false)} triggerRef={triggerRef} />
+    </>
+  );
+}
+
 type MobilePanel = 'drawer' | 'display' | 'more' | null;
 
 export interface LibraryMobileSourceMode {
@@ -311,6 +402,19 @@ export function LibraryMobileHeader(props: LibraryScreenProps & { sourceMode?: L
   const [searchOpen, setSearchOpen] = useState(false);
   const [shelfOpen, setShelfOpen] = useState(false);
   const drawerTriggerRef = useRef<HTMLButtonElement>(null);
+
+  useEffect(() => {
+    if (typeof window === 'undefined' || typeof window.matchMedia !== 'function') return;
+    const media = window.matchMedia('(max-width: 699px)');
+    const onChange = () => {
+      if (media.matches) return;
+      setPanel(null);
+      setSearchOpen(false);
+      setShelfOpen(false);
+    };
+    media.addEventListener('change', onChange);
+    return () => media.removeEventListener('change', onChange);
+  }, []);
 
   const closeTransient = () => {
     setPanel(null);
@@ -539,50 +643,12 @@ export function LibraryMobileHeader(props: LibraryScreenProps & { sourceMode?: L
         </section>
       )}
 
-      <ModalDrawer
+      <LibraryNavigationDrawer
+        {...props}
         open={panel === 'drawer'}
-        title={<img src="/branding/moya-wordmark.png" alt="MOYA" />}
-        onClose={() => setPanel(null)}
-        restoreFocusRef={drawerTriggerRef}
-        className="library-mobile-drawer"
-        closeLabel="라이브러리 메뉴 닫기"
-        footer={
-          <>
-            <button type="button" onClick={() => runGlobal(actions.header.openImport)}>
-              <Upload size={17} /> 가져오기
-            </button>
-            <button type="button" onClick={() => runGlobal(actions.header.openLibraryFolders)}>
-              <FolderPlus size={17} /> 폴더 가져오기
-            </button>
-            <button type="button" onClick={() => runGlobal(actions.header.openSync)}>
-              <RotateCcw size={17} /> 동기화
-            </button>
-            <button type="button" onClick={() => runGlobal(actions.header.openBackup)}>
-              <DatabaseBackup size={17} /> 백업 및 복원
-            </button>
-            <button type="button" onClick={() => runGlobal(actions.header.openSettings)}>
-              <Settings size={17} /> 설정
-            </button>
-          </>
-        }
-      >
-        <div className="library-mobile-drawer-scroll">
-          <h2>라이브러리</h2>
-          <FilterNavigation {...props} close={() => setPanel(null)} />
-          {model.management.available && (
-            <>
-              <h2>책장</h2>
-              <ShelfNavigation {...props} close={() => setPanel(null)} />
-            </>
-          )}
-          {model.externalSources.sources.length > 0 && (
-            <>
-              <h2>소스</h2>
-              <SourceNavigation {...props} close={() => setPanel(null)} />
-            </>
-          )}
-        </div>
-      </ModalDrawer>
+        close={closeTransient}
+        triggerRef={drawerTriggerRef}
+      />
     </header>
   );
 }
