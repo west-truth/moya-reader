@@ -1401,6 +1401,15 @@
   backdrop-filter: blur(12px);
 }
 
+.library-batch-details {
+  display: contents;
+}
+
+.library-batch-toggle,
+.library-batch-mobile-unfavorite {
+  display: none;
+}
+
 .library-batch-summary,
 .library-batch-utilities {
   display: flex;
@@ -2133,12 +2142,12 @@
     right: 8px;
     bottom: calc(8px + env(safe-area-inset-bottom, 0px));
     min-height: 0;
-    max-height: calc(100dvh - 78px - env(safe-area-inset-top, 0px) - env(safe-area-inset-bottom, 0px));
+    max-height: 55dvh;
     display: grid;
-    grid-template-columns: minmax(0, 1fr);
-    align-items: stretch;
-    gap: 10px;
-    padding: 11px;
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: center;
+    gap: 4px;
+    padding: 6px;
     overflow-x: hidden;
     overflow-y: auto;
     overscroll-behavior: contain;
@@ -2146,16 +2155,69 @@
   }
 
   .library-batch-summary {
-    justify-content: space-between;
-    padding: 0 0 9px;
+    justify-content: flex-start;
+    gap: 2px;
+    padding: 0;
     border-right: 0;
-    border-bottom: 1px solid var(--border);
   }
 
   .library-batch-summary > div {
-    display: flex;
-    align-items: baseline;
-    gap: 5px;
+    min-width: 0;
+  }
+
+  .library-batch-summary strong {
+    white-space: nowrap;
+    font-size: 0.78rem;
+  }
+
+  .library-batch-summary span {
+    display: none;
+  }
+
+  .library-batch-details {
+    display: none;
+    grid-column: 1 / -1;
+    order: 1;
+    min-height: 0;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+  }
+
+  .library-batch-bar.is-expanded .library-batch-details {
+    display: grid;
+    gap: 12px;
+    margin-top: 6px;
+    padding: 10px 4px 4px;
+    border-top: 1px solid var(--border);
+  }
+
+  .library-batch-bar .library-batch-toggle,
+  .library-batch-mobile-unfavorite {
+    display: inline-flex;
+  }
+
+  .library-batch-utilities .library-batch-desktop-unfavorite,
+  .library-batch-trash > span {
+    display: none;
+  }
+
+  .library-screen:has(.library-batch-bar) .library-main {
+    scroll-padding-bottom: 88px;
+  }
+
+  .library-screen:has(.library-batch-bar.is-expanded) .library-main {
+    scroll-padding-bottom: calc(55dvh + 24px);
+  }
+
+  /* Extend the scroll range without resizing the virtualizer's observed content box. */
+  .library-screen:has(.library-batch-bar) .library-main::after {
+    content: '';
+    display: block;
+    height: 40px;
+  }
+
+  .library-screen:has(.library-batch-bar.is-expanded) .library-main::after {
+    height: calc(55dvh - 24px);
   }
 
   .library-batch-group {
@@ -2185,16 +2247,19 @@
   }
 
   .library-batch-utilities {
-    display: grid;
-    grid-template-columns: 38px 38px 38px minmax(0, 1fr);
-    gap: 7px;
+    display: flex;
+    gap: 2px;
     margin: 0;
-    padding-top: 1px;
+    padding: 0;
   }
 
+  .library-batch-summary .icon-btn,
   .library-batch-utilities .icon-btn,
   .library-batch-utilities .ghost-btn {
-    width: 100%;
+    flex: 0 0 40px;
+    width: 40px;
+    height: 40px;
+    padding: 0;
   }
 
   .library-management-dialog .metadata-editor {

@@ -26,7 +26,9 @@ const noop = () => {};
 const noActions = new Proxy({}, { get: () => noop });
 function Fixture() {
   const [state, setState] = useState({ query: '', viewMode: 'grid', selectionMode: false });
-  globalThis.libraryFixture = { update: (patch) => setState((previous) => ({ ...previous, ...patch })) };
+  const update = (patch) => setState((previous) => ({ ...previous, ...patch }));
+  globalThis.libraryFixture = { update };
+  globalThis.libraryBatchActions ??= [];
   const collection = buildLibraryCollectionModel({
     novels,
     query: state.query,
@@ -48,9 +50,9 @@ function Fixture() {
     presentation: { layoutMode: 'wide', inspectorOpen: false, shelfBookCounts: new Map() },
     management: {
       available: true,
-      shelves: [],
+      shelves: [{ id: 'shelf-1', name: 'Test shelf' }],
       selectionMode: state.selectionMode,
-      selectedBookIds: new Set(state.selectionMode ? novels.map((novel) => novel.id) : []),
+      selectedBookIds: new Set(state.selectionMode ? (state.selectedBookIds ?? novels.map((novel) => novel.id)) : []),
       busy: false,
     },
   };
@@ -58,8 +60,18 @@ function Fixture() {
     drag: noActions,
     header: { ...noActions, setQuery: (query) => setState((previous) => ({ ...previous, query })) },
     presentation: noActions,
-    controls: noActions,
-    books: noActions,
+    controls: {
+      clearSelection: () => update({ selectionMode: false, selectedBookIds: undefined }),
+      applyBatch: (action) => globalThis.libraryBatchActions.push(action),
+      exportSelectedMetadata: () => globalThis.libraryBatchActions.push({ kind: 'export_metadata' }),
+    },
+    books: {
+      toggleSelected: (novel) => {
+        const selected = new Set(model.management.selectedBookIds);
+        if (!selected.delete(novel.id)) selected.add(novel.id);
+        update({ selectedBookIds: [...selected] });
+      },
+    },
     imports: noActions,
   };
   return React.createElement(LibraryScreen, { model, actions });
