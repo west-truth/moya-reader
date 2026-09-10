@@ -38,6 +38,30 @@
   display: none;
 }
 
+.library-topbar-search {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+}
+
+.library-navigation-button {
+  display: none;
+  flex: 0 0 44px;
+  width: 44px;
+  height: 44px;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-2);
+  background: transparent;
+  border-radius: var(--radius-control);
+}
+
+.library-navigation-button:hover {
+  color: var(--text);
+  background: var(--app-surface-hover);
+}
+
 .library-topbar {
   position: relative;
   z-index: var(--layer-chrome);
@@ -2089,6 +2113,12 @@
   }
 }
 
+@media (min-width: 700px) and (max-width: 1279px) {
+  .library-navigation-button {
+    display: inline-flex;
+  }
+}
+
 @media (min-width: 700px) and (max-width: 1023px) {
   .library-topbar {
     grid-template-columns: minmax(0, 1fr) auto;
@@ -2510,80 +2540,83 @@
     grid-template-columns: repeat(2, minmax(0, 1fr));
     gap: 4px;
   }
+}
 
-  .library-mobile-drawer {
-    width: min(340px, calc(100vw - 36px));
-    color: var(--text);
-    background: var(--app-surface);
-    outline: 0;
-  }
+/* The same navigation drawer serves mobile and tablet-width headers. */
+.library-mobile-drawer {
+  width: min(340px, calc(100vw - 36px));
+  color: var(--text);
+  background: var(--app-surface);
+  outline: 0;
+}
 
-  .library-mobile-drawer > .modal-drawer-header {
-    min-height: calc(64px + env(safe-area-inset-top, 0px));
-    padding: env(safe-area-inset-top, 0px) 18px 0;
-    border-bottom: 1px solid var(--border);
-  }
+.library-mobile-drawer > .modal-drawer-header {
+  min-height: calc(64px + env(safe-area-inset-top, 0px));
+  padding: env(safe-area-inset-top, 0px) 18px 0;
+  border-bottom: 1px solid var(--border);
+}
 
-  .library-mobile-drawer > .modal-drawer-header img {
-    width: 112px;
-    height: 28px;
-    object-fit: contain;
-    object-position: left center;
-  }
+.library-mobile-drawer > .modal-drawer-header img {
+  width: 112px;
+  height: 28px;
+  object-fit: contain;
+  object-position: left center;
+}
 
-  .library-mobile-drawer > .modal-drawer-header button {
-    width: 44px;
-    height: 44px;
-    display: grid;
-    place-items: center;
-    color: var(--text-2);
-    background: transparent;
-  }
+.library-mobile-drawer > .modal-drawer-header button {
+  width: 44px;
+  height: 44px;
+  display: grid;
+  place-items: center;
+  color: var(--text-2);
+  background: transparent;
+}
 
-  .library-mobile-drawer > .modal-drawer-content {
-    padding: 0;
-    overflow-x: hidden;
-    overflow-y: auto;
-    overscroll-behavior-y: contain;
-    touch-action: pan-y;
-    -webkit-overflow-scrolling: touch;
-  }
+.library-mobile-drawer > .modal-drawer-content {
+  padding: 0;
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior-y: contain;
+  touch-action: pan-y;
+  -webkit-overflow-scrolling: touch;
+}
 
-  .library-mobile-drawer-scroll {
-    padding: 20px 13px;
-  }
+.library-mobile-drawer-scroll {
+  padding: 20px 13px;
+}
 
-  .library-mobile-drawer-scroll h2 {
-    margin: 0 9px 7px;
-    color: var(--muted);
-    font-size: var(--ui-label-size);
-    font-weight: var(--ui-weight-semibold);
-    letter-spacing: var(--ui-tracking-label);
-  }
+.library-mobile-drawer-scroll h2 {
+  margin: 0 9px 7px;
+  color: var(--muted);
+  font-size: var(--ui-label-size);
+  font-weight: var(--ui-weight-semibold);
+  letter-spacing: var(--ui-tracking-label);
+}
 
-  .library-mobile-drawer-scroll h2:not(:first-child) {
-    margin-top: 24px;
-  }
+.library-mobile-drawer-scroll h2:not(:first-child) {
+  margin-top: 24px;
+}
 
-  .library-mobile-drawer > .modal-drawer-footer {
-    display: grid;
-    gap: 2px;
-    padding: 10px 13px calc(10px + env(safe-area-inset-bottom, 0px));
-    border-top: 1px solid var(--border);
-  }
+.library-mobile-drawer > .modal-drawer-footer {
+  display: grid;
+  gap: 2px;
+  padding: 10px 13px calc(10px + env(safe-area-inset-bottom, 0px));
+  border-top: 1px solid var(--border);
+}
 
-  .library-mobile-drawer > .modal-drawer-footer button {
-    min-height: 44px;
-    display: flex;
-    align-items: center;
-    gap: 10px;
-    padding: 0 10px;
-    color: var(--text-2);
-    background: transparent;
-    border-radius: var(--radius-control);
-    text-align: left;
-  }
+.library-mobile-drawer > .modal-drawer-footer button {
+  min-height: 44px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 0 10px;
+  color: var(--text-2);
+  background: transparent;
+  border-radius: var(--radius-control);
+  text-align: left;
+}
 
+@media (max-width: 699px) {
   .recent-band {
     display: none;
   }

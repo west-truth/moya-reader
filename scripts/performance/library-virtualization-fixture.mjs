@@ -6,6 +6,7 @@ import '../../src/styles/tokens.css';
 import '../../src/styles/base.css';
 import '../../src/styles/shell.css';
 import '../../src/styles/library.css';
+import '../../src/styles/dialogs-import.css';
 
 const novels = Array.from({ length: 1000 }, (_, index) => ({
   id: `synthetic-${index}`,
@@ -29,6 +30,7 @@ function Fixture() {
   const update = (patch) => setState((previous) => ({ ...previous, ...patch }));
   globalThis.libraryFixture = { update };
   globalThis.libraryBatchActions ??= [];
+  globalThis.libraryNavigationActions ??= [];
   const collection = buildLibraryCollectionModel({
     novels,
     query: state.query,
@@ -41,7 +43,14 @@ function Fixture() {
     drop: { active: false, importBusy: false },
     query: state.query,
     sync: { label: 'local', tone: 'local' },
-    externalSources: { active: false, busy: false, sources: [] },
+    externalSources: {
+      active: false,
+      busy: false,
+      sources: [
+        { id: 'fixture.text', title: 'Text source', kind: 'catalog' },
+        { id: 'fixture.comic', title: 'Comic source', kind: 'catalog' },
+      ],
+    },
     importTasks: [],
     filter: 'all',
     sort: 'title',
@@ -58,9 +67,15 @@ function Fixture() {
   };
   const actions = {
     drag: noActions,
-    header: { ...noActions, setQuery: (query) => setState((previous) => ({ ...previous, query })) },
+    header: {
+      ...noActions,
+      setQuery: (query) => setState((previous) => ({ ...previous, query })),
+      openExternalSource: (id) => globalThis.libraryNavigationActions.push(id),
+    },
     presentation: noActions,
     controls: {
+      setFilter: (filter) => globalThis.libraryNavigationActions.push(filter),
+      setShelf: (id) => globalThis.libraryNavigationActions.push(id),
       clearSelection: () => update({ selectionMode: false, selectedBookIds: undefined }),
       applyBatch: (action) => globalThis.libraryBatchActions.push(action),
       exportSelectedMetadata: () => globalThis.libraryBatchActions.push({ kind: 'export_metadata' }),
