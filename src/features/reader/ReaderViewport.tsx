@@ -1,4 +1,4 @@
-import { useVirtualizer } from '@tanstack/react-virtual';
+import { useVirtualizer, type Range as VirtualRange } from '@tanstack/react-virtual';
 import { sentenceRanges } from '@noveldesk/text-core/sentence-boundaries';
 import { SkipBack, SkipForward } from 'lucide-react';
 import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type MutableRefObject } from 'react';
@@ -24,6 +24,7 @@ import { PaginatedReaderViewport } from './PaginatedReaderViewport';
 import { useReaderGestureHandlers } from './use-reader-gestures';
 import { useScrollChapterBoundary } from './use-scroll-chapter-boundary';
 import { SerializedProgressPersistence } from './reader-progress-controller';
+import { useReaderScrollEndAnchor } from './use-reader-scroll-end-anchor';
 
 export interface ReaderViewportApi {
   readonly flow: ReaderRuntimeFlow;
@@ -216,6 +217,17 @@ function nextFrame(): Promise<void> {
   return new Promise((resolve) => requestAnimationFrame(() => resolve()));
 }
 
+function visibleAndFollowingRows(range: VirtualRange): number[] {
+  // New measurements above the viewport change every visible row's position.
+  // iOS defers the compensating scroll write until momentum ends, causing a late
+  // jump. Keep pre-rendering below the viewport; paragraph-page caching still
+  // loads neighboring text without mounting/measuring leading overscan rows.
+  return Array.from(
+    { length: Math.min(range.count - 1, range.endIndex + range.overscan) - range.startIndex + 1 },
+    (_, index) => range.startIndex + index,
+  );
+}
+
 function VirtualizedReaderViewportComponent({
   repository,
   novel,
@@ -243,14 +255,44 @@ function VirtualizedReaderViewportComponent({
   const documentRef = useRef<HTMLElement>(null);
   const appliedOpenSequenceRef = useRef<number>();
   const visibleAnchorIndexRef = useRef<number>();
+  const [listOffset, setListOffset] = useState(0);
+  const endAnchor = useReaderScrollEndAnchor(rootRef, documentRef, isActive);
   const pages = useParagraphPages(repository, chapter.id, chapter.paragraphCount);
   const virtualizer = useVirtualizer({
     count: chapter.paragraphCount,
     getScrollElement: () => rootRef.current,
+    observeElementOffset: endAnchor.observeOffset,
+    scrollToFn: endAnchor.scrollTo,
+    scrollMargin: listOffset,
+    rangeExtractor: visibleAndFollowingRows,
     estimateSize: () => Math.max(settings.fontSize * settings.lineHeight * 2.4, 72),
     measureElement: (element) => Math.ceil(element.getBoundingClientRect().height),
     overscan: 6,
   });
+  // Resizing the partially visible paragraph must not shift its own start.
+  virtualizer.shouldAdjustScrollPositionOnItemSizeChange = (item, _delta, instance) =>
+    item.end <= (instance.scrollOffset ?? 0);
+
+  useLayoutEffect(() => {
+    const root = rootRef.current;
+    const list = documentRef.current?.querySelector<HTMLElement>('.reader-virtual-list');
+    if (!root || !list) return;
+    const update = () => {
+      // Include the heading and reader padding in virtual scroll coordinates.
+      // Layout offsets exclude the temporary chapter-boundary pull transform.
+      let offset = 0;
+      for (let node: HTMLElement | null = list; node && node !== root; node = node.offsetParent as HTMLElement | null) {
+        offset += node.offsetTop;
+      }
+      setListOffset(offset);
+    };
+    update();
+    const heading = documentRef.current?.querySelector('h1');
+    const observer = typeof ResizeObserver === 'undefined' ? undefined : new ResizeObserver(update);
+    if (heading) observer?.observe(heading);
+    observer?.observe(root);
+    return () => observer?.disconnect();
+  }, [chapter.id]);
   const measureVirtualRow = useCallback(
     (element: Element | null) => {
       // Let the virtualizer defer row measurement during native scrolling. An immediate
@@ -768,7 +810,10 @@ function VirtualizedReaderViewportComponent({
                   className="reader-virtual-row"
                   // Evicted text keeps its measured size while it reloads. Measuring the
                   // short skeleton overwrites that size and shifts every later paragraph.
-                  style={{ transform: `translateY(${item.start}px)`, height: failed ? undefined : item.size }}
+                  style={{
+                    transform: `translateY(${item.start - listOffset}px)`,
+                    height: failed ? undefined : item.size,
+                  }}
                 >
                   {failed ? (
                     <div className="reader-paragraph is-error" role="alert">
@@ -790,7 +835,7 @@ function VirtualizedReaderViewportComponent({
                 key={paragraph.id}
                 paragraph={paragraph}
                 virtualIndex={item.index}
-                start={item.start}
+                start={item.start - listOffset}
                 isSpeaking={ttsIndex === item.index}
                 mode={mode}
                 searchQuery={search.highlightQuery}

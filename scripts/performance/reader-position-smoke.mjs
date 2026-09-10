@@ -17,6 +17,7 @@ const html = `<!doctype html><html><head><meta name="viewport" content="width=de
 const baseUrl = `http://127.0.0.1:${await findTemporaryLoopbackPort()}`;
 const scrollStabilityOnly = process.argv.includes('--scroll-stability-only');
 const longCacheOnly = process.argv.includes('--long-cache-only');
+const momentumEndOnly = process.argv.includes('--momentum-end-only');
 const browserEngine = process.env.READER_UI_BROWSER_ENGINE || 'chromium';
 const browser =
   browserEngine === 'webkit'
@@ -47,6 +48,137 @@ try {
   });
   const evidence = [];
   const errors = [];
+  if (momentumEndOnly) {
+    const scenarios = process.argv.includes('--short-upward-only')
+      ? ['short-upward']
+      : ['grow', 'shrink', 'held', 'reverse', 'upward', 'short-upward'];
+    for (const scenario of scenarios) {
+      const upward = scenario.endsWith('upward');
+      const shortChapter = scenario === 'short-upward';
+      const page = await context.newPage();
+      page.on('pageerror', (error) => errors.push(error.message));
+      await page.goto(
+        `${baseUrl}/reader-position?variable=1&next=1${shortChapter ? '' : '&long=1'}${scenario === 'shrink' ? '&short=1' : ''}`,
+      );
+      await page.waitForFunction(() => globalThis.readerFixture?.api()?.flow === 'scroll');
+      await page.waitForTimeout(350);
+      if (upward) {
+        await page.evaluate(
+          (index) => readerFixture.api().scrollToParagraphIndex(index, 'start', 'auto'),
+          shortChapter ? 100 : 2000,
+        );
+        await page.waitForTimeout(350);
+      }
+      await page.evaluate(() => {
+        const root = document.querySelector('[data-reader-layer="scroll"]');
+        globalThis.endTrace = [];
+        globalThis.sendReaderTouch = (type, y) => {
+          const event = new Event(type, { bubbles: true, cancelable: true });
+          Object.defineProperty(event, 'touches', { value: type === 'touchend' ? [] : [{ clientY: y }] });
+          root.dispatchEvent(event);
+        };
+        const scrollTo = root.scrollTo.bind(root);
+        root.scrollTo = (...args) => {
+          endTrace.push(args);
+          scrollTo(...args);
+        };
+        readerFixture.pausePages();
+      });
+      if (upward) {
+        await page.evaluate(
+          async (distance) => {
+            const root = document.querySelector('[data-reader-layer="scroll"]');
+            sendReaderTouch('touchstart', 400);
+            sendReaderTouch('touchmove', 500);
+            root.scrollTop -= distance;
+            await new Promise(requestAnimationFrame);
+            sendReaderTouch('touchend', 500);
+            // Approximate the offset/touchend ordering of inertia; this does not synthesize native device momentum.
+            for (const delta of [800, 600, 400, 200]) {
+              root.scrollTop -= delta;
+              await new Promise(requestAnimationFrame);
+            }
+          },
+          shortChapter ? 3000 : 20000,
+        );
+      } else {
+        await page.evaluate(async () => {
+          const root = document.querySelector('[data-reader-layer="scroll"]');
+          sendReaderTouch('touchstart', 700);
+          sendReaderTouch('touchmove', 500);
+          root.scrollTop = root.scrollHeight - root.clientHeight - 900;
+          await new Promise(requestAnimationFrame);
+          sendReaderTouch('touchend', 500);
+          for (const distance of [600, 300, 120, 0]) {
+            root.scrollTop = root.scrollHeight - root.clientHeight - distance;
+            await new Promise(requestAnimationFrame);
+          }
+        });
+      }
+      if (!shortChapter)
+        await page.waitForFunction(() => document.querySelector('[data-reader-layer="scroll"] .is-loading'));
+      if (scenario === 'reverse') {
+        await page.evaluate(() => {
+          sendReaderTouch('touchstart', 400);
+          sendReaderTouch('touchmove', 500);
+          document.querySelector('[data-reader-layer="scroll"]').scrollTop -= 900;
+          sendReaderTouch('touchend', 500);
+        });
+      }
+      const before = await page.locator('[data-reader-layer="scroll"]').evaluate((root) => root.scrollTop);
+      if (scenario === 'held') await page.evaluate(() => sendReaderTouch('touchstart', 700));
+      await page.evaluate(() => readerFixture.resumePages());
+      await page.waitForFunction(() => !document.querySelector('[data-reader-layer="scroll"] .is-loading'));
+      if (scenario === 'held') {
+        await page.waitForTimeout(450);
+        const duringTouch = await page.locator('[data-reader-layer="scroll"]').evaluate((root) => root.scrollTop);
+        assert.equal(duringTouch, before, 'End correction must not interrupt an active touch');
+        await page.evaluate(() => sendReaderTouch('touchend', 700));
+      }
+      await page.waitForTimeout(850);
+      const settled = await page.locator('[data-reader-layer="scroll"]').evaluate((root) => ({
+        top: root.scrollTop,
+        distance: root.scrollHeight - root.clientHeight - root.scrollTop,
+        armed: root.querySelector('[data-scroll-chapter-boundary]')?.getAttribute('data-scroll-chapter-boundary-armed'),
+        adjustments: globalThis.endTrace,
+        opened: [...readerFixture.observations.openedChapters],
+        rows: root.querySelectorAll('[data-index]').length,
+      }));
+      console.log(JSON.stringify({ browserEngine, scenario, before, ...settled }));
+      assert.equal(settled.opened.length, 0, 'Momentum that reaches the end must never turn the chapter automatically');
+      assert.ok(settled.rows < 80, 'Long chapter rendering remains bounded');
+      if (upward) {
+        assert.ok(Math.abs(settled.top - before) <= 2, 'New rows must not cause a late upward-scroll correction');
+        assert.deepEqual(settled.adjustments, [], 'Leading overscan must not enqueue delayed scroll writes');
+      } else if (scenario === 'reverse') {
+        assert.ok(settled.distance > 400, 'An upward gesture must release end anchoring');
+        assert.equal(settled.armed, 'false');
+      } else {
+        assert.ok(settled.distance <= 2, 'Late height changes must retain the end reached by momentum');
+        assert.equal(settled.armed, 'true', 'The next deliberate gesture must remain available');
+        await page.evaluate(() => {
+          sendReaderTouch('touchstart', 700);
+          sendReaderTouch('touchmove', 620);
+          sendReaderTouch('touchend', 620);
+        });
+        await page.waitForFunction(() => readerFixture.observations.openedChapters.length === 1);
+        assert.deepEqual(await page.evaluate(() => readerFixture.observations.openedChapters), ['next-chapter']);
+        await page.evaluate(() => readerFixture.api().scrollToParagraphIndex(100, 'start', 'auto'));
+        await page.waitForTimeout(700);
+        const afterJump = await page
+          .locator('[data-reader-layer="scroll"]')
+          .evaluate((root) => root.scrollHeight - root.clientHeight - root.scrollTop);
+        assert.ok(afterJump > 10000, 'Explicit navigation must not be pulled back to the end');
+      }
+      evidence.push({
+        scenario,
+        browserEngine,
+        remainingEndDistance: settled.distance,
+        adjustmentWrites: settled.adjustments.length,
+      });
+      await page.close();
+    }
+  }
   if (longCacheOnly) {
     const page = await context.newPage();
     page.on('pageerror', (error) => errors.push(error.message));
@@ -163,7 +295,7 @@ try {
     assert.ok(stability.mountedRows < 80, 'Scroll rows must remain bounded');
     await page.close();
   }
-  for (const single of scrollStabilityOnly || longCacheOnly ? [] : [false, true]) {
+  for (const single of scrollStabilityOnly || longCacheOnly || momentumEndOnly ? [] : [false, true]) {
     const page = await context.newPage();
     page.on('pageerror', (error) => errors.push(error.message));
     await page.goto(`${baseUrl}/reader-position${single ? '?single=1' : ''}`);
