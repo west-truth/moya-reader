@@ -1,5 +1,16 @@
 # 독서·가져오기 UX 검증
 
+## 태블릿 탐색의 비브라우저 환경 보완 (2026-09-10)
+
+- 이전 태블릿 변경의 Library 테스트 통과 기록은 최종 화면 폭 감지 effect 추가 전 결과였다. 브라우저 검사는
+  최종 코드에서 통과했지만 Node 테스트 재실행을 놓쳤다. 최종 커밋에서 12 passed/11 failed를 재현했다.
+- LibraryChrome의 두 effect에서 window와 matchMedia 함수 유무를 확인한다. Node 또는 미디어 API가 없는
+  테스트 환경에서는 화면 폭 감지 등록만 생략한다. 실제 브라우저의 메뉴/화면 폭 전환 동작은 유지한다.
+- window 없음/window만 있음 두 조건에서 실제 컴포넌트 mount/unmount를 검증한다. Library 25 + SourceHub 23 통과.
+- 공개 저장소에서 `pnpm check:web-server` 전체 exit 0: deploy 314, 외부 소스 211, 복구 103, 가져오기 89/조건부 skip 3,
+  Reader UX 85 통과. 타입/lint/format/CSS/라이선스/경계 검사, 서버 production 검증, Hosted 264 검사, Web build 통과.
+  GitHub hosted-source의 재실행 결과는 이 로컬 검증과 별도다.
+
 ## 태블릿 너비에서 사이드바 열기 (2026-09-10)
 
 - 700–1279px에서 사이드바와 모바일 메뉴가 모두 숨겨지던 탐색 공백을 수정했다. 책장/로컬 작품 상세와

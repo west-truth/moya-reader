@@ -360,6 +360,7 @@ export function LibraryNavigationButton(props: LibraryScreenProps) {
   const [open, setOpen] = useState(false);
   const triggerRef = useRef<HTMLButtonElement>(null);
   useEffect(() => {
+    if (typeof window === 'undefined' || typeof window.matchMedia !== 'function') return;
     const media = window.matchMedia('(min-width: 700px) and (max-width: 1279px)');
     const onChange = () => {
       if (!media.matches) setOpen(false);
@@ -403,6 +404,7 @@ export function LibraryMobileHeader(props: LibraryScreenProps & { sourceMode?: L
   const drawerTriggerRef = useRef<HTMLButtonElement>(null);
 
   useEffect(() => {
+    if (typeof window === 'undefined' || typeof window.matchMedia !== 'function') return;
     const media = window.matchMedia('(max-width: 699px)');
     const onChange = () => {
       if (media.matches) return;
