@@ -1,4 +1,5 @@
 import asyncio
+import unicodedata
 from datetime import datetime, timezone
 
 from app.extractors.base import BaseExtractor
@@ -69,6 +70,35 @@ def test_title_normalization_and_matching() -> None:
     assert title_match_score("회귀자의 생존법", "회귀자의 생존법 (외전)") == 1.0
     assert normalize_title("회귀자의 생존법 [완전판]") == "회귀자의생존법"
     assert authors_match("산경", "글 산경(山景), 다른 작가")
+
+
+def test_standalone_hangul_survives_catalog_query_cleanup() -> None:
+    title = "마법소녀ㄴ은 은퇴하고 싶다"
+    for form in [title, unicodedata.normalize("NFKC", title), unicodedata.normalize("NFD", title)]:
+        assert search_title(form) == title
+        assert search_title(f"{form} １－２００ 完.txt") == title
+        assert normalize_title(form) == "마법소녀ㄴ은은퇴하고싶다"
+    assert normalize_title(title) != normalize_title("마법소녀은 은퇴하고 싶다")
+
+
+def test_resolution_sends_standalone_hangul_to_catalog_unchanged() -> None:
+    title = "마법소녀ㄴ은 은퇴하고 싶다"
+
+    class LiteralCatalog(StubExtractor):
+        async def search(self, query):
+            self.search_queries.append(query)
+            return [SearchCandidate(
+                title=title, author="에스필아", platform="novelpia", platform_work_id="347507",
+                source_url="https://novelpia.com/novel/347507",
+                cover_url="https://novelpia.com/imagebox/cover/fixture.jpg",
+            )] if query == title else []
+
+    extractor = LiteralCatalog("novelpia", [])
+    result = asyncio.run(SearchService([extractor]).resolve(f"{title} 1-200 完.txt"))
+    assert result.status == "found"
+    assert result.match_type == "exact_title"
+    assert result.metadata.platform_work_id == "347507"
+    assert extractor.search_queries == [title]
 
 
 def test_distribution_title_extraction_keeps_catalog_queries_conservative() -> None:

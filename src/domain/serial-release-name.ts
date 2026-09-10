@@ -1,3 +1,5 @@
+import { normalizeTitleUnicode } from './title-unicode';
+
 export type SerialReleaseSpecialKind = 'extra' | 'special';
 
 export interface SerialReleaseName {
@@ -68,7 +70,7 @@ function stripKnownLibraryExtensions(value: string): { readonly value: string; r
 }
 
 function prepareBaseName(value: string, stripFileCopySuffix: boolean): PreparedBaseName {
-  const initial = lastPathSegment(value).normalize('NFKC').trim();
+  const initial = normalizeTitleUnicode(lastPathSegment(value)).trim();
   const beforeCopy = stripKnownLibraryExtensions(initial);
   if (!stripFileCopySuffix || !beforeCopy.stripped) return { value: beforeCopy.value };
 

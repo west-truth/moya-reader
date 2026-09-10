@@ -4,7 +4,11 @@ from difflib import SequenceMatcher
 
 
 _BRACKETED_TEXT = re.compile(r"\[([^\]]*)]|\(([^)]*)\)|【([^】]*)】|（([^）]*)）")
-_NON_WORD = re.compile(r"[^0-9a-z가-힣]+")
+_NON_WORD = re.compile(r"[^0-9a-z가-힣ㄱ-ㆎ]+")
+_STANDALONE_JAMO = str.maketrans({
+    unicodedata.normalize("NFKC", chr(codepoint)): chr(codepoint)
+    for codepoint in range(0x3131, 0x318F)
+})
 _KNOWN_LIBRARY_EXTENSION = re.compile(
     r"\.(?:txt|md|markdown|epub|pdf|mobi|azw3?|fb2|zip|cbz|rar|cbr|7z|cb7)$",
     re.IGNORECASE,
@@ -81,7 +85,9 @@ _COSMETIC_LABELS = {
 
 
 def _unicode_text(value: str) -> str:
-    return unicodedata.normalize("NFKC", value).casefold()
+    # Keep complete syllables composed, but send standalone letters such as ㄴ
+    # in the form catalogs actually store instead of their conjoining Jamo form.
+    return unicodedata.normalize("NFKC", value).translate(_STANDALONE_JAMO).casefold()
 
 
 def _strip_cosmetic_label(match: re.Match[str], *, preserve_brackets: bool = False) -> str:
