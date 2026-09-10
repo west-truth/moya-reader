@@ -378,7 +378,8 @@ def test_optional_authenticated_resolution() -> None:
     )
 
     assert response.status == "found"
-    assert response.authenticated_search is True
+    assert response.authenticated_search is False
+    assert response.public_adult_metadata is True
     assert response.metadata is not None
     assert response.metadata.platform == "ridi"
 
@@ -462,9 +463,13 @@ def test_authenticated_extractors_keep_only_adult_candidates() -> None:
                 adult_only=True,
             )
 
+    class StubPublicKakao(KakaoPageExtractor):
+        async def search_adult(self, query: str) -> list[SearchCandidate]:
+            return self.parse_search_payload(await sessions.fetch_json(self.api_base_url), adult_only=True)
+
     extractors = [
         AuthenticatedExtractor(sessions, NaverSeriesExtractor()),
-        AuthenticatedExtractor(sessions, KakaoPageExtractor()),
+        AuthenticatedExtractor(sessions, StubPublicKakao()),
         AuthenticatedExtractor(sessions, NovelpiaExtractor()),
         AuthenticatedExtractor(sessions, StubAuthenticatedRidi()),
     ]

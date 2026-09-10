@@ -1,7 +1,7 @@
 import asyncio
 from datetime import datetime, timezone
 
-from app.auth_session import AUTH_PLATFORMS, AuthSessionManager
+from app.auth_session import AUTH_PLATFORMS, PUBLIC_ADULT_PLATFORMS, AuthSessionManager
 from app.authenticated_extractor import AuthenticatedExtractor
 from app.models import BatchResolveResponse, ResolveResponse
 from app.normalizer import literal_titles_match, normalize_author, normalize_title
@@ -37,7 +37,7 @@ class ResolveCoordinator:
         enabled = [
             self.authenticated_extractors[platform]
             for platform in AUTH_PLATFORMS
-            if platform in self.sessions.enabled_platforms
+            if platform in self.sessions.enabled_platforms and platform in self.authenticated_extractors
         ]
         if not enabled:
             return await self.public_service.resolve(query, author)
@@ -54,16 +54,27 @@ class ResolveCoordinator:
         )
         selected = self._select_response(query, public_response, authenticated_response)
         auth_failed = [
-            f"{platform}_auth"
+            platform if platform in PUBLIC_ADULT_PLATFORMS else f"{platform}_auth"
             for platform in authenticated_response.failed_platforms
         ]
         auth_errors = {
-            f"{platform}_auth": message
+            (platform if platform in PUBLIC_ADULT_PLATFORMS else f"{platform}_auth"): message
             for platform, message in authenticated_response.platform_errors.items()
         }
         return selected.model_copy(
             update={
-                "authenticated_search": authenticated_response.status != "failed",
+                "public_adult_metadata": (
+                    selected is authenticated_response
+                    and selected.status == "found"
+                    and selected.metadata is not None
+                    and selected.metadata.platform in PUBLIC_ADULT_PLATFORMS
+                ),
+                "authenticated_search": any(
+                    extractor.platform not in PUBLIC_ADULT_PLATFORMS
+                    and extractor.platform not in authenticated_response.failed_platforms
+                    and extractor.platform not in authenticated_response.skipped_platforms
+                    for extractor in enabled
+                ),
                 "searched_platforms": max(
                     public_response.searched_platforms,
                     authenticated_response.searched_platforms,

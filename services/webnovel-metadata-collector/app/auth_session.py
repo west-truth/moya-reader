@@ -31,6 +31,7 @@ except ImportError:  # 선택 기능이므로 기본 실행은 Playwright 없이
 
 
 AUTH_PLATFORMS = ("naver_series", "kakao_page", "novelpia", "ridi")
+PUBLIC_ADULT_PLATFORMS = ("kakao_page", "ridi")
 LOGIN_URLS = {
     "naver_series": "https://series.naver.com/",
     "kakao_page": "https://page.kakao.com/",
@@ -164,7 +165,7 @@ class AuthSessionManager:
     def supported_platforms(self) -> tuple[str, ...]:
         if self.browser_available:
             return AUTH_PLATFORMS
-        return ("novelpia",)
+        return (*PUBLIC_ADULT_PLATFORMS, "novelpia")
 
     @property
     def browser_presentation(self) -> str:
@@ -298,6 +299,8 @@ class AuthSessionManager:
         viewport_height: int | None = None,
     ) -> None:
         self._validate_platform(platform)
+        if platform in PUBLIC_ADULT_PLATFORMS:
+            raise AuthFeatureUnavailable("이 플랫폼은 로그인 없이 19세 검색을 사용할 수 있습니다.")
         if platform == "novelpia":
             raise AuthFeatureUnavailable(
                 "노벨피아는 이메일 또는 LOGINKEY로 연결해 주세요."
