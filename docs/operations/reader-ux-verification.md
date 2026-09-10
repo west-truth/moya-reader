@@ -1,5 +1,24 @@
 # 독서·가져오기 UX 검증
 
+## 긴 회차 관성 스크롤의 끝 유지 (2026-09-10)
+
+- 12,000개 길이가 다른 문단에서 끝에 도달한 후 지연된 높이 측정으로 끝까지 1,101px 남고 다음 화 감지가
+  해제되는 경로를 WebKit/iPad 조건에서 재현했다. 위로 이동할 때도 약 1,793px의 지연된 보정 write를 관찰했다.
+- 가상 목록 좌표에 실제 제목/여백 높이를 반영하고 위쪽 overscan 측정을 제거했다. 일부 보이는 문단이 커져도
+  그 문단 시작 위치를 보정하지 않는다. 본문 페이지 캐시와 아래쪽 overscan은 유지한다.
+- 끝 도달은 늦은 측정을 지나 유지하며 터치/관성이 안정된 뒤 최종 DOM 끝에 맞춘다. 손가락이 닿아 있거나
+  elastic overscroll 영역이면 강제로 쓰지 않는다. 위로 되돌아가기/명시적 이동/숨겨진 레이어는 고정을 해제한다.
+  끝에 도착한 관성만으로 화를 넘기지 않고, 기존처럼 다음 명시적 스와이프가 필요하다.
+- `reader-position-smoke.mjs --momentum-end-only`: WebKit/iPad와 Chromium/Android 프로필 모두 growth/shrink/held/
+  reverse/upward 통과. 끝 유지 0px, 자동 이동 0회, 다음 제스처 1회, 위로 이동 뒤 추가 scrollTo 보정 0회를 확인했다.
+- 기존 `--long-cache-only --scroll-stability-only`도 두 엔진에서 통과했다. 캐시 높이 보존/문단 페이지 요청 6회,
+  본문 전체 transform 없음, 80개 미만 렌더 행을 유지했다. WebKit 위치 복원·페이지 모드 왕복 검사도 통과했다.
+- 터치 이벤트와 offset의 순서 및 지연된 본문을 합성한 검사다. 실제 iPad의 관성/FPS 체감 확인은 배포 후 남는다.
+- 일반 120문단 회차에서도 수정 전 위로 이동 뒤 2,326px 추가 보정을 재현했다. `--momentum-end-only --short-upward-only`
+  검사에서 수정 후 두 엔진 모두 추가 이동/보정 write/자동 회차 이동이 0이다. 길이에 따른 조건부 수정이 아니다.
+- 공개 `pnpm check:web-server` 전체 exit 0: deploy 314, 외부 소스 211, 복구 103, 가져오기 89/조건부 skip 3, Reader UX 85,
+  타입/lint/format/CSS/라이선스/경계, 서버 production, Hosted 264 검사, Web build 통과.
+
 ## 태블릿 탐색의 비브라우저 환경 보완 (2026-09-10)
 
 - 이전 태블릿 변경의 Library 테스트 통과 기록은 최종 화면 폭 감지 effect 추가 전 결과였다. 브라우저 검사는

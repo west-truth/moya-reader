@@ -12,6 +12,8 @@ import '../../src/styles/reader-content.css';
 const singleParagraph = new URLSearchParams(location.search).has('single');
 const variableParagraphs = new URLSearchParams(location.search).has('variable');
 const longChapter = new URLSearchParams(location.search).has('long');
+const withNextChapter = new URLSearchParams(location.search).has('next');
+const shortParagraphs = new URLSearchParams(location.search).has('short');
 const chapter = {
   id: `position-chapter-${singleParagraph ? 1 : 120}`,
   novelId: 'position-book',
@@ -32,7 +34,7 @@ const paragraphs = Array.from({ length: chapter.paragraphCount }, (_, index) => 
   const text =
     `문단 ${index + 1}. ` +
     '이것은 독서 위치를 확인하기 위한 합성 본문입니다. '.repeat(
-      singleParagraph ? 80 : variableParagraphs ? 1 + (index % 12) : 5,
+      shortParagraphs ? 0 : singleParagraph ? 80 : variableParagraphs ? 1 + (index % 12) : 5,
     );
   const startOffsetInChapter = offset;
   offset += text.length;
@@ -48,13 +50,18 @@ const paragraphs = Array.from({ length: chapter.paragraphCount }, (_, index) => 
   };
 });
 const writes = [];
-const observations = { reveals: 0 };
+const observations = { reveals: 0, openedChapters: [] };
 const pageRequests = [];
 let pausePages = false;
 let pendingPages = [];
 const noop = () => {};
 const screenHandle = new ReaderScreenHandle();
-screenHandle.setActions(new Proxy({}, { get: () => noop }));
+screenHandle.setActions(
+  new Proxy(
+    {},
+    { get: (_, key) => (key === 'openChapter' ? (chapter) => observations.openedChapters.push(chapter.id) : noop) },
+  ),
+);
 const repository = {
   getParagraphPage: async (_, pageIndex) => {
     pageRequests.push(pageIndex);
@@ -100,7 +107,9 @@ function Fixture() {
       repository,
       novel,
       chapter,
-      chapters: [chapter],
+      chapters: withNextChapter
+        ? [chapter, { ...chapter, id: 'next-chapter', index: 2, title: 'Next chapter' }]
+        : [chapter],
       settings: defaultSettings,
       readingFlow: flow,
       mode: 'read',
