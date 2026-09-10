@@ -1,4 +1,4 @@
-import { useVirtualizer, type Range as VirtualRange } from '@tanstack/react-virtual';
+import { useVirtualizer } from '@tanstack/react-virtual';
 import { sentenceRanges } from '@noveldesk/text-core/sentence-boundaries';
 import { SkipBack, SkipForward } from 'lucide-react';
 import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type MutableRefObject } from 'react';
@@ -24,7 +24,7 @@ import { PaginatedReaderViewport } from './PaginatedReaderViewport';
 import { useReaderGestureHandlers } from './use-reader-gestures';
 import { useScrollChapterBoundary } from './use-scroll-chapter-boundary';
 import { SerializedProgressPersistence } from './reader-progress-controller';
-import { useReaderScrollEndAnchor } from './use-reader-scroll-end-anchor';
+import { useReaderScrollPosition } from './use-reader-scroll-position';
 
 export interface ReaderViewportApi {
   readonly flow: ReaderRuntimeFlow;
@@ -217,17 +217,6 @@ function nextFrame(): Promise<void> {
   return new Promise((resolve) => requestAnimationFrame(() => resolve()));
 }
 
-function visibleAndFollowingRows(range: VirtualRange): number[] {
-  // New measurements above the viewport change every visible row's position.
-  // iOS defers the compensating scroll write until momentum ends, causing a late
-  // jump. Keep pre-rendering below the viewport; paragraph-page caching still
-  // loads neighboring text without mounting/measuring leading overscan rows.
-  return Array.from(
-    { length: Math.min(range.count - 1, range.endIndex + range.overscan) - range.startIndex + 1 },
-    (_, index) => range.startIndex + index,
-  );
-}
-
 function VirtualizedReaderViewportComponent({
   repository,
   novel,
@@ -256,22 +245,20 @@ function VirtualizedReaderViewportComponent({
   const appliedOpenSequenceRef = useRef<number>();
   const visibleAnchorIndexRef = useRef<number>();
   const [listOffset, setListOffset] = useState(0);
-  const endAnchor = useReaderScrollEndAnchor(rootRef, documentRef, isActive);
+  const scrollPosition = useReaderScrollPosition(rootRef, documentRef, isActive);
+  const { beginNavigation, isCurrentNavigation, resetMeasurements } = scrollPosition;
   const pages = useParagraphPages(repository, chapter.id, chapter.paragraphCount);
   const virtualizer = useVirtualizer({
     count: chapter.paragraphCount,
     getScrollElement: () => rootRef.current,
-    observeElementOffset: endAnchor.observeOffset,
-    scrollToFn: endAnchor.scrollTo,
+    observeElementOffset: scrollPosition.observeOffset,
+    scrollToFn: scrollPosition.scrollTo,
     scrollMargin: listOffset,
-    rangeExtractor: visibleAndFollowingRows,
     estimateSize: () => Math.max(settings.fontSize * settings.lineHeight * 2.4, 72),
     measureElement: (element) => Math.ceil(element.getBoundingClientRect().height),
     overscan: 6,
   });
-  // Resizing the partially visible paragraph must not shift its own start.
-  virtualizer.shouldAdjustScrollPositionOnItemSizeChange = (item, _delta, instance) =>
-    item.end <= (instance.scrollOffset ?? 0);
+  virtualizer.shouldAdjustScrollPositionOnItemSizeChange = scrollPosition.adjustMeasuredSize;
 
   useLayoutEffect(() => {
     const root = rootRef.current;
@@ -314,7 +301,7 @@ function VirtualizedReaderViewportComponent({
 
   const firstVisible = useCallback((): { index?: number; paragraph?: Paragraph } => {
     const root = rootRef.current;
-    const viewportTop = root?.scrollTop ?? 0;
+    const viewportTop = virtualizer.scrollOffset ?? root?.scrollTop ?? 0;
     const viewportBottom = root ? viewportTop + root.clientHeight : Number.POSITIVE_INFINITY;
     let firstAfterViewport: number | undefined;
     for (const item of virtualizer.getVirtualItems()) {
@@ -352,12 +339,14 @@ function VirtualizedReaderViewportComponent({
   const scrollToParagraphIndex = useCallback(
     async (index: number, align: 'start' | 'center' | 'end' = 'center', behavior: ScrollBehavior = 'smooth') => {
       if (chapter.paragraphCount <= 0) return;
+      const navigation = beginNavigation();
       const targetIndex = clamp(index, 0, chapter.paragraphCount - 1);
       await pages.loadIndexes([targetIndex]);
+      if (!isCurrentNavigation(navigation)) return;
       virtualizer.scrollToIndex(targetIndex, { align, behavior });
       onRevealChrome();
     },
-    [chapter.paragraphCount, onRevealChrome, pages, virtualizer],
+    [beginNavigation, chapter.paragraphCount, isCurrentNavigation, onRevealChrome, pages, virtualizer],
   );
 
   const scrollToParagraph = useCallback(
@@ -577,8 +566,10 @@ function VirtualizedReaderViewportComponent({
     getPageTurnAnchor,
     scrollToAnchor: async (anchor, offsetFromTop = 0) => {
       if (anchor.sectionId !== chapter.id) return false;
+      const navigation = beginNavigation();
       const targetIndex = clamp(anchor.blockIndex ?? 0, 0, Math.max(0, chapter.paragraphCount - 1));
       await pages.loadIndexes([targetIndex]);
+      if (!isCurrentNavigation(navigation)) return false;
       virtualizer.scrollToIndex(targetIndex, { align: 'start', behavior: 'auto' });
       // Retain measurements across flow switches. Re-measuring every
       // mounted row for up to 40 frames made this handoff visibly stall on iPad WebKit. Measure
@@ -593,10 +584,12 @@ function VirtualizedReaderViewportComponent({
         );
       };
       await nextFrame();
+      if (!isCurrentNavigation(navigation)) return false;
       let paragraphElement = targetElement();
       if (!paragraphElement) {
         virtualizer.scrollToIndex(targetIndex, { align: 'start', behavior: 'auto' });
         await nextFrame();
+        if (!isCurrentNavigation(navigation)) return false;
         paragraphElement = targetElement();
       }
       if (!paragraphElement) return false;
@@ -605,6 +598,7 @@ function VirtualizedReaderViewportComponent({
       virtualizer.scrollToIndex(targetIndex, { align: 'start', behavior: 'auto' });
       for (let attempt = 0; attempt < 2; attempt += 1) {
         await nextFrame();
+        if (!isCurrentNavigation(navigation)) return false;
         const root = rootRef.current;
         if (!root) return false;
         paragraphElement = targetElement();
@@ -631,9 +625,18 @@ function VirtualizedReaderViewportComponent({
   useLayoutEffect(() => {
     // Both flow layers stay mounted at the same width. A visibility switch is not a layout
     // change: clearing sizes here makes upward scrolling rediscover every previous row.
+    resetMeasurements();
     virtualizer.measure();
     measureMountedRows();
-  }, [chapter.id, measureMountedRows, settings.fontSize, settings.lineHeight, settings.paragraphSpacing, virtualizer]);
+  }, [
+    chapter.id,
+    measureMountedRows,
+    resetMeasurements,
+    settings.fontSize,
+    settings.lineHeight,
+    settings.paragraphSpacing,
+    virtualizer,
+  ]);
 
   useLayoutEffect(() => {
     const documentElement = documentRef.current;
@@ -646,10 +649,14 @@ function VirtualizedReaderViewportComponent({
       lastWidth = nextWidth;
       const anchorIndex = visibleAnchorIndexRef.current ?? firstVisible().index;
       if (anchorIndex === undefined) return;
+      const navigation = beginNavigation();
       window.cancelAnimationFrame(restoreFrame ?? 0);
       restoreFrame = window.requestAnimationFrame(() => {
+        if (!isCurrentNavigation(navigation)) return;
+        resetMeasurements();
         virtualizer.measure();
         restoreFrame = window.requestAnimationFrame(() => {
+          if (!isCurrentNavigation(navigation)) return;
           measureMountedRows();
           virtualizer.scrollToIndex(anchorIndex, { align: 'start', behavior: 'auto' });
         });
@@ -660,7 +667,15 @@ function VirtualizedReaderViewportComponent({
       observer.disconnect();
       window.cancelAnimationFrame(restoreFrame ?? 0);
     };
-  }, [chapter.id, firstVisible, measureMountedRows, virtualizer]);
+  }, [
+    beginNavigation,
+    chapter.id,
+    firstVisible,
+    isCurrentNavigation,
+    measureMountedRows,
+    resetMeasurements,
+    virtualizer,
+  ]);
 
   useEffect(() => {
     const activeItems = virtualizer.getVirtualItems();
@@ -678,6 +693,7 @@ function VirtualizedReaderViewportComponent({
       return;
     }
     if (appliedOpenSequenceRef.current === openRequest.sequence) return;
+    const navigation = beginNavigation();
     let cancelled = false;
     const acknowledgeOpen = () => {
       appliedOpenSequenceRef.current = openRequest.sequence;
@@ -691,10 +707,10 @@ function VirtualizedReaderViewportComponent({
       if (explicitParagraph?.chapterId === chapter.id) {
         const targetIndex = clamp(explicitParagraph.index - 1, 0, Math.max(chapter.paragraphCount - 1, 0));
         await loadParagraphIndexes([targetIndex]);
-        if (!cancelled) {
+        if (!cancelled && isCurrentNavigation(navigation)) {
           virtualizer.scrollToIndex(targetIndex, { align: 'center', behavior: 'auto' });
-          acknowledgeOpen();
         }
+        if (!cancelled) acknowledgeOpen();
         return;
       }
       const resolvedParagraph =
@@ -706,10 +722,11 @@ function VirtualizedReaderViewportComponent({
         : { canRestore: false, scrollTop: 0 };
       if (target.paragraphIndex !== undefined) {
         await loadParagraphIndexes([target.paragraphIndex]);
-        if (!cancelled) virtualizer.scrollToIndex(target.paragraphIndex, { align: 'start', behavior: 'auto' });
+        if (!cancelled && isCurrentNavigation(navigation))
+          virtualizer.scrollToIndex(target.paragraphIndex, { align: 'start', behavior: 'auto' });
       } else {
         await loadParagraphIndexes([0]);
-        if (!cancelled && rootRef.current) {
+        if (!cancelled && isCurrentNavigation(navigation) && rootRef.current) {
           rootRef.current.scrollTop = target.canRestore ? target.scrollTop : openRequest.fallbackScrollTop;
         }
       }
@@ -721,6 +738,8 @@ function VirtualizedReaderViewportComponent({
       window.clearTimeout(timer);
     };
   }, [
+    beginNavigation,
+    isCurrentNavigation,
     chapter,
     loadParagraphIndexes,
     openRequest,
@@ -796,7 +815,10 @@ function VirtualizedReaderViewportComponent({
     >
       <article ref={documentRef} className="reader-document">
         <ReaderChapterHeading chapter={chapter} />
-        <div className="reader-virtual-list" style={{ height: `${virtualizer.getTotalSize()}px` }}>
+        <div
+          className="reader-virtual-list"
+          style={{ height: `${Math.max(0, virtualizer.getTotalSize() - scrollPosition.shift)}px` }}
+        >
           {virtualItems.map((item) => {
             const paragraph = pages.paragraphAt(item.index);
             if (!paragraph) {
@@ -811,7 +833,7 @@ function VirtualizedReaderViewportComponent({
                   // Evicted text keeps its measured size while it reloads. Measuring the
                   // short skeleton overwrites that size and shifts every later paragraph.
                   style={{
-                    transform: `translateY(${item.start - listOffset}px)`,
+                    transform: `translateY(${item.start - listOffset - scrollPosition.shift}px)`,
                     height: failed ? undefined : item.size,
                   }}
                 >
@@ -835,7 +857,8 @@ function VirtualizedReaderViewportComponent({
                 key={paragraph.id}
                 paragraph={paragraph}
                 virtualIndex={item.index}
-                start={item.start - listOffset}
+                start={item.start - listOffset - scrollPosition.shift}
+                estimatedSize={item.size}
                 isSpeaking={ttsIndex === item.index}
                 mode={mode}
                 searchQuery={search.highlightQuery}
