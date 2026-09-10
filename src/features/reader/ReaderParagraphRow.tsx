@@ -28,6 +28,7 @@ export interface ReaderParagraphRowProps {
   readonly paragraph: Paragraph;
   readonly virtualIndex: number;
   readonly start: number;
+  readonly estimatedSize?: number;
   readonly isSpeaking: boolean;
   readonly mode: ReaderMode;
   readonly searchQuery: string;
@@ -45,11 +46,13 @@ function EpubImage({
   bookId,
   assetId,
   alt,
+  onReady,
 }: {
   repository?: BookAssetRepository;
   bookId: string;
   assetId?: string;
   alt: string;
+  onReady: () => void;
 }) {
   const [source, setSource] = useState<string>();
   const [failed, setFailed] = useState(false);
@@ -80,7 +83,18 @@ function EpubImage({
   }, [assetId, bookId, repository]);
   if (failed) return <div className="reader-image-placeholder">{alt || '이미지를 표시할 수 없습니다.'}</div>;
   if (!source) return <div className="reader-image-placeholder is-loading" aria-label="이미지 불러오는 중" />;
-  return <img className="reader-epub-image" src={source} alt={alt} onError={() => setFailed(true)} />;
+  return (
+    <img
+      className="reader-epub-image"
+      src={source}
+      alt={alt}
+      onLoad={onReady}
+      onError={() => {
+        setFailed(true);
+        onReady();
+      }}
+    />
+  );
 }
 
 function InlineEpubText({
@@ -146,6 +160,7 @@ function ReaderParagraphRowComponent({
   paragraph,
   virtualIndex,
   start,
+  estimatedSize,
   isSpeaking,
   mode,
   searchQuery,
@@ -157,6 +172,7 @@ function ReaderParagraphRowComponent({
   staticLayout = false,
   sourceOffset = 0,
 }: ReaderParagraphRowProps) {
+  const [imageReady, setImageReady] = useState(false);
   const subscribe = useCallback(
     (listener: () => void) => decorationStore.subscribe(paragraph.id, listener),
     [decorationStore, paragraph.id],
@@ -212,6 +228,7 @@ function ReaderParagraphRowComponent({
           bookId={paragraph.novelId}
           assetId={paragraph.assetId}
           alt={paragraph.text}
+          onReady={() => setImageReady(true)}
         />
       );
     }
@@ -227,7 +244,16 @@ function ReaderParagraphRowComponent({
       ref={measureElement}
       data-index={virtualIndex}
       className={classNames('reader-virtual-row', staticLayout && 'is-static')}
-      style={staticLayout ? undefined : { transform: `translateY(${start}px)` }}
+      style={
+        staticLayout
+          ? undefined
+          : {
+              transform: `translateY(${start}px)`,
+              // Remounting an illustration must not replace its known height with a
+              // short placeholder while its bytes and decoded image load again.
+              minHeight: paragraph.documentKind === 'image' && !imageReady ? estimatedSize : undefined,
+            }
+      }
     >
       <div
         data-paragraph-id={paragraph.id}

@@ -14,6 +14,7 @@ const variableParagraphs = new URLSearchParams(location.search).has('variable');
 const longChapter = new URLSearchParams(location.search).has('long');
 const withNextChapter = new URLSearchParams(location.search).has('next');
 const shortParagraphs = new URLSearchParams(location.search).has('short');
+const withImages = new URLSearchParams(location.search).has('images');
 const chapter = {
   id: `position-chapter-${singleParagraph ? 1 : 120}`,
   novelId: 'position-book',
@@ -47,6 +48,7 @@ const paragraphs = Array.from({ length: chapter.paragraphCount }, (_, index) => 
     startOffsetInChapter,
     endOffsetInChapter: offset,
     textHash: `p${index}`,
+    ...(withImages && index % 20 === 19 ? { documentKind: 'image', assetId: `image-${index}` } : {}),
   };
 });
 const writes = [];
@@ -54,6 +56,23 @@ const observations = { reveals: 0, openedChapters: [] };
 const pageRequests = [];
 let pausePages = false;
 let pendingPages = [];
+let pauseImages = false;
+let pendingImages = [];
+const imageRequests = [];
+const assetRepository = {
+  getEmbeddedResource: async (_, assetId) => {
+    imageRequests.push(assetId);
+    if (pauseImages) await new Promise((resolve) => pendingImages.push(resolve));
+    return {
+      blob: new Blob(
+        [
+          '<svg xmlns="http://www.w3.org/2000/svg" width="600" height="1500"><rect width="600" height="1500" fill="teal"/></svg>',
+        ],
+        { type: 'image/svg+xml' },
+      ),
+    };
+  },
+};
 const noop = () => {};
 const screenHandle = new ReaderScreenHandle();
 screenHandle.setActions(
@@ -73,6 +92,7 @@ const repository = {
 };
 function Fixture() {
   const [flow, setFlow] = useState('scroll');
+  const [openRequest, setOpenRequest] = useState();
   const apiRef = useRef();
   globalThis.readerFixture = {
     setFlow,
@@ -81,6 +101,24 @@ function Fixture() {
     writes,
     observations,
     pageRequests,
+    imageRequests,
+    restore: (paragraphIndex) =>
+      setOpenRequest({
+        sequence: Date.now(),
+        chapterId: chapter.id,
+        restore: true,
+        fallbackScrollTop: 0,
+        position: { chapterId: chapter.id, paragraphIndex: paragraphIndex + 1, scrollTop: 0, chapterProgress: 0.5 },
+      }),
+    pauseImages: () => {
+      pauseImages = true;
+    },
+    resumeImages: () => {
+      pauseImages = false;
+      const pending = pendingImages;
+      pendingImages = [];
+      pending.forEach((resolve) => resolve());
+    },
     pausePages: () => {
       pausePages = true;
     },
@@ -115,6 +153,8 @@ function Fixture() {
       mode: 'read',
       search: { highlightQuery: '' },
       screenHandle,
+      openRequest,
+      assetRepository,
       apiRef,
       onApiReady: noop,
       onVisualLocation: noop,

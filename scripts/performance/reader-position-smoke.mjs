@@ -49,9 +49,11 @@ try {
   const evidence = [];
   const errors = [];
   if (momentumEndOnly) {
-    const scenarios = process.argv.includes('--short-upward-only')
-      ? ['short-upward']
-      : ['grow', 'shrink', 'held', 'reverse', 'upward', 'short-upward'];
+    const scenarios = process.argv.includes('--upward-only')
+      ? ['upward', 'short-upward']
+      : process.argv.includes('--short-upward-only')
+        ? ['short-upward']
+        : ['grow', 'shrink', 'held', 'reverse', 'upward', 'short-upward'];
     for (const scenario of scenarios) {
       const upward = scenario.endsWith('upward');
       const shortChapter = scenario === 'short-upward';
@@ -126,6 +128,14 @@ try {
         });
       }
       const before = await page.locator('[data-reader-layer="scroll"]').evaluate((root) => root.scrollTop);
+      const sourceAnchor = upward
+        ? await page.locator('[data-reader-layer="scroll"]').evaluate((root) => {
+            const row = [...root.querySelectorAll('[data-index]')].find(
+              (row) => row.getBoundingClientRect().bottom > root.getBoundingClientRect().top,
+            );
+            return row ? { index: row.dataset.index, top: row.getBoundingClientRect().top } : undefined;
+          })
+        : undefined;
       if (scenario === 'held') await page.evaluate(() => sendReaderTouch('touchstart', 700));
       await page.evaluate(() => readerFixture.resumePages());
       await page.waitForFunction(() => !document.querySelector('[data-reader-layer="scroll"] .is-loading'));
@@ -148,8 +158,15 @@ try {
       assert.equal(settled.opened.length, 0, 'Momentum that reaches the end must never turn the chapter automatically');
       assert.ok(settled.rows < 80, 'Long chapter rendering remains bounded');
       if (upward) {
-        assert.ok(Math.abs(settled.top - before) <= 2, 'New rows must not cause a late upward-scroll correction');
-        assert.deepEqual(settled.adjustments, [], 'Leading overscan must not enqueue delayed scroll writes');
+        assert.ok(sourceAnchor, 'Capture a visible source row before the delayed load');
+        const sourceTop = await page
+          .locator(`[data-reader-layer="scroll"] [data-index="${sourceAnchor.index}"]`)
+          .evaluate((row) => row.getBoundingClientRect().top);
+        assert.ok(
+          Math.abs(sourceTop - sourceAnchor.top) <= 2,
+          `Delayed measurement/rebasing must preserve source ${sourceAnchor.index}: ${sourceAnchor.top} -> ${sourceTop}`,
+        );
+        assert.deepEqual(settled.adjustments, [], 'Leading overscan must not interrupt native scrolling');
       } else if (scenario === 'reverse') {
         assert.ok(settled.distance > 400, 'An upward gesture must release end anchoring');
         assert.equal(settled.armed, 'false');
@@ -247,15 +264,36 @@ try {
     await page.waitForFunction(() => globalThis.readerFixture?.api()?.flow === 'scroll');
     await page.evaluate(() => readerFixture.api().scrollToParagraphIndex(75, 'start', 'auto'));
     await page.waitForTimeout(500);
-    const heightBefore = await page.locator('.reader-virtual-list').evaluate((element) => element.style.height);
+    const rowsBefore = await page.locator('[data-reader-layer="scroll"]').evaluate((root) =>
+      [...root.querySelectorAll('[data-index]')].map((row) => ({
+        index: row.dataset.index,
+        height: row.getBoundingClientRect().height,
+        top: row.getBoundingClientRect().top,
+      })),
+    );
     await page.evaluate(() => readerFixture.setFlow('paginated'));
     await page.waitForFunction(() => readerFixture.api()?.flow === 'paginated');
     await page.waitForTimeout(300);
     await page.evaluate(() => readerFixture.setFlow('scroll'));
     await page.waitForFunction(() => readerFixture.api()?.flow === 'scroll');
     await page.waitForTimeout(300);
-    const heightAfter = await page.locator('.reader-virtual-list').evaluate((element) => element.style.height);
-    assert.equal(heightAfter, heightBefore, 'A flow switch must preserve measured paragraph heights');
+    const rowsAfter = await page.locator('[data-reader-layer="scroll"]').evaluate((root) =>
+      [...root.querySelectorAll('[data-index]')].map((row) => ({
+        index: row.dataset.index,
+        height: row.getBoundingClientRect().height,
+        top: row.getBoundingClientRect().top,
+      })),
+    );
+    const anchorBefore = rowsBefore.find((row) => row.top + row.height > 0);
+    const anchorAfter = rowsAfter.find((row) => row.index === anchorBefore?.index);
+    assert.ok(
+      anchorAfter && Math.abs(anchorAfter.top - anchorBefore.top) <= 2,
+      'A flow switch must preserve the visible source position',
+    );
+    for (const row of rowsBefore) {
+      const after = rowsAfter.find((candidate) => candidate.index === row.index);
+      if (after) assert.equal(after.height, row.height, 'A flow switch must preserve measured paragraph heights');
+    }
     const stability = await page.evaluate(async () => {
       const root = document.querySelector('[data-reader-layer="scroll"]');
       const content = root.querySelector('.reader-document');
@@ -279,7 +317,7 @@ try {
     evidence.push({
       browserEngine,
       viewport: page.viewportSize(),
-      measuredHeightPreserved: heightAfter === heightBefore,
+      measuredHeightPreserved: true,
       ...stability,
     });
     assert.equal(
