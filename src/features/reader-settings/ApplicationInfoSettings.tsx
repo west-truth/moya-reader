@@ -1,3 +1,4 @@
+import { publicAssetUrl } from '../../utils/public-asset-url';
 import {
   ExternalLink,
   FileArchive,
@@ -11,6 +12,7 @@ import {
   Smartphone,
 } from 'lucide-react';
 import packageMetadata from '../../../package.json';
+import { useOptionalAppRuntime } from '../../app/runtime/RuntimeProvider';
 import type { PlatformRuntimeInfo, PlatformRuntimeKind, ProviderExecutionRuntimeKind } from '../../platform/runtime';
 import type { SelfHostAccount } from '../auth/self-host-auth-client';
 
@@ -96,6 +98,8 @@ function providerRuntimeLabel(runtime: ProviderExecutionRuntimeKind): string {
 }
 
 export function ApplicationInfoSettings(props: ApplicationInfoSettingsProps) {
+  const product = useOptionalAppRuntime()?.product;
+  const StoragePanel = product?.StoragePanel;
   const isAndroid = props.platformRuntime.kind === 'tauri-mobile' && /Android/i.test(props.platformRuntime.userAgent);
   const mediaSessionAvailable =
     typeof navigator !== 'undefined' && 'mediaSession' in navigator && Boolean(navigator.mediaSession);
@@ -110,7 +114,9 @@ export function ApplicationInfoSettings(props: ApplicationInfoSettingsProps) {
     ? '네이티브 캐시 · WorkManager 실패 복구'
     : props.platformRuntime.kind === 'tauri-desktop'
       ? '네이티브 TTS 캐시 · 중단 항목 복구'
-      : '서버 TTS 연결 시 브라우저 오디오 캐시';
+      : product
+        ? '저장한 작품 읽기 · 음성별 오프라인 지원 차이'
+        : '서버 TTS 연결 시 브라우저 오디오 캐시';
   const currentFiles = isAndroid
     ? 'Android 문서 선택기(SAF)'
     : props.platformRuntime.kind === 'tauri-desktop'
@@ -119,15 +125,16 @@ export function ApplicationInfoSettings(props: ApplicationInfoSettingsProps) {
 
   return (
     <div className="application-info-settings">
+      {StoragePanel && <StoragePanel />}
       <section className="application-info-identity" aria-labelledby="application-info-title">
         <div className="application-info-mark" aria-hidden="true">
-          <img src="/icons/moya-192.png" alt="" />
+          <img src={publicAssetUrl('/icons/moya-192.png')} alt="" />
         </div>
         <div>
           <h3 id="application-info-title" className="sr-only">
             모야
           </h3>
-          <img className="application-info-wordmark" src="/branding/moya-wordmark.png" alt="모야" />
+          <img className="application-info-wordmark" src={publicAssetUrl('/branding/moya-wordmark.png')} alt="모야" />
           <p>텍스트 및 만화 뷰어</p>
         </div>
         <span>v{packageMetadata.version}</span>
@@ -146,7 +153,9 @@ export function ApplicationInfoSettings(props: ApplicationInfoSettingsProps) {
             )}
             <div>
               <strong>{runtimeLabel(props.platformRuntime)}</strong>
-              <span>{providerRuntimeLabel(props.providerExecutionRuntime)}</span>
+              <span>
+                {product ? '이 브라우저에 저장 · 시스템 음성' : providerRuntimeLabel(props.providerExecutionRuntime)}
+              </span>
             </div>
           </div>
           <dl>
@@ -190,21 +199,23 @@ export function ApplicationInfoSettings(props: ApplicationInfoSettingsProps) {
       <section aria-labelledby="platform-help-title">
         <h3 id="platform-help-title">플랫폼별 동작</h3>
         <div className="application-info-platforms">
-          {runtimeHelpItems.map((item) => {
-            const Icon = item.icon;
-            const current = item.kind === props.platformRuntime.kind;
-            return (
-              <article key={item.kind} data-current={current || undefined}>
-                <div className="application-info-platform-heading">
-                  <Icon size={17} aria-hidden="true" />
-                  <strong>{item.label}</strong>
-                  {current && <span>현재</span>}
-                </div>
-                <p>{item.summary}</p>
-                <small>{item.limit}</small>
-              </article>
-            );
-          })}
+          {runtimeHelpItems
+            .filter((item) => !product || item.kind === 'browser')
+            .map((item) => {
+              const Icon = item.icon;
+              const current = item.kind === props.platformRuntime.kind;
+              return (
+                <article key={item.kind} data-current={current || undefined}>
+                  <div className="application-info-platform-heading">
+                    <Icon size={17} aria-hidden="true" />
+                    <strong>{item.label}</strong>
+                    {current && <span>현재</span>}
+                  </div>
+                  <p>{item.summary}</p>
+                  <small>{item.limit}</small>
+                </article>
+              );
+            })}
         </div>
       </section>
 
@@ -244,8 +255,9 @@ export function ApplicationInfoSettings(props: ApplicationInfoSettingsProps) {
         <div className="application-info-inline">
           <ShieldCheck size={17} aria-hidden="true" />
           <p>
-            책과 독서 기록은 기본적으로 기기에 저장됩니다. AI와 TTS 요청은 UI에서 외부 API를 직접 호출하지 않고 설정한
-            서버 작업자 또는 기기의 보안 연결을 통해 처리됩니다.
+            {product
+              ? '책과 독서 기록은 이 브라우저에 저장됩니다. 클라우드는 연결한 경우에만 사용합니다. 현재 Web 버전은 시스템 음성 읽어주기를 지원하며 AI 분석과 고품질 음성 합성은 제공하지 않습니다. 시스템 음성 중 일부는 기기의 온라인 서비스를 이용할 수 있습니다.'
+              : '책과 독서 기록은 기본적으로 기기에 저장됩니다. AI와 TTS 요청은 UI에서 외부 API를 직접 호출하지 않고 설정한 서버 작업자 또는 기기의 보안 연결을 통해 처리됩니다.'}
           </p>
         </div>
       </section>
@@ -253,7 +265,7 @@ export function ApplicationInfoSettings(props: ApplicationInfoSettingsProps) {
       <section aria-labelledby="open-source-title">
         <div className="application-info-section-heading">
           <h3 id="open-source-title">오픈소스 및 제3자 고지</h3>
-          <a href="/THIRD_PARTY_NOTICES.md" target="_blank" rel="noreferrer">
+          <a href={publicAssetUrl('/THIRD_PARTY_NOTICES.md')} target="_blank" rel="noreferrer">
             고지 전문 <ExternalLink size={13} aria-hidden="true" />
           </a>
         </div>
@@ -272,7 +284,7 @@ export function ApplicationInfoSettings(props: ApplicationInfoSettingsProps) {
                   {backend.licenseFile ? (
                     <>
                       {' · '}
-                      <a href={backend.licenseFile} target="_blank" rel="noreferrer">
+                      <a href={publicAssetUrl(backend.licenseFile)} target="_blank" rel="noreferrer">
                         LGPL 2.1
                       </a>
                     </>
@@ -287,7 +299,7 @@ export function ApplicationInfoSettings(props: ApplicationInfoSettingsProps) {
         </div>
         <p className="application-info-note">
           모야의 소스 코드는{' '}
-          <a href="/LICENSE" target="_blank" rel="noreferrer">
+          <a href={publicAssetUrl('/LICENSE')} target="_blank" rel="noreferrer">
             Apache License 2.0
           </a>
           으로 배포됩니다.

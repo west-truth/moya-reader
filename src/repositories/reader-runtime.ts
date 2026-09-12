@@ -298,8 +298,10 @@ export function getOrCreateRemoteDeviceId(): string {
   }
 }
 
-export function createReaderRuntime(): ReaderRuntime {
-  const mode = import.meta.env.VITE_READER_BACKEND === 'remote' ? 'remote' : 'local';
+export function createReaderRuntime(
+  options: { mode?: ReaderBackendMode; allowServerSync?: boolean } = {},
+): ReaderRuntime {
+  const mode = options.mode ?? (import.meta.env.VITE_READER_BACKEND === 'remote' ? 'remote' : 'local');
   const bookEnrichmentRepository = new IndexedDbBookEnrichmentRepository();
   if (mode === 'remote') {
     const apiBaseUrl = resolveApiBaseUrl();
@@ -326,7 +328,7 @@ export function createReaderRuntime(): ReaderRuntime {
     };
   }
 
-  const syncApiBaseUrl = resolveSyncApiBaseUrl();
+  const syncApiBaseUrl = options.allowServerSync === false ? undefined : resolveSyncApiBaseUrl();
   const localRepository = new IndexedDbReaderRepository();
   const syncClient = syncApiBaseUrl
     ? new RemoteApiClient(syncApiBaseUrl, { getAuthToken: resolveApiAuthToken })

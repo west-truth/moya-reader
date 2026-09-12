@@ -1,3 +1,5 @@
+import type { ComponentType } from 'react';
+import type { SyncPanelProps } from '../../features/sync/sync-panel-contract';
 import type { AIProvider } from '../../providers/ai';
 import type { BookAnalysisWorkflowGateway } from '../../features/ai/book-analysis-workflow-gateway';
 import type { NativeBookWorkflowBridge } from '../../features/ai/native-workflow/contracts';
@@ -32,6 +34,12 @@ import {
 } from '../../platform/tauri';
 
 export interface AppRuntime {
+  /** Optional product composition; omitted by existing desktop/self-host entrypoints. */
+  readonly product?: {
+    readonly kind: 'local-static';
+    readonly StoragePanel: ComponentType;
+    readonly SyncPanel: ComponentType<SyncPanelProps>;
+  };
   readonly extensionRuntime: AppExtensionRuntime;
   readonly readerRuntime: ReaderRuntime;
   readonly providerRuntime: ReaderProviderRuntime;
