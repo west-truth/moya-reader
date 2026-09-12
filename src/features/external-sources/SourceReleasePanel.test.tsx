@@ -104,7 +104,7 @@ describe('source release lists', () => {
     },
   );
 
-  it('starts at chapter one even when a later chapter is current and preserves hidden selection counts', async () => {
+  it('opens the page containing the reading release and keeps page selection counts correct', async () => {
     const items = releases(125).map((item, index) => ({
       ...item,
       selected: index === 114,
@@ -114,10 +114,10 @@ describe('source release lists', () => {
     await act(async () => {
       renderer = create(<SourceReleasePanel controller={control()} items={items} renderItem={renderItem} />);
     });
-    expect(renderer.root.findByProps({ 'aria-label': '1페이지' }).props['aria-current']).toBe('page');
+    expect(renderer.root.findByProps({ 'aria-label': '12페이지' }).props['aria-current']).toBe('page');
     expect(
       renderer.root.findByProps({ className: 'source-release-selection-summary' }).findByType('span').children.join(''),
-    ).toContain('전체 1화 선택 · 이 페이지 0화');
+    ).toContain('전체 1화 선택 · 이 페이지 1화');
     await act(async () => renderer.unmount());
   });
 

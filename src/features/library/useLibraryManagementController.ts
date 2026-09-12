@@ -8,6 +8,7 @@ import type {
   LibraryCatalogRepository,
 } from '../../repositories/library-catalog-repository';
 import { downloadLibraryMetadata } from './library-metadata-export';
+import { readLibraryViewPreferences, saveLibraryViewPreferences } from './library-view-preferences';
 
 export type LibraryManagementPanel = { kind: 'shelves' } | { kind: 'metadata'; book: Novel };
 export type CoverDraftAction = { kind: 'keep' } | { kind: 'remove' } | { kind: 'replace'; input: BookCoverAssetInput };
@@ -143,7 +144,9 @@ export function useLibraryManagementController(
 ): LibraryManagementController {
   const [shelves, setShelves] = useState<Shelf[]>([]);
   const [memberships, setMemberships] = useState<ShelfMembership[]>([]);
-  const [activeShelfId, setActiveShelfIdState] = useState<string>();
+  const [activeShelfId, setActiveShelfIdState] = useState<string | undefined>(
+    () => readLibraryViewPreferences().activeShelfId,
+  );
   const [selectionMode, setSelectionMode] = useState(false);
   const [selectedBookIds, setSelectedBookIds] = useState<Set<string>>(() => new Set());
   const [panel, setPanel] = useState<LibraryManagementPanel>();
@@ -152,6 +155,10 @@ export function useLibraryManagementController(
   const [lastBatchReceipt, setLastBatchReceipt] = useState<BatchLibraryReceipt>();
   const busyRef = useRef(false);
   const latestBooksRef = useRef(new Map<string, Novel>());
+
+  useEffect(() => {
+    saveLibraryViewPreferences({ activeShelfId });
+  }, [activeShelfId]);
 
   const rememberBook = useCallback((book: Novel): Novel => {
     const remembered = latestBooksRef.current.get(book.id);

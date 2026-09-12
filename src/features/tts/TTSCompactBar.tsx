@@ -1,4 +1,17 @@
-import { Gauge, Headphones, Pause, Play, Settings2, SkipBack, SkipForward, Square, Timer } from 'lucide-react';
+import {
+  ChevronDown,
+  ChevronUp,
+  Gauge,
+  Headphones,
+  Pause,
+  Play,
+  Settings2,
+  SkipBack,
+  SkipForward,
+  Square,
+  Timer,
+} from 'lucide-react';
+import { useId, useState } from 'react';
 import type { TTSSleepTimerPreset } from '../../domain/types';
 
 export interface TTSCompactBarProps {
@@ -44,8 +57,15 @@ function playbackStatusLabel(status: string | undefined, busy: boolean): string 
 }
 
 export default function TTSCompactBar(props: TTSCompactBarProps) {
+  const [expanded, setExpanded] = useState(false);
+  const detailsId = useId();
   return (
-    <section className="tts-compact-bar" aria-label="TTS 재생 제어" data-playing={props.playing}>
+    <section
+      className="tts-compact-bar"
+      aria-label="TTS 재생 제어"
+      data-playing={props.playing}
+      data-expanded={expanded}
+    >
       <div className="tts-compact-identity">
         <Headphones size={17} />
         <span>
@@ -75,6 +95,21 @@ export default function TTSCompactBar(props: TTSCompactBarProps) {
         <button className="icon-btn" onClick={props.next} title="다음 문단" aria-label="다음 문단">
           <SkipForward size={17} />
         </button>
+        <button className="icon-btn" onClick={props.stop} title="정지" aria-label="TTS 정지">
+          <Square size={16} />
+        </button>
+        <button
+          className="icon-btn tts-compact-disclosure"
+          onClick={() => setExpanded((value) => !value)}
+          aria-expanded={expanded}
+          aria-controls={detailsId}
+          aria-label={expanded ? '청취 옵션 접기' : '청취 옵션 펼치기'}
+          title={expanded ? '청취 옵션 접기' : '청취 옵션 펼치기'}
+        >
+          {expanded ? <ChevronDown size={17} /> : <ChevronUp size={17} />}
+        </button>
+      </div>
+      <div id={detailsId} className="tts-compact-details">
         <button className="tts-compact-value" onClick={props.openSettings} title="청취 설정">
           <Gauge size={15} /> {props.rate.toFixed(1)}x
         </button>
@@ -99,11 +134,13 @@ export default function TTSCompactBar(props: TTSCompactBarProps) {
           </select>
           <span>{timerLabel(props.timerRemainingSeconds, props.timerPreset)}</span>
         </label>
-        <button className="icon-btn" onClick={props.openSettings} title="청취 설정" aria-label="청취 설정 열기">
-          <Settings2 size={17} />
-        </button>
-        <button className="icon-btn" onClick={props.stop} title="정지" aria-label="TTS 정지">
-          <Square size={16} />
+        <button
+          className="tts-compact-value"
+          onClick={props.openSettings}
+          title="청취 설정"
+          aria-label="청취 설정 열기"
+        >
+          <Settings2 size={17} /> 청취 설정
         </button>
       </div>
     </section>

@@ -95,9 +95,9 @@
   --font-ui:
     system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI Variable Text', 'Segoe UI', 'Apple SD Gothic Neo',
     'Noto Sans KR', 'Malgun Gothic', sans-serif;
-  --font-serif: 'Noto Serif KR', 'KoPub Batang', 'Batang', Georgia, serif;
-  --font-sans: 'Pretendard Variable', Pretendard, 'Segoe UI', 'Malgun Gothic', Arial, sans-serif;
-  --font-mono: 'JetBrains Mono', 'D2Coding', Consolas, monospace;
+  --font-serif: 'Noto Serif KR', 'KoPub Batang', 'Batang', AppleMyungjo, Georgia, serif;
+  --font-sans: 'Pretendard Variable', Pretendard, 'Segoe UI', 'Malgun Gothic', 'Apple SD Gothic Neo', Arial, sans-serif;
+  --font-mono: 'JetBrains Mono', 'D2Coding', Consolas, Menlo, monospace;
 
   /* Native application typography. Keep Reader type separately user-configurable. */
   --ui-title-xl-size: 21px;

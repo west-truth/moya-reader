@@ -54,7 +54,8 @@ const paragraphs = Array.from({ length: chapter.paragraphCount }, (_, index) => 
 const writes = [];
 const observations = { reveals: 0, openedChapters: [] };
 const pageRequests = [];
-let pausePages = false;
+let pausePages = new URLSearchParams(location.search).has('pause');
+let failPages = false;
 let pendingPages = [];
 let pauseImages = false;
 let pendingImages = [];
@@ -85,6 +86,7 @@ const repository = {
   getParagraphPage: async (_, pageIndex) => {
     pageRequests.push(pageIndex);
     if (pausePages) await new Promise((resolve) => pendingPages.push(resolve));
+    if (failPages) throw new Error('Synthetic unavailable page');
     return { paragraphs: paragraphs.slice(pageIndex * PARAGRAPHS_PER_PAGE, (pageIndex + 1) * PARAGRAPHS_PER_PAGE) };
   },
   getParagraph: async (id) => paragraphs.find((paragraph) => paragraph.id === id),
@@ -92,10 +94,26 @@ const repository = {
 };
 function Fixture() {
   const [flow, setFlow] = useState('scroll');
-  const [openRequest, setOpenRequest] = useState();
+  const [mounted, setMounted] = useState(true);
+  const [openRequest, setOpenRequest] = useState(() => {
+    const target = new URLSearchParams(location.search).get('resume');
+    return target === null
+      ? undefined
+      : {
+          sequence: 1,
+          chapterId: chapter.id,
+          restore: true,
+          fallbackScrollTop: 0,
+          position: { chapterId: chapter.id, paragraphIndex: Number(target) + 1, scrollTop: 0, chapterProgress: 0.75 },
+        };
+  });
   const apiRef = useRef();
   globalThis.readerFixture = {
     setFlow,
+    setMounted,
+    failPages: (value) => {
+      failPages = value;
+    },
     flow,
     api: () => apiRef.current,
     writes,
@@ -141,32 +159,33 @@ function Fixture() {
   return React.createElement(
     'main',
     { className: 'reader-screen', style },
-    React.createElement(ReaderViewport, {
-      repository,
-      novel,
-      chapter,
-      chapters: withNextChapter
-        ? [chapter, { ...chapter, id: 'next-chapter', index: 2, title: 'Next chapter' }]
-        : [chapter],
-      settings: defaultSettings,
-      readingFlow: flow,
-      mode: 'read',
-      search: { highlightQuery: '' },
-      screenHandle,
-      openRequest,
-      assetRepository,
-      apiRef,
-      onApiReady: noop,
-      onVisualLocation: noop,
-      onSelectionChanged: noop,
-      onRevealChrome: () => {
-        observations.reveals += 1;
-      },
-      onToggleImmersive: noop,
-      onPageIntent: () => setFlow('paginated'),
-      onScrollIntent: () => setFlow('scroll'),
-      onDocumentLink: noop,
-    }),
+    mounted &&
+      React.createElement(ReaderViewport, {
+        repository,
+        novel,
+        chapter,
+        chapters: withNextChapter
+          ? [chapter, { ...chapter, id: 'next-chapter', index: 2, title: 'Next chapter' }]
+          : [chapter],
+        settings: defaultSettings,
+        readingFlow: flow,
+        mode: 'read',
+        search: { highlightQuery: '' },
+        screenHandle,
+        openRequest,
+        assetRepository,
+        apiRef,
+        onApiReady: noop,
+        onVisualLocation: noop,
+        onSelectionChanged: noop,
+        onRevealChrome: () => {
+          observations.reveals += 1;
+        },
+        onToggleImmersive: noop,
+        onPageIntent: () => setFlow('paginated'),
+        onScrollIntent: () => setFlow('scroll'),
+        onDocumentLink: noop,
+      }),
   );
 }
 createRoot(document.getElementById('root')).render(React.createElement(Fixture));

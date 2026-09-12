@@ -242,12 +242,21 @@ function VirtualizedReaderViewportComponent({
 }: ReaderViewportLayerProps) {
   const rootRef = useRef<HTMLDivElement>(null);
   const documentRef = useRef<HTMLElement>(null);
-  const appliedOpenSequenceRef = useRef<number>();
+  const [appliedOpenSequence, setAppliedOpenSequence] = useState<number>();
+  const [openError, setOpenError] = useState(false);
+  const [openAttempt, setOpenAttempt] = useState(0);
+  const opening = Boolean(openRequest?.chapterId === chapter.id && appliedOpenSequence !== openRequest.sequence);
   const visibleAnchorIndexRef = useRef<number>();
+  const viewportInsetsRef = useRef({ top: 0, bottom: 0 });
   const [listOffset, setListOffset] = useState(0);
-  const scrollPosition = useReaderScrollPosition(rootRef, documentRef, isActive);
+  const scrollPosition = useReaderScrollPosition(rootRef, documentRef, isActive && !opening);
   const { beginNavigation, isCurrentNavigation, resetMeasurements } = scrollPosition;
   const pages = useParagraphPages(repository, chapter.id, chapter.paragraphCount);
+  const pagesRef = useRef(pages);
+  pagesRef.current = pages;
+  useLayoutEffect(() => {
+    if (rootRef.current) rootRef.current.inert = opening;
+  }, [opening]);
   const virtualizer = useVirtualizer({
     count: chapter.paragraphCount,
     getScrollElement: () => rootRef.current,
@@ -265,6 +274,11 @@ function VirtualizedReaderViewportComponent({
     const list = documentRef.current?.querySelector<HTMLElement>('.reader-virtual-list');
     if (!root || !list) return;
     const update = () => {
+      const style = window.getComputedStyle(root);
+      viewportInsetsRef.current = {
+        top: Number.parseFloat(style.paddingTop) || 0,
+        bottom: Number.parseFloat(style.paddingBottom) || 0,
+      };
       // Include the heading and reader padding in virtual scroll coordinates.
       // Layout offsets exclude the temporary chapter-boundary pull transform.
       let offset = 0;
@@ -301,8 +315,13 @@ function VirtualizedReaderViewportComponent({
 
   const firstVisible = useCallback((): { index?: number; paragraph?: Paragraph } => {
     const root = rootRef.current;
-    const viewportTop = virtualizer.scrollOffset ?? root?.scrollTop ?? 0;
-    const viewportBottom = root ? viewportTop + root.clientHeight : Number.POSITIVE_INFINITY;
+    const scrollOffset = virtualizer.scrollOffset ?? root?.scrollTop ?? 0;
+    // Match the reading area used by anchor restoration. Overscan inside the top
+    // margin is not the saved paragraph, otherwise every reopen drifts backward.
+    const viewportTop = scrollOffset + viewportInsetsRef.current.top;
+    const viewportBottom = root
+      ? scrollOffset + root.clientHeight - viewportInsetsRef.current.bottom
+      : Number.POSITIVE_INFINITY;
     let firstAfterViewport: number | undefined;
     for (const item of virtualizer.getVirtualItems()) {
       const itemEnd = item.start + item.size;
@@ -320,7 +339,7 @@ function VirtualizedReaderViewportComponent({
   }, [pages, virtualizer]);
 
   const progress = useReaderProgress({
-    isActive,
+    isActive: isActive && !opening,
     positionPersistence,
     rootRef,
     repository,
@@ -338,7 +357,7 @@ function VirtualizedReaderViewportComponent({
 
   const scrollToParagraphIndex = useCallback(
     async (index: number, align: 'start' | 'center' | 'end' = 'center', behavior: ScrollBehavior = 'smooth') => {
-      if (chapter.paragraphCount <= 0) return;
+      if (opening || chapter.paragraphCount <= 0) return;
       const navigation = beginNavigation();
       const targetIndex = clamp(index, 0, chapter.paragraphCount - 1);
       await pages.loadIndexes([targetIndex]);
@@ -346,7 +365,7 @@ function VirtualizedReaderViewportComponent({
       virtualizer.scrollToIndex(targetIndex, { align, behavior });
       onRevealChrome();
     },
-    [beginNavigation, chapter.paragraphCount, isCurrentNavigation, onRevealChrome, pages, virtualizer],
+    [beginNavigation, chapter.paragraphCount, isCurrentNavigation, onRevealChrome, opening, pages, virtualizer],
   );
 
   const scrollToParagraph = useCallback(
@@ -359,14 +378,19 @@ function VirtualizedReaderViewportComponent({
     [chapter.id, pages, repository, scrollToParagraphIndex],
   );
 
-  const scrollByPixels = useCallback((deltaY: number) => {
-    const root = rootRef.current;
-    if (!root || !Number.isFinite(deltaY) || deltaY === 0) return;
-    root.scrollBy({ top: deltaY, behavior: 'auto' });
-  }, []);
+  const scrollByPixels = useCallback(
+    (deltaY: number) => {
+      if (opening) return;
+      const root = rootRef.current;
+      if (!root || !Number.isFinite(deltaY) || deltaY === 0) return;
+      root.scrollBy({ top: deltaY, behavior: 'auto' });
+    },
+    [opening],
+  );
 
   const scrollPageJump = useCallback(
     (direction: -1 | 1) => {
+      if (opening) return;
       const root = rootRef.current;
       if (!root) return;
       const reducedMotion = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ?? false;
@@ -377,11 +401,12 @@ function VirtualizedReaderViewportComponent({
       });
       onRevealChrome();
     },
-    [onRevealChrome, settings.readingProfile.pageTurnMotion],
+    [onRevealChrome, opening, settings.readingProfile.pageTurnMotion],
   );
 
   const scrubTo = useCallback(
     async (value: number) => {
+      if (opening) return;
       const nextProgress = clamp(value, 0, 1);
       if (chapter.paragraphCount > 0) {
         const targetIndex = clamp(
@@ -397,7 +422,7 @@ function VirtualizedReaderViewportComponent({
       if (!root) return;
       root.scrollTop = Math.max(root.scrollHeight - root.clientHeight, 1) * nextProgress;
     },
-    [chapter.paragraphCount, scrollToParagraphIndex],
+    [chapter.paragraphCount, opening, scrollToParagraphIndex],
   );
 
   const goChapter = useCallback(
@@ -430,7 +455,7 @@ function VirtualizedReaderViewportComponent({
     rootRef,
     contentRef: documentRef,
     chapterId: chapter.id,
-    enabled: isActive && Boolean(nextChapter),
+    enabled: isActive && !opening && Boolean(nextChapter),
     onNextChapter: () => goChapter(1),
   });
 
@@ -453,6 +478,7 @@ function VirtualizedReaderViewportComponent({
   }, [getSelection, onSelectionChanged]);
 
   const getVisibleAnchor = useCallback((): ReaderAnchor | undefined => {
+    if (opening) return undefined;
     const root = rootRef.current;
     if (root) {
       const viewportTop = readerContentTop(root);
@@ -488,10 +514,11 @@ function VirtualizedReaderViewportComponent({
       offset: current?.offsetInParagraph ?? 0,
       sourceLocator: paragraph.sourceLocator,
     };
-  }, [chapter.id, novel.activeContentRevisionId, novel.id, pages, progress]);
+  }, [chapter.id, novel.activeContentRevisionId, novel.id, opening, pages, progress]);
 
   const getPageTurnAnchor = useCallback(
     async (direction: -1 | 1): Promise<ReaderAnchor | undefined> => {
+      if (opening) return undefined;
       const root = rootRef.current;
       if (root) {
         const indexes = [...root.querySelectorAll<HTMLElement>('[data-index]')]
@@ -544,7 +571,7 @@ function VirtualizedReaderViewportComponent({
         sourceLocator: candidate.paragraph.sourceLocator,
       };
     },
-    [chapter.id, chapter.paragraphCount, getVisibleAnchor, novel.activeContentRevisionId, novel.id, pages],
+    [chapter.id, chapter.paragraphCount, getVisibleAnchor, novel.activeContentRevisionId, novel.id, opening, pages],
   );
 
   apiRef.current = {
@@ -613,7 +640,7 @@ function VirtualizedReaderViewportComponent({
     },
     getParagraphAtIndex: pages.getParagraphAt,
     getCachedParagraphById: pages.paragraphById,
-    getLocation: progress.readLocation,
+    getLocation: () => (opening ? undefined : progress.readLocation()),
     getSelection,
   };
 
@@ -678,77 +705,111 @@ function VirtualizedReaderViewportComponent({
   ]);
 
   useEffect(() => {
+    if (opening) return;
     const activeItems = virtualizer.getVirtualItems();
     if (activeItems.length === 0) return;
     const indexes = activeItems.map((item) => item.index);
     const generation = pages.generation;
+    let cancelled = false;
     void pages.loadIndexes(indexes).then(() => {
-      if (pages.generation === generation) pages.prune(indexes);
+      if (!cancelled && pagesRef.current.generation === generation) pages.prune(indexes);
     });
-  }, [pages, virtualRangeKey, virtualizer]);
+    return () => {
+      cancelled = true;
+    };
+  }, [opening, pages, virtualRangeKey, virtualizer]);
 
   useEffect(() => {
-    if (!openRequest || openRequest.chapterId !== chapter.id) {
-      void loadParagraphIndexes([0]);
-      return;
-    }
-    if (appliedOpenSequenceRef.current === openRequest.sequence) return;
-    const navigation = beginNavigation();
+    if (!opening || !isActive || !openRequest) return;
     let cancelled = false;
-    const acknowledgeOpen = () => {
-      appliedOpenSequenceRef.current = openRequest.sequence;
-      screenHandle.acknowledgeOpen(openRequest.sequence);
-      if (isActive) recordVisibleLocation();
-    };
+    setOpenError(false);
     const restore = async () => {
       const explicitParagraph = openRequest.targetParagraphId
         ? await repository.getParagraph(openRequest.targetParagraphId)
         : undefined;
-      if (explicitParagraph?.chapterId === chapter.id) {
-        const targetIndex = clamp(explicitParagraph.index - 1, 0, Math.max(chapter.paragraphCount - 1, 0));
-        await loadParagraphIndexes([targetIndex]);
-        if (!cancelled && isCurrentNavigation(navigation)) {
-          virtualizer.scrollToIndex(targetIndex, { align: 'center', behavior: 'auto' });
-        }
-        if (!cancelled) acknowledgeOpen();
-        return;
-      }
       const resolvedParagraph =
         openRequest.restore && openRequest.position?.paragraphIndex === 0 && openRequest.position.paragraphId
           ? await repository.getParagraph(openRequest.position.paragraphId)
           : undefined;
-      const target = openRequest.restore
-        ? resolveRestoreReadingPositionTarget(chapter, openRequest.position, resolvedParagraph)
-        : { canRestore: false, scrollTop: 0 };
-      if (target.paragraphIndex !== undefined) {
-        await loadParagraphIndexes([target.paragraphIndex]);
-        if (!cancelled && isCurrentNavigation(navigation))
-          virtualizer.scrollToIndex(target.paragraphIndex, { align: 'start', behavior: 'auto' });
-      } else {
-        await loadParagraphIndexes([0]);
-        if (!cancelled && isCurrentNavigation(navigation) && rootRef.current) {
-          rootRef.current.scrollTop = target.canRestore ? target.scrollTop : openRequest.fallbackScrollTop;
-        }
+      if (cancelled) return;
+      const target =
+        explicitParagraph?.chapterId === chapter.id
+          ? { canRestore: true, paragraphIndex: explicitParagraph.index - 1, scrollTop: 0 }
+          : openRequest.restore
+            ? resolveRestoreReadingPositionTarget(chapter, openRequest.position, resolvedParagraph)
+            : { canRestore: false, scrollTop: 0 };
+      const targetIndex = clamp(target.paragraphIndex ?? 0, 0, Math.max(chapter.paragraphCount - 1, 0));
+      const indexes = Array.from(
+        { length: Math.min(chapter.paragraphCount, targetIndex + 7) - Math.max(0, targetIndex - 6) },
+        (_, index) => Math.max(0, targetIndex - 6) + index,
+      );
+      const cache = pagesRef.current;
+      // Failed loads are deliberately sticky in the shared cache. Only explicit retry clears them.
+      if (openAttempt > 0) {
+        await Promise.all(
+          [...new Set(indexes.map((index) => Math.floor(index / PARAGRAPHS_PER_PAGE)))]
+            .filter((index) => cache.isPageFailed(index))
+            .map((index) => cache.retryPage(index)),
+        );
       }
-      if (!cancelled) acknowledgeOpen();
+      await loadParagraphIndexes(indexes);
+      if (cancelled) return;
+      if (chapter.paragraphCount > 0 && !cache.paragraphAt(targetIndex)) throw new Error('Resume target unavailable');
+      if (target.paragraphIndex !== undefined && chapter.paragraphCount > 0) {
+        const paragraph = cache.paragraphAt(targetIndex)!;
+        const anchor: ReaderAnchor = {
+          bookId: novel.id,
+          contentRevisionId: novel.activeContentRevisionId ?? `${novel.id}:${chapter.id}`,
+          sectionId: chapter.id,
+          blockId: paragraph.id,
+          blockIndex: targetIndex,
+          offset: explicitParagraph ? 0 : (openRequest.position?.offsetInParagraph ?? 0),
+        };
+        if (!(await apiRef.current?.scrollToAnchor(anchor))) throw new Error('Resume layout unavailable');
+        if (cancelled) return;
+        // Load the destination viewport as well as its overscan before revealing it.
+        await loadParagraphIndexes(virtualizer.getVirtualItems().map((item) => item.index));
+        if (cancelled) return;
+        if (!(await apiRef.current?.scrollToAnchor(anchor))) throw new Error('Resume layout unavailable');
+      } else if (rootRef.current) {
+        const navigation = beginNavigation();
+        await nextFrame();
+        if (cancelled || !isCurrentNavigation(navigation)) return;
+        rootRef.current.scrollTop = target.canRestore ? target.scrollTop : openRequest.fallbackScrollTop;
+        await nextFrame();
+        await loadParagraphIndexes(virtualizer.getVirtualItems().map((item) => item.index));
+      }
+      await nextFrame();
+      if (!cancelled) setAppliedOpenSequence(openRequest.sequence);
     };
-    const timer = window.setTimeout(() => void restore(), 60);
+    void restore().catch(() => {
+      if (!cancelled) setOpenError(true);
+    });
     return () => {
       cancelled = true;
-      window.clearTimeout(timer);
     };
   }, [
+    apiRef,
     beginNavigation,
-    isCurrentNavigation,
     chapter,
+    isActive,
+    isCurrentNavigation,
     loadParagraphIndexes,
+    novel.activeContentRevisionId,
+    novel.id,
+    openAttempt,
+    opening,
     openRequest,
     repository,
-    screenHandle,
     virtualizer,
-    isActive,
-    recordVisibleLocation,
   ]);
+
+  useEffect(() => {
+    if (opening || !isActive || !openRequest || appliedOpenSequence !== openRequest.sequence) return;
+    screenHandle.acknowledgeOpen(openRequest.sequence);
+    // Only the restored, visible viewport may publish or persist a reading position.
+    recordVisibleLocation();
+  }, [appliedOpenSequence, isActive, openRequest, opening, recordVisibleLocation, screenHandle]);
 
   const failedRows = new Set<number>();
   const failedPages = new Set<number>();
@@ -776,125 +837,140 @@ function VirtualizedReaderViewportComponent({
   });
 
   return (
-    <section
-      ref={rootRef}
-      className={`reader-scroll reader-viewport-layer ${isActive ? 'is-active' : 'is-inactive'} ${scrollChapterBoundary.armed ? 'is-next-chapter-armed' : ''} font-${settings.font} mode-${mode}`}
-      tabIndex={isActive ? 0 : -1}
-      aria-hidden={!isActive}
-      data-reader-layer="scroll"
-      onScroll={() => {
-        if (!isActive) return;
-        onRevealChrome();
-        visibleAnchorIndexRef.current = firstVisible().index;
-        progress.handleScroll();
-        scrollChapterBoundary.onScroll();
-      }}
-      onWheel={scrollChapterBoundary.onWheel}
-      onKeyUp={updateSelection}
-      onMouseUp={updateSelection}
-      onPointerDown={(event) => {
-        const shouldCaptureBoundaryGesture = scrollChapterBoundary.onPointerDown(event.clientY, event.pointerType);
-        gestureHandlers.onPointerDown(event);
-        if (shouldCaptureBoundaryGesture) {
-          try {
-            event.currentTarget.setPointerCapture(event.pointerId);
-          } catch {
-            // Synthetic pointer events do not own an active pointer, but the gesture can still be handled.
-          }
-        }
-      }}
-      onPointerMove={(event) => {
-        if (scrollChapterBoundary.onPointerMove(event.clientY, event.pointerType)) event.preventDefault();
-      }}
-      onPointerUp={(event) => {
-        gestureHandlers.onPointerUp(event);
-        scrollChapterBoundary.onPointerEnd();
-      }}
-      onPointerCancel={scrollChapterBoundary.onPointerEnd}
-      onClick={(event) => event.stopPropagation()}
-    >
-      <article ref={documentRef} className="reader-document">
-        <ReaderChapterHeading chapter={chapter} />
-        <div
-          className="reader-virtual-list"
-          style={{ height: `${Math.max(0, virtualizer.getTotalSize() - scrollPosition.shift)}px` }}
-        >
-          {virtualItems.map((item) => {
-            const paragraph = pages.paragraphAt(item.index);
-            if (!paragraph) {
-              const pageIndex = Math.floor(item.index / PARAGRAPHS_PER_PAGE);
-              const failed = failedRows.has(item.index);
-              return (
-                <div
-                  key={`${failed ? 'failed' : 'loading'}-${item.index}`}
-                  ref={failed ? measureVirtualRow : undefined}
-                  data-index={item.index}
-                  className="reader-virtual-row"
-                  // Evicted text keeps its measured size while it reloads. Measuring the
-                  // short skeleton overwrites that size and shifts every later paragraph.
-                  style={{
-                    transform: `translateY(${item.start - listOffset - scrollPosition.shift}px)`,
-                    height: failed ? undefined : item.size,
-                  }}
-                >
-                  {failed ? (
-                    <div className="reader-paragraph is-error" role="alert">
-                      <p>본문을 불러오지 못했습니다.</p>
-                      <button type="button" className="ghost-btn" onClick={() => void pages.retryPage(pageIndex)}>
-                        다시 시도
-                      </button>
-                    </div>
-                  ) : (
-                    <div className="reader-paragraph is-loading" aria-hidden="true">
-                      <p />
-                    </div>
-                  )}
-                </div>
-              );
-            }
-            return (
-              <ReaderParagraphRow
-                key={paragraph.id}
-                paragraph={paragraph}
-                virtualIndex={item.index}
-                start={item.start - listOffset - scrollPosition.shift}
-                estimatedSize={item.size}
-                isSpeaking={ttsIndex === item.index}
-                mode={mode}
-                searchQuery={search.highlightQuery}
-                decorationStore={screenHandle.decorations}
-                measureElement={measureVirtualRow}
-                onSelectCorrectionSegment={(segmentId) => screenHandle.getActions().selectCorrectionSegment(segmentId)}
-                assetRepository={assetRepository}
-                onDocumentLink={onDocumentLink}
-              />
-            );
-          })}
+    <>
+      {isActive && opening && (
+        <div className="reader-opening" role={openError ? 'alert' : 'status'}>
+          <p>{openError ? '읽던 위치를 불러오지 못했습니다.' : '본문을 준비하고 있습니다…'}</p>
+          {openError && (
+            <button className="ghost-btn" onClick={() => setOpenAttempt((attempt) => attempt + 1)}>
+              다시 시도
+            </button>
+          )}
         </div>
-        <nav className="chapter-nav">
-          <button className="ghost-btn" disabled={chapter.index <= 1} onClick={() => void goChapter(-1)}>
-            <SkipBack size={18} /> 이전 화
-          </button>
-          <button className="ghost-btn" disabled={chapter.index >= chapters.length} onClick={() => void goChapter(1)}>
-            다음 화 <SkipForward size={18} />
-          </button>
-        </nav>
-        {nextChapter && (
+      )}
+      <section
+        ref={rootRef}
+        className={`reader-scroll reader-viewport-layer ${isActive ? 'is-active' : 'is-inactive'} ${opening ? 'is-opening' : ''} ${scrollChapterBoundary.armed ? 'is-next-chapter-armed' : ''} font-${settings.font} mode-${mode}`}
+        tabIndex={isActive ? 0 : -1}
+        aria-hidden={!isActive}
+        aria-busy={opening}
+        data-reader-layer="scroll"
+        onScroll={() => {
+          if (!isActive || opening) return;
+          onRevealChrome();
+          visibleAnchorIndexRef.current = firstVisible().index;
+          progress.handleScroll();
+          scrollChapterBoundary.onScroll();
+        }}
+        onWheel={scrollChapterBoundary.onWheel}
+        onKeyUp={updateSelection}
+        onMouseUp={updateSelection}
+        onPointerDown={(event) => {
+          const shouldCaptureBoundaryGesture = scrollChapterBoundary.onPointerDown(event.clientY, event.pointerType);
+          gestureHandlers.onPointerDown(event);
+          if (shouldCaptureBoundaryGesture) {
+            try {
+              event.currentTarget.setPointerCapture(event.pointerId);
+            } catch {
+              // Synthetic pointer events do not own an active pointer, but the gesture can still be handled.
+            }
+          }
+        }}
+        onPointerMove={(event) => {
+          if (scrollChapterBoundary.onPointerMove(event.clientY, event.pointerType)) event.preventDefault();
+        }}
+        onPointerUp={(event) => {
+          gestureHandlers.onPointerUp(event);
+          scrollChapterBoundary.onPointerEnd();
+        }}
+        onPointerCancel={scrollChapterBoundary.onPointerEnd}
+        onClick={(event) => event.stopPropagation()}
+      >
+        <article ref={documentRef} className="reader-document">
+          <ReaderChapterHeading chapter={chapter} />
           <div
-            className={`reader-next-chapter-boundary${scrollChapterBoundary.armed ? ' is-armed' : ''}`}
-            data-scroll-chapter-boundary="true"
-            data-scroll-chapter-boundary-armed={scrollChapterBoundary.armed ? 'true' : 'false'}
-            aria-live="polite"
+            className="reader-virtual-list"
+            style={{ height: `${Math.max(0, virtualizer.getTotalSize() - scrollPosition.shift)}px` }}
           >
-            <span>다음 화</span>
-            <strong>
-              {nextChapter.index}화 · {nextChapter.title}
-            </strong>
-            <small>{scrollChapterBoundary.armed ? '한 번 더 아래로 스크롤' : '마지막까지 읽었습니다'}</small>
+            {virtualItems.map((item) => {
+              const paragraph = pages.paragraphAt(item.index);
+              if (!paragraph) {
+                const pageIndex = Math.floor(item.index / PARAGRAPHS_PER_PAGE);
+                const failed = failedRows.has(item.index);
+                return (
+                  <div
+                    key={`${failed ? 'failed' : 'loading'}-${item.index}`}
+                    ref={failed ? measureVirtualRow : undefined}
+                    data-index={item.index}
+                    className="reader-virtual-row"
+                    // Evicted text keeps its measured size while it reloads. Measuring the
+                    // short skeleton overwrites that size and shifts every later paragraph.
+                    style={{
+                      transform: `translateY(${item.start - listOffset - scrollPosition.shift}px)`,
+                      height: failed ? undefined : item.size,
+                    }}
+                  >
+                    {failed ? (
+                      <div className="reader-paragraph is-error" role="alert">
+                        <p>본문을 불러오지 못했습니다.</p>
+                        <button type="button" className="ghost-btn" onClick={() => void pages.retryPage(pageIndex)}>
+                          다시 시도
+                        </button>
+                      </div>
+                    ) : (
+                      <div className="reader-paragraph is-loading" aria-hidden="true">
+                        <p />
+                      </div>
+                    )}
+                  </div>
+                );
+              }
+              return (
+                <ReaderParagraphRow
+                  key={paragraph.id}
+                  paragraph={paragraph}
+                  virtualIndex={item.index}
+                  start={item.start - listOffset - scrollPosition.shift}
+                  estimatedSize={item.size}
+                  isSpeaking={ttsIndex === item.index}
+                  mode={mode}
+                  searchQuery={search.highlightQuery}
+                  decorationStore={screenHandle.decorations}
+                  measureElement={measureVirtualRow}
+                  onSelectCorrectionSegment={(segmentId) =>
+                    screenHandle.getActions().selectCorrectionSegment(segmentId)
+                  }
+                  assetRepository={assetRepository}
+                  onDocumentLink={onDocumentLink}
+                />
+              );
+            })}
           </div>
-        )}
-      </article>
-    </section>
+          <nav className="chapter-nav">
+            <button className="ghost-btn" disabled={chapter.index <= 1} onClick={() => void goChapter(-1)}>
+              <SkipBack size={18} /> 이전 화
+            </button>
+            <button className="ghost-btn" disabled={chapter.index >= chapters.length} onClick={() => void goChapter(1)}>
+              다음 화 <SkipForward size={18} />
+            </button>
+          </nav>
+          {nextChapter && (
+            <div
+              className={`reader-next-chapter-boundary${scrollChapterBoundary.armed ? ' is-armed' : ''}`}
+              data-scroll-chapter-boundary="true"
+              data-scroll-chapter-boundary-armed={scrollChapterBoundary.armed ? 'true' : 'false'}
+              aria-live="polite"
+            >
+              <span>다음 화</span>
+              <strong>
+                {nextChapter.index}화 · {nextChapter.title}
+              </strong>
+              <small>{scrollChapterBoundary.armed ? '한 번 더 아래로 스크롤' : '마지막까지 읽었습니다'}</small>
+            </div>
+          )}
+        </article>
+      </section>
+    </>
   );
 }
 

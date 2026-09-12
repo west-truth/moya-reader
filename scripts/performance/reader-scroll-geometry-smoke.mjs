@@ -150,12 +150,12 @@ try {
     await page.close();
   }
 
-  // A pending resume must yield to the user, and a later explicit jump must work.
+  // Once reading is open, a pending explicit jump must still yield to user scrolling.
   if (!process.argv.includes('--images-only')) {
     const page = await open('long&variable');
     await page.evaluate(() => {
       readerFixture.pausePages();
-      readerFixture.restore(2000);
+      void readerFixture.api().scrollToParagraphIndex(2000, 'start', 'auto');
     });
     await page.waitForFunction(() => readerFixture.pageRequests.includes(16));
     const before = await page.evaluate(async () => {
@@ -167,11 +167,11 @@ try {
     await page.evaluate(() => readerFixture.resumePages());
     await page.waitForTimeout(450);
     const after = await page.evaluate(() => readerGeometry.capture());
-    assert.equal(after.top, before.top, 'A late restore must not override user scrolling');
+    assert.equal(after.top, before.top, 'A late explicit jump must not override user scrolling');
     await page.evaluate(() => readerGeometry.touch('touchend'));
     await page.evaluate(() => readerFixture.api().scrollToParagraphIndex(2000, 'start', 'auto'));
     await page.waitForFunction(() => document.querySelector('[data-index="2000"] [data-paragraph-id]'));
-    console.log(JSON.stringify({ engine, scenario: 'restore-interrupt', delta: after.top - before.top }));
+    console.log(JSON.stringify({ engine, scenario: 'navigation-interrupt', delta: after.top - before.top }));
     await page.close();
   }
 

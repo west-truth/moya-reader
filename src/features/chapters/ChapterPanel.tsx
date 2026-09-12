@@ -1,8 +1,8 @@
 import { Clock3, Play, Search } from 'lucide-react';
 import { useEffect, useRef } from 'react';
-import { useNavigationViewState } from '../navigation/navigation-view-state';
+import { useReadingChapterPage } from './use-reading-chapter-page';
 import { formatCount, formatProgress } from '../../utils/format';
-import { initialChapterPage, paginateChapterRows, type ChapterListRowModel } from './chapters-screen-model';
+import { CHAPTER_PAGE_SIZE, paginateChapterRows, type ChapterListRowModel } from './chapters-screen-model';
 import type { ChaptersScreenProps } from './chapters-screen-contract';
 import { ChapterPagination } from './ChapterPagination';
 
@@ -86,27 +86,19 @@ function ChapterRow({ row, model, actions }: { row: ChapterListRowModel } & Chap
 
 export function ChapterPanel({ model, actions }: ChaptersScreenProps) {
   const rows = model.chapterList.rows;
-  const [requestedPage, setRequestedPage] = useNavigationViewState(`chapters:${model.book.novel.id}:page`, () =>
-    initialChapterPage(rows),
+  const [requestedPage, setRequestedPage] = useReadingChapterPage(
+    `chapters:${model.book.novel.id}:page`,
+    rows.findIndex((row) => row.isCurrent),
+    rows.length,
+    CHAPTER_PAGE_SIZE,
   );
-  const previousBookId = useRef(model.book.novel.id);
   const previousControls = useRef({
     bookId: model.book.novel.id,
     value: `${model.query}\0${model.readFilter}\0${model.sort}`,
   });
-  const previousRowsLength = useRef(rows.length);
   const panelRef = useRef<HTMLElement>(null);
   const headingRef = useRef<HTMLHeadingElement>(null);
   const pageModel = paginateChapterRows(rows, requestedPage);
-
-  useEffect(() => {
-    if (previousBookId.current !== model.book.novel.id) {
-      previousBookId.current = model.book.novel.id;
-    } else if (previousRowsLength.current === 0 && rows.length > 0) {
-      setRequestedPage(initialChapterPage(rows));
-    }
-    previousRowsLength.current = rows.length;
-  }, [model.book.novel.id, rows, setRequestedPage]);
 
   useEffect(() => {
     const controls = `${model.query}\0${model.readFilter}\0${model.sort}`;
@@ -115,10 +107,6 @@ export function ChapterPanel({ model, actions }: ChaptersScreenProps) {
     }
     previousControls.current = { bookId: model.book.novel.id, value: controls };
   }, [model.book.novel.id, model.query, model.readFilter, model.sort, setRequestedPage]);
-
-  useEffect(() => {
-    if (requestedPage !== pageModel.page) setRequestedPage(pageModel.page);
-  }, [pageModel.page, requestedPage, setRequestedPage]);
 
   const moveToPage = (page: number) => {
     setRequestedPage(page);

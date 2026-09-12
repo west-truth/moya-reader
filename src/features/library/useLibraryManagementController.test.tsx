@@ -1,6 +1,7 @@
 import { act, create, type ReactTestRenderer } from 'react-test-renderer';
-import { describe, expect, it, vi } from 'vitest';
-import type { Novel } from '../../domain/types';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import type { Novel, Shelf } from '../../domain/types';
+import { readLibraryViewPreferences, saveLibraryViewPreferences } from './library-view-preferences';
 import type { BookAssetRepository } from '../../repositories/book-asset-repository';
 import type { LibraryCatalogRepository } from '../../repositories/library-catalog-repository';
 import { useLibraryManagementController, type LibraryManagementController } from './useLibraryManagementController';
@@ -27,12 +28,13 @@ async function harness(input: {
   assets?: BookAssetRepository;
   getNovel?: () => Promise<Novel | undefined>;
   patchMetadata?: LibraryCatalogRepository['patchMetadata'];
+  listShelves?: LibraryCatalogRepository['listShelves'];
 }) {
   let controller!: LibraryManagementController;
   let renderer!: ReactTestRenderer;
   const notify = vi.fn();
   const catalog = {
-    listShelves: vi.fn(async () => []),
+    listShelves: input.listShelves ?? vi.fn(async () => []),
     listShelfMemberships: vi.fn(async () => []),
     patchMetadata:
       input.patchMetadata ??
@@ -290,5 +292,94 @@ describe('useLibraryManagementController metadata saves', () => {
     });
     expect(mounted.notify).toHaveBeenCalledWith(expect.stringContaining('현재 입력은 보존'), 'danger');
     await act(async () => mounted.renderer.unmount());
+  });
+});
+
+describe('browser-local bookshelf selection', () => {
+  const shelf = { id: 'shelf-1', name: 'Reading' } as Shelf;
+  const otherShelf = { id: 'shelf-2', name: 'Later' } as Shelf;
+  const listShelves = async () => [shelf, otherShelf];
+
+  beforeEach(() => {
+    const values = new Map<string, string>();
+    vi.stubGlobal('localStorage', {
+      getItem: (key: string) => values.get(key) ?? null,
+      setItem: (key: string, value: string) => values.set(key, value),
+    });
+  });
+  afterEach(() => vi.unstubAllGlobals());
+
+  it('restores the selected shelf after reopening and preserves sort/layout preferences', async () => {
+    saveLibraryViewPreferences({ librarySort: 'title', libraryViewMode: 'list' });
+    const first = await harness({ current: novel(), listShelves });
+    act(() => first.controller.setActiveShelf(shelf.id));
+    await act(async () => first.renderer.unmount());
+
+    const reopened = await harness({ current: novel(), listShelves });
+    expect(reopened.controller.activeShelfId).toBe(shelf.id);
+    expect(readLibraryViewPreferences()).toEqual({
+      activeShelfId: shelf.id,
+      librarySort: 'title',
+      libraryViewMode: 'list',
+    });
+    act(() => reopened.controller.setActiveShelf());
+    await act(async () => reopened.renderer.unmount());
+    const allBooks = await harness({ current: novel(), listShelves });
+    expect(allBooks.controller.activeShelfId).toBeUndefined();
+    expect(readLibraryViewPreferences().activeShelfId).toBeUndefined();
+    await act(async () => allBooks.renderer.unmount());
+  });
+
+  it('keeps the saved shelf through a failed fetch, clearing it only after confirming deletion', async () => {
+    saveLibraryViewPreferences({ activeShelfId: shelf.id });
+    const fetchShelves = vi
+      .fn<LibraryCatalogRepository['listShelves']>()
+      .mockRejectedValueOnce(new Error('offline'))
+      .mockResolvedValueOnce([shelf])
+      .mockResolvedValueOnce([]);
+    const mounted = await harness({ current: novel(), listShelves: fetchShelves });
+    expect(mounted.controller.activeShelfId).toBe(shelf.id);
+    expect(readLibraryViewPreferences().activeShelfId).toBe(shelf.id);
+    await act(async () => mounted.controller.refresh());
+    expect(mounted.controller.activeShelfId).toBe(shelf.id);
+    await act(async () => mounted.controller.refresh());
+    expect(mounted.controller.activeShelfId).toBeUndefined();
+    expect(readLibraryViewPreferences().activeShelfId).toBeUndefined();
+    await act(async () => mounted.renderer.unmount());
+  });
+
+  it('retains the latest user selection when the initial shelf fetch is delayed', async () => {
+    saveLibraryViewPreferences({ activeShelfId: shelf.id });
+    let resolve!: (shelves: Shelf[]) => void;
+    const pending = new Promise<Shelf[]>((done) => {
+      resolve = done;
+    });
+    const mounted = await harness({ current: novel(), listShelves: () => pending });
+    expect(mounted.controller.activeShelfId).toBe(shelf.id);
+    act(() => mounted.controller.setActiveShelf(otherShelf.id));
+    await act(async () => resolve([shelf, otherShelf]));
+    expect(mounted.controller.activeShelfId).toBe(otherShelf.id);
+    expect(readLibraryViewPreferences().activeShelfId).toBe(otherShelf.id);
+    await act(async () => mounted.renderer.unmount());
+  });
+
+  it('keeps selection usable when browser storage is blocked', async () => {
+    vi.stubGlobal('localStorage', {
+      getItem: () => {
+        throw new Error('blocked');
+      },
+      setItem: () => {
+        throw new Error('blocked');
+      },
+    });
+    const mounted = await harness({ current: novel(), listShelves });
+    act(() => mounted.controller.setActiveShelf(shelf.id));
+    expect(mounted.controller.activeShelfId).toBe(shelf.id);
+    await act(async () => mounted.renderer.unmount());
+  });
+
+  it.each([42, {}, '', '   '])('ignores an invalid persisted shelf ID: %j', (activeShelfId) => {
+    localStorage.setItem('moya.library-view.v1', JSON.stringify({ activeShelfId, librarySort: 'title' }));
+    expect(readLibraryViewPreferences()).toEqual({ librarySort: 'title' });
   });
 });
