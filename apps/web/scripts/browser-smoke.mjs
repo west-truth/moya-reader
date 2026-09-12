@@ -48,13 +48,13 @@ await new Promise((done) => server.listen(0, '127.0.0.1', done));
 const origin = `http://127.0.0.1:${server.address().port}`;
 let browser;
 let activePage;
+const errors = [];
 try {
   browser = await chromium.launch({ channel: process.env.READER_UI_BROWSER_CHANNEL || 'msedge', headless: true });
   const context = await browser.newContext({ viewport: { width: 1280, height: 900 }, acceptDownloads: true });
   const page = await context.newPage();
   activePage = page;
   page.setDefaultTimeout(20000);
-  const errors = [];
   page.on('pageerror', (error) => errors.push(error.message));
   await page.goto(origin + base);
   await page.getByRole('button', { name: '설정 열기', exact: true }).waitFor();
@@ -186,8 +186,11 @@ try {
     const reading = page.locator('.source-hub-reading-button');
     const alreadyOpen = page.locator(selector);
     await first.first().or(reading.first()).or(alreadyOpen.first()).first().waitFor();
-    if (await first.first().isVisible()) await first.first().click();
-    else if (await reading.first().isVisible()) await reading.first().click();
+    if (await first.first().isVisible()) {
+      await first.first().click();
+      await reading.first().or(alreadyOpen.first()).first().waitFor();
+    }
+    if (await reading.first().isVisible()) await reading.first().click();
     await page.locator(selector).first().waitFor();
     if (selector.endsWith('img'))
       await page
@@ -248,6 +251,7 @@ try {
   );
 } catch (error) {
   console.error('Failed browser step:', error);
+  console.error('Application errors:', errors);
   console.error((await activePage?.locator('body').innerText())?.slice(0, 9000));
   console.error(
     'PWA diagnostic:',
