@@ -231,6 +231,10 @@ check('redis mounts its durable data volume', includes(redis, 'redis-data:/data'
 check('redis restarts unless stopped', includes(redis, 'restart: unless-stopped'));
 check('minio has live healthcheck', includes(minio, 'http://127.0.0.1:9000/minio/health/live'));
 check(
+  'minio uses the pinned release from the official Quay registry',
+  includes(minio, 'image: quay.io/minio/minio:RELEASE.2025-09-07T16-13-09Z'),
+);
+check(
   'minio console defaults to loopback',
   matches(minio, /['"]\$\{MINIO_CONSOLE_BIND_ADDRESS:-127\.0\.0\.1}:9001:9001['"]/),
 );
