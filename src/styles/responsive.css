@@ -222,6 +222,8 @@
     margin-left: 0;
     padding: 6px 8px;
     transform: none;
+    flex-wrap: wrap;
+    gap: 6px;
   }
 
   .tts-compact-identity strong,
@@ -229,9 +231,24 @@
     max-width: 150px;
   }
 
-  .tts-compact-value,
-  .tts-compact-timer span,
-  .tts-compact-controls > button[aria-label='청취 설정 열기'] {
+  .tts-compact-details {
+    display: none;
+  }
+
+  .tts-compact-disclosure {
+    display: inline-flex;
+  }
+
+  .tts-compact-bar[data-expanded='true'] .tts-compact-details {
+    display: flex;
+    flex: 0 0 100%;
+    flex-wrap: wrap;
+    justify-content: flex-end;
+    padding-top: 6px;
+    border-top: 1px solid var(--border);
+  }
+
+  .tts-compact-timer span {
     display: none;
   }
 }

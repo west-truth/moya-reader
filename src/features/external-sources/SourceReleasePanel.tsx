@@ -4,6 +4,7 @@ import { useNavigationViewState } from '../navigation/navigation-view-state';
 import { externalItemKeyId } from '../../external-sources/contracts';
 import { formatCount } from '../../utils/format';
 import { ChapterPagination } from '../chapters/ChapterPagination';
+import { useReadingChapterPage } from '../chapters/use-reading-chapter-page';
 import {
   filterAndSortReleases,
   paginateReleases,
@@ -25,22 +26,24 @@ export function SourceReleasePanel({
   const location = JSON.stringify([
     'source-releases',
     controller.activeSourceId,
+    controller.localSeriesNovel?.id,
     controller.breadcrumbs.map((item) => item.parentRef),
   ]);
   const [query, setQuery] = useNavigationViewState(`${location}:query`, '');
   const [readFilter, setReadFilter] = useNavigationViewState<ReleaseReadFilter>(`${location}:filter`, 'all');
   const [sort, setSort] = useNavigationViewState<ReleaseSort>(`${location}:sort`, 'asc');
   const sorted = useMemo(() => filterAndSortReleases(items, query, readFilter, sort), [items, query, readFilter, sort]);
-  const [requestedPage, setRequestedPage] = useNavigationViewState(`${location}:page`, 1);
+  const [requestedPage, setRequestedPage] = useReadingChapterPage(
+    `${location}:page`,
+    sorted.findIndex((item) => item.readingState === 'current'),
+    sorted.length,
+    SOURCE_RELEASE_PAGE_SIZE,
+  );
   const page = paginateReleases(sorted, requestedPage);
   const headingRef = useRef<HTMLHeadingElement>(null);
   const panelRef = useRef<HTMLElement>(null);
   const cursor = controller.nextCursor;
   const partial = Boolean(cursor || controller.listError || controller.stale);
-
-  useEffect(() => {
-    if (requestedPage !== page.page) setRequestedPage(page.page);
-  }, [requestedPage, page.page, setRequestedPage]);
 
   const selectable = page.items.filter(
     (item) =>

@@ -2,6 +2,7 @@ import type { LibrarySort, LibraryViewMode } from './library-screen-model';
 
 const KEY = 'moya.library-view.v1';
 interface LibraryViewPreferences {
+  activeShelfId?: string;
   librarySort?: LibrarySort;
   libraryViewMode?: LibraryViewMode;
 }
@@ -12,6 +13,9 @@ export function readLibraryViewPreferences(): LibraryViewPreferences {
     if (!value || typeof value !== 'object') return {};
     const preferences = value as Record<string, unknown>;
     return {
+      ...(typeof preferences.activeShelfId === 'string' && preferences.activeShelfId.trim()
+        ? { activeShelfId: preferences.activeShelfId }
+        : {}),
       ...(preferences.librarySort === 'recent' ||
       preferences.librarySort === 'title' ||
       preferences.librarySort === 'added'

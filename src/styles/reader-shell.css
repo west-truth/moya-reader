@@ -382,3 +382,29 @@
   color: var(--text-2);
   font-size: 0.9rem;
 }
+
+/* Keep the real layout measurable, but do not expose or scroll chapter start during resume. */
+.reader-scroll.is-opening {
+  overflow: hidden;
+  pointer-events: none;
+}
+
+.reader-scroll.is-opening .reader-document {
+  visibility: hidden;
+}
+
+.reader-opening {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  padding: 24px;
+  color: var(--text-2);
+  background: var(--reading-background, var(--reader-canvas));
+  text-align: center;
+  touch-action: none;
+}

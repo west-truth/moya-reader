@@ -36,5 +36,7 @@ export function useActiveReaderFont(
     };
   }, [fontId, repository]);
 
-  return state;
+  // Built-ins are already available: apply them in the same render as fontId so
+  // pagination never measures the previous font under the new layout cache key.
+  return builtin ? { family: builtin, failed: false } : state;
 }

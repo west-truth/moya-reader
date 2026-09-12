@@ -1,5 +1,9 @@
 # Docker Compose deployment
 
+2026-09-12: MinIO uses `quay.io/minio/minio:RELEASE.2025-09-07T16-13-09Z`.
+PR #40 CI repeatedly failed while pulling the same release from Docker Hub, before import tests started.
+The release version, S3 endpoint and volume layout are unchanged; only the registry address changed.
+
 Status: current
 Last verified: 2026-08-30
 
