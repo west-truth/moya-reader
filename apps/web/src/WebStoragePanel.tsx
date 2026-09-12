@@ -40,6 +40,12 @@ export function WebStoragePanel() {
       setBusy(false);
     }
   }
+  const remaining =
+    status?.quota !== undefined && status.usage !== undefined ? Math.max(0, status.quota - status.usage) : undefined;
+  const pressure =
+    remaining !== undefined &&
+    status?.quota &&
+    (remaining < 64 * 1024 * 1024 || (status.usage ?? 0) / status.quota >= 0.8);
   return (
     <section className="web-storage-panel" aria-labelledby={titleId} aria-busy={busy}>
       <h3 id={titleId}>
@@ -59,12 +65,22 @@ export function WebStoragePanel() {
           <dd>{status?.quota === undefined ? '확인할 수 없음' : formatBytes(status.quota)}</dd>
         </div>
         <div>
+          <dt>남은 저장 여유</dt>
+          <dd>{remaining === undefined ? '확인할 수 없음' : `약 ${formatBytes(remaining)}`}</dd>
+        </div>
+        <div>
           <dt>자동 정리 방지</dt>
           <dd>
             {status?.persistent === true ? '보호됨' : status?.persistent === false ? '기본 저장' : '확인할 수 없음'}
           </dd>
         </div>
       </dl>
+      {Boolean(pressure) && (
+        <p role="status">
+          저장 공간이 부족해지고 있습니다. 원본과 백업을 보관한 뒤 불필요한 책을 정리해 주세요. 큰 파일은 처리 중
+          원본보다 많은 여유 공간이 필요합니다.
+        </p>
+      )}
       <div className="web-storage-actions">
         <button type="button" className="ghost-btn" disabled={busy} onClick={() => void refresh()}>
           <RefreshCw size={15} /> 용량 확인
@@ -77,8 +93,9 @@ export function WebStoragePanel() {
       </div>
       {message && <p role="status">{message}</p>}
       <p className="field-help">
-        사이트 데이터 삭제·시크릿 모드 종료·브라우저 변경 시 서재를 잃을 수 있습니다. 책장의 백업 메뉴에서 파일로
-        보관하세요. 동기화로 원본까지 복원하려면 ‘작품 파일과 표지’를 켜 주세요.
+        표시 용량은 브라우저의 추정치이며 실제 디스크 여유와 다를 수 있습니다. 사이트 데이터 삭제·시크릿 모드
+        종료·브라우저 변경 시 서재를 잃을 수 있습니다. 책장의 백업 메뉴에서 파일로 보관하세요. 동기화로 원본까지
+        복원하려면 ‘작품 파일과 표지’를 켜 주세요.
       </p>
     </section>
   );

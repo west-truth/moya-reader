@@ -74,6 +74,7 @@ export interface ReaderChromeProps {
   readonly onOverflowOpenChanged: (open: boolean) => void;
   readonly onGoToSavedPosition: () => void;
   readonly onToggleImmersive: () => void;
+  readonly onOpenAutoScroll?: () => void;
 }
 
 export function ReaderChrome({
@@ -94,6 +95,7 @@ export function ReaderChrome({
   onOverflowOpenChanged,
   onGoToSavedPosition,
   onToggleImmersive,
+  onOpenAutoScroll,
 }: ReaderChromeProps) {
   const [bookmarkPending, setBookmarkPending] = useState(false);
   const overflowMenu = useMenuPopover(overflowOpen, onOverflowOpenChanged);
@@ -407,6 +409,11 @@ export function ReaderChrome({
                 <button type="button" role="menuitem" onClick={() => runOverflowAction(actions.openSettings)}>
                   <Settings size={15} /> 읽기 설정
                 </button>
+                {onOpenAutoScroll && (
+                  <button type="button" role="menuitem" onClick={() => runOverflowAction(onOpenAutoScroll)}>
+                    <ChevronsRight size={15} /> 자동 스크롤
+                  </button>
+                )}
                 <button type="button" role="menuitem" onClick={() => runOverflowAction(actions.toggleNightTheme)}>
                   {nightThemeActive ? <Sun size={15} /> : <Moon size={15} />} 테마
                 </button>

@@ -29,6 +29,8 @@ import { dispatchReaderAction } from './reader-action-dispatcher';
 import { isAndroidBackKeyboardEvent, resolveReaderTransientBackAction } from '../../platform/android/app-navigation';
 import { PARAGRAPHS_PER_PAGE } from '../../repositories/reader-defaults';
 import { EpubFootnoteSheet } from './EpubFootnoteSheet';
+import { useAutoScroll } from './use-auto-scroll';
+import { AutoScrollControls } from './AutoScrollControls';
 
 const BOOKMARK_PROGRESS_TOLERANCE = 0.003;
 const SCROLL_HANDOFF_MIN_DURATION_MS = 72;
@@ -714,6 +716,34 @@ function ReaderScreenComponent({ model, screenHandle }: ReaderScreenProps) {
   });
 
   const activeBookmark = activeBookmarkAt(model.bookmarks, model.chapter.id, location);
+  const [autoScrollOpen, setAutoScrollOpen] = useState(false);
+  const autoScrollAllowed =
+    readingFlow === 'scroll' &&
+    mode === 'read' &&
+    !model.activeTTSPlayback &&
+    !model.overlays.settingsOpen &&
+    !model.overlays.syncPanelOpen &&
+    !model.overlays.importOpen &&
+    !model.addonOpen &&
+    !selection &&
+    !footnote;
+  const autoScrollReady = viewportApi?.flow === 'scroll' && !openRequest && !pageToScrollSettling;
+  const nextAutoChapter = model.chapters.find((chapter) => chapter.index === model.chapter.index + 1);
+  const autoScroll = useAutoScroll(
+    viewportApiRef,
+    `${model.novel.id}:${model.chapter.id}`,
+    autoScrollAllowed,
+    autoScrollReady,
+    nextAutoChapter
+      ? {
+          scope: `${model.novel.id}:${nextAutoChapter.id}`,
+          open: async (isCurrent) => {
+            await viewportApiRef.current?.flushPosition();
+            if (isCurrent()) await screenHandle.getActions().openChapter(nextAutoChapter, { restore: false });
+          },
+        }
+      : undefined,
+  );
   const activeHighlight = activeHighlightAt(model.highlights, location);
   return (
     <main
@@ -753,6 +783,16 @@ function ReaderScreenComponent({ model, screenHandle }: ReaderScreenProps) {
         onOverflowOpenChanged={setOverflowOpen}
         onGoToSavedPosition={() => void goToSavedPosition()}
         onToggleImmersive={toggleImmersive}
+        onOpenAutoScroll={() => {
+          autoScroll.stop();
+          setAutoScrollOpen(true);
+        }}
+      />
+      <AutoScrollControls
+        controller={autoScroll}
+        open={autoScrollOpen}
+        allowed={autoScrollAllowed && autoScrollReady}
+        onClose={() => setAutoScrollOpen(false)}
       />
       {search.query.trim() && (
         <aside className="reader-search-results-layer" aria-label="본문 검색 결과">

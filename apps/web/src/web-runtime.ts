@@ -8,6 +8,9 @@ import type { AIProvider } from '../../../src/providers/ai';
 import { ProviderRegistry } from '../../../src/providers/provider-registry';
 import { SystemTTSProvider, type TTSProvider } from '../../../src/providers/tts';
 import type { ReaderProviderRuntime } from '../../../src/providers/reader-provider-runtime';
+import { WebLibraryNotice } from './WebLibraryNotice';
+import { WebUpdateNotice } from './WebUpdateNotice';
+import { recordWebBackup } from './web-data-safety';
 
 /** Never manufacture analysis output when the Web edition has no real AI engine. */
 export function createWebProviderRuntime(): ReaderProviderRuntime {
@@ -54,5 +57,15 @@ export function createWebRuntime(): AppRuntime {
     }),
     extensionRuntimeFactory: () => createAppExtensionRuntime({ trustedDefinitions: [readerInfoTrustedExtension] }),
   });
-  return { ...runtime, product: { kind: 'local-static', StoragePanel: WebDataSettings, SyncPanel: WebSyncPanel } };
+  return {
+    ...runtime,
+    product: {
+      kind: 'local-static',
+      StoragePanel: WebDataSettings,
+      SyncPanel: WebSyncPanel,
+      LibraryNotice: WebLibraryNotice,
+      Lifecycle: WebUpdateNotice,
+      onBackupExported: recordWebBackup,
+    },
+  };
 }

@@ -1306,6 +1306,7 @@ export default function App() {
 
   const backupFeature = useBackupController({
     repository: backupRepository,
+    onExported: product?.onBackupExported,
     documentIo,
     refreshLibrary: async () => {
       await refreshNovels();
@@ -5998,9 +5999,30 @@ export default function App() {
         }
       : undefined;
 
+  const ProductLibraryNotice = product?.LibraryNotice;
+  const ProductLifecycle = product?.Lifecycle;
+  const productWorkBusy =
+    importBusy ||
+    backupFeature.busy ||
+    libraryFolderFeature.busy ||
+    externalSourceFeature.busy ||
+    cloudVault.activity === 'syncing' ||
+    cloudVault.activity === 'connecting' ||
+    cloudVault.activity === 'disconnecting';
   return (
     <div className="app-shell" style={styleVars}>
+      {ProductLifecycle && <ProductLifecycle busy={productWorkBusy} reading={view === 'reader'} />}
       <BookWorkspaceScreens
+        libraryNotice={
+          ProductLibraryNotice && (
+            <ProductLibraryNotice
+              bookCount={novels.filter((novel) => !novel.deletedAt).length}
+              busy={productWorkBusy}
+              openBackup={backupFeature.openPanel}
+              openStorage={() => setSyncPanelOpen(true)}
+            />
+          )
+        }
         controller={bookWorkspace}
         state={bookWorkspaceState}
         projection={bookWorkspaceProjection}

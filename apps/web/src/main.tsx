@@ -3,7 +3,6 @@ import ReactDOM from 'react-dom/client';
 import App from '../../../src/App';
 import { RuntimeProvider } from '../../../src/app/runtime/RuntimeProvider';
 import { createWebRuntime } from './web-runtime';
-import { WebUpdateNotice } from './WebUpdateNotice';
 import { relayDropboxOAuthPopup } from '../../../src/cloud-vault/dropbox-oauth';
 import '../../../src/styles/tokens.css';
 import '../../../src/styles/base.css';
@@ -27,7 +26,6 @@ if (!relayDropboxOAuthPopup()) {
     <React.StrictMode>
       <RuntimeProvider runtime={runtime}>
         <App />
-        <WebUpdateNotice />
       </RuntimeProvider>
     </React.StrictMode>,
   );

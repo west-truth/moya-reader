@@ -30,6 +30,7 @@ export interface UseBackupControllerOptions {
   documentIo?: PlatformDocumentIo;
   refreshLibrary(): Promise<unknown>;
   notify(message: string, tone?: ToastTone): void;
+  onExported?(exportedAt: string): void;
 }
 
 function backupFileName(exportedAt: string): string {
@@ -80,6 +81,7 @@ export function useBackupController(options: UseBackupControllerOptions): Backup
         window.setTimeout(() => URL.revokeObjectURL(url), 1_000);
       }
       optionsRef.current.notify(`전체 백업 ${exported.manifest.books.length}권을 만들었습니다.`, 'success');
+      optionsRef.current.onExported?.(exported.manifest.exportedAt);
     } catch (error) {
       optionsRef.current.notify(error instanceof Error ? error.message : '백업을 만들지 못했습니다.', 'danger');
     } finally {

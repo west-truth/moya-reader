@@ -4,6 +4,9 @@
   padding: 1.1rem;
   border: 1px solid var(--border);
   border-radius: 12px;
+  margin-block-end: 1rem;
+  min-width: 0;
+  overflow-wrap: anywhere;
 }
 .web-storage-panel h3 {
   display: flex;
@@ -78,4 +81,49 @@
 }
 .web-update-notice button {
   white-space: nowrap;
+}
+
+.web-storage-panel progress {
+  width: 100%;
+  accent-color: var(--app-accent);
+}
+.web-library-notice {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.75rem;
+  padding: 1rem;
+  margin-block-end: 1rem;
+  border: 1px solid var(--app-line);
+  border-radius: 12px;
+  background: var(--app-panel);
+}
+.web-library-notice-copy {
+  flex: 1;
+  min-width: 0;
+}
+.web-library-notice p {
+  font-size: 0.85rem;
+  line-height: 1.6;
+  color: var(--app-text-muted);
+  margin-block: 0.4rem 0.7rem;
+}
+@media (max-width: 600px) {
+  .web-update-notice {
+    flex-wrap: wrap;
+    width: calc(100% - 2rem);
+    bottom: calc(0.5rem + env(safe-area-inset-bottom));
+  }
+  .web-update-notice > span {
+    flex-basis: 100%;
+  }
+  .web-storage-panel dl > div {
+    flex-wrap: wrap;
+  }
+  .web-storage-actions > button {
+    min-height: 40px;
+    white-space: normal;
+  }
+  .web-library-notice {
+    padding: 0.75rem;
+  }
 }

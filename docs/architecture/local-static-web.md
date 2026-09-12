@@ -14,6 +14,9 @@ Web 기능을 `apps/web`으로 통합한다. Git·workspace·lockfile은 메인 
   기본 옵션을 생략하는 기존 앱은 기존 local/remote/connected 동작을 그대로 유지한다.
 - `AppRuntime.product`는 선택적 제품 구성이다. 기존 앱에서는 생략한다. Web에서만 저장/동기화
   UI를 주입하고 direct cloud source, Web 정보, 시스템 음성 안내를 사용한다.
+- 선택적 `LibraryNotice`, `Lifecycle`, `onBackupExported`로 Web 서재 안내·PWA 작업 보호·백업 날짜를 연결한다.
+  공통 Library는 React node slot만 받으며 Web 코드를 import하지 않는다. 완료 callback은 export와 저장 요청 성공
+  뒤에만 호출한다. 취소/실패를 백업 완료로 기록하지 않는다. 브라우저 다운로드 완료 자체는 사용자가 확인한다.
 - 공유 코드가 `apps/web`을 역참조하지 않는다. 앱이 공통 코드를 조합하는 방향을 유지한다.
 - 실제 AI 엔진 없는 상태에서 mock 결과를 생성하지 않는다. Web의 AI provider는 명시적으로 실패한다.
 - Web은 서버 source broker를 초기화하지 않고, 서버 source와 AI 익스텐션을 등록하지 않는다.
@@ -26,10 +29,25 @@ Web 기능을 `apps/web`으로 통합한다. Git·workspace·lockfile은 메인 
 Web OAuth 공개 식별자는 `apps/web/.env.local`에서만 읽고 서버 주소/token 변수는 빈 값으로 고정한다.
 공통 Reader 수정은 두 앱에 함께 반영한다. 동작이 달라야 하는 UI는 제품 구성 경계에서 구분한다.
 
-PWA는 앱 HTML과 전체 lazy chunks/Workers/WASM을 version hash로 사전 캐시한다. 실패 설치는 새 cache만
-제거하고 이전 버전을 유지한다. 외부 origin, 인증 header, Range, API, mutation을 가로채지 않는다.
+PWA는 Vite의 entry/static import/CSS graph와 필수 public assets만 먼저 캐시한다. lazy chunks/Workers/WASM은
+온라인에서 사용할 때 캐시하거나 설정의 ‘모든 형식 오프라인 준비’로 받는다. build manifest는 각 파일의 크기와
+SHA-256 integrity를 고정하고 실행 자산은 request integrity 검사 후 저장한다. HTML은 AdGuard 등 기기 콘텐츠 필터가
+변경할 수 있어 network SRI를 적용하지 않고 매 버전 새로 받는다. 이전 cache에서 URL과 integrity가 같은 실행 파일은
+재사용한다. 저장 header는 원래 build descriptor의 revision이며 필터를 거친 HTML의 바이트 해시를 증명하지 않는다.
+전체 다운로드는 순차적으로 진행하며 재시도 시 이미 받은 파일을 건너뛴다. 부분 실패가 정상 앱 셸을
+지우지 않는다. 전체 준비 완료 marker가 있으면 다음 업데이트도 전체 준비 후에만 설치를 완료한다.
+실패 설치는 새 cache만 제거하고 이전 버전을 유지한다. 외부 origin, 인증 header, Range, API, mutation을 가로채지 않는다.
 캐시 정리는 `moya-web-shell:<encoded mount path>:` namespace에만 적용하며 이전 버전 하나를 유지한다. 업데이트는 사용자
 선택 후 활성화한다. OAuth query와 개인 원문을 app-shell cache key/content로 저장하지 않는다.
+앱에서 import/backup/folder/source/Cloud Vault 작업 중 업데이트를 막고 beforeunload 확인을 요청한다.
+독서 화면에는 업데이트 알림을 표시하지 않는다. 모바일 강제 종료 및 다른 탭의 작업까지 보호하는 주장은 하지 않는다.
+
+`moya-web-data-safety-v1`에는 백업 생성 시각과 안내 숨김 기한만 기록한다. 책장 데이터/원문/토큰을 넣지 않으며
+백업이나 Cloud Vault로 동기화하지 않는다. localStorage 쓰기 실패는 성공한 백업을 실패로 바꾸지 않는다.
+보호 요청은 사용자 버튼에서만 실행하고, 용량은 브라우저 추정치로 표시한다. 일주일 알림은 서재에서만 보여준다.
+
+artifact gate는 초기 cache 4MiB 이하, entry gzip 650KiB 이하, initial graph에 WASM/PDF worker 없음과
+모든 manifest 파일의 크기/integrity를 검사한다. 전체 asset graph의 native/server 코드 제거는 후속 최적화다.
 
 Cloud Vault는 기존 opt-in 원본·암호화 metadata·충돌 병합·foreground 동기화 정책을 유지한다.
 실제 OAuth, 모바일 및 OCR/음성 offline은 코드 gate와 별도로 검증한다.

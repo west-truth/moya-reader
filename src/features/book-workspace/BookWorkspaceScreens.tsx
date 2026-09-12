@@ -1,4 +1,4 @@
-import { lazy, Suspense, useEffect, useMemo, useState } from 'react';
+import { lazy, Suspense, useEffect, useMemo, useState, type ReactNode } from 'react';
 import type { LibraryScreenActions, LibraryScreenModel } from '../library/library-screen-contract';
 import { LibraryHeader, LibraryMobileHeader, LibrarySidebar } from '../library/LibraryChrome';
 import { LibraryScreen } from '../library/LibraryScreen';
@@ -20,6 +20,7 @@ const LibraryManagementPanel = lazy(() => import('../library/LibraryManagementPa
 const SourceHubScreen = lazy(() => import('../external-sources/SourceHubScreen'));
 
 export interface BookWorkspaceScreensProps {
+  readonly libraryNotice?: ReactNode;
   readonly controller: BookWorkspaceController;
   readonly state: BookWorkspaceState;
   readonly projection: BookWorkspaceProjection;
@@ -59,6 +60,7 @@ export interface BookWorkspaceScreensProps {
 }
 
 export function BookWorkspaceScreens({
+  libraryNotice,
   controller,
   state,
   projection,
@@ -326,7 +328,7 @@ export function BookWorkspaceScreens({
   return (
     <>
       {state.view === 'library' && !externalSources.open && (
-        <LibraryScreen model={libraryModel} actions={libraryActions} />
+        <LibraryScreen model={libraryModel} actions={libraryActions} notice={libraryNotice} />
       )}
 
       {state.view === 'library' && externalSources.open && (

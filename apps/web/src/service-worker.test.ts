@@ -2,13 +2,13 @@ import { readFileSync } from 'node:fs';
 import { runInNewContext } from 'node:vm';
 import { describe, expect, it, vi } from 'vitest';
 
-function worker(failInstall = false, base = '/') {
+function worker(failInstall = false, base = '/', version = 'test', data = new Map<string, Map<string, Response>>()) {
   const origin = 'https://reader.invalid';
   const prefix = `moya-web-shell:${encodeURIComponent(base)}:`;
-  const cacheName = prefix + 'test';
-  const data = new Map<string, Map<string, Response>>();
+  const cacheName = prefix + version;
   const handlers = new Map<string, (event: any) => void>();
   const key = (request: string | Request) => new URL(typeof request === 'string' ? request : request.url, origin).href;
+  const failures = new Set<string>();
   const cacheApi = {
     keys: async () => [...data.keys()],
     delete: vi.fn(async (name: string) => data.delete(name)),
@@ -16,11 +16,8 @@ function worker(failInstall = false, base = '/') {
       if (!data.has(name)) data.set(name, new Map());
       const cache = data.get(name)!;
       return {
-        addAll: async (requests: Request[]) => {
-          if (failInstall) throw new Error('quota');
-          for (const request of requests) cache.set(key(request), new Response('cached ' + request.url));
-        },
-        match: async (request: string | Request) => cache.get(key(request)),
+        put: async (request: string | Request, response: Response) => cache.set(key(request), response.clone()),
+        match: async (request: string | Request) => cache.get(key(request))?.clone(),
       };
     },
   };
@@ -36,15 +33,23 @@ function worker(failInstall = false, base = '/') {
       super(typeof input === 'string' ? new URL(input, origin) : input, init);
     }
   }
-  const fetch = vi.fn(async () => new Response('network'));
+  const fetch = vi.fn(async (request: Request) => {
+    if (failInstall || failures.has(new URL(request.url).pathname)) throw new Error('offline');
+    return new Response('network ' + request.url);
+  });
+  const files = ['index.html', 'assets/reader.js', 'LICENSE', 'assets/pdf.js', 'assets/archive.wasm'].map(
+    (file) => base + file,
+  );
   const source = readFileSync(new URL('../scripts/service-worker.js', import.meta.url), 'utf8').replace(
     "{ version: '__BUILD_VERSION__', files: [] }",
     JSON.stringify({
-      version: 'test',
-      files: ['index.html', 'assets/reader.js', 'LICENSE'].map((file) => base + file),
+      version,
+      files,
+      precache: files.slice(0, 3),
+      assets: files.map((url) => ({ url, bytes: 100, integrity: 'sha256-fixture', verify: !url.endsWith('.html') })),
     }),
   );
-  runInNewContext(source, { self, caches: cacheApi, URL, Request: WebRequest, fetch, Set });
+  runInNewContext(source, { self, caches: cacheApi, URL, Request: WebRequest, Response, Headers, fetch, Set });
   async function event(type: string, extra: Record<string, unknown> = {}) {
     let result: Promise<unknown> | undefined;
     handlers.get(type)!({
@@ -70,43 +75,82 @@ function worker(failInstall = false, base = '/') {
     });
     return response;
   }
-  return { event, request, data, self, cacheName, prefix, cacheApi, fetch };
+  async function message(type: string) {
+    const messages: any[] = [];
+    await event('message', { data: { type }, ports: [{ postMessage: (value: unknown) => messages.push(value) }] });
+    return messages;
+  }
+  return { event, request, message, data, self, cacheName, prefix, cacheApi, fetch, failures };
 }
 
 describe('offline application cache boundary', () => {
-  it('keeps project Pages navigation, OAuth callbacks and caches inside its mount path', async () => {
+  it('installs only the initial screen and downloads optional formats when used', async () => {
+    const w = worker();
+    await w.event('install');
+    expect(w.fetch).toHaveBeenCalledTimes(3);
+    expect(w.data.get(w.cacheName)?.size).toBe(3);
+    w.fetch.mockClear();
+    expect(await (await w.request('/?code=private', { mode: 'navigate' }))?.text()).toContain('/index.html');
+    expect(await (await w.request('/assets/reader.js'))?.text()).toContain('/assets/reader.js');
+    expect(w.fetch).not.toHaveBeenCalled();
+    await w.request('/assets/pdf.js');
+    await w.request('/assets/pdf.js');
+    expect(w.fetch).toHaveBeenCalledOnce();
+    expect(w.data.get(w.cacheName)?.size).toBe(4);
+    expect(w.self.skipWaiting).not.toHaveBeenCalled();
+  });
+  it('prepares unread formats explicitly and reports resumable progress', async () => {
+    const w = worker();
+    await w.event('install');
+    w.failures.add('/assets/archive.wasm');
+    const failed = await w.message('PREPARE_OFFLINE');
+    expect(failed.at(-1).type).toBe('error');
+    expect(w.data.get(w.cacheName)?.size).toBe(4);
+    expect(await (await w.request('/', { mode: 'navigate' }))?.text()).toContain('/index.html');
+    w.failures.clear();
+    w.fetch.mockClear();
+    const resumed = await w.message('PREPARE_OFFLINE');
+    expect(w.fetch).toHaveBeenCalledOnce();
+    expect(resumed.at(-1)).toMatchObject({
+      type: 'complete',
+      total: 5,
+      completed: 5,
+      cachedBytes: 500,
+      preparing: false,
+    });
+    expect((await w.message('OFFLINE_STATUS'))[0]).toMatchObject({ completed: 5, totalBytes: 500 });
+  });
+  it('reuses identical verified assets across versions instead of downloading them again', async () => {
+    const previous = worker(false, '/', 'old');
+    await previous.event('install');
+    await previous.message('PREPARE_OFFLINE');
+    const next = worker(false, '/', 'new', previous.data);
+    await next.event('install');
+    await next.message('PREPARE_OFFLINE');
+    expect(next.fetch).toHaveBeenCalledOnce();
+    expect(next.fetch.mock.calls[0][0].url).toContain('/index.html');
+    expect(next.fetch.mock.calls[0][0].integrity).toBe('');
+    expect(next.data.get(next.cacheName)?.size).toBe(6);
+    expect((await next.message('OFFLINE_STATUS'))[0].completed).toBe(5);
+  });
+  it('keeps project navigation, OAuth callbacks and cache cleanup inside its mount path', async () => {
     const w = worker(false, '/moya-reader/');
     const sibling = 'moya-web-shell:%2Fsibling%2F:old';
     w.data.set(sibling, new Map());
-    w.data.set('moya-web-shell:%2F:old', new Map());
     await w.event('install');
     await w.event('activate');
+    w.fetch.mockClear();
     expect(w.data.has(sibling)).toBe(true);
-    expect(w.data.has('moya-web-shell:%2F:old')).toBe(true);
     expect(await (await w.request('/moya-reader/?code=private', { mode: 'navigate' }))?.text()).toContain(
       '/moya-reader/index.html',
     );
-    expect(await (await w.request('/moya-reader/assets/reader.js'))?.text()).toContain('/moya-reader/assets/reader.js');
     expect(await (await w.request('/moya-reader/LICENSE', { mode: 'navigate' }))?.text()).toContain(
       '/moya-reader/LICENSE',
     );
     expect(w.request('/sibling/', { mode: 'navigate' })).toBeUndefined();
     expect(w.request('/assets/reader.js')).toBeUndefined();
-    expect(w.request('/moya-reader/api/books')).toBeUndefined();
-    expect(w.request('/moya-reader/sw.js')).toBeUndefined();
     expect(w.fetch).not.toHaveBeenCalled();
-  });
-  it('serves installed HTML and unread lazy chunks without a network connection', async () => {
-    const w = worker();
-    await w.event('install');
-    expect(await (await w.request('/?code=oauth-sensitive-value', { mode: 'navigate' }))?.text()).toContain(
-      '/index.html',
-    );
-    expect(await (await w.request('/assets/reader.js'))?.text()).toContain('/assets/reader.js');
-    expect(w.fetch).not.toHaveBeenCalled();
-    expect([...w.data.get(w.cacheName)!.keys()]).not.toContain('https://reader.invalid/?code=oauth-sensitive-value');
-    expect(w.self.skipWaiting).not.toHaveBeenCalled();
-    expect(await (await w.request('/LICENSE', { mode: 'navigate' }))?.text()).toContain('/LICENSE');
+    expect([...w.data.get(w.cacheName)!.keys()].some((url) => url.includes('private'))).toBe(false);
   });
   it('never intercepts cloud data, credentials, APIs, ranges or mutations', () => {
     const w = worker();
@@ -116,15 +160,25 @@ describe('offline application cache boundary', () => {
     expect(w.request('/assets/reader.js', { headers: { Range: 'bytes=0-9' } })).toBeUndefined();
     expect(w.request('/assets/reader.js', { method: 'POST' })).toBeUndefined();
     expect(w.request('/runtime-config.js')).toBeUndefined();
+    expect(w.request('/sw.js')).toBeUndefined();
   });
-  it('rolls back failed installation without touching old app or unrelated caches', async () => {
+  it('does not cache unknown paths or asset query strings', async () => {
+    const w = worker();
+    await w.event('install');
+    await w.request('/assets/reader.js?private=value');
+    await w.request('/assets/user-file.txt');
+    expect(
+      [...w.data.get(w.cacheName)!.keys()].some((url) => url.includes('private') || url.includes('user-file')),
+    ).toBe(false);
+  });
+  it('rolls back a failed initial install without touching old or unrelated caches', async () => {
     const w = worker(true);
     w.data.set(w.prefix + 'old', new Map());
     w.data.set('other-app', new Map());
-    await expect(w.event('install')).rejects.toThrow('quota');
+    await expect(w.event('install')).rejects.toThrow('offline');
     expect([...w.data.keys()]).toEqual([w.prefix + 'old', 'other-app']);
   });
-  it('preserves another tab and unrelated storage, and activates only on request', async () => {
+  it('preserves an older tab and activates updates only on request', async () => {
     const w = worker();
     w.data.set(w.prefix + 'ancient', new Map());
     w.data.set('other-app', new Map());
