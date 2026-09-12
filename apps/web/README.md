@@ -1,5 +1,7 @@
 # 모야 브라우저 Web 앱
 
+공개 주소: https://west-truth.github.io/moya-reader/
+
 이 폴더는 메인 레포 안의 별도 실행·빌드 대상입니다. 독립 레포나 Reader 복사본을 만들지 않습니다.
 
 ```text
@@ -87,7 +89,8 @@ corepack pnpm web:preview
 4. 공개 저장소 main의 Actions → **Web Pages** → **Run workflow**를 실행합니다.
 
 워크플로는 Pages 설정에서 루트/하위 경로를 읽고 검증한 `apps/web/dist`만 배포합니다. push 시 자동 배포하지
-않으며 개발용 저장소에서는 실행하지 않습니다. 아직 외부 배포나 GitHub 설정 변경은 수행하지 않았습니다.
+않으며 개발용 저장소에서는 실행하지 않습니다. 2026-09-12 공개 저장소 PR #41 병합 후 Pages를 workflow 방식으로
+활성화했고, 수동 배포 run `34672371705`가 성공했습니다. 이후 배포도 main의 **Web Pages** workflow를 수동 실행합니다.
 Pages의 `_headers` 지원을 전제로 하지 않습니다. 앱은 경로 라우팅 없이 루트 문서와 OAuth query를 사용합니다.
 향후 유료 서비스로 확장할 때는 [Pages 사용 제한](https://docs.github.com/en/pages/getting-started-with-github-pages/github-pages-limits)을 확인합니다.
 

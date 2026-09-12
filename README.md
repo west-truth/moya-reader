@@ -16,6 +16,10 @@
 </p>
 
 <p align="center">
+  <a href="https://west-truth.github.io/moya-reader/"><strong>브라우저에서 모야 열기</strong></a>
+</p>
+
+<p align="center">
   <a href="#무엇을-할-수-있나요">기능</a> ·
   <a href="#지원-형식">지원 형식</a> ·
   <a href="#가장-빠른-설치-ubuntu--docker-compose">빠른 설치</a> ·
