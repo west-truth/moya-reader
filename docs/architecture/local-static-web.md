@@ -51,6 +51,11 @@ Cloud Vault는 기존 opt-in 원본·암호화 metadata·충돌 병합·foregrou
   `apps/web/dist`만 업로드한다. OAuth 공개 식별자만 repository variables로 받고 서버 비밀은 빌드에 전달하지 않는다.
 - 배포/공개 저장소 반영/네이티브 설치 검증은 로컬 코드 완료와 별도로 기록한다.
 
+2026-09-12 공개 저장소 PR #41을 병합하고 Pages를 `workflow` 방식으로 활성화했다. 첫 수동 배포 run
+`34672371705`가 성공했으며 공개 주소는 `https://west-truth.github.io/moya-reader/`이다. 실제 HTTPS에서
+HTML·manifest·worker·offline manifest·icon 응답과 새 Edge 프로필의 UI boot, service-worker scope,
+offline reload를 확인했다. OAuth와 네이티브 설치 프로그램은 아직 구성되지 않았다.
+
 운영 절차와 데이터 이동 방법은 [Web README](../../apps/web/README.md)를 따른다.
 설정 근거: [Vite public base path](https://vite.dev/guide/build.html#public-base-path),
 [GitHub Pages custom workflow](https://docs.github.com/en/pages/getting-started-with-github-pages/using-custom-workflows-with-github-pages).
