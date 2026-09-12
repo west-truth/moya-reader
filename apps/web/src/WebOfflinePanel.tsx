@@ -18,14 +18,14 @@ export function WebOfflinePanel() {
   const complete = Boolean(state.offline && state.offline.completed === state.offline.total);
   const remaining = state.offline ? Math.max(0, state.offline.totalBytes - state.offline.cachedBytes) : undefined;
   return (
-    <section className="web-storage-panel" aria-label="앱과 오프라인">
+    <section className="web-storage-panel" aria-label="인터넷 없이 읽기">
       <h3>
-        <WifiOff size={18} aria-hidden="true" /> 앱과 오프라인
+        <WifiOff size={18} aria-hidden="true" /> 인터넷 없이 읽기
       </h3>
       <p>
         {complete
-          ? '모든 형식의 오프라인 준비가 끝났습니다. 이 기기에 가져온 책을 인터넷 없이 읽을 수 있습니다.'
-          : '앱은 필요한 화면부터 받습니다. 인터넷 없이 처음 여는 책이나 PDF·만화를 사용하려면 모든 형식을 미리 준비하세요.'}
+          ? '이 브라우저에 저장한 책은 인터넷이 끊겨도 읽을 수 있어요.'
+          : '선택 사항이에요. 인터넷이 없을 때도 읽고 싶다면, 연결된 지금 필요한 읽기 기능을 미리 받아 두세요.'}
       </p>
       <dl>
         <div>
@@ -33,35 +33,37 @@ export function WebOfflinePanel() {
           <dd>{state.online ? '연결됨' : '오프라인'}</dd>
         </div>
         <div>
-          <dt>오프라인 준비</dt>
+          <dt>인터넷 없이 읽기</dt>
           <dd>
             {state.phase === 'unsupported'
               ? '이 환경에서 지원하지 않음'
               : state.phase === 'error'
-                ? '준비 실패'
+                ? '설정하지 못함'
                 : state.phase === 'starting'
-                  ? '앱 준비 중'
-                  : complete
-                    ? '모든 형식 준비됨'
-                    : '열어 본 화면 저장됨'}
+                  ? '확인 중'
+                  : state.preparing
+                    ? '받는 중'
+                    : complete
+                      ? '사용 가능'
+                      : '설정 전'}
           </dd>
         </div>
         {remaining !== undefined && !complete && (
           <div>
             <dt>추가 다운로드</dt>
-            <dd>약 {formatBytes(remaining)} · 전송 시 압축</dd>
+            <dd>약 {formatBytes(remaining)}</dd>
           </div>
         )}
       </dl>
       {state.preparing && (
         <div role="status">
           <progress
-            aria-label="오프라인 다운로드"
+            aria-label="읽기 기능 다운로드"
             max={state.offline?.total ?? 1}
             value={state.offline?.completed ?? 0}
           />
           <p>
-            오프라인 준비 중 · {state.offline?.completed ?? 0}/{state.offline?.total ?? '…'}
+            읽기 기능 받는 중 · {state.offline?.completed ?? 0}/{state.offline?.total ?? '…'}
           </p>
         </div>
       )}
@@ -73,7 +75,7 @@ export function WebOfflinePanel() {
             onClick={() => void prepareWebOffline()}
           >
             <Download size={15} />
-            {state.preparing ? '준비 중…' : '모든 형식 오프라인 준비'}
+            {state.preparing ? '받는 중…' : '인터넷 없이 읽기 켜기'}
           </button>
         )}
         <button
@@ -81,7 +83,7 @@ export function WebOfflinePanel() {
           disabled={!state.online || state.preparing || state.phase === 'unsupported'}
           onClick={() => void checkWebUpdate()}
         >
-          업데이트·상태 확인
+          업데이트 확인
         </button>
         {state.waiting && (
           <button className="primary-btn" disabled={state.busy || state.preparing} onClick={applyWebUpdate}>
@@ -90,7 +92,7 @@ export function WebOfflinePanel() {
         )}
         {state.installPrompt && (
           <button className="ghost-btn" onClick={() => void installWebApp()}>
-            앱 설치
+            모야 설치 (선택)
           </button>
         )}
       </div>
@@ -102,14 +104,24 @@ export function WebOfflinePanel() {
         </p>
       )}
       {state.error && <p role="status">{state.error}</p>}
-      {!state.installed && !state.installPrompt && (
-        <p className="field-help">브라우저 메뉴의 ‘앱 설치’ 또는 ‘홈 화면에 추가’로 앱처럼 열 수 있습니다.</p>
-      )}
-      <p className="field-help">
-        앱 파일 준비는 책장 백업과 다릅니다. 클라우드 연결·OCR 언어팩·일부 시스템 음성은 인터넷이 필요합니다. 새 버전
-        적용 후 준비 상태를 다시 확인하세요.
-      </p>
-      {state.offline && <p className="field-help">현재 앱 버전 {state.offline.version.slice(0, 10)}</p>}
+      {!state.online && !complete && <p className="field-help">이 기능을 켜려면 먼저 인터넷에 연결해 주세요.</p>}
+      <details className="web-settings-details">
+        <summary>사용 안내</summary>
+        <p className="field-help">
+          TXT·EPUB·PDF·만화를 읽는 데 필요한 기능을 이 브라우저에 저장합니다. 책은 직접 가져와 주세요. 인터넷이 연결돼
+          있다면 이 설정 없이 바로 읽을 수 있습니다.
+        </p>
+        {!state.installed && (
+          <p className="field-help">
+            브라우저 메뉴의 ‘앱 설치’ 또는 ‘홈 화면에 추가’는 실행 아이콘을 만드는 선택 기능입니다. 설치하지 않아도
+            인터넷 없이 읽을 수 있습니다.
+          </p>
+        )}
+        <p className="field-help">
+          클라우드 동기화·OCR 언어팩·일부 음성은 인터넷이 필요합니다. 이 설정은 책장 백업을 대신하지 않습니다.
+        </p>
+        {state.offline && <p className="field-help">현재 버전 {state.offline.version.slice(0, 10)}</p>}
+      </details>
     </section>
   );
 }

@@ -64,16 +64,25 @@ try {
     'First installation must not download unused document engines',
   );
   assert.equal(await page.evaluate(() => navigator.serviceWorker.controller.scriptURL), origin + base + 'sw.js');
-  await page.getByRole('button', { name: /동기화 열기/ }).click();
+  const introduction = page.getByRole('complementary', { name: '브라우저 서재 안내' });
+  assert.equal(await introduction.getByRole('button').count(), 2, 'Keep only the offline link and dismiss action');
+  await page.setViewportSize({ width: 390, height: 844 });
+  await mkdir('.tmp/web-pages-check', { recursive: true });
+  await page.screenshot({ path: '.tmp/web-pages-check/library-introduction.png', fullPage: true });
+  await introduction.getByRole('button', { name: '인터넷 없이 읽기', exact: true }).click();
+  const offlinePanel = page.getByRole('region', { name: '인터넷 없이 읽기', exact: true });
+  assert((await offlinePanel.innerText()).includes('선택 사항'), 'Offline setup is optional');
+  assert.equal(await offlinePanel.locator('details[open]').count(), 0, 'Keep secondary explanations folded');
+  await page.screenshot({ path: '.tmp/web-pages-check/offline-before-setup.png', fullPage: true });
   await page.getByRole('link', { name: /데스크톱 (출시 확인|앱 다운로드)/ }).waitFor();
-  await page.getByRole('button', { name: '모든 형식 오프라인 준비', exact: true }).click();
-  await page.getByText('모든 형식 준비됨', { exact: true }).waitFor({ timeout: 90000 });
+  await page.getByRole('button', { name: '인터넷 없이 읽기 켜기', exact: true }).click();
+  await offlinePanel.getByText('사용 가능', { exact: true }).waitFor({ timeout: 90000 });
   await page.setViewportSize({ width: 390, height: 844 });
   assert(
     await page.locator('.sync-panel').evaluate((panel) => panel.scrollWidth <= panel.clientWidth + 1),
     'Mobile Web settings overflow horizontally',
   );
-  await page.getByRole('region', { name: '앱과 오프라인', exact: true }).scrollIntoViewIfNeeded();
+  await offlinePanel.scrollIntoViewIfNeeded();
   await mkdir('.tmp/web-pages-check', { recursive: true });
   await page.screenshot({ path: '.tmp/web-pages-check/offline-settings.png', fullPage: true });
   await page.getByText('웹에서 읽던 책 옮기기', { exact: true }).click();
@@ -81,7 +90,11 @@ try {
   await page.screenshot({ path: '.tmp/web-pages-check/desktop-handoff.png', fullPage: true });
   await page.setViewportSize({ width: 1280, height: 900 });
   await page.getByRole('button', { name: '동기화 패널 닫기', exact: true }).click();
+  await introduction.getByRole('button', { name: '서재 안내 닫기', exact: true }).click();
   await context.setOffline(true);
+  await page.reload();
+  await page.getByRole('button', { name: '책 가져오기', exact: true }).waitFor();
+  assert.equal(await introduction.count(), 0, 'The dismissed introduction stays hidden after reload');
   await page.getByRole('button', { name: '책 가져오기', exact: true }).click();
   await page.locator('input[type=file]').setInputFiles({
     name: 'Pages smoke.txt',
@@ -150,7 +163,10 @@ try {
     return Boolean(registration?.active && !registration.waiting);
   });
   await page.getByRole('button', { name: /동기화 열기/ }).click();
-  await page.getByText('모든 형식 준비됨', { exact: true }).waitFor();
+  await page
+    .getByRole('region', { name: '인터넷 없이 읽기', exact: true })
+    .getByText('사용 가능', { exact: true })
+    .waitFor();
   await page.getByRole('button', { name: '동기화 패널 닫기', exact: true }).click();
   await context.setOffline(true);
   await page.reload();

@@ -87,6 +87,18 @@
   width: 100%;
   accent-color: var(--app-accent);
 }
+.web-settings-details summary {
+  cursor: pointer;
+  color: var(--app-text-muted);
+  font-size: 0.875rem;
+  padding-block: 0.2rem;
+}
+.web-settings-details[open] summary {
+  margin-block-end: 0.5rem;
+}
+.web-settings-details p + p {
+  margin-block-start: 0.5rem;
+}
 .web-library-notice {
   display: flex;
   align-items: flex-start;

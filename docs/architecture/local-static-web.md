@@ -30,7 +30,7 @@ Web OAuth 공개 식별자는 `apps/web/.env.local`에서만 읽고 서버 주�
 공통 Reader 수정은 두 앱에 함께 반영한다. 동작이 달라야 하는 UI는 제품 구성 경계에서 구분한다.
 
 PWA는 Vite의 entry/static import/CSS graph와 필수 public assets만 먼저 캐시한다. lazy chunks/Workers/WASM은
-온라인에서 사용할 때 캐시하거나 설정의 ‘모든 형식 오프라인 준비’로 받는다. build manifest는 각 파일의 크기와
+온라인에서 사용할 때 캐시하거나 설정의 ‘인터넷 없이 읽기 켜기’로 받는다. build manifest는 각 파일의 크기와
 SHA-256 integrity를 고정하고 실행 자산은 request integrity 검사 후 저장한다. HTML은 AdGuard 등 기기 콘텐츠 필터가
 변경할 수 있어 network SRI를 적용하지 않고 매 버전 새로 받는다. 이전 cache에서 URL과 integrity가 같은 실행 파일은
 재사용한다. 저장 header는 원래 build descriptor의 revision이며 필터를 거친 HTML의 바이트 해시를 증명하지 않는다.
@@ -42,9 +42,11 @@ SHA-256 integrity를 고정하고 실행 자산은 request integrity 검사 후 
 앱에서 import/backup/folder/source/Cloud Vault 작업 중 업데이트를 막고 beforeunload 확인을 요청한다.
 독서 화면에는 업데이트 알림을 표시하지 않는다. 모바일 강제 종료 및 다른 탭의 작업까지 보호하는 주장은 하지 않는다.
 
-`moya-web-data-safety-v1`에는 백업 생성 시각과 안내 숨김 기한만 기록한다. 책장 데이터/원문/토큰을 넣지 않으며
+`moya-web-data-safety-v1`에는 백업 생성 시각과 메인 안내 닫기 여부만 기록한다. 이전 `dismissedUntil`이 있으면
+이미 닫은 안내로 이관한다. 일주일마다 백업을 요구하던 메인 알림은 제거했다. 책장 데이터/원문/토큰을 넣지 않으며
 백업이나 Cloud Vault로 동기화하지 않는다. localStorage 쓰기 실패는 성공한 백업을 실패로 바꾸지 않는다.
-보호 요청은 사용자 버튼에서만 실행하고, 용량은 브라우저 추정치로 표시한다. 일주일 알림은 서재에서만 보여준다.
+보호 요청은 설정의 사용자 버튼에서만 실행하고, 용량은 브라우저 추정치로 표시한다. 메인에는 자동 저장 한 줄과
+‘인터넷 없이 읽기’ 진입만 둔다. 설정에서는 오프라인 사용과 설치·백업을 선택 기능으로 안내하고 상세 설명을 접는다.
 
 artifact gate는 초기 cache 4MiB 이하, entry gzip 650KiB 이하, initial graph에 WASM/PDF worker 없음과
 모든 manifest 파일의 크기/integrity를 검사한다. 전체 asset graph의 native/server 코드 제거는 후속 최적화다.

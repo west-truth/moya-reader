@@ -29,8 +29,8 @@ export function WebStoragePanel() {
         const granted = await requestBrowserPersistence();
         setMessage(
           granted
-            ? '자동 정리로부터 이 사이트의 데이터를 보호합니다. 직접 삭제하거나 기기를 잃으면 백업이 필요합니다.'
-            : '브라우저가 영구 저장을 허용하지 않았습니다. 파일과 기록은 백업으로 보호해 주세요.',
+            ? '브라우저의 자동 정리로부터 책장을 보호합니다.'
+            : '브라우저가 보호 요청을 허용하지 않았습니다. 기본 자동 저장은 계속 사용할 수 있습니다.',
         );
       }
       setStatus(await readBrowserStorage());
@@ -51,10 +51,7 @@ export function WebStoragePanel() {
       <h3 id={titleId}>
         <HardDrive size={18} aria-hidden="true" /> 이 기기에 저장
       </h3>
-      <p>
-        가져온 파일과 독서 기록은 이 브라우저에 저장됩니다. 다른 기기에서는 Dropbox 동기화 또는 백업 파일로 이어갈 수
-        있습니다.
-      </p>
+      <p>책과 읽던 위치는 자동 저장됩니다. 브라우저를 닫아도 다음에 이어 읽을 수 있어요.</p>
       <dl>
         <div>
           <dt>사용 중</dt>
@@ -92,11 +89,17 @@ export function WebStoragePanel() {
         )}
       </div>
       {message && <p role="status">{message}</p>}
-      <p className="field-help">
-        표시 용량은 브라우저의 추정치이며 실제 디스크 여유와 다를 수 있습니다. 사이트 데이터 삭제·시크릿 모드
-        종료·브라우저 변경 시 서재를 잃을 수 있습니다. 책장의 백업 메뉴에서 파일로 보관하세요. 동기화로 원본까지
-        복원하려면 ‘작품 파일과 표지’를 켜 주세요.
-      </p>
+      <details className="web-settings-details">
+        <summary>저장과 백업 안내</summary>
+        <p className="field-help">
+          저장 보호 요청이 승인되면 브라우저의 자동 정리 대상에서 제외됩니다. 사이트 데이터를 직접 삭제하면 책장도
+          삭제됩니다. 시크릿 모드는 장기 보관에 적합하지 않습니다.
+        </p>
+        <p className="field-help">
+          백업은 중요한 책과 기록을 별도로 보관하는 선택 기능입니다. 표시 용량은 브라우저의 추정치이며 실제 디스크
+          여유와 다를 수 있습니다.
+        </p>
+      </details>
     </section>
   );
 }
