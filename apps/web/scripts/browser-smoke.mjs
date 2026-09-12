@@ -179,17 +179,16 @@ try {
     await page.locator('input[type=file]').setInputFiles(file);
     await page.getByRole('button', { name: '가져오기 시작', exact: true }).click();
     await page.locator('.import-dialog').waitFor({ state: 'hidden' });
+    // Reopen the persisted library offline. Import completion may also navigate;
+    // a fresh page avoids racing that transition and verifies durable storage.
+    await page.reload();
     const title = file.name.replace(/\.(epub|cbz|pdf)$/, '');
-    const first = page
+    await page
       .locator('.book-continue-action')
-      .and(page.getByRole('button', { name: new RegExp('^' + title + ' ') }));
+      .and(page.getByRole('button', { name: new RegExp('^' + title + ' ') }))
+      .click();
     const reading = page.locator('.source-hub-reading-button');
-    const alreadyOpen = page.locator(selector);
-    await first.first().or(reading.first()).or(alreadyOpen.first()).first().waitFor();
-    if (await first.first().isVisible()) {
-      await first.first().click();
-      await reading.first().or(alreadyOpen.first()).first().waitFor();
-    }
+    await reading.first().or(page.locator(selector).first()).first().waitFor();
     if (await reading.first().isVisible()) await reading.first().click();
     await page.locator(selector).first().waitFor();
     if (selector.endsWith('img'))
