@@ -1,0 +1,59 @@
+name: Web Pages
+
+# Publication is an explicit action, never a side effect of updating the shared reader.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: web-pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    if: github.repository == 'west-truth/moya-reader' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+      - uses: pnpm/action-setup@v6
+        with:
+          version: 11.7.0
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: corepack enable
+      - run: corepack pnpm install --frozen-lockfile
+      - name: Read Pages configuration
+        id: pages
+        uses: actions/configure-pages@v5
+      - name: Verify and build browser edition
+        run: corepack pnpm check:web-local
+        env:
+          WEB_BASE_PATH: ${{ format('{0}/', steps.pages.outputs.base_path) }}
+          VITE_DESKTOP_DOWNLOAD_URL: ${{ vars.VITE_DESKTOP_DOWNLOAD_URL }}
+          VITE_DROPBOX_APP_KEY: ${{ vars.VITE_DROPBOX_APP_KEY }}
+          VITE_DROPBOX_SOURCE_APP_KEY: ${{ vars.VITE_DROPBOX_SOURCE_APP_KEY }}
+          VITE_GOOGLE_DRIVE_CLIENT_ID: ${{ vars.VITE_GOOGLE_DRIVE_CLIENT_ID }}
+          VITE_GOOGLE_DRIVE_APP_ID: ${{ vars.VITE_GOOGLE_DRIVE_APP_ID }}
+          VITE_GOOGLE_DRIVE_DEVELOPER_KEY: ${{ vars.VITE_GOOGLE_DRIVE_DEVELOPER_KEY }}
+      - uses: actions/upload-pages-artifact@v4
+        with:
+          path: apps/web/dist
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Publish verified artifact
+        id: deployment
+        uses: actions/deploy-pages@v4

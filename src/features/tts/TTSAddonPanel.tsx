@@ -21,6 +21,7 @@ import type {
   TTSPlaybackSettingsOverride,
   VoiceProfile,
 } from '../../domain/types';
+import { useOptionalAppRuntime } from '../../app/runtime/RuntimeProvider';
 import type { ProviderCatalogItem, ProviderOptionConfig } from '../../providers/provider-jobs';
 import {
   providerOptionValueFromRecord,
@@ -407,6 +408,7 @@ function VoicePoolEditor({
 }
 
 export default function TTSAddonPanel(props: TTSAddonPanelProps) {
+  const localStatic = useOptionalAppRuntime()?.product?.kind === 'local-static';
   const speedId = useId();
   const chapterEndId = useId();
   const sleepTimerId = useId();
@@ -527,7 +529,11 @@ export default function TTSAddonPanel(props: TTSAddonPanelProps) {
     <div className="panel-body tts-addon-body">
       <header className="addon-intro">
         <h3>TTS</h3>
-        <p className="muted">시스템 음성과 설정된 provider 음성을 같은 재생 제어로 사용합니다.</p>
+        <p className="muted">
+          {localStatic
+            ? '이 기기의 시스템 음성으로 읽어줍니다. 음성과 오프라인 재생은 브라우저·운영체제에 따라 다릅니다.'
+            : '시스템 음성과 설정된 provider 음성을 같은 재생 제어로 사용합니다.'}
+        </p>
       </header>
       <div className="segmented tts-panel-tabs" role="tablist" aria-label="TTS 설정 화면">
         <button
@@ -1226,188 +1232,195 @@ export default function TTSAddonPanel(props: TTSAddonPanelProps) {
           </div>
         </div>
 
-        <div className="voice-profile-section hosted-voice-section">
-          <div className="setting-line">
-            <h4>Hosted 캐릭터 음성</h4>
-            <span>{props.hostedPlaybackReady ? props.selectedHostedProviderLabel : '대기'}</span>
-          </div>
-          <div className="addon-status">
-            <span>{props.hostedBusy ? 'Cache 작업 중' : 'Cache 재생'}</span>
-            <strong>
-              {props.hostedPlaybackReady
-                ? `${formatCount(hostedProfiles.length)}개 지정`
-                : props.selectedHostedProvider
-                  ? '음성 ID 필요'
-                  : 'provider 미선택'}
-            </strong>
-          </div>
-          {props.offlineDownloadPolicy && (
-            <fieldset className="tts-skip-types">
-              <legend>Android 백그라운드 재개 조건</legend>
-              <label>
-                <input
-                  type="checkbox"
-                  aria-label="무제한 네트워크에서만 백그라운드 재개"
-                  checked={props.offlineDownloadPolicy.network === 'unmetered'}
-                  onChange={(event) =>
-                    props.changeOfflineDownloadPolicy({ network: event.target.checked ? 'unmetered' : 'any' })
-                  }
-                />
-                무제한 네트워크에서만 재개
-              </label>
-              <label>
-                <input
-                  type="checkbox"
-                  aria-label="충전 중에만 백그라운드 재개"
-                  checked={props.offlineDownloadPolicy.charging === 'required'}
-                  onChange={(event) =>
-                    props.changeOfflineDownloadPolicy({ charging: event.target.checked ? 'required' : 'any' })
-                  }
-                />
-                충전 중에만 재개
-              </label>
-              <small>앱이 종료된 뒤 남은 음성을 복구할 때만 적용됩니다. 현재 화면의 준비 작업은 바로 시작합니다.</small>
-            </fieldset>
-          )}
-          <button
-            className="ghost-btn wide"
-            onClick={() =>
-              props.selectedHostedProvider && void props.refreshHostedVoices(props.selectedHostedProvider.providerId)
-            }
-            disabled={
-              !props.selectedHostedProvider ||
-              props.hostedVoicesLoadingProvider === props.selectedHostedProvider?.providerId
-            }
-          >
-            <RefreshCw size={16} /> Hosted 음성 새로고침
-          </button>
-          {(['current', 'nearby', 'book'] as const).map((scope) => (
-            <button
-              key={scope}
-              className="ghost-btn wide"
-              onClick={() => void props.warmup(scope)}
-              disabled={props.hostedWarmupDisabled}
-            >
-              <RefreshCw size={16} />{' '}
-              {scope === 'current' ? '현재 화' : scope === 'nearby' ? '현재+다음 2화' : '책 전체'} 캐시 준비
-            </button>
-          ))}
-          {props.offlineDownloadJob && (
-            <div className="provider-job-card" aria-label="최근 오프라인 TTS 준비 작업">
-              <strong>
-                오프라인 음성 {props.offlineDownloadJob.readyItems}/{props.offlineDownloadJob.plannedItems}
-              </strong>
-              <span>
-                {props.offlineDownloadJob.state === 'completed'
-                  ? '준비 완료'
-                  : `실패 ${props.offlineDownloadJob.failedItems} · 준비된 항목은 그대로 유지`}
-              </span>
-              {props.offlineDownloadError && <small>{props.offlineDownloadError}</small>}
-              {(props.offlineDownloadJob.state === 'partial' || props.offlineDownloadJob.state === 'failed') && (
-                <button
-                  className="ghost-btn wide"
-                  aria-label="실패한 오프라인 음성 다시 준비"
-                  disabled={props.hostedWarmupDisabled}
-                  onClick={() => void props.warmup(offlineRetryScope)}
-                >
-                  <RefreshCw size={16} /> 실패 항목 다시 준비
-                </button>
-              )}
-            </div>
-          )}
-          {props.hostedOfflineCacheStatus && (
-            <div className="provider-job-card" aria-label="브라우저 오프라인 음성 저장소">
-              <strong>브라우저 오프라인 저장소</strong>
-              <span>
-                이 책 {props.hostedOfflineCacheStatus.itemCount}개 ·{' '}
-                {formatBytes(props.hostedOfflineCacheStatus.byteSize)}
-              </span>
-              {props.hostedOfflineCacheStatus.originUsage !== undefined &&
-                props.hostedOfflineCacheStatus.originQuota !== undefined && (
+        {!localStatic && (
+          <>
+            <div className="voice-profile-section hosted-voice-section">
+              <div className="setting-line">
+                <h4>Hosted 캐릭터 음성</h4>
+                <span>{props.hostedPlaybackReady ? props.selectedHostedProviderLabel : '대기'}</span>
+              </div>
+              <div className="addon-status">
+                <span>{props.hostedBusy ? 'Cache 작업 중' : 'Cache 재생'}</span>
+                <strong>
+                  {props.hostedPlaybackReady
+                    ? `${formatCount(hostedProfiles.length)}개 지정`
+                    : props.selectedHostedProvider
+                      ? '음성 ID 필요'
+                      : 'provider 미선택'}
+                </strong>
+              </div>
+              {props.offlineDownloadPolicy && (
+                <fieldset className="tts-skip-types">
+                  <legend>Android 백그라운드 재개 조건</legend>
+                  <label>
+                    <input
+                      type="checkbox"
+                      aria-label="무제한 네트워크에서만 백그라운드 재개"
+                      checked={props.offlineDownloadPolicy.network === 'unmetered'}
+                      onChange={(event) =>
+                        props.changeOfflineDownloadPolicy({ network: event.target.checked ? 'unmetered' : 'any' })
+                      }
+                    />
+                    무제한 네트워크에서만 재개
+                  </label>
+                  <label>
+                    <input
+                      type="checkbox"
+                      aria-label="충전 중에만 백그라운드 재개"
+                      checked={props.offlineDownloadPolicy.charging === 'required'}
+                      onChange={(event) =>
+                        props.changeOfflineDownloadPolicy({ charging: event.target.checked ? 'required' : 'any' })
+                      }
+                    />
+                    충전 중에만 재개
+                  </label>
                   <small>
-                    앱 전체 {formatBytes(props.hostedOfflineCacheStatus.originUsage)} /{' '}
-                    {formatBytes(props.hostedOfflineCacheStatus.originQuota)}
+                    앱이 종료된 뒤 남은 음성을 복구할 때만 적용됩니다. 현재 화면의 준비 작업은 바로 시작합니다.
                   </small>
+                </fieldset>
+              )}
+              <button
+                className="ghost-btn wide"
+                onClick={() =>
+                  props.selectedHostedProvider &&
+                  void props.refreshHostedVoices(props.selectedHostedProvider.providerId)
+                }
+                disabled={
+                  !props.selectedHostedProvider ||
+                  props.hostedVoicesLoadingProvider === props.selectedHostedProvider?.providerId
+                }
+              >
+                <RefreshCw size={16} /> Hosted 음성 새로고침
+              </button>
+              {(['current', 'nearby', 'book'] as const).map((scope) => (
+                <button
+                  key={scope}
+                  className="ghost-btn wide"
+                  onClick={() => void props.warmup(scope)}
+                  disabled={props.hostedWarmupDisabled}
+                >
+                  <RefreshCw size={16} />{' '}
+                  {scope === 'current' ? '현재 화' : scope === 'nearby' ? '현재+다음 2화' : '책 전체'} 캐시 준비
+                </button>
+              ))}
+              {props.offlineDownloadJob && (
+                <div className="provider-job-card" aria-label="최근 오프라인 TTS 준비 작업">
+                  <strong>
+                    오프라인 음성 {props.offlineDownloadJob.readyItems}/{props.offlineDownloadJob.plannedItems}
+                  </strong>
+                  <span>
+                    {props.offlineDownloadJob.state === 'completed'
+                      ? '준비 완료'
+                      : `실패 ${props.offlineDownloadJob.failedItems} · 준비된 항목은 그대로 유지`}
+                  </span>
+                  {props.offlineDownloadError && <small>{props.offlineDownloadError}</small>}
+                  {(props.offlineDownloadJob.state === 'partial' || props.offlineDownloadJob.state === 'failed') && (
+                    <button
+                      className="ghost-btn wide"
+                      aria-label="실패한 오프라인 음성 다시 준비"
+                      disabled={props.hostedWarmupDisabled}
+                      onClick={() => void props.warmup(offlineRetryScope)}
+                    >
+                      <RefreshCw size={16} /> 실패 항목 다시 준비
+                    </button>
+                  )}
+                </div>
+              )}
+              {props.hostedOfflineCacheStatus && (
+                <div className="provider-job-card" aria-label="브라우저 오프라인 음성 저장소">
+                  <strong>브라우저 오프라인 저장소</strong>
+                  <span>
+                    이 책 {props.hostedOfflineCacheStatus.itemCount}개 ·{' '}
+                    {formatBytes(props.hostedOfflineCacheStatus.byteSize)}
+                  </span>
+                  {props.hostedOfflineCacheStatus.originUsage !== undefined &&
+                    props.hostedOfflineCacheStatus.originQuota !== undefined && (
+                      <small>
+                        앱 전체 {formatBytes(props.hostedOfflineCacheStatus.originUsage)} /{' '}
+                        {formatBytes(props.hostedOfflineCacheStatus.originQuota)}
+                      </small>
+                    )}
+                  <small>
+                    {props.hostedOfflineCacheStatus.persisted
+                      ? '브라우저의 자동 저장소 정리에서 보호됩니다.'
+                      : '저장 공간이 부족하면 브라우저가 정리할 수 있습니다.'}
+                  </small>
+                  {props.hostedOfflineCacheStatus.staleItemCount > 0 && (
+                    <button
+                      className="ghost-btn wide"
+                      aria-label="이전 본문 버전의 오프라인 음성 정리"
+                      onClick={() => void props.removeStaleHostedOfflineAudio()}
+                    >
+                      <Trash2 size={16} /> 이전 본문 음성 {props.hostedOfflineCacheStatus.staleItemCount}개 정리 ·{' '}
+                      {formatBytes(props.hostedOfflineCacheStatus.staleByteSize)}
+                    </button>
+                  )}
+                  {props.hostedOfflineCacheStatus.protectedStaleItemCount > 0 && (
+                    <small>
+                      수동 보관 중인 이전 음성 {props.hostedOfflineCacheStatus.protectedStaleItemCount}개는 유지됩니다.
+                    </small>
+                  )}
+                  {props.hostedOfflineCacheStatus.persistenceSupported && !props.hostedOfflineCacheStatus.persisted && (
+                    <button
+                      className="ghost-btn wide"
+                      aria-label="오프라인 음성 저장소 보호 요청"
+                      onClick={() => void props.requestHostedOfflineStorage()}
+                    >
+                      <Check size={16} /> 저장소 보호 요청
+                    </button>
+                  )}
+                </div>
+              )}
+              {props.hostedStatus && (
+                <div className="provider-job-card">
+                  <strong>{props.hostedStatus}</strong>
+                  <span>
+                    {props.hostedJob
+                      ? `${props.hostedJob.providerId}${props.hostedJob.modelId ? ` · ${props.hostedJob.modelId}` : ''}`
+                      : props.selectedHostedProviderLabel}
+                  </span>
+                  {props.hostedJob?.errorMessage && <small>{props.hostedJob.errorMessage}</small>}
+                </div>
+              )}
+              {hostedLifecycle && (
+                <div className="tts-lifecycle-summary">
+                  <strong>오디오 {String(hostedLifecycle.state ?? 'planned')}</strong>
+                  <span>
+                    완료 {lifecycleCount(hostedLifecycle.succeeded) + lifecycleCount(hostedLifecycle.cacheHit)} · 실행{' '}
+                    {lifecycleCount(hostedLifecycle.running)} · 대기 {lifecycleCount(hostedLifecycle.queued)} · 실패{' '}
+                    {lifecycleCount(hostedLifecycle.failed) + lifecycleCount(hostedLifecycle.corrupt)}
+                  </span>
+                </div>
+              )}
+              <div className="voice-profile-list">
+                {[...ROLE_TARGETS, ...characterTargets].map((target) => (
+                  <HostedVoiceRow
+                    key={`hosted-${target.role}-${target.characterId ?? 'default'}`}
+                    target={target}
+                    profile={hostedProfiles.find((candidate) => profileMatchesTarget(candidate, target))}
+                    provider={props.selectedHostedProvider}
+                    voices={props.selectedHostedVoices}
+                    defaultVoiceId={defaultVoiceId}
+                    options={hostedOptions}
+                    onSave={props.saveHostedVoice}
+                    onSaveOption={props.saveHostedVoiceOption}
+                  />
+                ))}
+                {props.characters.length === 0 && (
+                  <p className="muted">라벨링 후 등장인물별 hosted 음성을 지정할 수 있습니다.</p>
                 )}
-              <small>
-                {props.hostedOfflineCacheStatus.persisted
-                  ? '브라우저의 자동 저장소 정리에서 보호됩니다.'
-                  : '저장 공간이 부족하면 브라우저가 정리할 수 있습니다.'}
-              </small>
-              {props.hostedOfflineCacheStatus.staleItemCount > 0 && (
-                <button
-                  className="ghost-btn wide"
-                  aria-label="이전 본문 버전의 오프라인 음성 정리"
-                  onClick={() => void props.removeStaleHostedOfflineAudio()}
-                >
-                  <Trash2 size={16} /> 이전 본문 음성 {props.hostedOfflineCacheStatus.staleItemCount}개 정리 ·{' '}
-                  {formatBytes(props.hostedOfflineCacheStatus.staleByteSize)}
-                </button>
-              )}
-              {props.hostedOfflineCacheStatus.protectedStaleItemCount > 0 && (
-                <small>
-                  수동 보관 중인 이전 음성 {props.hostedOfflineCacheStatus.protectedStaleItemCount}개는 유지됩니다.
-                </small>
-              )}
-              {props.hostedOfflineCacheStatus.persistenceSupported && !props.hostedOfflineCacheStatus.persisted && (
-                <button
-                  className="ghost-btn wide"
-                  aria-label="오프라인 음성 저장소 보호 요청"
-                  onClick={() => void props.requestHostedOfflineStorage()}
-                >
-                  <Check size={16} /> 저장소 보호 요청
-                </button>
-              )}
+              </div>
             </div>
-          )}
-          {props.hostedStatus && (
-            <div className="provider-job-card">
-              <strong>{props.hostedStatus}</strong>
-              <span>
-                {props.hostedJob
-                  ? `${props.hostedJob.providerId}${props.hostedJob.modelId ? ` · ${props.hostedJob.modelId}` : ''}`
-                  : props.selectedHostedProviderLabel}
-              </span>
-              {props.hostedJob?.errorMessage && <small>{props.hostedJob.errorMessage}</small>}
-            </div>
-          )}
-          {hostedLifecycle && (
-            <div className="tts-lifecycle-summary">
-              <strong>오디오 {String(hostedLifecycle.state ?? 'planned')}</strong>
-              <span>
-                완료 {lifecycleCount(hostedLifecycle.succeeded) + lifecycleCount(hostedLifecycle.cacheHit)} · 실행{' '}
-                {lifecycleCount(hostedLifecycle.running)} · 대기 {lifecycleCount(hostedLifecycle.queued)} · 실패{' '}
-                {lifecycleCount(hostedLifecycle.failed) + lifecycleCount(hostedLifecycle.corrupt)}
-              </span>
-            </div>
-          )}
-          <div className="voice-profile-list">
-            {[...ROLE_TARGETS, ...characterTargets].map((target) => (
-              <HostedVoiceRow
-                key={`hosted-${target.role}-${target.characterId ?? 'default'}`}
-                target={target}
-                profile={hostedProfiles.find((candidate) => profileMatchesTarget(candidate, target))}
-                provider={props.selectedHostedProvider}
-                voices={props.selectedHostedVoices}
-                defaultVoiceId={defaultVoiceId}
-                options={hostedOptions}
-                onSave={props.saveHostedVoice}
-                onSaveOption={props.saveHostedVoiceOption}
-              />
-            ))}
-            {props.characters.length === 0 && (
-              <p className="muted">라벨링 후 등장인물별 hosted 음성을 지정할 수 있습니다.</p>
-            )}
-          </div>
-        </div>
 
-        <ProviderSettingsPanel
-          scope="tts_synthesis"
-          title="TTS provider"
-          providers={props.providers}
-          draft={props.providerDraft}
-          controller={props.providerController}
-        />
+            <ProviderSettingsPanel
+              scope="tts_synthesis"
+              title="TTS provider"
+              providers={props.providers}
+              draft={props.providerDraft}
+              controller={props.providerController}
+            />
+          </>
+        )}
       </div>
     </div>
   );

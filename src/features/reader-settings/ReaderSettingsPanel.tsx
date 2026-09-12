@@ -1,3 +1,4 @@
+import { publicAssetUrl } from '../../utils/public-asset-url';
 import {
   BookOpenText,
   ChevronRight,
@@ -150,7 +151,7 @@ export default function ReaderSettingsPanel(props: ReaderSettingsPanelProps) {
       title={
         <span className="reader-settings-dialog-title">
           <span className="reader-settings-brand">
-            <img src="/icons/moya-192.png" alt="" aria-hidden="true" />
+            <img src={publicAssetUrl('/icons/moya-192.png')} alt="" aria-hidden="true" />
             <span>설정</span>
           </span>
         </span>

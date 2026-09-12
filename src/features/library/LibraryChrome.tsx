@@ -1,3 +1,4 @@
+import { publicAssetUrl } from '../../utils/public-asset-url';
 import {
   ArrowDownUp,
   BookOpen,
@@ -178,7 +179,7 @@ export function LibrarySidebar(props: LibraryScreenProps) {
         onClick={() => goLibraryHome(props)}
         aria-label="라이브러리 메인"
       >
-        <img src="/branding/moya-wordmark.png" alt="MOYA" />
+        <img src={publicAssetUrl('/branding/moya-wordmark.png')} alt="MOYA" />
       </button>
       <div className="library-sidebar-scroll">
         <section>
@@ -311,7 +312,7 @@ function LibraryNavigationDrawer({
   return (
     <ModalDrawer
       open={open}
-      title={<img src="/branding/moya-wordmark.png" alt="MOYA" />}
+      title={<img src={publicAssetUrl('/branding/moya-wordmark.png')} alt="MOYA" />}
       onClose={close}
       restoreFocusRef={triggerRef}
       className="library-mobile-drawer"
