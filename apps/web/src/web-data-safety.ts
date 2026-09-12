@@ -1,10 +1,9 @@
 import { useSyncExternalStore } from 'react';
 
 export const WEB_DATA_SAFETY_KEY = 'moya-web-data-safety-v1';
-export const BACKUP_REMINDER_INTERVAL = 7 * 24 * 60 * 60 * 1000;
 export interface WebDataSafety {
   lastExportedAt?: number;
-  dismissedUntil?: number;
+  introductionDismissed?: boolean;
 }
 
 export function parseWebDataSafety(raw: string | null): WebDataSafety {
@@ -12,17 +11,14 @@ export function parseWebDataSafety(raw: string | null): WebDataSafety {
     const parsed = JSON.parse(raw ?? '{}');
     const timestamp = (value: unknown) =>
       typeof value === 'number' && Number.isFinite(value) && value > 0 ? value : undefined;
-    return { lastExportedAt: timestamp(parsed?.lastExportedAt), dismissedUntil: timestamp(parsed?.dismissedUntil) };
+    return {
+      lastExportedAt: timestamp(parsed?.lastExportedAt),
+      // Honor a previous dismissal when migrating the old weekly reminder.
+      introductionDismissed: parsed?.introductionDismissed === true || timestamp(parsed?.dismissedUntil) !== undefined,
+    };
   } catch {
     return {};
   }
-}
-
-export function backupReminderDue(state: WebDataSafety, now = Date.now()) {
-  return (
-    (!state.lastExportedAt || now - state.lastExportedAt >= BACKUP_REMINDER_INTERVAL) &&
-    (!state.dismissedUntil || now >= state.dismissedUntil)
-  );
 }
 
 function read(): WebDataSafety {
@@ -65,6 +61,6 @@ export function recordWebBackup(exportedAt: string) {
   if (!Number.isFinite(timestamp) || timestamp <= 0) return;
   save({ ...getSnapshot(), lastExportedAt: timestamp });
 }
-export function dismissWebBackupReminder() {
-  save({ ...getSnapshot(), dismissedUntil: Date.now() + BACKUP_REMINDER_INTERVAL });
+export function dismissWebIntroduction() {
+  save({ ...getSnapshot(), introductionDismissed: true });
 }

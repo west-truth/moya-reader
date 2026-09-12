@@ -6,9 +6,9 @@ import { WebBackupStatus } from './WebLibraryNotice';
 export function WebDataSettings() {
   return (
     <>
+      <WebOfflinePanel />
       <WebStoragePanel />
       <WebBackupStatus />
-      <WebOfflinePanel />
       <WebDesktopPanel />
     </>
   );
