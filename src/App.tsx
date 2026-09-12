@@ -300,7 +300,7 @@ const ReaderSettingsPanel = lazy(() => import('./features/reader-settings/Reader
 const TTSAddonPanel = lazy(() => import('./features/tts/TTSAddonPanel'));
 const TTSCompactBar = lazy(() => import('./features/tts/TTSCompactBar'));
 const AIAddonPanel = lazy(() => import('./features/ai/AIAddonPanel'));
-const SyncPanel = lazy(() => import('./features/sync/SyncPanel'));
+const DefaultSyncPanel = lazy(() => import('./features/sync/SyncPanel'));
 const BackupPanel = lazy(() => import('./features/backup/BackupPanel'));
 const ChapterStructurePanel = lazy(() => import('./features/chapter-structure/ChapterStructurePanel'));
 const LibraryFolderPanel = lazy(() => import('./features/library-folders/LibraryFolderPanel'));
@@ -355,6 +355,7 @@ function chaptersForBundleAnalysis(chapters: Chapter[], currentChapter: Chapter 
 export default function App() {
   const selfHostAuth = useOptionalSelfHostAuth();
   const {
+    product,
     defaultAIProvider: aiProvider,
     defaultTTSProvider: systemTTS,
     bookAnalysisWorkflowGateway,
@@ -366,6 +367,8 @@ export default function App() {
     providerExecutionRuntime,
     readerRuntime,
   } = useAppRuntime();
+  const localStatic = product?.kind === 'local-static';
+  const SyncPanel = product?.SyncPanel ?? DefaultSyncPanel;
   const extensionRevision = useSyncExternalStore(
     extensionRuntime.manager.subscribe,
     extensionRuntime.manager.getRevision,
@@ -438,8 +441,7 @@ export default function App() {
     void Promise.allSettled([
       dropboxExternalSourceBroker.initialize(),
       googleDriveExternalSourceBroker.initialize(),
-      suwayomiExternalSourceBroker.initialize(),
-      textServerExternalSourceBroker.initialize(),
+      ...(localStatic ? [] : [suwayomiExternalSourceBroker.initialize(), textServerExternalSourceBroker.initialize()]),
     ]).finally(() => {
       if (!cancelled) setExternalSourceBrokerRevision((value) => value + 1);
     });
@@ -448,6 +450,7 @@ export default function App() {
       textServerExternalSourceBroker.dispose();
     };
   }, [
+    localStatic,
     dropboxExternalSourceBroker,
     googleDriveExternalSourceBroker,
     suwayomiExternalSourceBroker,
@@ -459,6 +462,7 @@ export default function App() {
         get: (brokerId) => {
           if (brokerId === DROPBOX_EXTERNAL_SOURCE_BROKER_ID) return dropboxExternalSourceBroker;
           if (brokerId === GOOGLE_DRIVE_EXTERNAL_SOURCE_BROKER_ID) return googleDriveExternalSourceBroker;
+          if (localStatic) return undefined;
           if (brokerId === SUWAYOMI_EXTERNAL_SOURCE_BROKER_ID) return suwayomiExternalSourceBroker;
           if (brokerId === TEXT_SERVER_EXTERNAL_SOURCE_BROKER_ID) return textServerExternalSourceBroker;
           return undefined;
@@ -466,6 +470,7 @@ export default function App() {
       },
     }),
     [
+      localStatic,
       dropboxExternalSourceBroker,
       googleDriveExternalSourceBroker,
       suwayomiExternalSourceBroker,
@@ -478,12 +483,11 @@ export default function App() {
         [
           dropboxBuiltInExternalSource,
           googleDriveBuiltInExternalSource,
-          suwayomiBuiltInExternalSource,
-          textServerBuiltInExternalSource,
+          ...(localStatic ? [] : [suwayomiBuiltInExternalSource, textServerBuiltInExternalSource]),
         ],
         extensionRuntime.trustedExtensions,
       ),
-    [extensionRuntime.trustedExtensions],
+    [extensionRuntime.trustedExtensions, localStatic],
   );
   const desktopLocalLLMProviderIds = useMemo(
     () => new Set<string>(nativeLocalLLMProviderIds(platformRuntime.kind)),
