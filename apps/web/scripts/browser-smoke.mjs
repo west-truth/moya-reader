@@ -3,6 +3,7 @@ import { createServer } from 'node:http';
 import { readFile, mkdir } from 'node:fs/promises';
 import { extname, resolve, sep } from 'node:path';
 import { chromium } from 'playwright-core';
+import { syntheticComic, syntheticEpub, syntheticPdf } from './browser-fixtures.mjs';
 
 // Real static HTTP serving is needed to exercise service-worker installation/offline boot.
 // Only synthetic books and fresh browser contexts are used; no user profile or cloud account.
@@ -11,6 +12,7 @@ const { base } = JSON.parse(await readFile(resolve(dist, 'offline-manifest.json'
 const types = {
   '.html': 'text/html',
   '.js': 'text/javascript',
+  '.mjs': 'text/javascript',
   '.css': 'text/css',
   '.png': 'image/png',
   '.wasm': 'application/wasm',
@@ -18,6 +20,7 @@ const types = {
   '.webmanifest': 'application/manifest+json',
 };
 const requests = [];
+let serveUpdate = false;
 const server = createServer(async (req, res) => {
   const pathname = new URL(req.url, 'http://localhost').pathname;
   requests.push(pathname);
@@ -32,7 +35,9 @@ const server = createServer(async (req, res) => {
     return;
   }
   try {
-    const bytes = await readFile(file);
+    let bytes = await readFile(file);
+    if (serveUpdate && relative === 'sw.js')
+      bytes = Buffer.from(bytes.toString().replace(/"version":"([^"]+)"/, '"version":"$1-update-smoke"'));
     res.writeHead(200, { 'Content-Type': types[extname(file)] || 'text/plain', 'Cache-Control': 'no-cache' });
     res.end(bytes);
   } catch {
@@ -43,24 +48,40 @@ await new Promise((done) => server.listen(0, '127.0.0.1', done));
 const origin = `http://127.0.0.1:${server.address().port}`;
 let browser;
 let activePage;
+const errors = [];
 try {
   browser = await chromium.launch({ channel: process.env.READER_UI_BROWSER_CHANNEL || 'msedge', headless: true });
   const context = await browser.newContext({ viewport: { width: 1280, height: 900 }, acceptDownloads: true });
   const page = await context.newPage();
   activePage = page;
   page.setDefaultTimeout(20000);
-  const errors = [];
   page.on('pageerror', (error) => errors.push(error.message));
   await page.goto(origin + base);
   await page.getByRole('button', { name: '설정 열기', exact: true }).waitFor();
   await page.waitForFunction(() => Boolean(navigator.serviceWorker.controller), null, { timeout: 45000 });
+  assert(
+    !requests.some((path) => path.endsWith('.wasm') || path.includes('pdf.worker')),
+    'First installation must not download unused document engines',
+  );
   assert.equal(await page.evaluate(() => navigator.serviceWorker.controller.scriptURL), origin + base + 'sw.js');
   await page.getByRole('button', { name: /동기화 열기/ }).click();
   await page.getByRole('link', { name: /데스크톱 (출시 확인|앱 다운로드)/ }).waitFor();
+  await page.getByRole('button', { name: '모든 형식 오프라인 준비', exact: true }).click();
+  await page.getByText('모든 형식 준비됨', { exact: true }).waitFor({ timeout: 90000 });
+  await page.setViewportSize({ width: 390, height: 844 });
+  assert(
+    await page.locator('.sync-panel').evaluate((panel) => panel.scrollWidth <= panel.clientWidth + 1),
+    'Mobile Web settings overflow horizontally',
+  );
+  await page.getByRole('region', { name: '앱과 오프라인', exact: true }).scrollIntoViewIfNeeded();
+  await mkdir('.tmp/web-pages-check', { recursive: true });
+  await page.screenshot({ path: '.tmp/web-pages-check/offline-settings.png', fullPage: true });
   await page.getByText('웹에서 읽던 책 옮기기', { exact: true }).click();
   await mkdir('.tmp/web-pages-check', { recursive: true });
   await page.screenshot({ path: '.tmp/web-pages-check/desktop-handoff.png', fullPage: true });
+  await page.setViewportSize({ width: 1280, height: 900 });
   await page.getByRole('button', { name: '동기화 패널 닫기', exact: true }).click();
+  await context.setOffline(true);
   await page.getByRole('button', { name: '책 가져오기', exact: true }).click();
   await page.locator('input[type=file]').setInputFiles({
     name: 'Pages smoke.txt',
@@ -82,12 +103,112 @@ try {
   const backupPath = resolve('.tmp/web-pages-check/synthetic-backup.zip');
   await download.saveAs(backupPath);
   await page.getByRole('button', { name: '백업 패널 닫기', exact: true }).click();
+  assert(
+    await page.evaluate(() => Boolean(JSON.parse(localStorage.getItem('moya-web-data-safety-v1')).lastExportedAt)),
+    'Only successful backup exports should record their creation date',
+  );
   await context.setOffline(true);
   await page.reload();
   await page.getByText('Pages smoke', { exact: true }).first().waitFor();
   await page.getByRole('button', { name: /동기화 열기/ }).click();
   await page.getByRole('link', { name: /데스크톱 (출시 확인|앱 다운로드)/ }).waitFor();
   await context.setOffline(false);
+
+  // A changed worker must wait for consent and retain full offline preparation across updates.
+  const currentVersion = await page.evaluate(
+    () =>
+      new Promise((done) => {
+        const channel = new MessageChannel();
+        channel.port1.onmessage = ({ data }) => {
+          channel.port1.close();
+          done(data.version);
+        };
+        navigator.serviceWorker.controller.postMessage({ type: 'OFFLINE_STATUS' }, [channel.port2]);
+      }),
+  );
+  serveUpdate = true;
+  await page.evaluate(async () => (await navigator.serviceWorker.getRegistration()).update());
+  await page.waitForFunction(async () => Boolean((await navigator.serviceWorker.getRegistration()).waiting));
+  const stillCurrent = await page.evaluate(
+    () =>
+      new Promise((done) => {
+        const channel = new MessageChannel();
+        channel.port1.onmessage = ({ data }) => {
+          channel.port1.close();
+          done(data.version);
+        };
+        navigator.serviceWorker.controller.postMessage({ type: 'OFFLINE_STATUS' }, [channel.port2]);
+      }),
+  );
+  assert.equal(stillCurrent, currentVersion, 'An update must not activate without user action');
+  await Promise.all([
+    page.waitForEvent('load'),
+    page.getByRole('button', { name: '새 버전 적용', exact: true }).click(),
+  ]);
+  await page.waitForFunction(async () => {
+    const registration = await navigator.serviceWorker.getRegistration();
+    return Boolean(registration?.active && !registration.waiting);
+  });
+  await page.getByRole('button', { name: /동기화 열기/ }).click();
+  await page.getByText('모든 형식 준비됨', { exact: true }).waitFor();
+  await page.getByRole('button', { name: '동기화 패널 닫기', exact: true }).click();
+  await context.setOffline(true);
+  await page.reload();
+  await page.getByText('Pages smoke', { exact: true }).first().waitFor();
+
+  // New formats are opened for the first time without any network access.
+  const png = await readFile(resolve(dist, 'icons/moya-192.png'));
+  const formats = [
+    {
+      name: 'Offline EPUB.epub',
+      mimeType: 'application/epub+zip',
+      buffer: await syntheticEpub(),
+      selector: '.reader-paragraph',
+    },
+    {
+      name: 'Offline comic.cbz',
+      mimeType: 'application/vnd.comicbook+zip',
+      buffer: await syntheticComic(png),
+      selector: '.fixed-doc-viewport img',
+    },
+    { name: 'Offline PDF.pdf', mimeType: 'application/pdf', buffer: syntheticPdf(), selector: '.fixed-doc-canvas' },
+  ];
+  for (const { selector, ...file } of formats) {
+    await page.goto(origin + base);
+    await page.getByRole('button', { name: '책 가져오기', exact: true }).click();
+    await page.locator('input[type=file]').setInputFiles(file);
+    await page.getByRole('button', { name: '가져오기 시작', exact: true }).click();
+    await page.locator('.import-dialog').waitFor({ state: 'hidden' });
+    // Reopen the persisted library offline. Import completion may also navigate;
+    // a fresh page avoids racing that transition and verifies durable storage.
+    await page.reload();
+    const title = file.name.replace(/\.(epub|cbz|pdf)$/, '');
+    await page
+      .locator('.book-continue-action')
+      .and(page.getByRole('button', { name: new RegExp('^' + title + ' ') }))
+      .click();
+    const reading = page.locator('.source-hub-reading-button');
+    await reading.first().or(page.locator(selector).first()).first().waitFor();
+    if (await reading.first().isVisible()) await reading.first().click();
+    await page.locator(selector).first().waitFor();
+    if (selector.endsWith('img'))
+      await page
+        .locator(selector)
+        .first()
+        .evaluate((img) => img.decode());
+    if (selector.endsWith('canvas'))
+      await page.waitForFunction(() => document.querySelector('.fixed-doc-canvas')?.width > 1);
+    await page.setViewportSize({ width: 390, height: 844 });
+    assert(
+      await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1),
+      `Mobile ${file.name} overflows`,
+    );
+    await page.screenshot({
+      path: `.tmp/web-pages-check/${file.name.split('.')[0].replaceAll(' ', '-')}.png`,
+      fullPage: true,
+    });
+    await page.setViewportSize({ width: 1280, height: 900 });
+  }
 
   // A second clean profile exercises the same backup repository consumed by the desktop entry.
   const destination = await browser.newContext({ viewport: { width: 1280, height: 900 } });
@@ -115,6 +236,10 @@ try {
       base,
       serviceWorker: true,
       offlineReload: true,
+      lazyInitialCache: true,
+      offlineFirstImport: ['TXT', 'EPUB', 'CBZ', 'PDF'],
+      explicitUpdateAndOfflineRetention: true,
+      mobileSettingsAndFormats: true,
       import: true,
       readingAndBookmark: true,
       backupRestore: true,
@@ -124,7 +249,24 @@ try {
     }),
   );
 } catch (error) {
+  console.error('Failed browser step:', error);
+  console.error('Application errors:', errors);
   console.error((await activePage?.locator('body').innerText())?.slice(0, 9000));
+  console.error(
+    'PWA diagnostic:',
+    await activePage?.evaluate(async () => ({
+      secure: isSecureContext,
+      controller: Boolean(navigator.serviceWorker.controller),
+      registrations: (await navigator.serviceWorker.getRegistrations()).map((registration) => ({
+        scope: registration.scope,
+        active: registration.active?.state,
+        waiting: registration.waiting?.state,
+        installing: registration.installing?.state,
+      })),
+      caches: await caches.keys(),
+    })),
+  );
+  console.error('Recent static requests:', requests.slice(-15));
   throw error;
 } finally {
   await browser?.close();

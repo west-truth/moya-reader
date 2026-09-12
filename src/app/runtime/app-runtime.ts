@@ -33,12 +33,27 @@ import {
   TauriNativeBookWorkflowBridge,
 } from '../../platform/tauri';
 
+export interface ProductLibraryNoticeProps {
+  bookCount: number;
+  busy: boolean;
+  openBackup(): void;
+  openStorage(): void;
+}
+
+export interface ProductLifecycleProps {
+  busy: boolean;
+  reading: boolean;
+}
+
 export interface AppRuntime {
   /** Optional product composition; omitted by existing desktop/self-host entrypoints. */
   readonly product?: {
     readonly kind: 'local-static';
     readonly StoragePanel: ComponentType;
     readonly SyncPanel: ComponentType<SyncPanelProps>;
+    readonly LibraryNotice?: ComponentType<ProductLibraryNoticeProps>;
+    readonly Lifecycle?: ComponentType<ProductLifecycleProps>;
+    readonly onBackupExported?: (exportedAt: string) => void;
   };
   readonly extensionRuntime: AppExtensionRuntime;
   readonly readerRuntime: ReaderRuntime;

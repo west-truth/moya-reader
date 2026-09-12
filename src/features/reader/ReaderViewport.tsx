@@ -25,6 +25,7 @@ import { useReaderGestureHandlers } from './use-reader-gestures';
 import { useScrollChapterBoundary } from './use-scroll-chapter-boundary';
 import { SerializedProgressPersistence } from './reader-progress-controller';
 import { useReaderScrollPosition } from './use-reader-scroll-position';
+import { AutoReadingPresentation, type AutoReadingMode, type AutoReadingResult } from './auto-reading-modes';
 
 export interface ReaderViewportApi {
   readonly flow: ReaderRuntimeFlow;
@@ -41,6 +42,9 @@ export interface ReaderViewportApi {
   readonly goChapter: (direction: -1 | 1) => Promise<void>;
   readonly scrollPageJump: (direction: -1 | 1) => void;
   readonly scrollByPixels: (deltaY: number) => void;
+  readonly advanceAutoScroll?: (deltaY: number) => 'moving' | 'waiting' | 'end';
+  readonly advanceAutoReading?: (mode: AutoReadingMode, amount: number) => AutoReadingResult;
+  readonly resetAutoReading?: () => void;
   readonly getAnchor: () => ReaderAnchor | undefined;
   readonly getPageTurnAnchor: (direction: -1 | 1) => Promise<ReaderAnchor | undefined>;
   readonly scrollToAnchor: (
@@ -105,6 +109,9 @@ function createViewportApiProxy(
     goChapter: (direction) => current()?.goChapter(direction) ?? Promise.resolve(),
     scrollPageJump: (direction) => current()?.scrollPageJump(direction),
     scrollByPixels: (deltaY) => current()?.scrollByPixels(deltaY),
+    advanceAutoScroll: (deltaY) => current()?.advanceAutoScroll?.(deltaY) ?? 'end',
+    advanceAutoReading: (mode, amount) => current()?.advanceAutoReading?.(mode, amount) ?? 'end',
+    resetAutoReading: () => current()?.resetAutoReading?.(),
     getAnchor: () => current()?.getAnchor(),
     getPageTurnAnchor: (direction) => current()?.getPageTurnAnchor(direction) ?? Promise.resolve(undefined),
     scrollToAnchor: (anchor, offsetFromTop, placement) =>
@@ -250,6 +257,14 @@ function VirtualizedReaderViewportComponent({
   const viewportInsetsRef = useRef({ top: 0, bottom: 0 });
   const [listOffset, setListOffset] = useState(0);
   const scrollPosition = useReaderScrollPosition(rootRef, documentRef, isActive && !opening);
+  const autoPresentation = useRef(new AutoReadingPresentation());
+  const autoOverlayRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const presentation = autoPresentation.current;
+    const overlay = autoOverlayRef.current;
+    if (!isActive || opening) presentation.reset(overlay);
+    return () => presentation.reset(overlay);
+  }, [isActive, opening]);
   const { beginNavigation, isCurrentNavigation, resetMeasurements } = scrollPosition;
   const pages = useParagraphPages(repository, chapter.id, chapter.paragraphCount);
   const pagesRef = useRef(pages);
@@ -589,7 +604,44 @@ function VirtualizedReaderViewportComponent({
     goChapter: (direction) => goChapter(direction, direction < 0),
     scrollPageJump,
     scrollByPixels,
+    advanceAutoScroll: (deltaY) => {
+      const root = rootRef.current;
+      if (!isActive || !root || opening) return 'waiting';
+      // Do not scroll through unloaded rows or let a delayed body consume reading time.
+      if (virtualizer.getVirtualItems().some((item) => !pages.paragraphAt(item.index))) return 'waiting';
+      if (
+        root.querySelector('.reader-image-placeholder.is-loading') ||
+        [...root.querySelectorAll('img')].some((image) => !image.complete)
+      )
+        return 'waiting';
+      if (root.scrollHeight - root.clientHeight - root.scrollTop <= 1) return 'end';
+      if (Number.isFinite(deltaY) && deltaY > 0) root.scrollBy({ top: deltaY, behavior: 'auto' });
+      return 'moving';
+    },
     getAnchor: getVisibleAnchor,
+    resetAutoReading: () => autoPresentation.current.reset(autoOverlayRef.current),
+    advanceAutoReading: (autoMode, amount) => {
+      const root = rootRef.current;
+      const overlay = autoOverlayRef.current;
+      if (!root || !overlay || opening || !isActive) return 'waiting';
+      return autoPresentation.current.advance(autoMode, amount, {
+        root,
+        overlay,
+        top: readerContentTop(root),
+        bottom: readerContentBottom(root),
+        count: chapter.paragraphCount,
+        anchor: getVisibleAnchor,
+        paragraph: pages.paragraphAt,
+        load: async (index, isCurrent) => {
+          await pages.loadIndexes([index]);
+          if (!isCurrent()) return;
+          beginNavigation();
+          virtualizer.scrollToIndex(index, { align: 'start', behavior: 'auto' });
+        },
+        range: sourceRange,
+        advance: (pixels) => apiRef.current?.advanceAutoScroll?.(pixels) ?? 'waiting',
+      });
+    },
     getPageTurnAnchor,
     scrollToAnchor: async (anchor, offsetFromTop = 0) => {
       if (anchor.sectionId !== chapter.id) return false;
@@ -838,6 +890,7 @@ function VirtualizedReaderViewportComponent({
 
   return (
     <>
+      <div ref={autoOverlayRef} className="reader-auto-reading-overlay" aria-hidden="true" hidden />
       {isActive && opening && (
         <div className="reader-opening" role={openError ? 'alert' : 'status'}>
           <p>{openError ? '읽던 위치를 불러오지 못했습니다.' : '본문을 준비하고 있습니다…'}</p>

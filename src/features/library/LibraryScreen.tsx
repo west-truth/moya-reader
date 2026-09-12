@@ -115,7 +115,7 @@ function LibraryBootstrapState({ model, actions }: LibraryScreenProps) {
   return null;
 }
 
-export function LibraryScreen({ model, actions }: LibraryScreenProps) {
+export function LibraryScreen({ model, actions, notice }: LibraryScreenProps) {
   const scrollRef = useRef<HTMLElement>(null);
   useNavigationScroll(
     scrollRef,
@@ -163,6 +163,7 @@ export function LibraryScreen({ model, actions }: LibraryScreenProps) {
                 <LibraryBootstrapState model={model} actions={actions} />
               ) : (
                 <>
+                  {notice}
                   <RecentReadingBand model={model} actions={actions} />
                   <LibraryControls model={model} actions={actions} />
                   {model.collection.visibleBooks.length === 0 &&

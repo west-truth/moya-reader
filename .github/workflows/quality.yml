@@ -10,6 +10,27 @@ permissions:
   contents: read
 
 jobs:
+  browser-web:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+      - uses: pnpm/action-setup@v6
+        with:
+          version: 11.7.0
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: corepack pnpm check:web-local
+        env:
+          WEB_BASE_PATH: /moya-reader/
+      - run: pnpm exec playwright-core install --with-deps chromium
+      - run: pnpm check:web-pages:browser
+        env:
+          READER_UI_BROWSER_CHANNEL: chromium
+
   hosted-source:
     # Keep the source-release license inventory and hosted deployment checks on
     # the same Linux/glibc family used by the production Node images.

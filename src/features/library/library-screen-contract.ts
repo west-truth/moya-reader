@@ -1,4 +1,4 @@
-import type { DragEventHandler } from 'react';
+import type { DragEventHandler, ReactNode } from 'react';
 import type { ExtensionContributionId } from '@noveldesk/extension-contracts';
 import type { Novel } from '../../domain/types';
 import type { LibraryCollectionModel, LibraryFilter, LibrarySort, LibraryViewMode } from './library-screen-model';
@@ -129,4 +129,5 @@ export interface LibraryScreenActions {
 export interface LibraryScreenProps {
   model: LibraryScreenModel;
   actions: LibraryScreenActions;
+  notice?: ReactNode;
 }
