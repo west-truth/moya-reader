@@ -91,6 +91,7 @@ export function ChapterPanel({ model, actions }: ChaptersScreenProps) {
     rows.findIndex((row) => row.isCurrent),
     rows.length,
     CHAPTER_PAGE_SIZE,
+    !model.loading,
   );
   const previousControls = useRef({
     bookId: model.book.novel.id,
@@ -169,7 +170,11 @@ export function ChapterPanel({ model, actions }: ChaptersScreenProps) {
           </select>
         </label>
       </div>
-      {rows.length === 0 ? (
+      {model.loading ? (
+        <div className="empty-panel chapter-empty" role="status">
+          회차 정보를 불러오는 중입니다.
+        </div>
+      ) : rows.length === 0 ? (
         <div className="empty-panel chapter-empty">
           <strong>검색 결과가 없습니다.</strong>
           <button

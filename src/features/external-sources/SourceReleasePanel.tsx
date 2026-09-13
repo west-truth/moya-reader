@@ -38,8 +38,12 @@ export function SourceReleasePanel({
     sorted.findIndex((item) => item.readingState === 'current'),
     sorted.length,
     SOURCE_RELEASE_PAGE_SIZE,
-    // A complete cached catalog is usable while its background freshness check runs.
-    !controller.loading && !controller.nextCursor && !controller.listError && !controller.stale,
+    // Keep downloaded subsets usable, but settle the reading page only after catalog preparation.
+    !controller.loading &&
+      !controller.catalogPreparing &&
+      !controller.nextCursor &&
+      !controller.listError &&
+      !controller.stale,
   );
   const page = paginateReleases(sorted, requestedPage);
   const headingRef = useRef<HTMLHeadingElement>(null);

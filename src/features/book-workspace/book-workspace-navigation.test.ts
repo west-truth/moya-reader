@@ -10,6 +10,26 @@ import {
 } from './book-workspace-test-fixtures';
 
 describe('BookWorkspaceController navigation', () => {
+  it('shows detail immediately and does not wait for annotations to expose chapters', async () => {
+    const novel = testNovel();
+    const chapters = [testChapter(1)];
+    const h = createBookWorkspaceTestHarness({ novel, chapters });
+    let finish!: (value: { bookmarks: []; highlights: []; notes: [] }) => void;
+    h.ports.adjacent.loadBookAnnotations = () =>
+      new Promise((resolve) => {
+        finish = resolve;
+      });
+    const controller = new BookWorkspaceController(h.ports);
+    const opening = controller.openNovel(novel);
+    expect(controller.getSnapshot()).toMatchObject({ view: 'chapters', selectedNovel: novel, navigationPending: true });
+    await opening;
+    expect(controller.getSnapshot()).toMatchObject({ chapters, navigationPending: false });
+    controller.setView('library');
+    finish({ bookmarks: [], highlights: [], notes: [] });
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(controller.getSnapshot().view).toBe('library');
+  });
   it('restores chapter controls before exposing the detail screen', async () => {
     const novel = testNovel();
     const harness = createBookWorkspaceTestHarness({ novel, chapters: [testChapter(1)] });
@@ -64,7 +84,8 @@ describe('BookWorkspaceController navigation', () => {
       chapters: [secondChapter],
       view: 'chapters',
     });
-    expect(harness.calls.filter((call) => call === 'adjacent.applyBookAnnotations')).toHaveLength(1);
+    // Two immediate clears, then only the latest book's loaded annotations.
+    expect(harness.calls.filter((call) => call === 'adjacent.applyBookAnnotations')).toHaveLength(3);
   });
 
   it('does not enter a stale chapter after a newer chapter finishes loading', async () => {

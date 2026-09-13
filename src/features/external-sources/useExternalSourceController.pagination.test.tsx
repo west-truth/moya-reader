@@ -142,6 +142,8 @@ async function fixture(format: 'txt' | 'image_archive' = 'txt', showPanel = fals
     downloadExternalSource: download,
   } as unknown as ExternalSourceRegistryPort;
   const notify = vi.fn();
+  const listNovels = vi.fn(async () => [novel, otherNovel]);
+  const getNovel = vi.fn(async (id: string) => (id === novel.id ? novel : otherNovel));
   let controller!: ExternalSourceController;
   let renderer!: ReactTestRenderer;
   function Harness() {
@@ -151,9 +153,9 @@ async function fixture(format: 'txt' | 'image_archive' = 'txt', showPanel = fals
       state,
       importService: { importFile: vi.fn() },
       extensionRevision: 0,
-      listNovels: async () => [novel, otherNovel],
+      listNovels,
       listChapters: async () => chapters,
-      getNovel: async (id) => (id === novel.id ? novel : otherNovel),
+      getNovel,
       openNovel: vi.fn(async () => undefined),
       onLibraryChanged: vi.fn(async () => undefined),
       notify,
@@ -183,6 +185,8 @@ async function fixture(format: 'txt' | 'image_archive' = 'txt', showPanel = fals
     registry,
     cachedPages,
     notify,
+    listNovels,
+    getNovel,
     setPage(value: typeof page) {
       page = value;
     },
@@ -196,6 +200,31 @@ async function fixture(format: 'txt' | 'image_archive' = 'txt', showPanel = fals
 }
 
 describe('source series pagination integration', () => {
+  it('opens detail before remote metadata arrives without fetching the whole library, and respects closing', async () => {
+    const h = await fixture();
+    let finish!: (value: typeof h.novel) => void;
+    h.getNovel.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          finish = resolve;
+        }),
+    );
+    const priorReads = h.listNovels.mock.calls.length;
+    let opening!: Promise<void>;
+    await act(async () => {
+      opening = h.controller.showLocalSeries(h.novel);
+    });
+    expect(h.controller.open).toBe(true);
+    expect(h.controller.detail?.title).toBe(h.novel.title);
+    expect(h.listNovels).toHaveBeenCalledTimes(priorReads);
+    await act(async () => h.controller.close());
+    await act(async () => {
+      finish(h.novel);
+      await opening;
+    });
+    expect(h.controller.open).toBe(false);
+    await act(async () => h.renderer.unmount());
+  });
   it.each(['txt', 'image_archive'] as const)(
     'positions the real %s local-series panel after the remote catalog arrives',
     async (format) => {
@@ -218,7 +247,8 @@ describe('source series pagination integration', () => {
       await act(async () => {
         opening = h.controller.showLocalSeries(h.novel);
       });
-      expect(h.controller.loading).toBe(true);
+      expect(h.controller.loading).toBe(false);
+      expect(h.controller.catalogLoading).toBe(true);
       expect(h.controller.items.some((item) => item.readingState === 'current')).toBe(true);
       await act(async () => {
         finish({ detail: { title: 'Work' }, items: Array.from({ length: 100 }, (_, i) => release(i + 1, format)) });
@@ -250,7 +280,8 @@ describe('source series pagination integration', () => {
         pending = h.controller.showLocalSeries(h.novel);
         await vi.waitFor(() => expect(h.registry.listExternalSource).toHaveBeenCalledTimes(2));
       });
-      expect(h.controller.loading).toBe(true);
+      expect(h.controller.loading).toBe(false);
+      expect(h.controller.catalogLoading).toBe(true);
       expect(h.controller.items.map((item) => item.key.remoteId)).toEqual(['release-1', 'release-2', 'release-3']);
       finish();
       await act(async () => pending);

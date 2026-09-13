@@ -380,6 +380,7 @@ export function BookWorkspaceScreens({
               <Suspense fallback={null}>
                 <ChaptersScreen
                   model={{
+                    loading: state.navigationPending,
                     book: projection.selectedNovelScreenBook,
                     titleEditor: { editing: state.bookTitleEditing, draft: state.bookTitleDraft },
                     query: state.chapterQuery,

@@ -195,12 +195,25 @@ export class BookWorkspaceController {
     documentSectionId?: string,
     documentSectionTitle?: string,
     chapterControls?: Pick<BookWorkspaceState, 'chapterQuery' | 'chapterReadFilter' | 'chapterSort'>,
+    backgroundAnnotations = false,
   ): Promise<boolean> {
-    const [chapters, annotations, readingPosition] = await Promise.all([
+    const loadAnnotations = () =>
+      this.ports.adjacent.loadBookAnnotations(novel.id).then(
+        (value) => ({ value }),
+        (error: unknown) => ({ error }),
+      );
+    const annotationTask = backgroundAnnotations ? undefined : loadAnnotations();
+    const [chapters, readingPosition] = await Promise.all([
       prefetched ? Promise.resolve(prefetched.chapters) : this.ports.repository.listChapters(novel.id),
-      this.ports.adjacent.loadBookAnnotations(novel.id),
       prefetched ? Promise.resolve(prefetched.readingPosition) : this.ports.repository.getReadingPosition(novel.id),
     ]);
+    const applyAnnotations = async () => {
+      const result = await (annotationTask ?? loadAnnotations());
+      if (!this.navigationIsCurrent(generation)) return;
+      if ('value' in result) this.ports.adjacent.applyBookAnnotations(result.value);
+      else this.ports.environment.notify('북마크와 메모를 불러오지 못했습니다.', 'warning');
+    };
+    if (!backgroundAnnotations) await applyAnnotations();
     if (!this.navigationIsCurrent(generation)) return false;
     const normalizedRequestedTitle = documentSectionTitle
       ? normalizedDocumentSectionTitle(documentSectionTitle)
@@ -222,14 +235,20 @@ export class BookWorkspaceController {
       chapterQuery: '',
       chapterReadFilter: 'all',
       chapterSort: 'asc',
-      ...chapterControls,
+      ...(backgroundAnnotations
+        ? {
+            chapterQuery: this.state.chapterQuery,
+            chapterReadFilter: this.state.chapterReadFilter,
+            chapterSort: this.state.chapterSort,
+          }
+        : chapterControls),
       outlineQuery: '',
-      bookTitleDraft: novel.title,
-      bookTitleEditing: false,
+      bookTitleDraft: backgroundAnnotations ? this.state.bookTitleDraft : novel.title,
+      bookTitleEditing: backgroundAnnotations ? this.state.bookTitleEditing : false,
       fixedDocumentOpenChapterId: documentEntryChapter?.id,
       fixedDocumentOpenRequestVersion: (this.state.fixedDocumentOpenRequestVersion ?? 0) + 1,
     });
-    this.ports.adjacent.applyBookAnnotations(annotations);
+    if (backgroundAnnotations) void applyAnnotations();
     this.updateState({
       currentChapter: isFixedDocumentFormat(novel.format)
         ? (documentEntryChapter ?? chapters.find((chapter) => chapter.id === readingPosition?.chapterId) ?? chapters[0])
@@ -243,9 +262,33 @@ export class BookWorkspaceController {
     novel: Novel,
     chapterControls?: Pick<BookWorkspaceState, 'chapterQuery' | 'chapterReadFilter' | 'chapterSort'>,
   ): Promise<void> => {
-    await this.navigate((generation) =>
-      this.openNovelForNavigation(novel, generation, undefined, undefined, undefined, chapterControls),
-    );
+    await this.navigate(async (generation) => {
+      const detail = !isFixedDocumentFormat(novel.format);
+      if (detail) {
+        this.ports.adjacent.applyBookAnnotations({ bookmarks: [], highlights: [], notes: [] });
+        this.updateState({
+          selectedNovel: novel,
+          chapters: [],
+          currentChapter: undefined,
+          localReadingPosition: undefined,
+          remoteReadingPosition: undefined,
+          chapterQuery: '',
+          chapterReadFilter: 'all',
+          chapterSort: 'asc',
+          ...chapterControls,
+          bookTitleDraft: novel.title,
+          bookTitleEditing: false,
+          view: 'chapters',
+        });
+      }
+      try {
+        await this.openNovelForNavigation(novel, generation, undefined, undefined, undefined, chapterControls, detail);
+      } catch (error) {
+        if (!detail) throw error;
+        if (this.navigationIsCurrent(generation))
+          this.ports.environment.notify('회차 정보를 불러오지 못했습니다. 다시 시도해 주세요.', 'warning');
+      }
+    });
   };
 
   readonly openDocumentSection = async (
