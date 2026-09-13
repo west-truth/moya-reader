@@ -1,4 +1,5 @@
 import { runExtension } from '@moya/extension-runtime';
+import { createSourceProxyTransport } from './source-proxy-transport.js';
 import { createSourceBroker } from '@moya/extension-runtime/source-broker';
 import {
   validateSourceInput,
@@ -103,20 +104,29 @@ export function createNodePackageExecution(
         !pkg.manifest.extension.contributes?.externalSources?.some((source) => source.id === input.sourceId)
       )
         throw new Error('invalid_source_invocation');
+      const sourceOptions =
+        credentialEpoch && preferences
+          ? preferences.values(pkg, String(input.sourceId), credentialEpoch)
+          : {
+              values: {} as Record<string, string | number | boolean>,
+              privateOrigins: [],
+              outboundProxy: undefined,
+              proxyDns: undefined,
+            };
+      const outboundProxy = sourceOptions.outboundProxy ?? process.env.SOURCE_OUTBOUND_PROXY;
       const broker = createSourceBroker(
         {
           origins: pkg.manifest.requestedAccess.networkOrigins,
           allowDownloads: pkg.manifest.extension.permissions.includes('external.source.download'),
         },
-        credentialEpoch && authentication
-          ? authentication.transport(pkg, String(input.sourceId), credentialEpoch)
-          : options.transport,
+        {
+          ...(credentialEpoch && authentication
+            ? authentication.transport(pkg, String(input.sourceId), credentialEpoch)
+            : options.transport),
+          ...(outboundProxy ? createSourceProxyTransport(outboundProxy, sourceOptions.proxyDns) : {}),
+        },
       );
       const storage = createSourceStateSession(state, pkg.manifest.requestedAccess.storageKiB);
-      const sourceOptions =
-        credentialEpoch && preferences
-          ? preferences.values(pkg, String(input.sourceId), credentialEpoch)
-          : { values: {} as Record<string, string | number | boolean>, privateOrigins: [] };
       let requestedBytes = 0;
       try {
         const result = await runExtension({
@@ -155,7 +165,8 @@ export function createNodePackageExecution(
                   ]),
                   vault: options.vault,
                   privateOrigins: sourceOptions.privateOrigins,
-                  outboundProxy: process.env.SOURCE_OUTBOUND_PROXY,
+                  outboundProxy,
+                  proxyDns: sourceOptions.proxyDns,
                   browserMode: 'browserMode' in sourceOptions ? sourceOptions.browserMode : undefined,
                 },
                 2 * 1024 * 1024,
@@ -182,7 +193,8 @@ export function createNodePackageExecution(
                   vault: options.vault,
                   origins: pkg.manifest.requestedAccess.networkOrigins,
                   privateOrigins: sourceOptions.privateOrigins,
-                  outboundProxy: process.env.SOURCE_OUTBOUND_PROXY,
+                  outboundProxy,
+                  proxyDns: sourceOptions.proxyDns,
                   browserMode: 'browserMode' in sourceOptions ? sourceOptions.browserMode : undefined,
                 },
                 requestSignal,

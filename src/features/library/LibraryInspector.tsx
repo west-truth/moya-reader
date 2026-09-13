@@ -21,6 +21,8 @@ export function LibraryInspector({ book, model, actions }: LibraryScreenProps & 
     else inspectorRef.current.removeAttribute('inert');
   }, [compact, compactOpen]);
 
+  if (model.presentation.layoutMode !== 'wide') return null;
+
   if (!book) {
     return (
       <aside

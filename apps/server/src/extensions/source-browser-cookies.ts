@@ -63,6 +63,7 @@ export async function sourceBrowserHttp(
     maximum,
     scope.outboundProxy,
     followRedirects,
+    scope.proxyDns,
   );
   const received = response.headers['set-cookie'];
   if (received) {

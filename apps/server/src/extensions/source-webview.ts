@@ -17,6 +17,7 @@ export interface SourceWebViewScope {
   origins?: readonly string[];
   privateOrigins?: readonly string[];
   outboundProxy?: string;
+  proxyDns?: import('./proxy-dns.js').ProxyDnsMode;
   browserMode?: 'browser' | 'broker' | 'patchright';
 }
 
@@ -184,6 +185,7 @@ export class SourceWebViewHost {
               8 * 1024 * 1024,
               scope.outboundProxy,
               false,
+              scope.proxyDns,
             );
             total += response.bytes.length;
             if (total > 32 * 1024 * 1024) throw new Error('source_body_limit');
@@ -213,7 +215,7 @@ export class SourceWebViewHost {
         }
         if (!response?.ok())
           throw new Error(
-            response?.status() === 401 || response?.status() === 403 ? 'source_auth_required' : 'source_http_failed',
+            response?.status() === 401 || response?.status() === 403 ? 'source_access_denied' : 'source_http_failed',
           );
         const result: unknown =
           mode === 'patchright'

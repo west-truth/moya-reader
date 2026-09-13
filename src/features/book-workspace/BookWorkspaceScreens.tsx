@@ -194,10 +194,9 @@ export function BookWorkspaceScreens({
   };
 
   const previewBook = (novel: import('../../domain/types').Novel) => {
-    if (layoutMode === 'mobile') return;
+    if (layoutMode !== 'wide') return;
     keepInspectorOpen();
     setFocusedBookId(novel.id);
-    if (layoutMode === 'compact') setInspectorOpen(true);
   };
 
   const goLibraryHome = () => {

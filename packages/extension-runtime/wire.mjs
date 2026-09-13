@@ -21,6 +21,8 @@ export const PUBLIC_FAILURE_CODES = new Set([
   'source_auth_forbidden',
   'source_rate_limited',
   'source_http_failed',
+  'source_access_denied',
+  'source_dns_failed',
   'source_connection_failed',
   'source_request_timeout',
   'source_body_limit',
