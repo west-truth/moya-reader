@@ -74,6 +74,10 @@ export interface ImportController {
 }
 
 export interface ImportService {
+  importPrepared?(
+    source: import('./hosted-image-import').PreparedServerImport,
+    onProgress: (progress: ImportProgress) => void,
+  ): ImportController;
   readonly supportsExpectedBase?: boolean;
   readonly supportsArchivePassword?: boolean;
   readonly supportsExpectedNormalizedTextHash?: boolean;

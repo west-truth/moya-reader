@@ -1,6 +1,7 @@
 import { Archive, X } from 'lucide-react';
 import type { ProductLibraryNoticeProps } from '../../../src/app/runtime/app-runtime';
 import { dismissWebIntroduction, useWebDataSafety } from './web-data-safety';
+import { requestWebStoragePanel } from './web-settings-navigation';
 
 export function WebLibraryNotice({ openStorage }: ProductLibraryNoticeProps) {
   const safety = useWebDataSafety();
@@ -11,7 +12,13 @@ export function WebLibraryNotice({ openStorage }: ProductLibraryNoticeProps) {
         <strong>파일을 가져오면 바로 읽을 수 있어요</strong>
         <p>책과 읽던 위치는 자동 저장됩니다.</p>
         <div className="web-storage-actions">
-          <button className="ghost-btn" onClick={openStorage}>
+          <button
+            className="ghost-btn"
+            onClick={() => {
+              requestWebStoragePanel();
+              openStorage();
+            }}
+          >
             인터넷 없이 읽기
           </button>
         </div>

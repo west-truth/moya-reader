@@ -11,6 +11,7 @@ assert(manifest.files.includes(`${manifest.base}index.html`));
 assert(manifest.files.some((file) => /import-worker.*\.js$/.test(file)));
 assert(manifest.files.some((file) => file.endsWith('.wasm')));
 assert(manifest.files.some((file) => file.includes('WebSyncPanel')));
+assert(manifest.files.includes(`${manifest.base}third_party/licenses/jose/LICENSE.md`));
 assert(manifest.precache.includes(`${manifest.base}index.html`));
 assert(manifest.precache.every((file) => manifest.files.includes(file)));
 assert(

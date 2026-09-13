@@ -24,6 +24,7 @@ import {
   type SuwayomiClientAuth,
 } from './suwayomi-graphql-client';
 import { DEFAULT_SUWAYOMI_BASE_URL } from '../../config/public-runtime-config';
+import { SuwayomiExtensionManager } from './suwayomi-extension-manager';
 import type { ExternalSourceSharedConnectionV1 } from '../../integration-settings/self-host-integration-settings';
 
 export { DEFAULT_SUWAYOMI_BASE_URL } from '../../config/public-runtime-config';
@@ -354,6 +355,26 @@ function statusLabel(status: string | undefined): string | undefined {
 
 /** Hosts installed Mihon-compatible sources through a user-owned Suwayomi Server. */
 export class SuwayomiSourceAccountBroker implements ExternalSourceBroker {
+  private extensionManagement?: SuwayomiExtensionManager;
+  private extensionConnectionEpoch = 0;
+  getExtensionManager(): SuwayomiExtensionManager | undefined {
+    if (this.status().state !== 'connected') return undefined;
+    if (!this.extensionManagement) {
+      const client = this.requireConnection();
+      const epoch = this.extensionConnectionEpoch;
+      const account = this.record?.accountConnectionId;
+      this.extensionManagement = new SuwayomiExtensionManager(
+        client,
+        () => this.client === client && this.extensionConnectionEpoch === epoch,
+        async () => {
+          if (this.client !== client) return;
+          this.sources.clear();
+          await this.state.clearCache(this.connectorId, account);
+        },
+      );
+    }
+    return this.extensionManagement;
+  }
   private record?: ExternalSourceCredentialRecord;
   private sharedConnection?: ExternalSourceSharedConnectionV1;
   private credential?: SuwayomiCredential;
@@ -381,7 +402,7 @@ export class SuwayomiSourceAccountBroker implements ExternalSourceBroker {
   connectionForm(): ExternalSourceConnectionForm {
     return {
       submitLabel: 'Suwayomi 연결',
-      help: 'Mihon 호환 소스의 설치와 업데이트는 Suwayomi에서 관리합니다.',
+      help: '연결 후 모야에서 만화 확장 저장소와 설치·업데이트를 관리할 수 있습니다.',
       fields: [
         {
           id: 'baseUrl',
@@ -547,6 +568,8 @@ export class SuwayomiSourceAccountBroker implements ExternalSourceBroker {
   }
 
   async disconnect(): Promise<void> {
+    this.extensionConnectionEpoch += 1;
+    this.extensionManagement = undefined;
     const accountConnectionId = this.record?.accountConnectionId ?? this.sharedConnection?.accountConnectionId;
     await this.state.deleteCredential(this.connectorId);
     await this.state.deleteSharedConnection?.(this.connectorId);
@@ -883,6 +906,8 @@ export class SuwayomiSourceAccountBroker implements ExternalSourceBroker {
   }
 
   private installCredential(credential: SuwayomiCredential, key: CryptoKey): void {
+    this.extensionConnectionEpoch += 1;
+    this.extensionManagement = undefined;
     this.clearThumbnailObjectUrls();
     this.credential = credential;
     this.credentialKey = key;

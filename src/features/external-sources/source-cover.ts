@@ -1,6 +1,7 @@
 import { integrityHash } from '@noveldesk/text-core/hash';
 import type { Novel } from '../../domain/types';
 import type { BookAssetRepository } from '../../repositories/book-asset-repository';
+import { boundedCoverDimensions, encodeCoverImage } from '../../services/cover-image';
 
 export const MAX_SOURCE_COVER_BYTES = 8 * 1024 * 1024;
 const SOURCE_COVER_TIMEOUT_MS = 5_000;
@@ -71,7 +72,7 @@ async function downloadSourceCover(url: string, signal: AbortSignal | undefined,
 export async function persistSourceCover(
   assets: BookAssetRepository | undefined,
   novel: Novel,
-  thumbnailUrl: string | undefined,
+  thumbnailUrl: string | undefined | (() => Promise<string | undefined>),
   signal?: AbortSignal,
   options: { readonly timeoutMs?: number } = {},
 ): Promise<boolean> {
@@ -90,12 +91,26 @@ export async function persistSourceCover(
   ) {
     return false;
   }
-  const blob = await downloadSourceCover(thumbnailUrl, signal, options.timeoutMs ?? SOURCE_COVER_TIMEOUT_MS);
+  const resolvedUrl = typeof thumbnailUrl === 'function' ? await thumbnailUrl() : thumbnailUrl;
+  signal?.throwIfAborted();
+  if (!resolvedUrl) return false;
+  let blob = await downloadSourceCover(resolvedUrl, signal, options.timeoutMs ?? SOURCE_COVER_TIMEOUT_MS);
   signal?.throwIfAborted();
   const bitmap = await createImageBitmap(blob);
-  const pixelWidth = bitmap.width;
-  const pixelHeight = bitmap.height;
-  bitmap.close();
+  let pixelWidth: number;
+  let pixelHeight: number;
+  try {
+    signal?.throwIfAborted();
+    const dimensions = boundedCoverDimensions(bitmap.width, bitmap.height);
+    pixelWidth = dimensions.width;
+    pixelHeight = dimensions.height;
+    // Use the same bounds/encoder as manually imported covers. Keep smaller originals unchanged.
+    if (pixelWidth !== bitmap.width || pixelHeight !== bitmap.height) {
+      blob = await encodeCoverImage(bitmap, pixelWidth, pixelHeight, sourceCoverContentType(blob.type)!);
+    }
+  } finally {
+    bitmap.close();
+  }
   signal?.throwIfAborted();
   if (pixelWidth < 1 || pixelHeight < 1) throw new Error('원격 표지 크기를 확인하지 못했습니다.');
   // Hosted cover uploads require the current tagged integrity-hash contract.

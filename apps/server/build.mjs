@@ -11,6 +11,9 @@ await rm(outdir, { force: true, recursive: true });
 await build({
   absWorkingDir: serverRoot,
   alias: {
+    '@noveldesk/extension-contracts/source-protocol': '../../packages/extension-contracts/source-protocol.ts',
+    '@noveldesk/extension-contracts/package': '../../packages/extension-contracts/package-manifest.ts',
+    '@noveldesk/extension-contracts': '../../packages/extension-contracts/index.ts',
     '@noveldesk/contracts/sync': '../../packages/contracts/sync.ts',
     '@noveldesk/contracts': '../../packages/contracts/index.ts',
     '@noveldesk/document-series-core': '../../packages/document-series-core/index.ts',

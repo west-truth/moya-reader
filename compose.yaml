@@ -155,6 +155,14 @@ services:
       # Trust only the immediate Web proxy by default; increase explicitly for an additional NPM hop.
       TRUSTED_PROXY_HOPS: ${TRUSTED_PROXY_HOPS:-1}
       RUN_MIGRATIONS_ON_START: ${RUN_MIGRATIONS_ON_START:-true}
+      EXTENSION_TEXT_MIGRATION: ${EXTENSION_TEXT_MIGRATION:-}
+      EXTENSION_CONTENT_BINDINGS: ${EXTENSION_CONTENT_BINDINGS:-[]}
+      CONTENT_PROVIDER_PROTOCOL: ${CONTENT_PROVIDER_PROTOCOL:-job-v1}
+      CONTENT_PROVIDER_ENDPOINT: ${CONTENT_PROVIDER_ENDPOINT:-}
+      CONTENT_PROVIDER_KEY: ${CONTENT_PROVIDER_KEY:-}
+      CONTENT_PROVIDERS: ${CONTENT_PROVIDERS:-[]}
+      # Optional operator-owned egress for installed SDK source catalog/detail/download requests only.
+      SOURCE_OUTBOUND_PROXY: ${SOURCE_OUTBOUND_PROXY:-}
     volumes: *server-volumes
     # Deliberately no ports: the loopback-published web proxy is the only default host ingress.
     depends_on:

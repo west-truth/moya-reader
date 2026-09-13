@@ -44,6 +44,7 @@ pub fn run() {
     let app = builder
         .setup(|app| {
             app.manage(crate::metadata_collector::MetadataCollectorManager::default());
+            app.manage(crate::extension_runtime::ExtensionRuntimeManager::default());
             let runtime = crate::workflow::NativeWorkflowRuntime::open(app.handle())
                 .map_err(std::io::Error::other)?;
             app.manage(runtime.clone());
@@ -62,7 +63,9 @@ pub fn run() {
             crate::secure_credentials::app_credential_status,
             crate::secure_credentials::app_credential_delete,
             crate::desktop_oauth::desktop_dropbox_oauth_authorize,
+            crate::google_oauth::desktop_google_oauth,
             crate::metadata_collector::desktop_metadata_collector_start,
+            crate::extension_runtime::desktop_extension_runtime_start,
             crate::metadata_collector::desktop_metadata_collector_stop,
             crate::android_document_io::android_document_io_pick,
             crate::android_document_io::android_document_io_pick_folder,
@@ -100,6 +103,9 @@ pub fn run() {
         .expect("error while building Moya");
     app.run(|app_handle, event| {
         if matches!(event, tauri::RunEvent::ExitRequested { .. }) {
+            app_handle
+                .state::<crate::extension_runtime::ExtensionRuntimeManager>()
+                .stop_before_exit();
             app_handle
                 .state::<crate::metadata_collector::MetadataCollectorManager>()
                 .stop_before_exit();

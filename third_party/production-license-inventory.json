@@ -9,15 +9,15 @@
     "libc": "glibc"
   },
   "summary": {
-    "componentCount": 179,
+    "componentCount": 207,
     "byLicense": {
       "0BSD": 1,
-      "Apache-2.0": 40,
+      "Apache-2.0": 43,
       "Apache-2.0 OR MIT": 1,
-      "BSD-2-Clause": 1,
-      "BSD-3-Clause": 15,
-      "ISC": 5,
-      "MIT": 115,
+      "BSD-2-Clause": 9,
+      "BSD-3-Clause": 16,
+      "ISC": 8,
+      "MIT": 128,
       "SEE LICENSE IN License.txt": 1
     }
   },
@@ -210,6 +210,20 @@
       "version": "1.5.1",
       "license": "MIT",
       "homepage": "https://github.com/ioredis/commands"
+    },
+    {
+      "ecosystem": "npm",
+      "name": "@jitl/quickjs-ffi-types",
+      "version": "0.32.0",
+      "license": "MIT",
+      "homepage": "https://github.com/justjake/quickjs-emscripten#readme"
+    },
+    {
+      "ecosystem": "npm",
+      "name": "@jitl/quickjs-wasmfile-release-sync",
+      "version": "0.32.0",
+      "license": "MIT",
+      "homepage": "https://github.com/justjake/quickjs-emscripten#readme"
     },
     {
       "ecosystem": "npm",
@@ -472,6 +486,13 @@
     },
     {
       "ecosystem": "npm",
+      "name": "boolbase",
+      "version": "1.0.0",
+      "license": "ISC",
+      "homepage": "https://github.com/fb55/boolbase"
+    },
+    {
+      "ecosystem": "npm",
       "name": "bowser",
       "version": "2.14.1",
       "license": "MIT",
@@ -514,6 +535,27 @@
     },
     {
       "ecosystem": "npm",
+      "name": "css-select",
+      "version": "5.2.2",
+      "license": "BSD-2-Clause",
+      "homepage": "https://github.com/fb55/css-select#readme"
+    },
+    {
+      "ecosystem": "npm",
+      "name": "css-what",
+      "version": "6.2.2",
+      "license": "BSD-2-Clause",
+      "homepage": "https://github.com/fb55/css-what#readme"
+    },
+    {
+      "ecosystem": "npm",
+      "name": "cssom",
+      "version": "0.5.0",
+      "license": "MIT",
+      "homepage": "https://github.com/NV/CSSOM#readme"
+    },
+    {
+      "ecosystem": "npm",
       "name": "data-uri-to-buffer",
       "version": "4.0.1",
       "license": "MIT",
@@ -549,10 +591,52 @@
     },
     {
       "ecosystem": "npm",
+      "name": "dom-serializer",
+      "version": "2.0.0",
+      "license": "MIT",
+      "homepage": "https://github.com/cheeriojs/dom-serializer#readme"
+    },
+    {
+      "ecosystem": "npm",
+      "name": "domelementtype",
+      "version": "2.3.0",
+      "license": "BSD-2-Clause",
+      "homepage": "https://github.com/fb55/domelementtype#readme"
+    },
+    {
+      "ecosystem": "npm",
+      "name": "domhandler",
+      "version": "5.0.3",
+      "license": "BSD-2-Clause",
+      "homepage": "https://github.com/fb55/domhandler#readme"
+    },
+    {
+      "ecosystem": "npm",
+      "name": "domutils",
+      "version": "3.2.2",
+      "license": "BSD-2-Clause",
+      "homepage": "https://github.com/fb55/domutils#readme"
+    },
+    {
+      "ecosystem": "npm",
       "name": "ecdsa-sig-formatter",
       "version": "1.0.11",
       "license": "Apache-2.0",
       "homepage": "https://github.com/Brightspace/node-ecdsa-sig-formatter#readme"
+    },
+    {
+      "ecosystem": "npm",
+      "name": "entities",
+      "version": "4.5.0",
+      "license": "BSD-2-Clause",
+      "homepage": "https://github.com/fb55/entities#readme"
+    },
+    {
+      "ecosystem": "npm",
+      "name": "entities",
+      "version": "7.0.1",
+      "license": "BSD-2-Clause",
+      "homepage": "https://github.com/fb55/entities#readme"
     },
     {
       "ecosystem": "npm",
@@ -661,6 +745,20 @@
     },
     {
       "ecosystem": "npm",
+      "name": "html-escaper",
+      "version": "3.0.3",
+      "license": "MIT",
+      "homepage": "https://github.com/WebReflection/html-escaper"
+    },
+    {
+      "ecosystem": "npm",
+      "name": "htmlparser2",
+      "version": "10.1.0",
+      "license": "MIT",
+      "homepage": "https://github.com/fb55/htmlparser2#readme"
+    },
+    {
+      "ecosystem": "npm",
       "name": "https-proxy-agent",
       "version": "7.0.6",
       "license": "MIT",
@@ -682,6 +780,13 @@
     },
     {
       "ecosystem": "npm",
+      "name": "ip-address",
+      "version": "10.7.0",
+      "license": "MIT",
+      "homepage": "https://github.com/beaugunderson/ip-address#readme"
+    },
+    {
+      "ecosystem": "npm",
       "name": "ipaddr.js",
       "version": "2.4.0",
       "license": "MIT",
@@ -693,6 +798,13 @@
       "version": "1.2.4",
       "license": "MIT",
       "homepage": "https://github.com/segmentio/is-url#readme"
+    },
+    {
+      "ecosystem": "npm",
+      "name": "jose",
+      "version": "6.2.12",
+      "license": "MIT",
+      "homepage": "https://github.com/panva/jose"
     },
     {
       "ecosystem": "npm",
@@ -749,6 +861,13 @@
       "version": "6.6.0",
       "license": "BSD-3-Clause",
       "homepage": "https://github.com/fastify/light-my-request#readme"
+    },
+    {
+      "ecosystem": "npm",
+      "name": "linkedom",
+      "version": "0.18.12",
+      "license": "ISC",
+      "homepage": "https://github.com/WebReflection/linkedom#readme"
     },
     {
       "ecosystem": "npm",
@@ -857,6 +976,13 @@
     },
     {
       "ecosystem": "npm",
+      "name": "nth-check",
+      "version": "2.1.1",
+      "license": "BSD-2-Clause",
+      "homepage": "https://github.com/fb55/nth-check"
+    },
+    {
+      "ecosystem": "npm",
       "name": "on-exit-leak-free",
       "version": "2.1.2",
       "license": "MIT",
@@ -875,6 +1001,20 @@
       "version": "4.6.2",
       "license": "MIT",
       "homepage": "https://github.com/sindresorhus/p-retry#readme"
+    },
+    {
+      "ecosystem": "npm",
+      "name": "patchright",
+      "version": "1.61.1",
+      "license": "Apache-2.0",
+      "homepage": "https://github.com/Kaliiiiiiiiii-Vinyzu/patchright"
+    },
+    {
+      "ecosystem": "npm",
+      "name": "patchright-core",
+      "version": "1.61.1",
+      "license": "Apache-2.0",
+      "homepage": "https://github.com/Kaliiiiiiiiii-Vinyzu/patchright"
     },
     {
       "ecosystem": "npm",
@@ -962,6 +1102,13 @@
     },
     {
       "ecosystem": "npm",
+      "name": "playwright-core",
+      "version": "1.61.1",
+      "license": "Apache-2.0",
+      "homepage": "https://playwright.dev"
+    },
+    {
+      "ecosystem": "npm",
       "name": "postgres-array",
       "version": "2.0.0",
       "license": "MIT",
@@ -1015,6 +1162,13 @@
       "version": "4.0.4",
       "license": "MIT",
       "homepage": "https://github.com/davidmarkclements/quick-format#readme"
+    },
+    {
+      "ecosystem": "npm",
+      "name": "quickjs-emscripten-core",
+      "version": "0.32.0",
+      "license": "MIT",
+      "homepage": "https://github.com/justjake/quickjs-emscripten#readme"
     },
     {
       "ecosystem": "npm",
@@ -1158,6 +1312,20 @@
     },
     {
       "ecosystem": "npm",
+      "name": "smart-buffer",
+      "version": "4.2.0",
+      "license": "MIT",
+      "homepage": "https://github.com/JoshGlazebrook/smart-buffer/"
+    },
+    {
+      "ecosystem": "npm",
+      "name": "socks",
+      "version": "2.8.10",
+      "license": "MIT",
+      "homepage": "https://github.com/JoshGlazebrook/socks/"
+    },
+    {
+      "ecosystem": "npm",
       "name": "sonic-boom",
       "version": "4.2.1",
       "license": "MIT",
@@ -1200,10 +1368,31 @@
     },
     {
       "ecosystem": "npm",
+      "name": "tldts",
+      "version": "7.4.12",
+      "license": "MIT",
+      "homepage": "https://github.com/remusao/tldts#readme"
+    },
+    {
+      "ecosystem": "npm",
+      "name": "tldts-core",
+      "version": "7.4.12",
+      "license": "MIT",
+      "homepage": "https://github.com/remusao/tldts#readme"
+    },
+    {
+      "ecosystem": "npm",
       "name": "toad-cache",
       "version": "3.7.4",
       "license": "MIT",
       "homepage": "https://github.com/kibertoad/toad-cache"
+    },
+    {
+      "ecosystem": "npm",
+      "name": "tough-cookie",
+      "version": "6.0.0",
+      "license": "BSD-3-Clause",
+      "homepage": "https://github.com/salesforce/tough-cookie"
     },
     {
       "ecosystem": "npm",
@@ -1218,6 +1407,13 @@
       "version": "2.8.1",
       "license": "0BSD",
       "homepage": "https://www.typescriptlang.org/"
+    },
+    {
+      "ecosystem": "npm",
+      "name": "uhyphen",
+      "version": "0.2.0",
+      "license": "ISC",
+      "homepage": "https://github.com/WebReflection/uhyphen#readme"
     },
     {
       "ecosystem": "npm",

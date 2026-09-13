@@ -11,6 +11,7 @@ import type { ReaderProviderRuntime } from '../../../src/providers/reader-provid
 import { WebLibraryNotice } from './WebLibraryNotice';
 import { WebUpdateNotice } from './WebUpdateNotice';
 import { recordWebBackup } from './web-data-safety';
+import { googleVaultAdapter } from './google/google-vault-adapter';
 
 /** Never manufacture analysis output when the Web edition has no real AI engine. */
 export function createWebProviderRuntime(): ReaderProviderRuntime {
@@ -66,6 +67,7 @@ export function createWebRuntime(): AppRuntime {
       LibraryNotice: WebLibraryNotice,
       Lifecycle: WebUpdateNotice,
       onBackupExported: recordWebBackup,
+      cloudVaultProvider: googleVaultAdapter,
     },
   };
 }

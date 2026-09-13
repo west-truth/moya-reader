@@ -1,9 +1,13 @@
 import { Dialog } from '../../../src/shared/ui/Dialog';
 import type { SyncPanelProps } from '../../../src/features/sync/sync-panel-contract';
-import { CloudVaultSection } from '../../../src/features/cloud-vault/CloudVaultSection';
+import { CloudAccountsPanel } from '../../../src/features/cloud-vault/CloudAccountsPanel';
 import { WebDataSettings } from './WebDataSettings';
+import { useEffect, useState } from 'react';
+import { resetWebSettingsPanel, takeWebSettingsPanel } from './web-settings-navigation';
 
 export default function WebSyncPanel({ data, actions }: SyncPanelProps) {
+  const [panel, setPanel] = useState(takeWebSettingsPanel);
+  useEffect(resetWebSettingsPanel, []);
   return (
     <Dialog
       open
@@ -12,14 +16,23 @@ export default function WebSyncPanel({ data, actions }: SyncPanelProps) {
       className="settings-panel sync-panel"
       closeLabel="동기화 패널 닫기"
     >
-      <WebDataSettings />
-      <CloudVaultSection controller={data.cloudVault} />
-      {!data.cloudVault.connected && !data.cloudVault.dropboxAvailable && (
-        <p className="cloud-vault-notice">
-          이 배포에서는 Dropbox 연결이 아직 준비되지 않았습니다. 책장의 백업 메뉴에서 파일로 저장하거나, 지원되는
-          브라우저에서는 로컬 동기화 폴더를 선택할 수 있습니다.
-        </p>
-      )}
+      <nav className="web-storage-actions" aria-label="저장과 동기화 메뉴">
+        <button
+          className={panel === 'sync' ? 'primary-btn' : 'ghost-btn'}
+          aria-pressed={panel === 'sync'}
+          onClick={() => setPanel('sync')}
+        >
+          계정 · 동기화
+        </button>
+        <button
+          className={panel === 'storage' ? 'primary-btn' : 'ghost-btn'}
+          aria-pressed={panel === 'storage'}
+          onClick={() => setPanel('storage')}
+        >
+          저장 · 오프라인
+        </button>
+      </nav>
+      {panel === 'storage' ? <WebDataSettings /> : <CloudAccountsPanel controller={data.cloudVault} />}
     </Dialog>
   );
 }

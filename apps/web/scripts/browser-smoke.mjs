@@ -124,6 +124,7 @@ try {
   await page.reload();
   await page.getByText('Pages smoke', { exact: true }).first().waitFor();
   await page.getByRole('button', { name: /동기화 열기/ }).click();
+  await page.getByRole('button', { name: '저장 · 오프라인', exact: true }).click();
   await page.getByRole('link', { name: /데스크톱 (출시 확인|앱 다운로드)/ }).waitFor();
   await context.setOffline(false);
 
@@ -163,6 +164,7 @@ try {
     return Boolean(registration?.active && !registration.waiting);
   });
   await page.getByRole('button', { name: /동기화 열기/ }).click();
+  await page.getByRole('button', { name: '저장 · 오프라인', exact: true }).click();
   await page
     .getByRole('region', { name: '인터넷 없이 읽기', exact: true })
     .getByText('사용 가능', { exact: true })

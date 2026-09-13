@@ -19,7 +19,9 @@ import {
   RotateCcw,
   Search,
   Settings,
+  Sparkles,
   Star,
+  TimerReset,
   Trash2,
   Upload,
   X,
@@ -145,24 +147,59 @@ function SourceNavigation({ model, actions, close }: LibraryScreenProps & { clos
         const Icon = source.kind === 'cloud_file' ? Cloud : PlugZap;
         const active = model.externalSources.active && model.externalSources.activeSourceId === source.id;
         return (
-          <button
-            key={source.id}
-            type="button"
-            className={active ? 'active' : ''}
-            disabled={model.externalSources.busy && source.id !== model.externalSources.activeSourceId}
-            aria-label={`${source.title} 소스 열기`}
-            aria-current={active ? 'page' : undefined}
-            onClick={() => {
-              actions.header.openExternalSource(source.id);
-              close?.();
-            }}
-          >
-            <Icon size={17} strokeWidth={1.7} />
-            <span>{source.title}</span>
-            {Boolean(source.newReleaseCount) && (
-              <em aria-label={`새 회차 ${source.newReleaseCount}개`}>{source.newReleaseCount}</em>
+          <div className="library-source-navigation" key={source.id}>
+            <button
+              type="button"
+              className={active ? 'active' : ''}
+              disabled={model.externalSources.busy && source.id !== model.externalSources.activeSourceId}
+              aria-label={`${source.title} 소스 열기`}
+              aria-current={active ? 'page' : undefined}
+              onClick={() => {
+                actions.header.openExternalSource(source.id);
+                close?.();
+              }}
+            >
+              <Icon size={17} strokeWidth={1.7} />
+              <span>{source.title}</span>
+              {Boolean(source.newReleaseCount) && (
+                <em aria-label={`새 회차 ${source.newReleaseCount}개`}>{source.newReleaseCount}</em>
+              )}
+            </button>
+            {active && model.externalSources.browse && (
+              <div className="library-source-browse-navigation" aria-label={`${source.title} 탐색`}>
+                <button
+                  type="button"
+                  className={model.externalSources.browse.activeMode === 'popular' ? 'active' : ''}
+                  disabled={model.externalSources.busy}
+                  aria-label={`${source.title} 인기 작품 보기`}
+                  aria-current={model.externalSources.browse.activeMode === 'popular' ? 'page' : undefined}
+                  onClick={() => {
+                    actions.header.openExternalSourceBrowse(source.id, 'popular');
+                    close?.();
+                  }}
+                >
+                  <Sparkles size={15} />
+                  <span>인기</span>
+                </button>
+                {model.externalSources.browse.availableModes.includes('latest') && (
+                  <button
+                    type="button"
+                    className={model.externalSources.browse.activeMode === 'latest' ? 'active' : ''}
+                    disabled={model.externalSources.busy}
+                    aria-label={`${source.title} 최신 작품 보기`}
+                    aria-current={model.externalSources.browse.activeMode === 'latest' ? 'page' : undefined}
+                    onClick={() => {
+                      actions.header.openExternalSourceBrowse(source.id, 'latest');
+                      close?.();
+                    }}
+                  >
+                    <TimerReset size={15} />
+                    <span>최신</span>
+                  </button>
+                )}
+              </div>
             )}
-          </button>
+          </div>
         );
       })}
     </nav>

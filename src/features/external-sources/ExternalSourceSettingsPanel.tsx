@@ -3,6 +3,7 @@ import { useEffect, useState, type FormEvent } from 'react';
 import type { ExternalSourceConnectionForm } from '../../external-sources/contracts';
 import type { ExternalSourceConnectionStatus } from '../../external-sources/contracts';
 import type { ExternalSourceController, ExternalSourceView } from './useExternalSourceController';
+import { SourceExtensionManagerPanel } from '../extensions/SourceExtensionManagerPanel';
 
 function statusLabel(connection: ExternalSourceConnectionStatus): string {
   switch (connection.state) {
@@ -28,6 +29,7 @@ function SourceCard({ source, controller }: { source: ExternalSourceView; contro
   const connected = connection.state === 'connected';
   const needsReauthorization = connection.state === 'reauthorization_required';
   const [values, setValues] = useState<Record<string, string>>(() => initialFormValues(source.connectionForm));
+  const [manageExtensions, setManageExtensions] = useState(false);
 
   useEffect(() => {
     setValues(initialFormValues(source.connectionForm));
@@ -80,6 +82,18 @@ function SourceCard({ source, controller }: { source: ExternalSourceView; contro
                 {controller.busy ? <LoaderCircle size={15} className="spin" /> : <Link2Off size={15} />}
                 연결 해제
               </button>
+              {source.extensionManager && (
+                <>
+                  <button
+                    type="button"
+                    aria-expanded={manageExtensions}
+                    onClick={() => setManageExtensions(!manageExtensions)}
+                  >
+                    확장 저장소 관리
+                  </button>
+                  {manageExtensions && <SourceExtensionManagerPanel manager={source.extensionManager} />}
+                </>
+              )}
             </>
           ) : (
             <>

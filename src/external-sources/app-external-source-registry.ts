@@ -24,6 +24,16 @@ export interface ExternalSourceContributionView {
 
 /** The host-facing source port shared by built-in connectors and source plugins. */
 export interface ExternalSourceRegistryPort {
+  getHostedDocumentImport?(
+    contributionId: ExtensionContributionId,
+  ): import('../services/import/hosted-document-import').HostedDocumentImportPort | undefined;
+  getHostedImageImport?(
+    contributionId: ExtensionContributionId,
+  ): import('../services/import/hosted-image-import').HostedImageImportPort | undefined;
+  getSourceExtensionManager?(
+    contributionId: ExtensionContributionId,
+    context: TrustedExternalSourceHostContext,
+  ): import('./extension-management').SourceExtensionManager | undefined;
   resolveExternalSourceCover?(
     contributionId: ExtensionContributionId,
     context: TrustedExternalSourceHostContext,
@@ -96,6 +106,18 @@ export interface ExternalSourceProviderRegistryPort extends Omit<ExternalSourceR
  * Optional plugin sources are merged after built-ins and cannot shadow a product connector ID.
  */
 export class AppExternalSourceRegistry implements ExternalSourceRegistryPort {
+  getHostedDocumentImport(contributionId: ExtensionContributionId) {
+    return this.builtIns.has(contributionId)
+      ? undefined
+      : this.pluginSources?.getHostedDocumentImport?.(contributionId);
+  }
+  getHostedImageImport(contributionId: ExtensionContributionId) {
+    return this.builtIns.has(contributionId) ? undefined : this.pluginSources?.getHostedImageImport?.(contributionId);
+  }
+  getSourceExtensionManager(contributionId: ExtensionContributionId, context: TrustedExternalSourceHostContext) {
+    const builtIn = this.builtIns.get(contributionId);
+    return builtIn ? this.requireBroker(builtIn, context).getExtensionManager?.() : undefined;
+  }
   async resolveExternalSourceCover(
     contributionId: ExtensionContributionId,
     context: TrustedExternalSourceHostContext,

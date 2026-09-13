@@ -363,61 +363,11 @@ export class ServerUploadImportService implements ImportService {
         message: '서버에서 책을 분석하고 있습니다.',
       });
 
-      let lastActivityFingerprint: string | undefined;
-      let lastActivityAt = Date.now();
-      while (true) {
-        if (signal.aborted) throw new DOMException('Import cancelled', 'AbortError');
-        const remoteJob = await this.getImportJobWithResponseTimeout(job.jobId, signal);
-        const serverProgress = importProgressFromJob(localJobId, input.file.size, remoteJob);
-        onProgress(serverProgress);
-        if (remoteJob.status === 'cancelled' || remoteJob.stage === 'cancelled') {
-          this.uploadSessionStore.remove(uploadSession.sessionKey);
-          throw new ServerImportCancelledError();
-        }
-        if (remoteJob.status === 'failed') {
-          this.uploadSessionStore.remove(uploadSession.sessionKey);
-          throw new Error(remoteJob.error_message ?? '서버 가져오기에 실패했습니다.');
-        }
-        if (remoteJob.status === 'done' && remoteJob.book_id) {
-          const manifest = await this.client.getBookManifest(remoteJob.book_id);
-          const importedNovel = mapServerBook(manifest.book);
-          onProgress({
-            ...serverProgress,
-            status: 'ready',
-            message: serverProgress.message || '서버 가져오기가 완료되었습니다.',
-          });
-          this.uploadSessionStore.remove(uploadSession.sessionKey);
-          return {
-            novel: {
-              ...importedNovel,
-              ...(() => {
-                const position = mapServerReadingPosition(manifest.readingPosition);
-                return position
-                  ? {
-                      lastReadChapterId: position.chapterId,
-                      lastReadParagraphId: position.paragraphId,
-                      lastReadOffset: position.scrollTop,
-                      lastReadProgress:
-                        importedNovel.lastReadChapterIndex === undefined
-                          ? position.chapterProgress
-                          : importedNovel.lastReadProgress,
-                      lastReadAt: position.updatedAt,
-                    }
-                  : {};
-              })(),
-            },
-          };
-        }
-        const activityFingerprint = importJobActivityFingerprint(remoteJob);
-        const now = Date.now();
-        if (activityFingerprint !== lastActivityFingerprint) {
-          lastActivityFingerprint = activityFingerprint;
-          lastActivityAt = now;
-        } else if (now - lastActivityAt >= Math.max(IMPORT_JOB_POLL_INTERVAL_MS, this.importActivityTimeoutMs)) {
-          throw new ServerImportActivityTimeoutError();
-        }
-        await wait(Math.min(IMPORT_JOB_POLL_INTERVAL_MS, Math.max(1, this.importActivityTimeoutMs)));
-      }
+      const result = await this.awaitImport(localJobId, input.file.size, job.jobId, signal, onProgress, () =>
+        this.uploadSessionStore.remove(uploadSession!.sessionKey),
+      );
+      this.uploadSessionStore.remove(uploadSession.sessionKey);
+      return result;
     } catch (error) {
       if (isAbortError(error) && uploadSession) {
         await this.client.cancelUpload(uploadSession.uploadId).catch(() => undefined);
@@ -438,6 +388,90 @@ export class ServerUploadImportService implements ImportService {
       }
       throw error;
     }
+  }
+
+  private async awaitImport(
+    localJobId: string,
+    fileSize: number,
+    jobId: string,
+    signal: AbortSignal,
+    onProgress: (progress: ImportProgress) => void,
+    onTerminal: () => void = () => undefined,
+  ): Promise<ImportResult> {
+    let lastActivityFingerprint: string | undefined;
+    let lastActivityAt = Date.now();
+    while (true) {
+      if (signal.aborted) throw new DOMException('Import cancelled', 'AbortError');
+      const remoteJob = await this.getImportJobWithResponseTimeout(jobId, signal);
+      const serverProgress = importProgressFromJob(localJobId, fileSize, remoteJob);
+      onProgress(serverProgress);
+      if (remoteJob.status === 'cancelled' || remoteJob.stage === 'cancelled') {
+        onTerminal();
+        throw new ServerImportCancelledError();
+      }
+      if (remoteJob.status === 'failed') {
+        onTerminal();
+        throw new Error(remoteJob.error_message ?? '서버 가져오기에 실패했습니다.');
+      }
+      if (remoteJob.status === 'done' && remoteJob.book_id) {
+        const manifest = await this.client.getBookManifest(remoteJob.book_id);
+        const importedNovel = mapServerBook(manifest.book);
+        onProgress({
+          ...serverProgress,
+          status: 'ready',
+          message: serverProgress.message || '서버 가져오기가 완료되었습니다.',
+        });
+
+        return {
+          novel: {
+            ...importedNovel,
+            ...(() => {
+              const position = mapServerReadingPosition(manifest.readingPosition);
+              return position
+                ? {
+                    lastReadChapterId: position.chapterId,
+                    lastReadParagraphId: position.paragraphId,
+                    lastReadOffset: position.scrollTop,
+                    lastReadProgress:
+                      importedNovel.lastReadChapterIndex === undefined
+                        ? position.chapterProgress
+                        : importedNovel.lastReadProgress,
+                    lastReadAt: position.updatedAt,
+                  }
+                : {};
+            })(),
+          },
+        };
+      }
+      const activityFingerprint = importJobActivityFingerprint(remoteJob);
+      const now = Date.now();
+      if (activityFingerprint !== lastActivityFingerprint) {
+        lastActivityFingerprint = activityFingerprint;
+        lastActivityAt = now;
+      } else if (now - lastActivityAt >= Math.max(IMPORT_JOB_POLL_INTERVAL_MS, this.importActivityTimeoutMs)) {
+        throw new ServerImportActivityTimeoutError();
+      }
+      await wait(Math.min(IMPORT_JOB_POLL_INTERVAL_MS, Math.max(1, this.importActivityTimeoutMs)));
+    }
+  }
+
+  importPrepared(
+    source: import('./hosted-image-import').PreparedServerImport,
+    onProgress: (progress: ImportProgress) => void,
+  ): ImportController {
+    const jobId = stableId('remote_import', source.uploadId, 12);
+    const controller = new AbortController();
+    const promise = (async () => {
+      try {
+        controller.signal.throwIfAborted();
+        const job = await this.client.completeUpload(source.uploadId, controller.signal);
+        return await this.awaitImport(jobId, source.byteLength, job.jobId, controller.signal, onProgress);
+      } catch (error) {
+        if (isAbortError(error)) await this.client.cancelUpload(source.uploadId).catch(() => undefined);
+        throw error;
+      }
+    })();
+    return { jobId, promise, cancel: () => controller.abort() };
   }
 
   private async uploadAndComplete(

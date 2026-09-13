@@ -1,6 +1,7 @@
 import type { MouseEvent, ReactNode } from 'react';
 import { Minus, Square, X } from 'lucide-react';
 import { getCurrentWindow } from '@tauri-apps/api/window';
+import { detectPlatformRuntime } from './runtime';
 
 function runWindowAction(action: (window: ReturnType<typeof getCurrentWindow>) => Promise<void>): void {
   void action(getCurrentWindow()).catch((error) => {
@@ -50,7 +51,10 @@ function DesktopWindowFrame() {
 }
 
 export function DesktopWindowShell({ children }: { readonly children: ReactNode }) {
-  const enabled = import.meta.env.TAURI_ENV_PLATFORM === 'windows';
+  const runtime = detectPlatformRuntime();
+  const enabled =
+    runtime.kind === 'tauri-desktop' &&
+    (import.meta.env.TAURI_ENV_PLATFORM === 'windows' || /Windows/i.test(runtime.userAgent));
   if (!enabled) return children;
   return (
     <div className="desktop-window-shell">

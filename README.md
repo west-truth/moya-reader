@@ -59,8 +59,9 @@ Dropbox/Google 연결은 배포자의 OAuth 앱 설정 후 사용할 수 있습�
 - 텍스트 자동 읽기: 픽셀·줄·화면 이동, 픽셀·줄 블라인드와 RSVP, 회차 끝 정지/다음 화 선택
 - 시스템 음성, 선택형 서버 TTS, 캐시와 전역 미니 플레이어
 - 원본 파일 다운로드, 백업·복원, Dropbox Cloud Vault 기반 기기 간 동기화
-- 연결된 Dropbox, Google Drive 선택 파일과 Suwayomi/Mihon source를 탐색하는 Source Hub
-- 별도 텍스트 소스 서버의 작품 구독, TXT 회차 병렬 수신·순차 저장, 공통 검색·정렬·페이지 목록
+- 연결된 Dropbox·Google Drive와 설치형 텍스트·이미지 source를 탐색하는 Source Hub
+- `.moyaext`, Mangayomi JS, Mihon/Suwayomi 계열 APK 저장소·파일 설치와 확장 업데이트
+- 외부 작품 구독, 회차 병렬 수신·순차 저장, 공통 검색·필터·정렬·페이지 목록
 - 외부 작품의 큰 표지·카드·목록 표시, 내려받은 회차의 개별·일괄 삭제와 브라우저 뒤로가기 복원
 - 연재 작품 단위 회차 누적, 로컬 회차 추가와 압축 파일 안의 TXT·EPUB 묶음 가져오기
 - 선택형 self-host 수집기를 통한 웹소설 표지·작품 정보 자동 보강
@@ -344,10 +345,14 @@ docker compose -f compose.yaml -f compose.metadata-collector.yaml up -d --build
 인증용 override 없이 동작합니다. 자세한 설정과 보안 경계는
 [Docker Compose 한국어 가이드](docs/operations/docker-compose-guide-ko.md)를 참고하십시오.
 
-### 선택 기능: Suwayomi/Mihon source
+### 선택 기능: 설치형 source와 Suwayomi Server
 
-텍스트 작품은 별도 [텍스트 소스 서버 설치 안내](docs/operations/external-text-sources.md)를 따릅니다.
-공통 어댑터 계약으로 수동 TXT catalog와 별도 구현한 소스를 연결하며, 사이트별 구현이나 Suwayomi 확장 파일 실행은 포함하지 않습니다.
+Self-host와 Windows 앱은 `설정 → 익스텐션`에서 `.moyaext`, 호환 JS/APK 파일 또는 여러 확장 저장소를
+추가할 수 있습니다. 설치한 텍스트·이미지 source는 Source Hub에 나타나며 검색·필터·정렬, 작품 연결과
+회차 다운로드를 같은 흐름으로 사용합니다. 확장별 네트워크·로그인 조건과 사이트 변경은 해당 확장에 따라
+다릅니다. 패키지 형식과 권한은 [소스 개발·설치 안내](docs/extensions/source-development.md)를 참고하십시오.
+
+기존 Suwayomi Server 연결도 계속 지원합니다.
 
 사용자 소유 Suwayomi Server에 설치한 Mihon 호환 source를 모야의 `설정 → 소스`와 Source Hub에서 탐색할 수
 있습니다. `compose.npm.yaml`은 Moya Web을 Nginx Proxy Manager network에 연결하고,
@@ -539,7 +544,7 @@ curl http://127.0.0.1:8080/ready
 - [Docker Compose 기술 운영 문서](docs/operations/docker-compose-deployment.md)
 - [WireGuard + Nginx Proxy Manager + Suwayomi 배포](docs/operations/nginx-proxy-manager-wireguard.md)
 - [Hosted provider 운영 경계](docs/operations/hosted-provider-admission.md)
-- [신뢰 익스텐션 v1 개발 가이드](docs/architecture/trusted-extensions.md)
+- [설치형 source 개발·배포 가이드](docs/extensions/source-development.md)
 - [외부 작품 소스 아키텍처](docs/architecture/external-library-sources.md)
 - [Windows·Android 네이티브 빌드 가이드](docs/platforms/native-build-guide-ko.md)
 
@@ -550,10 +555,9 @@ curl http://127.0.0.1:8080/ready
 - RAR/7z는 단일 볼륨 중심이며 매우 큰 solid archive와 암호화 archive는 추가 검증이 필요합니다.
 - OCR 정확도와 처리 시간은 스캔 품질, 언어 data와 서버 자원에 따라 달라집니다.
 - CPU MeloTTS는 상용 cloud TTS보다 느릴 수 있습니다.
-- 현재 익스텐션은 소스와 함께 검토·빌드되는 trusted 기능입니다. 임의 community package 설치·sandbox는 아직
-  제공하지 않습니다.
-- Suwayomi/Mihon 연동은 별도 Suwayomi Server가 필요하며 source별 검색·필터 품질은 해당 source 구현에
-  영향을 받습니다.
+- 설치형 확장은 제한된 host 권한으로 실행되지만, 설치 전 제공 기능·접근 도메인·게시자를 확인해야 합니다.
+  서명은 게시자 키의 일관성을 식별하며 공식 안전성 인증을 뜻하지 않습니다.
+- 호환 JS/APK와 Suwayomi 연동의 검색·필터·인증 품질은 각 source 구현과 대상 사이트 상태에 영향을 받습니다.
 - 인터넷 공개 운영에는 HTTPS, 방화벽, 접근 통제, monitoring과 복구가 검증된 backup이 필요합니다.
 - 데스크톱 installer와 signed Android package는 아직 공개 배포되지 않았습니다.
 

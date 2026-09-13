@@ -12,19 +12,25 @@ const scopeRows = [
   {
     key: 'sourceFiles',
     label: '작품 파일과 표지',
-    description: '원본 · 표지 · 암호화 제외',
+    description: '원본과 표지 함께 보관',
   },
 ] as const;
 
 function activityLabel(activity: CloudVaultController['activity']): string | undefined {
   if (activity === 'loading') return '연결 정보를 확인하는 중…';
   if (activity === 'connecting') return '저장 위치를 연결하는 중…';
-  if (activity === 'syncing') return '암호화하고 동기화하는 중…';
+  if (activity === 'syncing') return '동기화하는 중…';
   if (activity === 'disconnecting') return '연결을 해제하는 중…';
   return undefined;
 }
 
-export function CloudVaultSection({ controller }: { readonly controller: CloudVaultController }) {
+export function CloudVaultSection({
+  controller,
+  showConnectionOptions = true,
+}: {
+  readonly controller: CloudVaultController;
+  readonly showConnectionOptions?: boolean;
+}) {
   const busy = controller.activity !== 'idle';
   const config = controller.config;
   const scope = config?.scope;
@@ -46,7 +52,7 @@ export function CloudVaultSection({ controller }: { readonly controller: CloudVa
           </div>
         </div>
         <span className={controller.connected ? 'cloud-vault-state connected' : 'cloud-vault-state'}>
-          {controller.connected ? '연결됨' : '연결 안 됨'}
+          {controller.connected ? (controller.connectionReady === false ? '다시 연결 필요' : '연결됨') : '연결 안 됨'}
         </span>
       </div>
 
@@ -54,15 +60,10 @@ export function CloudVaultSection({ controller }: { readonly controller: CloudVa
         <p className="cloud-vault-notice">{controller.unavailableReason}</p>
       ) : (
         <>
-          {controller.unlocked ? (
-            <div className="cloud-vault-unlocked">
-              <LockKeyhole size={15} aria-hidden="true" />
-              <span>이 기기에서 잠금 해제됨</span>
-            </div>
-          ) : (
+          {controller.needsLegacyPassphrase && (
             <label className="cloud-vault-passphrase">
               <span>
-                <LockKeyhole size={15} aria-hidden="true" /> 동기화 암호
+                <LockKeyhole size={15} aria-hidden="true" /> 기존 동기화 파일 열기
               </span>
               <input
                 type="password"
@@ -72,20 +73,27 @@ export function CloudVaultSection({ controller }: { readonly controller: CloudVa
                 autoComplete="current-password"
                 disabled={busy}
               />
+              <small>예전에 설정한 암호로 한 번 열면 별도 암호 없는 동기화로 전환합니다.</small>
             </label>
           )}
 
           {controller.connected ? (
             <div className="cloud-vault-provider-card">
               <div>
-                <span>{controller.providerKind === 'dropbox' ? 'Dropbox' : '로컬 폴더'}</span>
+                <span>
+                  {controller.providerKind === 'google-drive'
+                    ? 'Google Drive'
+                    : controller.providerKind === 'dropbox'
+                      ? 'Dropbox'
+                      : '로컬 폴더'}
+                </span>
                 <strong>{controller.providerLabel}</strong>
               </div>
               <button className="ghost-btn" type="button" onClick={() => void controller.disconnect()} disabled={busy}>
                 <Unlink size={15} /> 연결 해제
               </button>
             </div>
-          ) : (
+          ) : showConnectionOptions ? (
             <div className="cloud-vault-provider-options">
               <button
                 className="primary-btn cloud-vault-dropbox-connect"
@@ -109,18 +117,9 @@ export function CloudVaultSection({ controller }: { readonly controller: CloudVa
                 </details>
               )}
             </div>
-          )}
+          ) : null}
 
           <div className="cloud-vault-preferences">
-            <label>
-              <input
-                type="checkbox"
-                checked={config?.rememberPassphrase ?? true}
-                onChange={(event) => void controller.setRememberPassphrase(event.target.checked)}
-                disabled={busy || !config}
-              />
-              <span>이 기기에서 기억</span>
-            </label>
             <label>
               <input
                 type="checkbox"
@@ -165,7 +164,7 @@ export function CloudVaultSection({ controller }: { readonly controller: CloudVa
 
           {controller.backupOnly && (
             <p className="cloud-vault-notice">
-              서버 동기화가 연결되어 있어 Cloud Vault는 충돌 없는 암호화 백업으로만 사용됩니다.
+              서버 동기화가 연결되어 있어 이 저장소는 충돌 없는 백업으로만 사용됩니다.
             </p>
           )}
 
@@ -207,7 +206,8 @@ export function CloudVaultSection({ controller }: { readonly controller: CloudVa
               disabled={
                 busy ||
                 !controller.connected ||
-                (!controller.unlocked && controller.passphrase.length < CLOUD_VAULT_MIN_PASSPHRASE_LENGTH)
+                controller.connectionReady === false ||
+                (controller.needsLegacyPassphrase && controller.passphrase.length < CLOUD_VAULT_MIN_PASSPHRASE_LENGTH)
               }
               aria-label={controller.backupOnly ? '기기 간 백업 갱신' : '기기 간 지금 동기화'}
             >
@@ -221,7 +221,7 @@ export function CloudVaultSection({ controller }: { readonly controller: CloudVa
                   <span>마지막 동기화 {formatDateTime(currentProviderSyncAt)}</span>
                   {config?.lastUploadedBytes !== undefined && (
                     <small>
-                      암호화 기록 {formatBytes(config.lastUploadedBytes)}
+                      동기화 기록 {formatBytes(config.lastUploadedBytes)}
                       {controller.lastReport?.uploadedContentBytes
                         ? ` · 작품 ${formatBytes(controller.lastReport.uploadedContentBytes)}`
                         : ''}

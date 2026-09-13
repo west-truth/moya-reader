@@ -1,12 +1,14 @@
 import { useEffect, useRef, useState } from 'react';
 
 const KEY = 'noveldesk.next-release-download.v1';
+const COUNT_KEY = 'noveldesk.next-release-download-count.v1';
+export type NextReleaseCount = 1 | 2 | 3;
 
 /** One attempt per reading section. A commit must never start a chain of downloads. */
 export function useNextReleaseDownload(input: {
   readingKey?: string;
   busy: boolean;
-  run(signal: AbortSignal): Promise<void>;
+  run(signal: AbortSignal, count: NextReleaseCount): Promise<void>;
   reportError(): void;
 }) {
   const [enabled, setEnabled] = useState(() => {
@@ -14,6 +16,14 @@ export function useNextReleaseDownload(input: {
       return localStorage.getItem(KEY) === 'true';
     } catch {
       return false;
+    }
+  });
+  const [count, updateCount] = useState<NextReleaseCount>(() => {
+    try {
+      const value = Number(localStorage.getItem(COUNT_KEY));
+      return value === 2 || value === 3 ? value : 1;
+    } catch {
+      return 1;
     }
   });
   const latest = useRef(input);
@@ -25,7 +35,7 @@ export function useNextReleaseDownload(input: {
   useEffect(() => {
     attempted.current = undefined;
     return () => activeAbort.current?.abort();
-  }, [enabled, input.readingKey]);
+  }, [enabled, count, input.readingKey]);
   useEffect(() => {
     if (!enabled || !input.readingKey) {
       attempted.current = undefined;
@@ -38,7 +48,7 @@ export function useNextReleaseDownload(input: {
     attempted.current = key;
     running.current = true;
     void latest.current
-      .run(abort.signal)
+      .run(abort.signal, count)
       .catch(() => {
         if (!abort.signal.aborted) latest.current.reportError();
       })
@@ -46,9 +56,19 @@ export function useNextReleaseDownload(input: {
         running.current = false;
         setSettled((value) => value + 1);
       });
-  }, [enabled, input.readingKey, input.busy, settled]);
+  }, [enabled, count, input.readingKey, input.busy, settled]);
   return {
     enabled,
+    count,
+    setCount(value: NextReleaseCount) {
+      if (![1, 2, 3].includes(value)) return;
+      try {
+        localStorage.setItem(COUNT_KEY, String(value));
+      } catch {
+        /* session preference */
+      }
+      updateCount(value);
+    },
     setEnabled(value: boolean) {
       try {
         localStorage.setItem(KEY, String(value));

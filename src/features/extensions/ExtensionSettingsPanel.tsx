@@ -1,3 +1,4 @@
+import './extension-management.css';
 import { Boxes, ShieldCheck } from 'lucide-react';
 import type { ReactNode } from 'react';
 import type { ExtensionContributionId, ExtensionPermission } from '@noveldesk/extension-contracts';
@@ -103,15 +104,18 @@ export function ExtensionSettingsPanel({
   extensions,
   setEnabled,
   renderDetails,
+  installedPackages,
 }: {
   extensions: readonly AppExtensionSnapshot[];
   setEnabled(extensionId: ExtensionContributionId, enabled: boolean): void;
   renderDetails?(extension: AppExtensionSnapshot): ReactNode;
+  installedPackages?: ReactNode;
 }) {
   const bundled = extensions.filter((extension) => extension.origin === 'bundled');
   const community = extensions.filter((extension) => extension.origin === 'community');
   return (
-    <div className="extension-settings-sections">
+    <div className="extension-settings-sections extension-management">
+      {installedPackages}
       <section className="settings-section-card">
         <div className="settings-section-heading">
           <Boxes size={18} aria-hidden="true" />
@@ -131,29 +135,31 @@ export function ExtensionSettingsPanel({
           ))}
         </div>
       </section>
-      <section className="settings-section-card">
-        <div className="settings-section-heading">
-          <ShieldCheck size={18} aria-hidden="true" />
-          <div>
-            <h3>커뮤니티 플러그인</h3>
-            <p>향후 별도 권한 검토와 격리 실행 환경을 통해 제공됩니다.</p>
+      {(!installedPackages || community.length > 0) && (
+        <section className="settings-section-card">
+          <div className="settings-section-heading">
+            <ShieldCheck size={18} aria-hidden="true" />
+            <div>
+              <h3>커뮤니티 플러그인</h3>
+              <p>향후 별도 권한 검토와 격리 실행 환경을 통해 제공됩니다.</p>
+            </div>
           </div>
-        </div>
-        {community.length === 0 ? (
-          <p className="muted extension-community-empty">설치된 커뮤니티 플러그인이 없습니다.</p>
-        ) : (
-          <div className="extension-settings-list">
-            {community.map((extension) => (
-              <ExtensionCard
-                key={extension.id}
-                extension={extension}
-                setEnabled={setEnabled}
-                details={renderDetails?.(extension)}
-              />
-            ))}
-          </div>
-        )}
-      </section>
+          {community.length === 0 ? (
+            <p className="muted extension-community-empty">설치된 커뮤니티 플러그인이 없습니다.</p>
+          ) : (
+            <div className="extension-settings-list">
+              {community.map((extension) => (
+                <ExtensionCard
+                  key={extension.id}
+                  extension={extension}
+                  setEnabled={setEnabled}
+                  details={renderDetails?.(extension)}
+                />
+              ))}
+            </div>
+          )}
+        </section>
+      )}
     </div>
   );
 }

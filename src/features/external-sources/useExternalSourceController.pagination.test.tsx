@@ -16,6 +16,7 @@ import {
 } from '../../external-sources/local-state';
 import { testChapter, testNovel } from '../book-workspace/book-workspace-test-fixtures';
 import { externalItemSectionId } from './serial-work-projection';
+import { SourceReleasePanel } from './SourceReleasePanel';
 import {
   useExternalSourceController,
   type ExternalSourceController,
@@ -66,7 +67,7 @@ function subscription(connectorId: string): ExternalSourceSubscriptionRecord {
   };
 }
 
-async function fixture(format: 'txt' | 'image_archive' = 'txt') {
+async function fixture(format: 'txt' | 'image_archive' = 'txt', showPanel = false) {
   const novel = testNovel({ id: 'book', format, documentSectionCount: 3 });
   const otherNovel = testNovel({ id: 'other-book', format: 'txt', documentSectionCount: 1 });
   const chapters = [1, 2, 3].map((id) =>
@@ -158,7 +159,13 @@ async function fixture(format: 'txt' | 'image_archive' = 'txt') {
       notify,
       confirm: () => true,
     });
-    return null;
+    return showPanel && controller.localSeriesNovel ? (
+      <SourceReleasePanel
+        controller={controller}
+        items={controller.items}
+        renderItem={(item) => <article key={externalItemKeyId(item.key)}>{item.title}</article>}
+      />
+    ) : null;
   }
   await act(async () => {
     renderer = create(<Harness />);
@@ -189,6 +196,41 @@ async function fixture(format: 'txt' | 'image_archive' = 'txt') {
 }
 
 describe('source series pagination integration', () => {
+  it.each(['txt', 'image_archive'] as const)(
+    'positions the real %s local-series panel after the remote catalog arrives',
+    async (format) => {
+      const h = await fixture(format, true);
+      const current = h.chapters[0]!;
+      current.documentSectionId = externalItemSectionId(release(46, format));
+      current.documentSectionTitle = 'Release 46';
+      current.documentSectionIndex = 46;
+      h.novel.lastReadChapterId = current.id;
+      h.novel.lastReadChapterIndex = current.index;
+      h.novel.lastReadProgress = 0.5;
+      let finish!: (value: ExternalItemPage) => void;
+      h.setPage(
+        () =>
+          new Promise((resolve) => {
+            finish = resolve;
+          }),
+      );
+      let opening!: Promise<void>;
+      await act(async () => {
+        opening = h.controller.showLocalSeries(h.novel);
+      });
+      expect(h.controller.loading).toBe(true);
+      expect(h.controller.items.some((item) => item.readingState === 'current')).toBe(true);
+      await act(async () => {
+        finish({ detail: { title: 'Work' }, items: Array.from({ length: 100 }, (_, i) => release(i + 1, format)) });
+        await opening;
+      });
+      expect(h.controller.loading).toBe(false);
+      expect(h.renderer.root.findByProps({ 'aria-current': 'page' }).props['aria-label']).toBe('5\uD398\uC774\uC9C0');
+      expect(h.renderer.root.findAllByType('article').some((row) => row.children.includes('46\uD654'))).toBe(true);
+      await act(async () => h.renderer.unmount());
+    },
+  );
+
   it('publishes the first complete snapshot once, reuses it without requests, and stages background changes', async () => {
     const h = await fixture();
     let finish!: () => void;

@@ -11,7 +11,11 @@ artifacts/
 docs/
 handoff/
 .noveldesk-lab/
-scripts/
+# Web type-check includes extension integration tests that import this SDK helper.
+scripts/*
+!scripts/extensions/
+scripts/extensions/*
+!scripts/extensions/project.ts
 speaker-review-studio/
 
 # Local credentials and runtime data
@@ -23,6 +27,11 @@ secrets/
 services/text-source-server/data/
 services/text-source-server/.env
 services/text-source-server/.env.*
+services/web-auth/.env
+services/web-auth/.env.*
+services/web-auth/.data/
+services/apk-worker/build/
+services/apk-worker/data/
 
 node_modules
 **/node_modules

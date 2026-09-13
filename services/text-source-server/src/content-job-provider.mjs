@@ -22,7 +22,7 @@ async function jsonRequest(endpoint, key, route, { body, signal, maximum = 64 * 
       redirect: 'error',
       signal: combined,
       headers: {
-        Authorization: `Bearer ${key}`,
+        ...(key ? { Authorization: `Bearer ${key}` } : {}),
         Accept: 'application/json',
         ...(body === undefined ? {} : { 'Content-Type': 'application/json', 'X-Lab-Request': '1' }),
       },
@@ -89,8 +89,8 @@ export function createContentJobProvider({
     base.search ||
     base.hash ||
     base.pathname !== '/' ||
-    typeof key !== 'string' ||
-    !key
+    (key !== undefined && typeof key !== 'string') ||
+    (typeof key === 'string' && /[\r\n]/u.test(key))
   )
     throw new SourceError(500, 'invalid_content_provider_configuration');
   return async function materialize(chapterUrl, callerSignal) {

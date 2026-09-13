@@ -101,6 +101,7 @@ export interface ReaderSettingsPanelProps {
   readonly selfHostAccount?: SelfHostAccount;
   readonly logoutSelfHostAccount?: () => Promise<void>;
   readonly extensions: readonly AppExtensionSnapshot[];
+  readonly installedPackages?: ReactNode;
   readonly externalSources: ExternalSourceController;
   readonly webNovelMetadataCollector?: WebNovelMetadataCollectorBroker;
   readonly bookEnrichmentAutomation?: BookEnrichmentAutomationController;
@@ -232,6 +233,7 @@ export default function ReaderSettingsPanel(props: ReaderSettingsPanelProps) {
               {tab === 'extensions' && (
                 <ExtensionSettingsPanel
                   extensions={props.extensions}
+                  installedPackages={props.installedPackages}
                   setEnabled={props.setExtensionEnabled}
                   renderDetails={(extension) =>
                     props.renderExtensionDetails?.(extension) ??

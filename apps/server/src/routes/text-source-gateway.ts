@@ -65,12 +65,16 @@ function upstreamErrorStatus(status: number): number {
 export async function registerTextSourceGateway(
   app: FastifyInstance,
   config: ServerConfig,
-  options: { fetchImpl?: typeof fetch; timeoutMs?: number } = {},
+  options: {
+    fetchImpl?: typeof fetch;
+    timeoutMs?: number;
+    installedFetch?: (path: string, signal: AbortSignal) => Promise<Response>;
+  } = {},
 ): Promise<void> {
   const fetchImpl = options.fetchImpl ?? globalThis.fetch.bind(globalThis);
   app.get(`${PREFIX}/*`, async (request, reply) => {
     reply.header('Cache-Control', 'no-store').header('X-Content-Type-Options', 'nosniff');
-    if (!config.textSourceServerUrl || !config.textSourceServerKey) {
+    if (!options.installedFetch && (!config.textSourceServerUrl || !config.textSourceServerKey)) {
       return reply.code(503).send({
         error: 'text_source_server_not_configured',
         detail: '텍스트 소스 서버가 설정되지 않았습니다.',
@@ -100,16 +104,18 @@ export async function registerTextSourceGateway(
     };
     abort.signal.addEventListener('abort', cancelBody, { once: true });
     try {
-      const response = await fetchImpl(`${config.textSourceServerUrl}${path}${incoming.search}`, {
-        method: 'GET',
-        redirect: 'error',
-        signal: abort.signal,
-        // Browser/Moya credentials and Fetch Metadata never reach the companion.
-        headers: {
-          Accept: cover ? 'image/jpeg, image/png, image/webp' : content ? 'text/plain' : 'application/json',
-          Authorization: `Bearer ${config.textSourceServerKey}`,
-        },
-      });
+      const response = options.installedFetch
+        ? await options.installedFetch(`${path}${incoming.search}`, abort.signal)
+        : await fetchImpl(`${config.textSourceServerUrl}${path}${incoming.search}`, {
+            method: 'GET',
+            redirect: 'error',
+            signal: abort.signal,
+            // Browser/Moya credentials and Fetch Metadata never reach the companion.
+            headers: {
+              Accept: cover ? 'image/jpeg, image/png, image/webp' : content ? 'text/plain' : 'application/json',
+              Authorization: `Bearer ${config.textSourceServerKey}`,
+            },
+          });
       if (!response.body) {
         return reply
           .code(upstreamErrorStatus(response.status))

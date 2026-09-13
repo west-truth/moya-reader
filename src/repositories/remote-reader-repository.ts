@@ -1,3 +1,4 @@
+import { ReadingPositionSaveError } from './reading-position-save-error';
 import {
   Bookmark,
   Chapter,
@@ -27,6 +28,7 @@ import { throwIfReaderSearchAborted } from './reader-query-contract';
 import {
   RemoteApiClient,
   RemoteApiError,
+  RemoteApiRequestTimeoutError,
   mapServerBook,
   mapServerBookmark,
   mapServerChapter,
@@ -204,17 +206,41 @@ export class RemoteReaderRepository implements ReaderRepository {
   }
 
   async saveReadingPosition(input: SaveReadingPositionInput): Promise<void> {
-    const result = await this.client.saveReadingPosition(input.novelId, {
-      chapterId: input.chapterId,
-      documentSectionId: input.documentSectionId,
-      paragraphId: input.paragraphId,
-      paragraphIndex: input.paragraphIndex,
-      offsetInParagraph: input.offsetInParagraph ?? 0,
-      chapterProgress: Math.max(0, Math.min(1, input.chapterProgress)),
-      scrollTop: Math.max(0, Math.round(input.scrollTop)),
-      deviceId: this.deviceId,
-      updatedAt: new Date().toISOString(),
-    });
+    let result: RemoteMutationResult;
+    try {
+      result = await this.client.saveReadingPosition(input.novelId, {
+        chapterId: input.chapterId,
+        documentSectionId: input.documentSectionId,
+        paragraphId: input.paragraphId,
+        paragraphIndex: input.paragraphIndex,
+        offsetInParagraph: input.offsetInParagraph ?? 0,
+        chapterProgress: Math.max(0, Math.min(1, input.chapterProgress)),
+        scrollTop: Math.max(0, Math.round(input.scrollTop)),
+        deviceId: this.deviceId,
+        updatedAt: new Date().toISOString(),
+      });
+    } catch (error) {
+      if (error instanceof RemoteApiError) {
+        const status = error.status;
+        const reason =
+          status === 401
+            ? 'authentication'
+            : status === 403
+              ? 'permission'
+              : status === 404
+                ? 'missing'
+                : status === 429
+                  ? 'rate-limit'
+                  : status >= 500
+                    ? 'server'
+                    : 'response';
+        throw new ReadingPositionSaveError(reason, status, { cause: error });
+      }
+      if (error instanceof RemoteApiRequestTimeoutError)
+        throw new ReadingPositionSaveError('timeout', undefined, { cause: error });
+      if (error instanceof TypeError) throw new ReadingPositionSaveError('connection', undefined, { cause: error });
+      throw error;
+    }
     ensureApplied(result, 'reading_position');
   }
 

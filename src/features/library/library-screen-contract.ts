@@ -1,5 +1,6 @@
 import type { DragEventHandler, ReactNode } from 'react';
 import type { ExtensionContributionId } from '@noveldesk/extension-contracts';
+import type { ExternalSourceBrowseMode } from '../../external-sources/contracts';
 import type { Novel } from '../../domain/types';
 import type { LibraryCollectionModel, LibraryFilter, LibrarySort, LibraryViewMode } from './library-screen-model';
 import type { Shelf } from '../../domain/types';
@@ -46,6 +47,10 @@ export interface LibraryScreenModel {
       newReleaseCount?: number;
     }[];
     libraryWorks?: readonly LibraryExternalWorkView[];
+    browse?: {
+      readonly activeMode: ExternalSourceBrowseMode;
+      readonly availableModes: readonly ExternalSourceBrowseMode[];
+    };
   };
   filter: LibraryFilter;
   sort: LibrarySort;
@@ -86,6 +91,10 @@ export interface LibraryScreenActions {
     openImport(): void;
     openLibraryFolders(): void;
     openExternalSource(sourceId: ExtensionContributionId): void;
+    openExternalSourceBrowse(
+      sourceId: ExtensionContributionId,
+      mode: Exclude<ExternalSourceBrowseMode, 'search'>,
+    ): void;
     openExternalSourceSettings(): void;
   };
   presentation: {

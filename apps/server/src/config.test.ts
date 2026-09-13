@@ -97,6 +97,14 @@ describe('server security config', () => {
     expect(() => loadConfig({ TRUSTED_PROXY_HOPS: '5' })).toThrow(/TRUSTED_PROXY_HOPS/);
   });
 
+  it('accepts an optional credential-free source egress proxy', () => {
+    expect(loadConfig({ SOURCE_OUTBOUND_PROXY: 'socks5://source-egress:40000' }).sourceOutboundProxy).toBe(
+      'socks5://source-egress:40000',
+    );
+    for (const value of ['ftp://proxy:21', 'http://user:pass@proxy:8080', 'http://proxy:8080/path'])
+      expect(() => loadConfig({ SOURCE_OUTBOUND_PROXY: value })).toThrow(/SOURCE_OUTBOUND_PROXY/);
+  });
+
   it.each(['-1', '1.5', 'many', '9007199254740992'])('rejects invalid provider admission limit %s', (value) => {
     expect(() => loadConfig({ PROVIDER_MAX_ATTEMPTS_PER_MINUTE: value })).toThrow(/PROVIDER_MAX_ATTEMPTS_PER_MINUTE/);
   });

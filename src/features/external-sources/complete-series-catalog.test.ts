@@ -36,6 +36,24 @@ describe('complete series catalog', () => {
       ),
     ).rejects.toThrow('offline');
   });
+  it('allows a large catalog to take longer than five minutes', async () => {
+    const clock = vi.spyOn(Date, 'now').mockReturnValue(0);
+    let page = 0;
+    try {
+      const result = await completeSeriesCatalog(
+        { items: [item(1)], nextCursor: '1' },
+        async () => {
+          page++;
+          clock.mockReturnValue(page * 4 * 60_000);
+          return { items: [item(page + 1)], nextCursor: page < 3 ? String(page + 1) : undefined };
+        },
+        new AbortController().signal,
+      );
+      expect(result.items).toHaveLength(4);
+    } finally {
+      clock.mockRestore();
+    }
+  });
   it('does not read another page after cancellation', async () => {
     const abort = new AbortController();
     const read = vi.fn(async () => {

@@ -22,6 +22,7 @@ function sharedPublicAssets(): Plugin {
     'third_party/licenses/common/LGPL-2.1.txt',
     'third_party/licenses/common/unRarLicense.txt',
     'third_party/licenses/node-unrar-js/LICENSE.md',
+    'third_party/licenses/jose/LICENSE.md',
   ])
     entries.set(name, resolve(repoRoot, name));
   return {
@@ -54,6 +55,7 @@ export default defineConfig(({ mode }) => ({
     'VITE_DROPBOX_APP_KEY',
     'VITE_DROPBOX_SOURCE_APP_KEY',
     'VITE_GOOGLE_DRIVE_CLIENT_ID',
+    'VITE_GOOGLE_AUTH_URL',
     'VITE_GOOGLE_DRIVE_APP_ID',
     'VITE_GOOGLE_DRIVE_DEVELOPER_KEY',
     'VITE_DESKTOP_DOWNLOAD_URL',

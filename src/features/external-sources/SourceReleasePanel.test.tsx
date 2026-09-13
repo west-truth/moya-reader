@@ -112,7 +112,9 @@ describe('source release lists', () => {
     }));
     let renderer!: ReactTestRenderer;
     await act(async () => {
-      renderer = create(<SourceReleasePanel controller={control()} items={items} renderItem={renderItem} />);
+      renderer = create(
+        <SourceReleasePanel controller={control({ catalogLoading: true })} items={items} renderItem={renderItem} />,
+      );
     });
     expect(renderer.root.findByProps({ 'aria-label': '12페이지' }).props['aria-current']).toBe('page');
     expect(
@@ -120,6 +122,47 @@ describe('source release lists', () => {
     ).toContain('전체 1화 선택 · 이 페이지 1화');
     await act(async () => renderer.unmount());
   });
+
+  it.each(['text-source', 'suwayomi', 'installed-comic'])(
+    'waits for the complete %s catalog before settling on the reading page',
+    async (kind) => {
+      const all = releases(100).map((item, index) => ({
+        ...item,
+        readingState: index === 45 ? ('current' as const) : ('unread' as const),
+      }));
+      const controller = control({ activeSourceId: kind as ExternalSourceController['activeSourceId'], loading: true });
+      let renderer!: ReactTestRenderer;
+      await act(async () => {
+        renderer = create(
+          <SourceReleasePanel controller={controller} items={all.slice(45, 48)} renderItem={renderItem} />,
+        );
+      });
+      await act(async () =>
+        renderer.update(
+          <SourceReleasePanel controller={{ ...controller, loading: false }} items={all} renderItem={renderItem} />,
+        ),
+      );
+      expect(renderer.root.findByProps({ 'aria-label': '5페이지' }).props['aria-current']).toBe('page');
+      expect(renderer.root.findAllByType('article').some((row) => row.children.includes('46화 이야기'))).toBe(true);
+      await act(async () => renderer.root.findByProps({ 'aria-label': '1페이지' }).props.onClick());
+      await act(async () =>
+        renderer.update(
+          <SourceReleasePanel
+            controller={{ ...controller, loading: false, catalogLoading: true }}
+            items={all}
+            renderItem={renderItem}
+          />,
+        ),
+      );
+      await act(async () =>
+        renderer.update(
+          <SourceReleasePanel controller={{ ...controller, loading: false }} items={all} renderItem={renderItem} />,
+        ),
+      );
+      expect(renderer.root.findByProps({ 'aria-label': '1페이지' }).props['aria-current']).toBe('page');
+      await act(async () => renderer.unmount());
+    },
+  );
 
   it('does not drive network paging from renders and keeps cached rows selectable during background checks', async () => {
     const loadMore = vi.fn(async () => undefined);

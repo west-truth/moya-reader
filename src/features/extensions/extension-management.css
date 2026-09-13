@@ -1,0 +1,356 @@
+/* Extension management uses application colors, independent of reader paper themes. */
+:is(section.installed-extension-panel, div.extension-management) {
+  display: grid;
+  gap: 18px;
+  min-width: 0;
+  font-family: var(--font-ui);
+}
+
+:is(section.installed-extension-panel, div.extension-management) :is(h3, h4, p) {
+  margin: 0;
+}
+:is(section.installed-extension-panel, div.extension-management) .settings-section-heading {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+}
+:is(section.installed-extension-panel, div.extension-management) .settings-section-heading > svg {
+  flex: 0 0 auto;
+  margin-top: 3px;
+  color: var(--primary);
+}
+:is(section.installed-extension-panel, div.extension-management) .settings-section-heading > div {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+}
+:is(section.installed-extension-panel, div.extension-management) :is(.field-help, .muted, .settings-section-heading p) {
+  color: var(--text-2);
+  font-size: 13px;
+  line-height: 1.65;
+  overflow-wrap: anywhere;
+}
+:is(section.installed-extension-panel, div.extension-management) .warning {
+  color: var(--danger);
+}
+
+:is(section.installed-extension-panel, div.extension-management) button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  min-height: 40px;
+  padding: 9px 14px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--app-surface-muted);
+  color: var(--text);
+  font: inherit;
+  font-size: 13px;
+  font-weight: 550;
+  line-height: 1.35;
+  cursor: pointer;
+  transition:
+    background 140ms ease,
+    border-color 140ms ease,
+    transform 100ms ease;
+}
+:is(section.installed-extension-panel, div.extension-management) button:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--primary) 12%, var(--app-surface-muted));
+  border-color: color-mix(in srgb, var(--primary) 55%, var(--border));
+}
+:is(section.installed-extension-panel, div.extension-management) button:active:not(:disabled) {
+  transform: translateY(1px);
+}
+:is(section.installed-extension-panel, div.extension-management) button:disabled {
+  opacity: 0.48;
+  cursor: default;
+}
+:is(section.installed-extension-panel, div.extension-management) button[aria-expanded='true'] {
+  background: color-mix(in srgb, var(--primary) 15%, var(--app-surface-muted));
+  border-color: var(--primary);
+  color: var(--primary);
+}
+:is(section.installed-extension-panel, div.extension-management) button[aria-pressed='true'] {
+  border-color: var(--primary);
+  color: var(--primary);
+  background: color-mix(in srgb, var(--primary) 15%, var(--app-surface-muted));
+}
+:is(section.installed-extension-panel, div.extension-management) .source-extension-list > li {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 12px;
+}
+:is(section.installed-extension-panel, div.extension-management)
+  :is(button, input, select, textarea, summary):focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: 3px;
+}
+:is(section.installed-extension-panel, div.extension-management) .installed-extension-actions {
+  gap: 8px;
+  margin: 0;
+}
+:is(section.installed-extension-panel, div.extension-management) > .installed-extension-actions {
+  padding-bottom: 16px;
+  border-bottom: 1px solid var(--border);
+}
+:is(section.installed-extension-panel, div.extension-management)
+  :is(.extension-settings-list, .installed-extension-list) {
+  gap: 12px;
+}
+:is(section.installed-extension-panel, div.extension-management) .extension-settings-card {
+  min-width: 0;
+  gap: 12px;
+  padding: 18px;
+  border-radius: 14px;
+  background: var(--app-surface-muted);
+}
+:is(section.installed-extension-panel, div.extension-management) .extension-settings-card > strong {
+  font-size: 15px;
+  overflow-wrap: anywhere;
+}
+:is(section.installed-extension-panel, div.extension-management)
+  .apk-extension-manager
+  .installed-extension-list
+  > article {
+  grid-template-columns: minmax(0, 1fr) auto;
+  row-gap: 6px;
+}
+:is(section.installed-extension-panel, div.extension-management)
+  .apk-extension-manager
+  .installed-extension-list
+  > article
+  > :is(strong, span) {
+  grid-column: 1;
+}
+:is(section.installed-extension-panel, div.extension-management)
+  .apk-extension-manager
+  .installed-extension-list
+  > article
+  > .installed-extension-actions {
+  grid-column: 2;
+  grid-row: 1 / span 2;
+  align-self: center;
+  justify-content: flex-end;
+}
+:is(section.installed-extension-panel, div.extension-management)
+  .apk-extension-manager
+  .installed-extension-list
+  > article
+  > :is(section, form, p) {
+  grid-column: 1 / -1;
+}
+:is(section.installed-extension-panel, div.extension-management) .installed-extension-actions:empty {
+  display: none;
+}
+:is(section.installed-extension-panel, div.extension-management) .extension-settings-card-heading {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  text-align: left;
+  gap: 16px;
+  align-items: center;
+}
+:is(section.installed-extension-panel, div.extension-management) .extension-settings-card-heading strong {
+  font-size: 15px;
+}
+:is(section.installed-extension-panel, div.extension-management) details {
+  min-width: 0;
+}
+:is(section.installed-extension-panel, div.extension-management) summary {
+  padding-block: 10px;
+  min-height: 40px;
+  box-sizing: border-box;
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 550;
+  cursor: pointer;
+}
+:is(section.installed-extension-panel, div.extension-management) details[open] > summary {
+  color: var(--primary);
+  margin-bottom: 10px;
+}
+:is(section.installed-extension-panel, div.extension-management) details > :not(summary) {
+  margin-block: 10px;
+}
+:is(section.installed-extension-panel, div.extension-management) .extension-settings-card details {
+  border-top: 1px solid var(--border);
+}
+
+:is(section.installed-extension-panel, div.extension-management)
+  :is(input:not([type='checkbox']):not([type='file']), select, textarea) {
+  width: 100%;
+  min-width: 0;
+  min-height: 42px;
+  padding: 10px 12px;
+  box-sizing: border-box;
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  background: var(--app-panel);
+  color: var(--text);
+  font: inherit;
+  font-size: 14px;
+  line-height: 1.5;
+}
+:is(section.installed-extension-panel, div.extension-management) input::placeholder {
+  color: var(--text-2);
+  opacity: 0.8;
+}
+:is(section.installed-extension-panel, div.extension-management) textarea {
+  min-height: 88px;
+  resize: vertical;
+}
+:is(section.installed-extension-panel, div.extension-management) input[type='file'] {
+  max-width: 100%;
+  color: var(--text-2);
+  font-size: 13px;
+}
+:is(section.installed-extension-panel, div.extension-management) input::file-selector-button {
+  padding: 10px 14px;
+  margin-right: 10px;
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  background: var(--app-panel);
+  color: var(--text);
+  cursor: pointer;
+}
+:is(section.installed-extension-panel, div.extension-management) input[type='checkbox'] {
+  width: 18px;
+  height: 18px;
+  flex: 0 0 auto;
+  accent-color: var(--primary);
+}
+:is(section.installed-extension-panel, div.extension-management) :is(.checkbox-field, .reader-settings-toggle) {
+  gap: 10px;
+  min-height: 40px;
+  cursor: pointer;
+}
+:is(section.installed-extension-panel, div.extension-management) .compatibility-preferences {
+  gap: 20px;
+  padding-top: 8px;
+}
+:is(section.installed-extension-panel, div.extension-management) .compatibility-preference-field {
+  gap: 7px;
+}
+:is(section.installed-extension-panel, div.extension-management) .compatibility-preference-field > span {
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 550;
+}
+:is(section.installed-extension-panel, div.extension-management) .compatibility-preference-toggle {
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  padding-bottom: 14px;
+  border-bottom: 1px solid var(--border);
+  cursor: pointer;
+}
+:is(section.installed-extension-panel, div.extension-management) .compatibility-preference-toggle small {
+  grid-column: 1 / -1;
+}
+:is(section.installed-extension-panel, div.extension-management) .compatibility-preferences > button[type='submit'],
+:is(section.installed-extension-panel, div.extension-management)
+  .extension-install-confirmation
+  .installed-extension-actions
+  > button:first-child {
+  background: var(--primary);
+  border-color: var(--primary);
+  color: #fff;
+}
+:is(section.installed-extension-panel, div.extension-management) .compatibility-preferences > button[type='submit'] {
+  justify-self: start;
+  min-width: 112px;
+}
+:is(section.installed-extension-panel, div.extension-management) .extension-install-confirmation {
+  display: grid;
+  gap: 12px;
+  min-width: 0;
+  padding: 16px;
+  border: 1px solid color-mix(in srgb, var(--primary) 45%, var(--border));
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--primary) 5%, var(--app-panel));
+  animation: extension-reveal 160ms ease-out;
+}
+:is(section.installed-extension-panel, div.extension-management) .extension-install-confirmation .checkbox-field {
+  display: flex;
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: var(--app-surface-muted);
+}
+:is(section.installed-extension-panel, div.extension-management) .extension-repository-browser {
+  gap: 16px;
+}
+:is(section.installed-extension-panel, div.extension-management) .extension-repository-select {
+  display: grid;
+  gap: 8px;
+}
+.reader-settings-dialog .reader-settings-page-title {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 6px;
+  align-items: start;
+}
+.reader-settings-dialog .reader-settings-page-title h2 {
+  white-space: nowrap;
+}
+@keyframes extension-reveal {
+  from {
+    opacity: 0;
+    transform: translateY(-4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+@media (max-width: 600px) {
+  :is(section.installed-extension-panel, div.extension-management)
+    .apk-extension-manager
+    .installed-extension-list
+    > article {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  :is(section.installed-extension-panel, div.extension-management)
+    .apk-extension-manager
+    .installed-extension-list
+    > article
+    > .installed-extension-actions {
+    grid-column: 1;
+    grid-row: auto;
+    justify-content: flex-start;
+  }
+  :is(section.installed-extension-panel, div.extension-management) button {
+    min-height: 44px;
+  }
+  :is(section.installed-extension-panel, div.extension-management) .extension-settings-card {
+    padding: 14px;
+  }
+  :is(section.installed-extension-panel, div.extension-management) .extension-install-confirmation {
+    padding: 12px;
+  }
+  :is(section.installed-extension-panel, div.extension-management)
+    .extension-install-confirmation
+    .installed-extension-actions
+    > button {
+    flex: 1;
+  }
+  :is(section.installed-extension-panel, div.extension-management)
+    :is(.extension-repository-add, .extension-repository-form) {
+    display: flex;
+    flex-wrap: wrap;
+  }
+  :is(section.installed-extension-panel, div.extension-management)
+    :is(.extension-repository-add, .extension-repository-form)
+    > input {
+    flex: 1 1 100%;
+  }
+  :is(section.installed-extension-panel, div.extension-management) :is(input:not([type='checkbox']), select, textarea) {
+    font-size: 16px;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  :is(section.installed-extension-panel, div.extension-management) button {
+    transition: none;
+  }
+  :is(section.installed-extension-panel, div.extension-management) .extension-install-confirmation {
+    animation: none;
+  }
+}

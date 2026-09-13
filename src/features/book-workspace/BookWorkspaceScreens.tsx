@@ -216,6 +216,12 @@ export function BookWorkspaceScreens({
         addedAt: work.createdAt,
         updatedAt: work.updatedAt,
       })),
+      browse: externalSources.catalogBrowse
+        ? {
+            activeMode: externalSources.catalogBrowse.activeMode,
+            availableModes: externalSources.catalogBrowse.availableModes,
+          }
+        : undefined,
     },
     filter: state.libraryFilter,
     sort: state.librarySort,
@@ -252,6 +258,11 @@ export function BookWorkspaceScreens({
       openExternalSource: (sourceId) => {
         controller.setView('library');
         externalSources.show(sourceId);
+      },
+      openExternalSourceBrowse: (sourceId, mode) => {
+        if (externalSources.activeSourceId !== sourceId) return;
+        controller.setView('library');
+        void externalSources.openCatalogBrowse(mode);
       },
       openExternalSourceSettings,
     },

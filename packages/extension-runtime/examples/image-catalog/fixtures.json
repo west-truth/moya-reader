@@ -1,0 +1,12 @@
+[
+  {
+    "url": "https://catalog.example/catalog?q=&cursor=",
+    "contentType": "application/json",
+    "body": "{\"works\":[{\"key\":\"sample\",\"name\":\"Example comic\"}]}"
+  },
+  {
+    "url": "https://catalog.example/page1.png",
+    "contentType": "image/png",
+    "bodyBase64": "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aP1sAAAAASUVORK5CYII="
+  }
+]

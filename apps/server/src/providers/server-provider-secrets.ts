@@ -335,7 +335,7 @@ function secretStatusExposesValueHint(secretName: ProviderSecretName): boolean {
   return secretName !== 'credential_path' && secretName !== 'endpoint_url';
 }
 
-function loadProviderSecretMasterKey(config: ServerConfig, env: NodeJS.ProcessEnv): Buffer {
+export function loadProviderSecretMasterKey(config: ServerConfig, env: NodeJS.ProcessEnv): Buffer {
   const explicit = env.PROVIDER_SECRET_ENCRYPTION_KEY?.trim();
   if (explicit) return normalizeMasterKey(explicit);
   fs.mkdirSync(config.dataDir, { recursive: true });

@@ -121,6 +121,9 @@ CONTENT_PROVIDER_KEY=
 ```
 
 protocol 기본값은 `job-v1`이며 endpoint를 지정하지 않으면 본문 공급자는 비활성이다.
+별도 공급자 없이 본문을 가져오는 adapter도 지원한다. 여러 공급자가 필요한 경우에만 `CONTENT_PROVIDERS`와
+소스별 `contentProviderId`를 추가한다. 기존 주소·키·소스 설정을 변경할 필요는 없다.
+[소스별 연결과 driver 등록](ADAPTERS.md#소스별-선택형-본문-공급자-2026-09-13)을 참고한다.
 `SOURCE_ADAPTERS`는 제공된 어댑터 ID와 설정을 담은 JSON 배열이다. 모듈 경로나 설치 URL이 아니며, 선택하지 않은
 소스는 등록하지 않는다. 지원 어댑터의 구체적인 opt-in 예시는 [ADAPTERS.md](ADAPTERS.md#현재-두-구현의-책임)에 있다.
 원격 어댑터만 쓸 때도 `data/content/`를 만들고 서버 identity용 catalog를 다음처럼 준비한다.
@@ -130,7 +133,8 @@ protocol 기본값은 `job-v1`이며 endpoint를 지정하지 않으면 본문 �
 ```
 
 원격 본문이 필요하면 `CONTENT_PROVIDER_PROTOCOL=job-v1`, `CONTENT_PROVIDER_ENDPOINT`,
-`CONTENT_PROVIDER_KEY`를 설정한다. endpoint는 해당 프로토콜을 제공하는 API origin이며 query·credential·path
+`CONTENT_PROVIDER_KEY`는 공급자 서버가 접속 키를 요구할 때만 설정한다. 키가 없으면 Authorization 헤더를 보내지
+않으며 모야가 새 키를 만들지 않는다. 서버의 401/403은 계속 인증 실패로 처리한다. endpoint는 해당 프로토콜을 제공하는 API origin이며 query·credential·path
 prefix를 받지 않는다. 공급자 key는 catalog나 Moya 브라우저에 넣지 않는다. source adapter 설정과 공급자는
 [source-configuration.mjs](src/source-configuration.mjs)의 `createConfiguredSources`에서 조립해 core에 주입한다.
 

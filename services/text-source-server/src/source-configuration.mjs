@@ -1,21 +1,13 @@
 import { SourceError } from './catalog.mjs';
-
-// Only bundled, trusted implementations can be selected. Configuration is data, never module paths.
-const contentProviderFactories = new Map([
-  [
-    'job-v1',
-    async (options) => {
-      const { createContentJobProvider } = await import('./content-job-provider.mjs');
-      return createContentJobProvider(options);
-    },
-  ],
-]);
+import { createContentProviderRegistry } from './content-provider-registry.mjs';
 
 export async function createConfiguredSources({
   contentProviderProtocol = 'job-v1',
   contentProviderEndpoint,
   contentProviderKey,
   contentProviderLimits,
+  contentProviders = [],
+  contentProviderFactories = new Map(),
   sourceAdapters = [],
   sourceHttpTransport = 'http',
   sourceBrowserChannel,
@@ -33,8 +25,15 @@ export async function createConfiguredSources({
     throw new SourceError(500, 'invalid_source_http_transport');
   if (!Array.isArray(sourceAdapters) || sourceAdapters.length > 100)
     throw new SourceError(500, 'invalid_source_configuration');
-  const providerFactory = contentProviderFactories.get(contentProviderProtocol);
-  if (!providerFactory) throw new SourceError(500, 'unsupported_content_provider_protocol');
+  const providers = createContentProviderRegistry({
+    definitions: contentProviders,
+    factories: contentProviderFactories,
+    legacy: {
+      protocol: contentProviderProtocol,
+      endpoint: contentProviderEndpoint,
+      options: { ...contentProviderLimits, endpoint: contentProviderEndpoint, key: contentProviderKey },
+    },
+  });
   const seen = new Set();
   for (const source of sourceAdapters) {
     if (
@@ -47,24 +46,30 @@ export async function createConfiguredSources({
     )
       throw new SourceError(500, 'invalid_source_configuration');
     seen.add(source.id);
+    providers.validateSelection(source.contentProviderId);
   }
-  const contentProvider = contentProviderEndpoint
-    ? await providerFactory({ endpoint: contentProviderEndpoint, key: contentProviderKey, ...contentProviderLimits })
-    : undefined;
   const additionalAdapters = [];
   let transport;
-  if (sourceHttpTransport === 'browser') {
-    const { createBrowserSourceHttp } = await import('./browser-source-http.mjs');
-    transport = createBrowserSourceHttp({ channel: sourceBrowserChannel });
-  }
   const dispose = async () => {
-    await transport?.dispose();
+    await Promise.allSettled([providers.dispose(), Promise.resolve().then(() => transport?.dispose())]);
   };
   try {
-    for (const source of sourceAdapters)
+    const contentProvider = await providers.select();
+    if (sourceHttpTransport === 'browser') {
+      const { createBrowserSourceHttp } = await import('./browser-source-http.mjs');
+      transport = createBrowserSourceHttp({ channel: sourceBrowserChannel });
+    }
+    for (const source of sourceAdapters) {
+      // Binding is host configuration, not source-specific data or an endpoint/key visible to the adapter.
+      const { contentProviderId, ...settings } = source;
       additionalAdapters.push(
-        await sourceAdapterFactories.get(source.id)(source, contentProvider, transport?.fetchImpl),
+        await sourceAdapterFactories.get(source.id)(
+          settings,
+          await providers.select(contentProviderId),
+          transport?.fetchImpl,
+        ),
       );
+    }
     return { contentProvider, additionalAdapters, dispose };
   } catch (error) {
     await dispose();
@@ -72,17 +77,30 @@ export async function createConfiguredSources({
   }
 }
 
-export function configuredSourcesFromEnvironment(environment, { sourceAdapterFactories } = {}) {
+export function configuredSourcesFromEnvironment(
+  environment,
+  { sourceAdapterFactories, contentProviderFactories } = {},
+) {
   let sourceAdapters;
   try {
     sourceAdapters = JSON.parse(environment.SOURCE_ADAPTERS || '[]');
   } catch {
     throw new SourceError(500, 'invalid_source_configuration');
   }
+  let contentProviders;
+  try {
+    const raw = environment.CONTENT_PROVIDERS || '[]';
+    if (Buffer.byteLength(raw, 'utf8') > 64 * 1024) throw new Error();
+    contentProviders = JSON.parse(raw);
+  } catch {
+    throw new SourceError(500, 'invalid_content_provider_configuration');
+  }
   return createConfiguredSources({
     contentProviderProtocol: environment.CONTENT_PROVIDER_PROTOCOL || 'job-v1',
     contentProviderEndpoint: environment.CONTENT_PROVIDER_ENDPOINT || undefined,
     contentProviderKey: environment.CONTENT_PROVIDER_KEY,
+    contentProviders,
+    contentProviderFactories,
     sourceAdapters,
     sourceHttpTransport: environment.SOURCE_HTTP_TRANSPORT || 'http',
     sourceBrowserChannel: environment.SOURCE_BROWSER_CHANNEL || undefined,

@@ -21,6 +21,17 @@ import {
 import { assembleDocumentSeries } from './document-series-assembler';
 import { externalDocumentCollectionId } from './document-series-identity';
 import { seriesDownloadRef } from './series-download-queue';
+import type {
+  HostedDocumentImportPort,
+  HostedDocumentAssemblyResult,
+} from '../../services/import/hosted-document-import';
+import type { HostedImageDownload } from '../../services/import/hosted-image-import';
+import type { ExternalDocumentSeriesReleaseInput, DocumentSeriesAssemblyResult } from './document-series-assembler';
+
+type PendingRelease = Omit<ExternalDocumentSeriesReleaseInput, 'content'> & {
+  content?: ExternalDocumentSeriesReleaseInput['content'];
+  hosted?: HostedImageDownload;
+};
 
 type DocumentItem = ExternalItemSummary & Required<Pick<ExternalItemSummary, 'collection' | 'release'>>;
 const MAX_BATCH_RELEASES = 50;
@@ -37,6 +48,10 @@ export interface DocumentSeriesImportOptions {
   signal: AbortSignal;
   /** Host-owned bounded prefetch; storage and activation remain serialized here. */
   download?(item: DocumentItem): Promise<DownloadedExternalSource>;
+  hosted?: {
+    port: HostedDocumentImportPort;
+    download(item: DocumentItem): Promise<HostedImageDownload>;
+  };
   getNovel(id: string): Promise<Novel | undefined>;
   onProgress(value: {
     received: number;
@@ -72,6 +87,11 @@ async function snapshot(options: DocumentSeriesImportOptions, bookId: string) {
   if (before.format !== 'txt' || !before.activeContentRevisionId) {
     throw new Error('이 작품은 원격 TXT 연재로 갱신할 수 없습니다.');
   }
+  if (options.hosted)
+    return {
+      novel: before,
+      expectedBase: { kind: 'revision', contentRevisionId: before.activeContentRevisionId } as ImportExpectedBase,
+    };
   const exported = await options.assets?.exportSource(bookId);
   options.signal.throwIfAborted();
   const sourceHash = exported
@@ -98,6 +118,49 @@ async function snapshot(options: DocumentSeriesImportOptions, bookId: string) {
 
 /** Bounded TXT batches share the existing activation/link recovery boundaries. */
 export async function importDocumentSeries(options: DocumentSeriesImportOptions): Promise<void> {
+  const receipts = new Set<string>();
+  const unstagedImports = new Set<string>();
+  const hosted = options.importService.importPrepared ? options.hosted : undefined;
+  try {
+    await runDocumentSeries(
+      {
+        ...options,
+        hosted: hosted
+          ? {
+              ...hosted,
+              port: {
+                ...hosted.port,
+                discard: (id) => {
+                  receipts.delete(id);
+                  return hosted.port.discard(id);
+                },
+                assemble: async (input, signal) => {
+                  const result = await hosted.port.assemble(input, signal);
+                  if (result.prepared) unstagedImports.add(result.prepared.uploadId);
+                  return result;
+                },
+              },
+              download: async (item) => {
+                const receipt = await hosted.download(item);
+                receipts.add(receipt.artifactId);
+                return receipt;
+              },
+            }
+          : undefined,
+      },
+      (id) => unstagedImports.delete(id),
+    );
+  } finally {
+    // A cleanup round trip must not delay the next chapter's ordered commit.
+    void Promise.all([...receipts].map((id) => hosted!.port.discard(id).catch(() => undefined)));
+    await Promise.all([...unstagedImports].map((id) => hosted!.port.cancelPrepared(id).catch(() => undefined)));
+  }
+}
+
+async function runDocumentSeries(
+  options: DocumentSeriesImportOptions,
+  handedToImporter: (id: string) => void,
+): Promise<void> {
   if (!options.importService.supportsExpectedBase)
     throw new Error('이 환경은 안전한 텍스트 연재 갱신을 지원하지 않습니다.');
   if (!options.state.acquirePendingLinks || !options.state.compareAndSwapPendingLinks)
@@ -135,14 +198,18 @@ export async function importDocumentSeries(options: DocumentSeriesImportOptions)
   ).connectionGeneration;
   let received = 0;
   let committed = 0;
-  let carried: Parameters<typeof assembleDocumentSeries>[0]['releases'][number] | undefined;
+  let carried: PendingRelease | undefined;
   for (let index = 0; index < items.length || carried;) {
     options.signal.throwIfAborted();
     let base = await snapshot(options, bookId);
-    let releases: Parameters<typeof assembleDocumentSeries>[0]['releases'][number][] = [];
+    let releases: PendingRelease[] = [];
     const batch: DocumentItem[] = [];
     let bytes = 0;
-    while ((index < items.length || carried) && batch.length < MAX_BATCH_RELEASES && bytes < MAX_BATCH_BYTES) {
+    while (
+      (index < items.length || carried) &&
+      batch.length < (options.hosted ? 1 : MAX_BATCH_RELEASES) &&
+      bytes < MAX_BATCH_BYTES
+    ) {
       const item = (carried?.item as DocumentItem | undefined) ?? items[index++]!;
       options.signal.throwIfAborted();
       options.onProgress({
@@ -156,24 +223,36 @@ export async function importDocumentSeries(options: DocumentSeriesImportOptions)
       let release = carried;
       carried = undefined;
       if (!release) {
-        const downloaded = options.download
-          ? await options.download(item)
-          : await options.registry.downloadExternalSource(
-              options.sourceId,
-              options.hostContext,
-              seriesDownloadRef(item, generation),
-              options.signal,
-            );
-        const content = downloaded.content;
-        if (content?.kind !== 'document') throw new Error('텍스트 소스가 올바른 TXT 본문을 반환하지 않았습니다.');
-        options.signal.throwIfAborted();
-        const sourceContentHash = await hashBlobInChunks(content.file, { shouldCancel: () => options.signal.aborted });
-        release = {
-          item,
-          content,
-          sourceContentHash,
-          remoteRevision: downloaded.remoteRevision ?? item.remoteRevision,
-        };
+        if (options.hosted) {
+          const receipt = await options.hosted.download(item);
+          release = {
+            item,
+            hosted: receipt,
+            sourceContentHash: receipt.sourceContentHash,
+            remoteRevision: receipt.remoteRevision ?? item.remoteRevision,
+          };
+        } else {
+          const downloaded = options.download
+            ? await options.download(item)
+            : await options.registry.downloadExternalSource(
+                options.sourceId,
+                options.hostContext,
+                seriesDownloadRef(item, generation),
+                options.signal,
+              );
+          const content = downloaded.content;
+          if (content?.kind !== 'document') throw new Error('텍스트 소스가 올바른 TXT 본문을 반환하지 않았습니다.');
+          options.signal.throwIfAborted();
+          const sourceContentHash = await hashBlobInChunks(content.file, {
+            shouldCancel: () => options.signal.aborted,
+          });
+          release = {
+            item,
+            content,
+            sourceContentHash,
+            remoteRevision: downloaded.remoteRevision ?? item.remoteRevision,
+          };
+        }
         received += 1;
         options.onProgress({
           received,
@@ -184,24 +263,45 @@ export async function importDocumentSeries(options: DocumentSeriesImportOptions)
           stage: 'verifying',
         });
       }
-      if (batch.length && bytes + release.content.file.size > MAX_BATCH_BYTES) {
+      const byteLength = release.hosted?.byteLength ?? release.content!.file.size;
+      if (batch.length && bytes + byteLength > MAX_BATCH_BYTES) {
         carried = release;
         break;
       }
       releases.push(release);
       batch.push(item);
-      bytes += release.content.file.size;
+      bytes += byteLength;
     }
     let retryFences: Map<string, string | null> | undefined;
     for (let attempt = 0; attempt < 2; attempt += 1) {
-      const assembled = await assembleDocumentSeries({
-        collection: { ...first.collection, seriesProfile: profile },
-        releases,
-        targetBookId: bookId,
-        existingSource: base.existingSource,
-        expectedBase: base.expectedBase,
-        signal: options.signal,
-      });
+      let assembled: DocumentSeriesAssemblyResult & Partial<HostedDocumentAssemblyResult>;
+      try {
+        assembled = options.hosted
+          ? await options.hosted.port.assemble(
+              {
+                artifactId: releases[0]!.hosted!.artifactId,
+                item: releases[0]!.item,
+                targetBookId: bookId,
+                expectedBase: base.expectedBase,
+                expectedPreviousSourceContentHash: releases[0]!.expectedPreviousSourceContentHash,
+              },
+              options.signal,
+            )
+          : await assembleDocumentSeries({
+              collection: { ...first.collection, seriesProfile: profile },
+              releases: releases as ExternalDocumentSeriesReleaseInput[],
+              targetBookId: bookId,
+              existingSource: base.existingSource,
+              expectedBase: base.expectedBase,
+              signal: options.signal,
+            });
+      } catch (error) {
+        if (attempt === 0 && isBaseConflict(error) && !options.signal.aborted) {
+          base = await snapshot(options, bookId);
+          continue;
+        }
+        throw error;
+      }
       retryFences ??= new Map(
         assembled.releaseProjections.map((release) => [release.remoteId, release.previousSourceContentHash]),
       );
@@ -217,9 +317,11 @@ export async function importDocumentSeries(options: DocumentSeriesImportOptions)
         throw new Error('작품의 소스 연결이 변경되었습니다. 다시 시도해 주세요.');
       const checked = new Map(releases.map((release) => [externalItemKeyId(release.item.key), release]));
       const now = new Date().toISOString();
-      const sourceHash = assembled.file
-        ? await hashBlobInChunks(assembled.file, { shouldCancel: () => options.signal.aborted })
-        : base.novel?.sourceContentHash;
+      const sourceHash =
+        assembled.sourceContentHash ??
+        (assembled.file
+          ? await hashBlobInChunks(assembled.file, { shouldCancel: () => options.signal.aborted })
+          : base.novel?.sourceContentHash);
       if (!sourceHash) throw new Error('저장된 원본을 확인하지 못했습니다.');
       const operationId = crypto.randomUUID();
       const candidates = new Map(previous.map((link) => [externalItemKeyId(link.source), link]));
@@ -250,11 +352,11 @@ export async function importDocumentSeries(options: DocumentSeriesImportOptions)
           },
         } satisfies ExternalSourceLink;
       });
-      await acquireExternalSourcePendingLinks(options.state, staged);
       let activated = false;
       let importStarted = false;
       let finalizationAttempted = false;
       try {
+        await acquireExternalSourcePendingLinks(options.state, staged);
         options.signal.throwIfAborted();
         const currentConnection = options.registry.getExternalSourceStatus(options.sourceId, options.hostContext);
         if (
@@ -264,29 +366,33 @@ export async function importDocumentSeries(options: DocumentSeriesImportOptions)
         ) {
           throw new Error('외부 소스 연결이 변경되었습니다. 목록을 다시 열어 주세요.');
         }
-        if (assembled.file) {
+        if (assembled.file || assembled.prepared) {
           importStarted = true;
-          const task = options.importService.importFile(
-            {
-              file: assembled.file,
-              encoding: 'utf-8',
-              chapterSplitMode: 'single',
-              clientBookId: bookId,
-              expectedBase: base.expectedBase,
-              ...(options.importService.supportsExpectedSourceContentHash
-                ? { expectedSourceContentHash: sourceHash }
-                : {}),
-            },
-            (detail) =>
-              options.onProgress({
-                received,
-                committed,
-                total: items.length,
-                title: first.collection.title,
-                detail,
-                items: batch,
-              }),
-          );
+          const onProgress = (detail: ImportProgress) =>
+            options.onProgress({
+              received,
+              committed,
+              total: items.length,
+              title: first.collection.title,
+              detail,
+              items: batch,
+            });
+          const task = assembled.prepared
+            ? options.importService.importPrepared!(assembled.prepared, onProgress)
+            : options.importService.importFile(
+                {
+                  file: assembled.file!,
+                  encoding: 'utf-8',
+                  chapterSplitMode: 'single',
+                  clientBookId: bookId,
+                  expectedBase: base.expectedBase,
+                  ...(options.importService.supportsExpectedSourceContentHash
+                    ? { expectedSourceContentHash: sourceHash }
+                    : {}),
+                },
+                onProgress,
+              );
+          if (assembled.prepared) handedToImporter(assembled.prepared.uploadId);
           const cancel = () => task.cancel();
           options.signal.addEventListener('abort', cancel, { once: true });
           if (options.signal.aborted) cancel();
@@ -365,6 +471,8 @@ export async function importDocumentSeries(options: DocumentSeriesImportOptions)
         }
       }
       if (!novel) throw new Error('저장된 작품을 확인하지 못했습니다.');
+      if (options.hosted && releases[0]?.hosted)
+        void options.hosted.port.discard(releases[0].hosted.artifactId).catch(() => undefined);
       committed += batch.length;
       options.onProgress({ received, committed, total: items.length, title: first.collection.title, items: batch });
       if (replacedRelease) options.onReplacedRelease?.();

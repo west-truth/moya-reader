@@ -119,6 +119,34 @@
   color: var(--app-text-muted);
   margin-block: 0.4rem 0.7rem;
 }
+.web-google-account-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+}
+.web-google-account-row > span {
+  overflow-wrap: anywhere;
+  min-width: 0;
+}
+.web-google-setup {
+  display: grid;
+  gap: 0.75rem;
+}
+.web-google-signin {
+  min-height: 44px;
+}
+.web-google-files {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.5rem;
+}
+.web-google-files small,
+.web-google-setup small {
+  display: block;
+  color: var(--app-text-muted);
+  line-height: 1.6;
+}
 @media (max-width: 600px) {
   .web-update-notice {
     flex-wrap: wrap;

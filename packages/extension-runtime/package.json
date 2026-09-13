@@ -1,0 +1,32 @@
+{
+  "name": "@moya/extension-runtime",
+  "version": "0.1.0",
+  "private": true,
+  "license": "Apache-2.0",
+  "type": "module",
+  "exports": {
+    ".": "./host.mjs",
+    "./source-broker": "./source-broker.mjs",
+    "./source-http": "./source-http.mjs"
+  },
+  "scripts": {
+    "test": "node --test test/*.check.mjs"
+  },
+  "dependencies": {
+    "@jitl/quickjs-wasmfile-release-sync": "0.32.0",
+    "quickjs-emscripten-core": "0.32.0"
+  },
+  "files": [
+    "host.mjs",
+    "host.d.mts",
+    "helper.mjs",
+    "wire.mjs",
+    "admission.mjs",
+    "source-http.mjs",
+    "source-http.d.mts",
+    "source-broker.mjs",
+    "source-broker.d.mts",
+    "content-limits.mjs",
+    "content-limits.d.mts"
+  ]
+}

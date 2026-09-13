@@ -77,6 +77,22 @@ function fileLastModified(): number {
 }
 
 describe('ServerUploadImportService', () => {
+  it('imports server-prepared bytes without downloading or re-uploading a file and retains the reading position', async () => {
+    const client = {
+      completeUpload: vi.fn(async () => ({ jobId: 'job_1' })),
+      getImportJob: vi.fn(async () => ({ status: 'done', book_id: 'book_1' })),
+      getBookManifest: vi.fn(async () => importedBook()),
+      initUpload: vi.fn(),
+      putUploadChunk: vi.fn(),
+    };
+    const service = new ServerUploadImportService(client as unknown as RemoteApiClient);
+    const result = await service.importPrepared({ uploadId: 'prepared_1', byteLength: 100, sourceContentHash }, vi.fn())
+      .promise;
+    expect(result.novel.id).toBe('book_1');
+    expect(client.completeUpload).toHaveBeenCalledWith('prepared_1', expect.any(AbortSignal));
+    expect(client.initUpload).not.toHaveBeenCalled();
+    expect(client.putUploadChunk).not.toHaveBeenCalled();
+  });
   it.each([{ kind: 'absent' }, { kind: 'revision', contentRevisionId: 'revision_1' }] as const)(
     'persists and verifies the $kind expected base before uploading',
     async (expectedBase) => {

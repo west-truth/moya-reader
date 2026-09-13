@@ -201,7 +201,9 @@ export class CloudVaultAiTtsTransferService {
         const bytes = await encryptCloudVaultAiTts(value, passphrase);
         const descriptor: CloudVaultAiTtsObjectV1 = {
           kind: 'ai-tts',
-          objectKey: objectKey(hashValue),
+          objectKey: objectKey(
+            passphrase === '' ? taggedHash(encoder.encode('storage-account-v2:' + hashValue)) : hashValue,
+          ),
           artifactHash: hashValue,
           byteLength: bytes.byteLength,
           revisionAt: value.revisionAt,

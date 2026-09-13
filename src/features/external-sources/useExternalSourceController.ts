@@ -1,3 +1,5 @@
+import { createHostedImageDownloadQueue } from '../../external-sources/series/hosted-image-download-queue';
+import type { HostedImageDownload, PreparedServerImport } from '../../services/import/hosted-image-import';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { TextServerRequestError } from '../../external-sources/text-server/text-server-errors';
 import { createSeriesDownloadQueue } from '../../external-sources/series/series-download-queue';
@@ -33,6 +35,7 @@ import type {
   ExternalSourceOrigin,
   ExternalSourceRegistryPort,
 } from '../../external-sources/app-external-source-registry';
+import { supportsExternalSourceLibrary } from '../../external-sources/source-capabilities';
 import {
   externalSourceCatalogPreferenceId,
   externalSourceDefaultFolderId,
@@ -127,6 +130,7 @@ interface ActiveSerialImportQueue {
 export type { ExternalSourceRegistryPort } from '../../external-sources/app-external-source-registry';
 
 export interface ExternalSourceView {
+  readonly extensionManager?: import('../../external-sources/extension-management').SourceExtensionManager;
   readonly id: ExtensionContributionId;
   readonly title: string;
   readonly description?: string;
@@ -179,6 +183,8 @@ export interface ExternalSourceController {
   resumeDownloadQueue?(queue: SourceDownloadQueue): Promise<void>;
   discardDownloadQueue?(id: string): Promise<void>;
   readonly autoDownloadNext?: boolean;
+  readonly autoDownloadNextCount?: 1 | 2 | 3;
+  setAutoDownloadNextCount?(count: 1 | 2 | 3): void;
   setAutoDownloadNext?(enabled: boolean): void;
   captureNavigation?(): ExternalSourceNavigationSnapshot;
   restoreNavigation?(snapshot: ExternalSourceNavigationSnapshot): Promise<void>;
@@ -208,6 +214,8 @@ export interface ExternalSourceController {
   readonly localSeriesNovel?: Novel;
   readonly localSeriesSourceId?: ExtensionContributionId;
   readonly browse?: ExternalSourceBrowseState;
+  /** Last catalog navigation modes, retained while a work detail is open. */
+  readonly catalogBrowse?: ExternalSourceBrowseState;
   readonly filterValues: Readonly<Record<string, ExternalSourceFilterValue>>;
   readonly breadcrumbs: readonly ExternalSourceBreadcrumb[];
   readonly currentFolderIsDefault: boolean;
@@ -232,6 +240,7 @@ export interface ExternalSourceController {
   setQuery(value: string): void;
   search(): Promise<void>;
   setBrowseMode(mode: Exclude<ExternalSourceBrowseMode, 'search'>): Promise<void>;
+  openCatalogBrowse(mode: Exclude<ExternalSourceBrowseMode, 'search'>): Promise<void>;
   setFilterValue(id: string, value: ExternalSourceFilterValue): void;
   applyFilters(): Promise<void>;
   resetFilters(): Promise<void>;
@@ -506,6 +515,8 @@ export function useExternalSourceController(options: UseExternalSourceController
   >(() => new Map());
   const [localSeriesChapters, setLocalSeriesChapters] = useState<readonly Chapter[]>([]);
   const [browse, setBrowse] = useState<ExternalSourceBrowseState>();
+  const [catalogBrowse, setCatalogBrowse] = useState<ExternalSourceBrowseState>();
+  const [catalogBrowseParentRef, setCatalogBrowseParentRef] = useState<string>();
   const [filterValues, setFilterValues] = useState<Readonly<Record<string, ExternalSourceFilterValue>>>({});
   const [breadcrumbs, setBreadcrumbs] = useState<readonly ExternalSourceBreadcrumb[]>([{ label: '최상위 폴더' }]);
   const [defaultFolder, setDefaultFolder] = useState<ExternalSourceDefaultFolder>();
@@ -600,8 +611,9 @@ export function useExternalSourceController(options: UseExternalSourceController
           kind: descriptor.kind,
           origin: origin ?? 'plugin',
           connection,
+          extensionManager: options.registry.getSourceExtensionManager?.(descriptor.id, options.hostContext),
           connectionForm: options.registry.getExternalSourceConnectionForm?.(descriptor.id, options.hostContext),
-          supportsSubscriptions: descriptor.capabilities.includes('subscriptions'),
+          supportsSubscriptions: supportsExternalSourceLibrary(descriptor),
           newReleaseCount: sourceSubscriptions.reduce((total, item) => total + item.newReleaseIds.length, 0),
         };
       }),
@@ -925,6 +937,10 @@ export function useExternalSourceController(options: UseExternalSourceController
         if (!append) setDetail(page.detail ?? localSeed?.detail);
         if (!append) {
           setBrowse(page.browse);
+          if (page.browse) {
+            setCatalogBrowse(page.browse);
+            setCatalogBrowseParentRef(normalizedInput.parentRef);
+          }
           if (page.browse?.filters) {
             setFilterValues((current) =>
               Object.keys(current).length > 0 ? current : defaultFilterValues(page.browse?.filters),
@@ -995,6 +1011,10 @@ export function useExternalSourceController(options: UseExternalSourceController
           if (!append) setDetail(cached.detail ?? localSeed?.detail);
           if (!append) {
             setBrowse(cached.browse);
+            if (cached.browse) {
+              setCatalogBrowse(cached.browse);
+              setCatalogBrowseParentRef(normalizedInput.parentRef);
+            }
             setFilterValues(defaultFilterValues(cached.browse?.filters));
           }
           setNextCursor(cached.nextCursor);
@@ -1053,6 +1073,8 @@ export function useExternalSourceController(options: UseExternalSourceController
       setRawItems([]);
       setDetail(undefined);
       setBrowse(undefined);
+      setCatalogBrowse(undefined);
+      setCatalogBrowseParentRef(undefined);
       setFilterValues({});
       setSelectedKeys(new Set());
       setNextCursor(undefined);
@@ -1158,6 +1180,11 @@ export function useExternalSourceController(options: UseExternalSourceController
       novel = nextNovels.find((candidate) => candidate.id === novel.id) ?? novel;
       const sourceId = relatedLinks[0]?.source.connectorId as ExtensionContributionId | undefined;
       const collectionRemoteId = relatedLinks[0]?.collectionRemoteId;
+      const source = sourceId ? sources.find((candidate) => candidate.id === sourceId) : undefined;
+      const canLoadCatalog = Boolean(sourceId && collectionRemoteId && source?.connection.state === 'connected');
+      // Mark provisional local rows before publishing them, including unbatched async renders.
+      setLoading(canLoadCatalog);
+      setCatalogLoading(false);
       const local = projectLocalSeries(novel, chapters, allLinks);
       const localSeed = {
         sourceId,
@@ -1178,6 +1205,8 @@ export function useExternalSourceController(options: UseExternalSourceController
       setRawItems(local.items);
       setDetail(localSeriesDetail(novel));
       setBrowse(undefined);
+      setCatalogBrowse(undefined);
+      setCatalogBrowseParentRef(undefined);
       setFilterValues({});
       setSelectedKeys(new Set());
       setNextCursor(undefined);
@@ -1188,8 +1217,7 @@ export function useExternalSourceController(options: UseExternalSourceController
       if (sourceId) setActiveSourceId(sourceId);
       setOpen(true);
 
-      const source = sourceId ? sources.find((candidate) => candidate.id === sourceId) : undefined;
-      if (!sourceId || !collectionRemoteId || source?.connection.state !== 'connected') return;
+      if (!sourceId || !collectionRemoteId || !canLoadCatalog) return;
       const loaded = await loadPage({ parentRef: collectionRemoteId }, false, sourceId, false);
       if (!mountedRef.current || loaded === undefined || localSeriesPageSeedRef.current !== localSeed) return;
       setDetail((current) => current ?? localSeriesDetail(novel));
@@ -1239,6 +1267,40 @@ export function useExternalSourceController(options: UseExternalSourceController
       }
     },
     [activeSourceId, browse, currentParentRef, filterValues, loadPage, persistCatalogPreference],
+  );
+
+  const openCatalogBrowse = useCallback(
+    async (mode: Exclude<ExternalSourceBrowseMode, 'search'>) => {
+      if (!activeSourceId || !catalogBrowse || blockingBusy) return;
+      const parentRef = catalogBrowseParentRef;
+      const crumbIndex = parentRef ? breadcrumbs.findIndex((crumb) => crumb.parentRef === parentRef) : 0;
+      setBreadcrumbs(crumbIndex >= 0 ? breadcrumbs.slice(0, crumbIndex + 1) : [{ label: '최상위 폴더' }]);
+      setQuery('');
+      setSelectedKeys(new Set());
+      const loaded = await loadPage(
+        {
+          parentRef,
+          browseMode: mode,
+          filters: filterChanges(catalogBrowse.filters, filterValues),
+        },
+        false,
+      );
+      if (loaded !== false) {
+        await persistCatalogPreference(activeSourceId, parentRef, mode, filterValues, catalogBrowse.filters).catch(
+          () => undefined,
+        );
+      }
+    },
+    [
+      activeSourceId,
+      blockingBusy,
+      breadcrumbs,
+      catalogBrowse,
+      catalogBrowseParentRef,
+      filterValues,
+      loadPage,
+      persistCatalogPreference,
+    ],
   );
 
   const setFilterValue = useCallback((id: string, value: ExternalSourceFilterValue) => {
@@ -1812,7 +1874,29 @@ export function useExternalSourceController(options: UseExternalSourceController
         serialImportQueueRef.current = serialQueue;
         const abort = new AbortController();
         downloadAbortRef.current = abort;
-        const downloads = createDownloads(abort.signal, taskIdByItemKey);
+        const documentPort = optionsRef.current.importService.importPrepared
+          ? optionsRef.current.registry.getHostedDocumentImport?.(sourceId)
+          : undefined;
+        const hostedDocumentDownloads = documentPort
+          ? createHostedImageDownloadQueue({
+              sourceId,
+              registry: optionsRef.current.registry,
+              hostContext: optionsRef.current.hostContext,
+              port: documentPort,
+              document: true,
+              items: importable,
+              signal: abort.signal,
+              onStage: (item, phase) => {
+                if (!mountedRef.current) return;
+                const id = taskIdByItemKey.get(externalItemKeyId(item.key));
+                setTasks((current) =>
+                  current.map((task) => (task.id === id ? { ...task, phase, percent: undefined } : task)),
+                );
+              },
+            })
+          : undefined;
+        const localDocumentDownloads = documentPort ? undefined : createDownloads(abort.signal, taskIdByItemKey);
+        const downloads = hostedDocumentDownloads ?? localDocumentDownloads!;
         setImportBusy(true);
         setSelectedBatchActive(true);
         let completed = 0;
@@ -1838,7 +1922,18 @@ export function useExternalSourceController(options: UseExternalSourceController
               importService: optionsRef.current.importService,
               getNovel: (id) => optionsRef.current.getNovel(id),
               signal: abort.signal,
-              download: () => downloads.take(offset),
+              download: localDocumentDownloads ? () => localDocumentDownloads.take(offset) : undefined,
+              hosted:
+                documentPort && hostedDocumentDownloads
+                  ? {
+                      port: documentPort,
+                      download: async () => {
+                        const receipt = await hostedDocumentDownloads.take(offset);
+                        hostedDocumentDownloads.forget(receipt.artifactId);
+                        return receipt;
+                      },
+                    }
+                  : undefined,
               onReplacedRelease: () => {
                 replacedRelease = true;
               },
@@ -1900,11 +1995,12 @@ export function useExternalSourceController(options: UseExternalSourceController
                 if (!coverAttempted && (sourceThumbnailUrl || sourceDetail?.coverRef)) {
                   coverAttempted = true;
                   try {
-                    sourceThumbnailUrl ??= await resolveDetailThumbnail(
-                      sourceDetail!,
-                      downloadAbortRef.current!.signal,
+                    await persistSourceCover(
+                      optionsRef.current.assets,
+                      novel,
+                      async () => (sourceThumbnailUrl ??= await resolveDetailThumbnail(sourceDetail!, abort.signal)),
+                      abort.signal,
                     );
-                    await persistSourceCover(optionsRef.current.assets, novel, sourceThumbnailUrl, abort.signal);
                   } catch (error) {
                     coverWarning = error instanceof Error ? error.message : '원격 표지를 저장하지 못했습니다.';
                   }
@@ -1970,6 +2066,11 @@ export function useExternalSourceController(options: UseExternalSourceController
         return true;
       }
 
+      const hostedPort = optionsRef.current.importService.importPrepared
+        ? optionsRef.current.registry.getHostedImageImport?.(sourceId)
+        : undefined;
+      let hostedDownloads: ReturnType<typeof createHostedImageDownloadQueue> | undefined;
+      let useHosted: boolean | undefined;
       const batchId = `external-series-${Date.now()}-${collection.remoteId}`;
       const targetBookId = persistentId128('external_series', [serialCollectionKey(importable[0]!)]);
       const taskIdByItemKey = new Map<string, string>();
@@ -2076,6 +2177,24 @@ export function useExternalSourceController(options: UseExternalSourceController
             existingNovel.documentSectionCount !== undefined &&
             relatedLinks.some((link) => link.collectionRemoteId === collection.remoteId),
           );
+          if (useHosted === undefined) {
+            // Legacy standalone archives still use the existing full merge path for this batch.
+            useHosted = Boolean(hostedPort && (!existingLocalBookId || incrementalSeriesAppend));
+            if (useHosted)
+              hostedDownloads = createHostedImageDownloadQueue({
+                sourceId,
+                registry: optionsRef.current.registry,
+                hostContext: optionsRef.current.hostContext,
+                port: hostedPort!,
+                items: importable,
+                signal: abort.signal,
+                onStage: (item, phase) => {
+                  if (!mountedRef.current) return;
+                  const id = taskIdByItemKey.get(externalItemKeyId(item.key));
+                  setTasks((current) => current.map((task) => (task.id === id ? { ...task, phase } : task)));
+                },
+              });
+          }
           const existingSource =
             existingLocalBookId && !incrementalSeriesAppend
               ? await (
@@ -2112,6 +2231,8 @@ export function useExternalSourceController(options: UseExternalSourceController
                 }
               : undefined;
 
+          let preparedDownload: HostedImageDownload | undefined;
+          let preparedChanged = false;
           const downloadedChapters: SuwayomiSeriesChapterInput[] = [];
           const checked = new Map<
             string,
@@ -2137,7 +2258,8 @@ export function useExternalSourceController(options: UseExternalSourceController
               fileName: item.title,
               phase: 'downloading',
             });
-            const downloaded = await downloads.take(batchIndex);
+            preparedDownload = hostedDownloads ? await hostedDownloads.take(batchIndex) : undefined;
+            const downloaded = preparedDownload ? undefined : await downloads.take(batchIndex);
             if (activeTaskId) {
               setTasks((current) =>
                 current.map((task) =>
@@ -2147,11 +2269,9 @@ export function useExternalSourceController(options: UseExternalSourceController
             }
             setProgress((current) => (current ? { ...current, phase: 'verifying' } : current));
             const sourceHash =
-              normalizedHash(
-                await hashBlobInChunks(downloaded.file, {
-                  shouldCancel: () => abort.signal.aborted,
-                }),
-              ) ?? '';
+              preparedDownload?.sourceContentHash ??
+              normalizedHash(await hashBlobInChunks(downloaded!.file, { shouldCancel: () => abort.signal.aborted })) ??
+              '';
             const existingLink = knownLinks.find(
               (link) =>
                 existingNovel &&
@@ -2161,24 +2281,29 @@ export function useExternalSourceController(options: UseExternalSourceController
             checked.set(externalItemKeyId(item.key), {
               item,
               sourceHash,
-              remoteRevision: downloaded.remoteRevision ?? item.remoteRevision,
+              remoteRevision: preparedDownload?.remoteRevision ?? downloaded?.remoteRevision ?? item.remoteRevision,
               existingLink,
             });
             if (existingLink && normalizedHash(existingLink.importedSourceContentHash) === normalizedHash(sourceHash)) {
+              if (preparedDownload) hostedDownloads!.release(preparedDownload.artifactId);
               revisionChecked += 1;
+              continue;
+            }
+            if (preparedDownload) {
+              preparedChanged = true;
               continue;
             }
             downloadedChapters.push({
               remoteId: item.key.remoteId,
               release: item.release,
-              remoteRevision: downloaded.remoteRevision ?? item.remoteRevision,
+              remoteRevision: downloaded!.remoteRevision ?? item.remoteRevision,
               sourceContentHash: sourceHash,
               expectedPreviousSourceContentHash: existingLink?.importedSourceContentHash,
-              file: downloaded.file,
+              file: downloaded!.file,
             });
           }
 
-          if (downloadedChapters.length > 0) {
+          if (downloadedChapters.length > 0 || preparedChanged) {
             if (activeTaskId) {
               setTasks((current) =>
                 current.map((task) =>
@@ -2195,18 +2320,46 @@ export function useExternalSourceController(options: UseExternalSourceController
               fileName: collection.title,
               phase: 'importing',
             });
-            const { buildSuwayomiSeriesArchive } = await import('../../external-sources/suwayomi/suwayomi-series-cbz');
-            const aggregate = await buildSuwayomiSeriesArchive({
-              collection,
-              targetBookId: incrementalSeriesAppend ? existingLocalBookId : undefined,
-              chapters: downloadedChapters,
-              existingArchive: incrementalSeriesAppend ? undefined : existingSource?.blob,
-              existingLegacyChapter: incrementalSeriesAppend ? undefined : existingLegacyChapter,
-              signal: abort.signal,
-            });
-            const uploadedSourceContentHash = await hashBlobInChunks(aggregate, {
-              shouldCancel: () => abort.signal.aborted,
-            });
+            let preparedImport: PreparedServerImport | undefined;
+            let aggregate: File | undefined;
+            if (preparedDownload) {
+              const previous = checked.get(externalItemKeyId(selectedItem.key))?.existingLink;
+              preparedImport = await hostedPort!.assemble(
+                {
+                  artifactId: preparedDownload.artifactId,
+                  collection,
+                  remoteId: selectedItem.key.remoteId,
+                  release: selectedItem.release,
+                  remoteRevision: preparedDownload.remoteRevision ?? selectedItem.remoteRevision,
+                  expectedPreviousSourceContentHash: previous?.importedSourceContentHash,
+                  clientBookId: existingLocalBookId ?? targetBookId,
+                  ...(incrementalSeriesAppend
+                    ? {
+                        importMode: 'append_image_series',
+                        baseActiveContentRevisionId: existingNovel?.activeContentRevisionId,
+                      }
+                    : {}),
+                },
+                abort.signal,
+              );
+              hostedDownloads!.release(preparedDownload.artifactId);
+            } else {
+              const { buildSuwayomiSeriesArchive } =
+                await import('../../external-sources/suwayomi/suwayomi-series-cbz');
+              aggregate = await buildSuwayomiSeriesArchive({
+                collection,
+                targetBookId: incrementalSeriesAppend ? existingLocalBookId : undefined,
+                chapters: downloadedChapters,
+                existingArchive: incrementalSeriesAppend ? undefined : existingSource?.blob,
+                existingLegacyChapter: incrementalSeriesAppend ? undefined : existingLegacyChapter,
+                signal: abort.signal,
+              });
+            }
+            const uploadedSourceContentHash =
+              preparedImport?.sourceContentHash ??
+              (await hashBlobInChunks(aggregate!, {
+                shouldCancel: () => abort.signal.aborted,
+              }));
             const localBookId =
               existingLocalBookId ?? persistentId128('external_series', [serialCollectionKey(importable[0]!)]);
             const stagedAt = currentIso();
@@ -2258,48 +2411,51 @@ export function useExternalSourceController(options: UseExternalSourceController
             previousLinks = relatedLinks;
             await acquireExternalSourcePendingLinks(optionsRef.current.state, nextStagedLinks);
             stagedLinks = nextStagedLinks;
-            const controller = optionsRef.current.importService.importFile(
-              {
-                file: aggregate,
-                encoding: 'auto',
-                chapterSplitMode: 'auto',
-                clientBookId: localBookId,
-                ...(incrementalSeriesAppend
-                  ? {
-                      importMode: 'append_image_series' as const,
-                      baseActiveContentRevisionId: existingNovel?.activeContentRevisionId,
-                    }
-                  : {}),
-                ...(optionsRef.current.importService.supportsExpectedSourceContentHash
-                  ? { expectedSourceContentHash: uploadedSourceContentHash }
-                  : {}),
-              },
-              (progressDetail) => {
-                if (!mountedRef.current) return;
-                if (activeTaskId) {
-                  const projection = projectImportProgress(progressDetail);
-                  setTasks((current) =>
-                    current.map((task) => (task.id === activeTaskId ? { ...task, ...projection } : task)),
-                  );
-                }
-                setProgress({
-                  current: batchIndex + 1,
-                  total: importable.length,
-                  completed: changedCount,
-                  failed: 0,
-                  linkedExisting: revisionChecked,
-                  fileName: collection.title,
-                  phase: 'importing',
-                  detail: progressDetail,
-                });
-              },
-            );
+            const onImportProgress = (progressDetail: ImportProgress) => {
+              if (!mountedRef.current) return;
+              if (activeTaskId) {
+                const projection = projectImportProgress(progressDetail);
+                setTasks((current) =>
+                  current.map((task) => (task.id === activeTaskId ? { ...task, ...projection } : task)),
+                );
+              }
+              setProgress({
+                current: batchIndex + 1,
+                total: importable.length,
+                completed: changedCount,
+                failed: 0,
+                linkedExisting: revisionChecked,
+                fileName: collection.title,
+                phase: 'importing',
+                detail: progressDetail,
+              });
+            };
+            const controller = preparedImport
+              ? optionsRef.current.importService.importPrepared!(preparedImport, onImportProgress)
+              : optionsRef.current.importService.importFile(
+                  {
+                    file: aggregate!,
+                    encoding: 'auto',
+                    chapterSplitMode: 'auto',
+                    clientBookId: localBookId,
+                    ...(incrementalSeriesAppend
+                      ? {
+                          importMode: 'append_image_series' as const,
+                          baseActiveContentRevisionId: existingNovel?.activeContentRevisionId,
+                        }
+                      : {}),
+                    ...(optionsRef.current.importService.supportsExpectedSourceContentHash
+                      ? { expectedSourceContentHash: uploadedSourceContentHash }
+                      : {}),
+                  },
+                  onImportProgress,
+                );
             importRef.current = controller;
             if (abort.signal.aborted) controller.cancel();
             const result = await controller.promise;
             importRef.current = undefined;
             contentApplied = true;
-            changedCount += downloadedChapters.length;
+            changedCount += preparedChanged ? 1 : downloadedChapters.length;
             importedNovel = (await optionsRef.current.getNovel(result.novel.id).catch(() => undefined)) ?? result.novel;
           } else {
             importedNovel = existingNovel;
@@ -2380,10 +2536,17 @@ export function useExternalSourceController(options: UseExternalSourceController
           }
           // Content and its release link are usable at this point. Do not keep the
           // completed release visually blocked while optional cover persistence runs.
-          if (!coverAttempted && downloadedChapters.length > 0 && sourceThumbnailUrl) {
+          // Hosted receipts carry no browser files. Also repair an embedded preview
+          // when the selected release was already downloaded with identical bytes.
+          if (!coverAttempted && (sourceThumbnailUrl || sourceDetail?.coverRef)) {
             coverAttempted = true;
             try {
-              await persistSourceCover(optionsRef.current.assets, importedNovel, sourceThumbnailUrl, abort.signal);
+              await persistSourceCover(
+                optionsRef.current.assets,
+                importedNovel,
+                async () => (sourceThumbnailUrl ??= await resolveDetailThumbnail(sourceDetail!, abort.signal)),
+                abort.signal,
+              );
             } catch (error) {
               coverWarning = error instanceof Error ? error.message : '원격 표지를 저장하지 못했습니다.';
             }
@@ -2404,6 +2567,7 @@ export function useExternalSourceController(options: UseExternalSourceController
           );
       } catch (error) {
         downloads.close();
+        hostedDownloads?.close();
         importRef.current = undefined;
         if (!contentApplied && stagedLinks.length > 0) {
           await restoreExternalSourceLinks(optionsRef.current.state, stagedLinks, previousLinks).catch(() => undefined);
@@ -2439,6 +2603,7 @@ export function useExternalSourceController(options: UseExternalSourceController
         );
       } finally {
         downloads.close();
+        hostedDownloads?.close();
         serialQueue.accepting = false;
         if (serialImportQueueRef.current === serialQueue) serialImportQueueRef.current = undefined;
         downloadAbortRef.current = undefined;
@@ -2991,7 +3156,7 @@ export function useExternalSourceController(options: UseExternalSourceController
         '다음 회차를 자동 다운로드하지 못했습니다. 회차 목록에서 다시 시도할 수 있습니다.',
         'warning',
       ),
-    run: async (signal) => {
+    run: async (signal, count) => {
       const target = optionsRef.current.readingTarget;
       if (!target) return;
       const allLinks = await optionsRef.current.state.listLinks();
@@ -3052,11 +3217,17 @@ export function useExternalSourceController(options: UseExternalSourceController
         'asc',
       );
       const index = ordered.findIndex((item) => externalItemSectionId(item) === target.sectionId);
-      const next = index < 0 ? undefined : ordered[index + 1];
-      if (!next || !isSerialSourceItem(next) || next.importability === 'unsupported') return;
+      if (index < 0) return;
+      const upcoming = ordered.slice(index + 1, index + 1 + count);
       // Check the active stored chapters, including downloads completed while metadata was loading.
       const chapters = await optionsRef.current.listChapters(target.novelId);
-      if (chapters.some((chapter) => chapter.documentSectionId === externalItemSectionId(next))) return;
+      const next = upcoming.filter(
+        (item): item is SerialSourceItem =>
+          isSerialSourceItem(item) &&
+          item.importability !== 'unsupported' &&
+          !chapters.some((chapter) => chapter.documentSectionId === externalItemSectionId(item)),
+      );
+      if (!next.length) return;
       signal.throwIfAborted();
       // A manual job owns the queue if it started during the metadata request.
       if (
@@ -3066,7 +3237,7 @@ export function useExternalSourceController(options: UseExternalSourceController
         importRef.current
       )
         return;
-      await importSerialItems(sourceId, [next], signal);
+      await importSerialItems(sourceId, next, signal);
     },
   });
 
@@ -3198,6 +3369,8 @@ export function useExternalSourceController(options: UseExternalSourceController
       setRawItems([]);
       setDetail(undefined);
       setBrowse(undefined);
+      setCatalogBrowse(undefined);
+      setCatalogBrowseParentRef(undefined);
       setFilterValues({});
       await refreshLocalProjection();
       setSelectedKeys(new Set());
@@ -3910,6 +4083,8 @@ export function useExternalSourceController(options: UseExternalSourceController
     resumeDownloadQueue,
     discardDownloadQueue,
     autoDownloadNext: automaticDownload.enabled,
+    autoDownloadNextCount: automaticDownload.count,
+    setAutoDownloadNextCount: automaticDownload.setCount,
     setAutoDownloadNext: automaticDownload.setEnabled,
     captureNavigation,
     restoreNavigation,
@@ -3943,6 +4118,7 @@ export function useExternalSourceController(options: UseExternalSourceController
     localSeriesNovel,
     localSeriesSourceId,
     browse,
+    catalogBrowse,
     filterValues,
     breadcrumbs,
     currentFolderIsDefault: Boolean(currentParentRef && defaultFolder?.parentRef === currentParentRef),
@@ -3969,6 +4145,7 @@ export function useExternalSourceController(options: UseExternalSourceController
     setQuery,
     search,
     setBrowseMode,
+    openCatalogBrowse,
     setFilterValue,
     applyFilters,
     resetFilters,

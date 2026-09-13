@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import { BookWorkspaceController } from './book-workspace-controller';
+import { ReadingPositionSaveError } from '../../repositories/reading-position-save-error';
 import {
   createBookWorkspaceTestHarness,
   testChapter,
@@ -9,6 +10,19 @@ import {
 } from './book-workspace-test-fixtures';
 
 describe('BookWorkspaceController commands', () => {
+  it('shows safe reading-position diagnostics without exposing the underlying server error', () => {
+    const harness = createBookWorkspaceTestHarness({ novel: testNovel() });
+    const notify = vi.fn();
+    harness.ports.environment.notify = notify;
+    const controller = new BookWorkspaceController(harness.ports, testWorkspaceState({}));
+    const error = new ReadingPositionSaveError('server', 503, { cause: new Error('private server payload') });
+    controller.locationPersistenceFailed(error);
+    expect(notify).toHaveBeenLastCalledWith(error.message, 'warning');
+    expect(notify.mock.calls[0][0]).toContain('HTTP 503');
+    expect(notify.mock.calls[0][0]).not.toContain('private server payload');
+    controller.locationPersistenceFailed(new Error('private unknown error'));
+    expect(notify).toHaveBeenLastCalledWith('읽기 위치를 저장하지 못했습니다.', 'warning');
+  });
   it('updates only the saved reading unit before a detail refresh and ignores an old book response', async () => {
     const novel = testNovel({ format: 'image_archive', totalChapters: 6 });
     const chapters = Array.from({ length: 6 }, (_, i) => testChapter(i + 1, { documentSectionId: `chapter:${i + 1}` }));
