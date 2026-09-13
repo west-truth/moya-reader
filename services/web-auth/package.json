@@ -1,0 +1,17 @@
+{
+  "name": "moya-web-auth",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "license": "Apache-2.0",
+  "engines": {
+    "node": ">=22.21.0"
+  },
+  "scripts": {
+    "start": "node index.mjs",
+    "test": "node --test check.mjs"
+  },
+  "dependencies": {
+    "jose": "6.2.12"
+  }
+}

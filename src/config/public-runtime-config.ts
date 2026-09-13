@@ -9,6 +9,7 @@ type PublicRuntimeConfigKey =
   | 'googleDriveClientId'
   | 'googleDriveAppId'
   | 'googleDriveDeveloperKey'
+  | 'googleAuthUrl'
   | 'suwayomiDefaultUrl';
 
 export interface AppPublicRuntimeConfig {
@@ -20,6 +21,7 @@ export interface AppPublicRuntimeConfig {
     readonly clientId?: string;
     readonly appId?: string;
     readonly developerKey?: string;
+    readonly authUrl?: string;
   };
   readonly suwayomi: {
     readonly defaultBaseUrl: string;
@@ -32,6 +34,7 @@ export interface PublicBuildTimeConfig {
   readonly VITE_GOOGLE_DRIVE_CLIENT_ID?: unknown;
   readonly VITE_GOOGLE_DRIVE_APP_ID?: unknown;
   readonly VITE_GOOGLE_DRIVE_DEVELOPER_KEY?: unknown;
+  readonly VITE_GOOGLE_AUTH_URL?: unknown;
   readonly VITE_SUWAYOMI_DEFAULT_URL?: unknown;
 }
 
@@ -97,6 +100,12 @@ export function resolveAppPublicRuntimeConfig(
     clientId: layeredPublicIdentifier(runtime, 'googleDriveClientId', build.VITE_GOOGLE_DRIVE_CLIENT_ID),
     appId: layeredPublicIdentifier(runtime, 'googleDriveAppId', build.VITE_GOOGLE_DRIVE_APP_ID),
     developerKey: layeredPublicIdentifier(runtime, 'googleDriveDeveloperKey', build.VITE_GOOGLE_DRIVE_DEVELOPER_KEY),
+    authUrl: (() => {
+      const value = httpBaseUrl(layeredPublicIdentifier(runtime, 'googleAuthUrl', build.VITE_GOOGLE_AUTH_URL));
+      return value && (value.startsWith('https://') || ['localhost', '127.0.0.1'].includes(new URL(value).hostname))
+        ? value
+        : undefined;
+    })(),
   });
   const configuredSuwayomiUrl = layeredPublicIdentifier(runtime, 'suwayomiDefaultUrl', build.VITE_SUWAYOMI_DEFAULT_URL);
   const suwayomi = Object.freeze({
@@ -114,6 +123,7 @@ const buildTimeConfig: PublicBuildTimeConfig = {
   VITE_GOOGLE_DRIVE_CLIENT_ID: import.meta.env.VITE_GOOGLE_DRIVE_CLIENT_ID,
   VITE_GOOGLE_DRIVE_APP_ID: import.meta.env.VITE_GOOGLE_DRIVE_APP_ID,
   VITE_GOOGLE_DRIVE_DEVELOPER_KEY: import.meta.env.VITE_GOOGLE_DRIVE_DEVELOPER_KEY,
+  VITE_GOOGLE_AUTH_URL: import.meta.env.VITE_GOOGLE_AUTH_URL,
   VITE_SUWAYOMI_DEFAULT_URL: import.meta.env.VITE_SUWAYOMI_DEFAULT_URL,
 };
 

@@ -54,6 +54,7 @@ export interface AppRuntime {
     readonly LibraryNotice?: ComponentType<ProductLibraryNoticeProps>;
     readonly Lifecycle?: ComponentType<ProductLifecycleProps>;
     readonly onBackupExported?: (exportedAt: string) => void;
+    readonly cloudVaultProvider?: import('../../cloud-vault/external-provider').CloudVaultExternalProvider;
   };
   readonly extensionRuntime: AppExtensionRuntime;
   readonly readerRuntime: ReaderRuntime;

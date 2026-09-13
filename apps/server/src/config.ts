@@ -48,6 +48,8 @@ export interface ServerConfig {
   webNovelMetadataCollectorRemoteAuthEnabled?: boolean;
   textSourceServerUrl?: string;
   textSourceServerKey?: string;
+  /** Operator-owned HTTP(S)/SOCKS5 egress used only by installed SDK source requests. */
+  sourceOutboundProxy?: string;
   s3: {
     endpoint: string;
     region: string;
@@ -72,6 +74,28 @@ function optionalInternalHttpUrlFromEnv(value: string | undefined, key: string):
   }
   url.pathname = url.pathname.replace(/\/+$/u, '') || '/';
   return url.toString().replace(/\/$/u, '');
+}
+
+function optionalOutboundProxyFromEnv(value: string | undefined): string | undefined {
+  const candidate = value?.trim();
+  if (!candidate) return undefined;
+  let url: URL;
+  try {
+    url = new URL(candidate);
+  } catch {
+    throw new Error('SOURCE_OUTBOUND_PROXY must be an HTTP(S) or SOCKS5 proxy URL');
+  }
+  if (
+    !['http:', 'https:', 'socks5:'].includes(url.protocol) ||
+    !url.hostname ||
+    url.username ||
+    url.password ||
+    (url.pathname !== '/' && url.pathname !== '') ||
+    url.search ||
+    url.hash
+  )
+    throw new Error('SOURCE_OUTBOUND_PROXY must not contain credentials, a path, query, or fragment');
+  return url.href;
 }
 
 function boolFromEnv(value: string | undefined, fallback: boolean): boolean {
@@ -242,6 +266,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): ServerConfig {
     corsAllowedOrigins: corsOriginsFromEnv(env),
     textSourceServerUrl: optionalInternalHttpUrlFromEnv(env.TEXT_SOURCE_SERVER_URL, 'TEXT_SOURCE_SERVER_URL'),
     textSourceServerKey: env.TEXT_SOURCE_SERVER_KEY?.trim() || undefined,
+    sourceOutboundProxy: optionalOutboundProxyFromEnv(env.SOURCE_OUTBOUND_PROXY),
     webNovelMetadataCollectorUrl: optionalInternalHttpUrlFromEnv(
       env.WEBNOVEL_METADATA_COLLECTOR_URL,
       'WEBNOVEL_METADATA_COLLECTOR_URL',

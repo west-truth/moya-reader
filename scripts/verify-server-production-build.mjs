@@ -209,6 +209,11 @@ check(
     dockerfile.includes('COPY packages/text-core packages/text-core'),
 );
 check('Dockerfile creates a production dependency stage', /FROM build AS production-dependencies/i.test(dockerfile));
+check(
+  'server owns the installed-source content provider implementation',
+  !dockerfile.includes('services/text-source-server/src/content-provider') &&
+    !dockerfile.includes('services/text-source-server/src/content-job-provider'),
+);
 check('Dockerfile generates the server bundle', dockerfile.includes('pnpm --filter server bundle'));
 check('Dockerfile deploys production dependencies only', dockerfile.includes('deploy --prod /opt/server'));
 
@@ -221,8 +226,20 @@ check(
   runtimeStage.includes('/opt/server/node_modules') && runtimeStage.includes('/workspace/apps/server/dist'),
 );
 check(
-  'runtime excludes source and package-manager commands',
-  !/(?:COPY[^\n]*\bsrc\b|\bpnpm\b|\btsx\b|\bcorepack\b)/i.test(runtimeStage),
+  'runtime excludes application source and package-manager commands',
+  !/(?:COPY[^\n]*\bsrc\b|\bpnpm\b|\btsx\b|\bcorepack\b)/i.test(
+    // APK runtime corresponding source is a distributed license artifact, not an application entry point.
+    // Exempt only this exact copy; other source copies and package-manager commands remain forbidden.
+    runtimeStage.replace(
+      /^COPY --from=apk-build \/workspace\/services\/apk-worker\/build\/src \/opt\/moya-apk\/source\r?$/m,
+      '',
+    ),
+  ),
+);
+check(
+  'runtime retains APK corresponding source and build recipe',
+  runtimeStage.includes('COPY --from=apk-build /workspace/services/apk-worker/build/src /opt/moya-apk/source') &&
+    runtimeStage.includes('COPY services/apk-worker /opt/moya-apk/build-recipe/'),
 );
 check('runtime runs as the node user', runtimeStage.includes('USER node'));
 check('runtime starts compiled JavaScript', runtimeStage.includes('CMD ["node", "dist/index.js"]'));

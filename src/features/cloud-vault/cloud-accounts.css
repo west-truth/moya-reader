@@ -1,0 +1,84 @@
+.cloud-account-card {
+  display: grid;
+  gap: 12px;
+  min-width: 0;
+  padding: 18px;
+  margin-block: 12px;
+  border: 1px solid var(--app-line);
+  border-radius: 14px;
+  background: var(--app-panel);
+  color: var(--app-text);
+  overflow-wrap: anywhere;
+}
+.cloud-account-heading,
+.cloud-account-card .web-google-account-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+.cloud-account-heading h3 {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+  font-size: 15px;
+}
+.cloud-account-heading > span {
+  font-size: 12px;
+  color: var(--app-text-muted);
+}
+.cloud-account-card p,
+.cloud-account-card small {
+  margin: 0;
+  line-height: 1.65;
+  color: var(--app-text-muted);
+  font-size: 13px;
+}
+.cloud-account-card .web-google-setup {
+  display: grid;
+  gap: 12px;
+}
+.cloud-account-card .web-storage-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.cloud-account-card .web-google-files {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+}
+.cloud-account-card .web-google-files small {
+  display: block;
+}
+.cloud-account-card .web-google-signin {
+  min-height: 44px;
+}
+.cloud-account-card button {
+  min-height: 40px;
+  max-width: 100%;
+}
+.cloud-account-card > button {
+  justify-self: start;
+}
+.cloud-account-card summary {
+  cursor: pointer;
+  font-size: 13px;
+  color: var(--app-text-muted);
+}
+.cloud-account-card details[open] summary {
+  margin-bottom: 10px;
+}
+.cloud-account-card [role='alert'] {
+  color: var(--app-danger);
+}
+@media (max-width: 600px) {
+  .cloud-account-card {
+    padding: 14px;
+  }
+  .cloud-account-card button {
+    min-height: 44px;
+  }
+}

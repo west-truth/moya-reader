@@ -33,6 +33,23 @@ describe('reading chapter page on entry', () => {
     act(() => renderer.unmount());
   });
 
+  it('does not overwrite the chosen page while a refresh temporarily exposes only a downloaded subset', () => {
+    let result!: ReturnType<typeof useReadingChapterPage>;
+    function Probe({ count, ready }: { count: number; ready: boolean }) {
+      result = useReadingChapterPage('transient-catalog', 0, count, 10, ready);
+      return null;
+    }
+    let renderer!: ReactTestRenderer;
+    act(() => {
+      renderer = create(<Probe count={100} ready />);
+    });
+    act(() => result[1](4));
+    act(() => renderer.update(<Probe count={3} ready={false} />));
+    act(() => renderer.update(<Probe count={100} ready />));
+    expect(result[0]).toBe(4);
+    act(() => renderer.unmount());
+  });
+
   it('does not hijack a page chosen before reading state arrives', () => {
     let result!: ReturnType<typeof useReadingChapterPage>;
     function Probe({ current }: { current: number }) {

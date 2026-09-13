@@ -7,9 +7,9 @@ const MAX_DROPBOX_TOKEN_RESPONSE_BYTES: usize = 64 * 1024;
 const MAX_DROPBOX_TOKEN_LENGTH: usize = 16 * 1024;
 const MAX_CALLBACK_REQUEST_BYTES: usize = 128 * 1024;
 
-struct DesktopDropboxOAuthCallback {
-    code: Option<String>,
-    error: Option<String>,
+pub(crate) struct DesktopDropboxOAuthCallback {
+    pub(crate) code: Option<String>,
+    pub(crate) error: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -83,8 +83,10 @@ fn validate_code_verifier(code_verifier: &str) -> Result<(), String> {
 }
 
 #[cfg(target_os = "windows")]
-fn open_system_browser(url: &str) -> Result<(), String> {
+pub(crate) fn open_system_browser(url: &str) -> Result<(), String> {
+    use std::os::windows::process::CommandExt;
     std::process::Command::new("rundll32.exe")
+        .creation_flags(0x08000000)
         .arg("url.dll,FileProtocolHandler")
         .arg(url)
         .spawn()
@@ -93,7 +95,7 @@ fn open_system_browser(url: &str) -> Result<(), String> {
 }
 
 #[cfg(target_os = "macos")]
-fn open_system_browser(url: &str) -> Result<(), String> {
+pub(crate) fn open_system_browser(url: &str) -> Result<(), String> {
     std::process::Command::new("open")
         .arg(url)
         .spawn()
@@ -107,7 +109,7 @@ fn open_system_browser(url: &str) -> Result<(), String> {
     not(target_os = "ios"),
     not(target_os = "android")
 ))]
-fn open_system_browser(url: &str) -> Result<(), String> {
+pub(crate) fn open_system_browser(url: &str) -> Result<(), String> {
     std::process::Command::new("xdg-open")
         .arg(url)
         .spawn()
@@ -120,13 +122,13 @@ fn callback_page(success: bool) -> Vec<u8> {
     let (status, heading, detail) = if success {
         (
             "200 OK",
-            "Dropbox connection received",
+            "Moya connection received",
             "You can close this tab and return to Moya.",
         )
     } else {
         (
             "400 Bad Request",
-            "Dropbox connection failed",
+            "Moya connection failed",
             "Return to Moya and try connecting again.",
         )
     };
@@ -183,6 +185,15 @@ fn wait_for_callback(
     listener: std::net::TcpListener,
     expected_state: String,
 ) -> Result<DesktopDropboxOAuthCallback, String> {
+    wait_for_provider_callback(listener, expected_state, "/oauth/dropbox")
+}
+
+#[cfg(not(any(target_os = "android", target_os = "ios")))]
+pub(crate) fn wait_for_provider_callback(
+    listener: std::net::TcpListener,
+    expected_state: String,
+    callback_path: &str,
+) -> Result<DesktopDropboxOAuthCallback, String> {
     use std::time::{Duration, Instant};
 
     listener
@@ -223,7 +234,7 @@ fn wait_for_callback(
             continue;
         };
         let callback_url = match reqwest::Url::parse(&format!("http://127.0.0.1:53682{target}")) {
-            Ok(value) if value.path() == "/oauth/dropbox" => value,
+            Ok(value) if value.path() == callback_path => value,
             _ => {
                 write_callback_page(&mut stream, false);
                 continue;
@@ -444,10 +455,35 @@ mod tests {
         );
         assert!(accepted.starts_with("HTTP/1.1 200 OK"));
         assert!(accepted.contains("Content-Length:"));
-        assert!(accepted.contains("Dropbox connection received"));
+        assert!(accepted.contains("Moya connection received"));
 
         let callback = callback.join().unwrap();
         assert_eq!(callback.code.as_deref(), Some("accepted-code"));
         assert!(callback.error.is_none());
+    }
+
+    #[test]
+    fn google_callback_requires_root_path_and_matching_state() {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        let callback = std::thread::spawn(move || {
+            wait_for_provider_callback(listener, "google-test-state".into(), "/").unwrap()
+        });
+        assert!(send_callback_request(
+            address,
+            "/oauth/dropbox?state=google-test-state&code=wrong",
+            false,
+            0
+        )
+        .starts_with("HTTP/1.1 400"));
+        assert!(
+            send_callback_request(address, "/?state=wrong&code=wrong", false, 0)
+                .starts_with("HTTP/1.1 400")
+        );
+        assert!(
+            send_callback_request(address, "/?state=google-test-state&code=accepted", true, 0)
+                .starts_with("HTTP/1.1 200")
+        );
+        assert_eq!(callback.join().unwrap().code.as_deref(), Some("accepted"));
     }
 }

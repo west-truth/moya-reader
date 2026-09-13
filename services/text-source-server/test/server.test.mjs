@@ -269,6 +269,108 @@ test('Content provider bridge polls a scoped job, preserves exact manifest text 
   assert.equal(fake.calls.at(-1).route, `/v1/jobs/${JOB_ID}/close`);
 });
 
+test('a provider without access authentication needs no invented key, including polling and cleanup', async (t) => {
+  const bodyText = '\ufeff  Password-free provider\r\n';
+  const fake = await fakeContentProvider(t, (request) => {
+    if (request.url === '/v1/jobs') return { id: JOB_ID, kind: 'novel', state: 'queued' };
+    if (request.url.endsWith('/manifest'))
+      return { id: JOB_ID, chapterUrl: CHAPTER_URL, kind: 'novel', text: bodyText };
+    if (request.url.endsWith('/close')) return { state: 'closed' };
+    return { id: JOB_ID, kind: 'novel', state: 'ready' };
+  });
+  const fixture = await service(t, [{ id: 'one', title: 'First', order: 1, contentUrl: CHAPTER_URL }], {
+    contentProviderEndpoint: fake.endpoint,
+    contentProviderLimits: { pollMs: 1 },
+  });
+  const response = await fixture.request('/v1/sources/fixture/works/work/releases/one/content');
+  assert.equal(response.status, 200);
+  assert.deepEqual(Buffer.from(await response.arrayBuffer()), Buffer.from(bodyText));
+  assert.deepEqual(
+    fake.calls.map((call) => call.route),
+    ['/v1/jobs', `/v1/jobs/${JOB_ID}`, `/v1/jobs/${JOB_ID}/manifest`, `/v1/jobs/${JOB_ID}/close`],
+  );
+  assert.ok(fake.calls.every((call) => call.headers.authorization === undefined));
+});
+
+test('named provider and direct source coexist through HTTP without changing identity or original bytes', async (t) => {
+  const original = Buffer.from('\ufeff  Named provider\r\n\r\nEnd  \r\n');
+  const fake = await fakeContentProvider(t, (request) => {
+    if (request.url === '/v1/jobs') return { id: JOB_ID, kind: 'novel', state: 'queued' };
+    if (request.url.endsWith('/manifest'))
+      return { id: JOB_ID, chapterUrl: CHAPTER_URL, kind: 'novel', text: original.toString('utf8') };
+    if (request.url.endsWith('/close')) return { state: 'closed' };
+    return { id: JOB_ID, kind: 'novel', state: 'ready' };
+  });
+  const factory = (settings, contentProvider) => ({
+    apiVersion: 1,
+    id: settings.id,
+    title: 'Synthetic source',
+    async listWorks() {
+      return { items: [{ id: 'work', title: 'Work' }] };
+    },
+    async getWork() {
+      return {
+        id: 'work',
+        title: 'Work',
+        seriesProfile: {
+          kind: 'document_series',
+          format: 'txt',
+          encoding: 'utf-8',
+          chapterSplitMode: 'single',
+        },
+      };
+    },
+    async listReleases() {
+      return { items: [{ id: 'one', title: 'One', sourceOrder: 1 }] };
+    },
+    async getContent({ workId, releaseId, signal }) {
+      assert.equal(workId, 'work');
+      assert.equal(releaseId, 'one');
+      return { bytes: contentProvider ? await contentProvider(CHAPTER_URL, signal) : original };
+    },
+  });
+  const configured = await createConfiguredSources({
+    contentProviders: [
+      {
+        id: 'remote',
+        protocol: 'job-v1',
+        options: {
+          endpoint: fake.endpoint,
+          key: 'synthetic-named-key',
+          pollMs: 1,
+        },
+      },
+    ],
+    sourceAdapters: [
+      { id: 'named', contentProviderId: 'remote' },
+      { id: 'direct', contentProviderId: null },
+    ],
+    sourceAdapterFactories: new Map([
+      ['named', factory],
+      ['direct', factory],
+    ]),
+  });
+  t.after(() => configured.dispose());
+  const fixture = await service(t, [], { additionalAdapters: configured.additionalAdapters });
+  const health = await (await fixture.request('/v1/health')).json();
+  assert.equal(health.dataNamespace, 'fixture-data');
+  for (const source of ['named', 'direct']) {
+    const response = await fixture.request(`/v1/sources/${source}/works/work/releases`);
+    assert.equal(response.status, 200);
+    assert.deepEqual((await response.json()).items, [{ id: 'one', title: 'One', sourceOrder: 1 }]);
+  }
+  assert.equal(fake.calls.length, 0);
+  for (const source of ['direct', 'named']) {
+    const response = await fixture.request(`/v1/sources/${source}/works/work/releases/one/content`);
+    assert.equal(response.status, 200);
+    assert.deepEqual(Buffer.from(await response.arrayBuffer()), original);
+    if (source === 'direct') assert.equal(fake.calls.length, 0);
+  }
+  assert.equal(fake.calls.filter((call) => call.route === '/v1/jobs').length, 1);
+  assert.equal(fake.calls.at(-1).route, `/v1/jobs/${JOB_ID}/close`);
+  assert.ok(fake.calls.every((call) => call.headers.authorization === 'Bearer synthetic-named-key'));
+});
+
 test('provider authentication, capacity and job access failures expose only actionable safe codes', async (t) => {
   for (const [upstreamStatus, code, status] of [
     [401, 'content_provider_authentication_required', 502],
@@ -280,11 +382,13 @@ test('provider authentication, capacity and job access failures expose only acti
       response.statusCode = upstreamStatus;
       return { error: 'private upstream diagnostic', credential: 'never expose this' };
     });
-    await assert.rejects(createContentJobProvider({ endpoint: fake.endpoint, key: 'fixture-key' })(CHAPTER_URL), {
-      code,
-      status,
-      message: code,
-    });
+    for (const key of [undefined, 'fixture-key']) {
+      await assert.rejects(createContentJobProvider({ endpoint: fake.endpoint, key })(CHAPTER_URL), {
+        code,
+        status,
+        message: code,
+      });
+    }
   }
   for (const [upstreamError, code, status] of [
     ['manual_login_or_paid_content', 'source_access_required', 403],

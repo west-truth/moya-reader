@@ -437,6 +437,211 @@
   border-radius: var(--radius-control);
 }
 
+.installed-extension-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin-block: 10px;
+}
+
+.installed-extension-actions button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  min-height: 36px;
+  max-width: 100%;
+  white-space: normal;
+}
+
+.installed-extension-origin {
+  overflow-wrap: anywhere;
+}
+
+.extension-repository-browser {
+  display: grid;
+  gap: 12px;
+  min-width: 0;
+}
+
+.apk-extension-manager h4 {
+  margin: 0;
+}
+
+.compatibility-preferences,
+.compatibility-preference-field {
+  display: grid;
+  gap: 0.5rem;
+  min-width: 0;
+}
+
+.compatibility-preferences {
+  margin-top: 0.75rem;
+  gap: 1rem;
+}
+
+.compatibility-preferences input:not([type='checkbox']),
+.compatibility-preferences select,
+.compatibility-preferences textarea {
+  width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
+}
+
+.compatibility-preferences .field-help,
+.compatibility-preference-field > span {
+  overflow-wrap: anywhere;
+}
+
+.apk-extension-manager .extension-repository-add {
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  align-items: center;
+}
+
+.apk-extension-manager .installed-extension-list {
+  display: grid;
+  gap: 10px;
+}
+
+.apk-extension-manager .checkbox-field {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.apk-extension-manager input[type='checkbox'] {
+  flex: 0 0 auto;
+  min-height: 0;
+  width: 18px;
+  height: 18px;
+}
+
+@media (max-width: 600px) {
+  .apk-extension-manager .extension-repository-add {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .apk-extension-manager .extension-repository-add > input,
+  .apk-extension-manager .extension-repository-add > select,
+  .apk-extension-manager form.extension-repository-add > button {
+    grid-column: 1 / -1;
+  }
+}
+
+.source-extension-manager {
+  border-top: 1px solid var(--border);
+  padding-top: 12px;
+}
+
+.source-extension-manager input,
+.source-extension-manager select,
+.source-extension-manager button {
+  min-height: 40px;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-control);
+  background: var(--app-field);
+  color: var(--text);
+  font: inherit;
+}
+
+.source-extension-manager input {
+  font-size: 16px;
+}
+
+.source-extension-filters {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(100px, 0.4fr);
+  gap: 10px;
+}
+
+.source-extension-filters label {
+  display: grid;
+  min-width: 0;
+  gap: 6px;
+}
+
+.source-extension-list {
+  display: grid;
+  gap: 10px;
+  padding: 0;
+  margin: 0;
+  list-style: none;
+}
+
+.source-extension-list li {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  align-items: center;
+  justify-content: space-between;
+  border-bottom: 1px solid var(--border);
+  padding-block: 10px;
+}
+
+.source-extension-list li > div:first-child {
+  min-width: 0;
+  flex: 1 1 180px;
+}
+
+.source-extension-list small {
+  display: block;
+  margin-top: 4px;
+  overflow-wrap: anywhere;
+}
+
+.source-extension-review {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 12px;
+  min-width: 0;
+}
+
+.extension-repository-add,
+.extension-repository-select,
+.extension-repository-add label {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+}
+
+.extension-repository-browser input:not([type='checkbox']),
+.extension-repository-browser select {
+  box-sizing: border-box;
+  min-width: 0;
+  width: 100%;
+  max-width: 100%;
+}
+
+.extension-repository-browser strong,
+.extension-repository-browser .field-help {
+  overflow-wrap: anywhere;
+}
+
+.installed-source-authentication fieldset,
+.installed-source-preferences fieldset {
+  display: grid;
+  gap: 12px;
+  min-width: 0;
+  margin: 12px 0 0;
+  padding: 0;
+  border: 0;
+}
+
+.installed-source-authentication label {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+}
+
+.installed-source-authentication input {
+  box-sizing: border-box;
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
+}
+
 .extension-settings-card-heading {
   display: flex;
   align-items: flex-start;

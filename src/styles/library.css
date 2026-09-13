@@ -264,6 +264,32 @@
   gap: 2px;
 }
 
+.library-source-navigation {
+  min-width: 0;
+  display: grid;
+  gap: 2px;
+}
+
+.library-source-browse-navigation {
+  display: grid;
+  gap: 2px;
+  margin: 1px 0 5px 18px;
+  padding-left: 9px;
+  border-left: 1px solid var(--border);
+}
+
+.library-sidebar-list .library-source-browse-navigation button {
+  min-height: 32px;
+  grid-template-columns: 16px minmax(0, 1fr);
+  padding-inline: 9px;
+  font-size: var(--ui-label-size);
+}
+
+.library-sidebar-list .library-source-browse-navigation button.active {
+  color: var(--primary-2);
+  background: color-mix(in srgb, var(--primary) 8%, transparent);
+}
+
 .library-sidebar-list button {
   width: 100%;
   min-width: 0;

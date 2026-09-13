@@ -1,3 +1,4 @@
+import { ReadingPositionSaveError } from '../../repositories/reading-position-save-error';
 import type { Chapter, Novel } from '../../domain/types';
 import { isFixedDocumentFormat } from '../../domain/book-format';
 import type { ReadingPosition } from '../../sync/types';
@@ -733,7 +734,10 @@ export class BookWorkspaceController {
       this.ports.adjacent.refreshAfterLocationConflict();
       return;
     }
-    this.ports.environment.notify('읽기 위치를 저장하지 못했습니다.', 'warning');
+    this.ports.environment.notify(
+      error instanceof ReadingPositionSaveError ? error.message : '읽기 위치를 저장하지 못했습니다.',
+      'warning',
+    );
   };
 
   private markReadChapters(chapter: Chapter, readAt: string): Chapter[] {

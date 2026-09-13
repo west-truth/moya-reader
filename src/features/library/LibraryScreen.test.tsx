@@ -81,6 +81,7 @@ function actions(): LibraryScreenActions {
       openImport: vi.fn(),
       openLibraryFolders: vi.fn(),
       openExternalSource: vi.fn(),
+      openExternalSourceBrowse: vi.fn(),
       openExternalSourceSettings: vi.fn(),
     },
     presentation: {
@@ -248,6 +249,35 @@ describe('LibraryScreen', () => {
     expect(renderToStaticMarkup(<LibraryScreen model={model([novel()])} actions={screenActions} />)).not.toContain(
       '외부 소스 열기',
     );
+  });
+
+  it('shows popular and latest navigation below the active catalog source', () => {
+    const screenActions = actions();
+    const elements = collectHostElements(
+      <LibraryScreen
+        model={model([novel()], {
+          externalSources: {
+            active: true,
+            activeSourceId: 'fixture.source',
+            busy: false,
+            sources: [{ id: 'fixture.source', title: '개발용 작품', kind: 'catalog' }],
+            browse: { activeMode: 'latest', availableModes: ['popular', 'latest', 'search'] },
+          },
+        })}
+        actions={screenActions}
+      />,
+    );
+    const popular = elements.find(
+      (element) => element.type === 'button' && element.props['aria-label'] === '개발용 작품 인기 작품 보기',
+    );
+    const latest = elements.find(
+      (element) => element.type === 'button' && element.props['aria-label'] === '개발용 작품 최신 작품 보기',
+    );
+
+    expect(popular).toBeDefined();
+    expect(latest?.props['aria-current']).toBe('page');
+    (popular!.props.onClick as () => void)();
+    expect(screenActions.header.openExternalSourceBrowse).toHaveBeenCalledWith('fixture.source', 'popular');
   });
 
   it('uses one atomic home action from the desktop brand', () => {

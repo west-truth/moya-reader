@@ -5,6 +5,18 @@ third-party software under separate terms. This notice records the archive backe
 deployment, but it does not replace the license texts under `third_party/licenses/` or the generated production
 dependency inventory at `third_party/production-license-inventory.json`.
 
+## Google identity verification
+
+The browser Web edition uses `jose` 6.2.12 (MIT, copyright Filip Skokan) to verify Google ID tokens.
+Its license is included at `third_party/licenses/jose/LICENSE.md` in the static Web build.
+
+## Extension execution prototype
+
+`packages/extension-runtime` uses `quickjs-emscripten-core` and the release-sync QuickJS WebAssembly variant at
+0.32.0 (MIT), including the QuickJS engine notices. The copied license text is under
+`third_party/licenses/quickjs/`. This initial execution boundary is not yet included in Desktop installers or
+application startup; future runtime packaging must carry these notices and the runtime binary's own notices.
+
 ## Bundled Desktop metadata collector
 
 The optional `웹소설 표지·작품 정보` trusted extension is packaged in Desktop releases as a Python/PyInstaller
@@ -73,6 +85,25 @@ license/source inventory for the built artifact; the Desktop sidecar inventory i
   <https://sourceware.org/bzip2/>.
 - The npm tarball does not contain a standalone license file. A public release must capture the exact upstream license
   texts/corresponding source for the emitted binary before this backend's redistribution gate is considered closed.
+
+## Mangayomi JavaScript compatibility DOM
+
+The compatibility adapter is independently implemented. It loads user-installed source scripts inside QuickJS;
+it does not embed the Mangayomi application or redistribute repository source scripts.
+
+HTML and CSS selection uses pinned `linkedom@0.18.12` and its dependency graph. The npm inventory records exact
+versions and declared licenses; captured upstream license files are under `third_party/licenses/mangayomi-dom/`.
+These notices accompany the Windows sidecar and Hosted image. `boolbase@1.0.0` declares ISC but omits the license
+text in its npm archive; its copyright/permission notice was captured from
+<https://raw.githubusercontent.com/fb55/boolbase/master/LICENSE> on 2026-09-13.
+
+## Source browser runtime
+
+The host uses `playwright-core@1.61.1` (Apache-2.0, Microsoft) to drive an isolated source browser,
+and `tough-cookie@6.0.0` (BSD-3-Clause, Salesforce and contributors) for HTTP/browser cookie interoperability.
+Their npm license texts are included with the packaged dependencies. Windows uses the installed Edge browser;
+the self-host image uses Debian's Chromium and CJK font packages, whose notices remain in the image's package inventory.
+No Mangayomi application source or private extension code is redistributed as part of this adapter.
 
 ## Release requirements still open
 

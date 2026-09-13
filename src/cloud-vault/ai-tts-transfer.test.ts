@@ -9,6 +9,8 @@ import {
   type CloudVaultSnapshotV1,
 } from './contracts';
 import { CloudVaultAiTtsTransferService } from './ai-tts-transfer';
+import { decryptCloudVault, encryptCloudVault, isAccountCloudVault } from './crypto';
+import { CloudVaultService } from './service';
 
 const passphrase = 'correct horse battery staple';
 
@@ -99,6 +101,70 @@ function memoryProvider() {
   };
   return { objects, provider };
 }
+
+describe('account-only Cloud Vault migration', () => {
+  it.each([true, false])('preserves remote-only AI/TTS data with selected scope %s', async (aiTtsArtifacts) => {
+    const { provider: objectsProvider, objects } = memoryProvider();
+    const transfer = new CloudVaultAiTtsTransferService();
+    const original = snapshot(book(true));
+    const legacy = await transfer.externalize(original, objectsProvider, passphrase);
+    const oldKey = legacy.snapshot.books[0]!.aiTtsObject!.objectKey;
+    let stored = await encryptCloudVault(legacy.snapshot, passphrase);
+    const provider = {
+      ...objectsProvider,
+      read: async () => ({ bytes: stored, revision: 'revision' }),
+      write: vi.fn(async (bytes: Uint8Array) => {
+        stored = bytes;
+        return { revision: 'revision' };
+      }),
+    };
+    const local = { ...original, scope: { ...original.scope, aiTtsArtifacts }, books: [] };
+    const apply = vi.fn(async () => ({
+      matchedBooks: 0,
+      waitingForSourceBooks: 1,
+      appliedRecords: 0,
+      quarantinedRecords: 0,
+      waitingBookTitles: ['Book'],
+    }));
+    const service = new CloudVaultService({ capture: async () => local, apply });
+    const input = { provider, deviceId: 'new-device', scope: local.scope, accountAccess: true };
+    await expect(service.sync({ ...input, passphrase: '' })).rejects.toThrow('legacy_cloud_vault_passphrase_required');
+    expect(provider.write).not.toHaveBeenCalled();
+    expect(apply).not.toHaveBeenCalled();
+    await service.sync({ ...input, passphrase });
+    expect(isAccountCloudVault(stored)).toBe(true);
+    const converted = await decryptCloudVault(stored, '');
+    const hydrated = await transfer.hydrateRemote(converted, original, provider, '');
+    expect(hydrated.report.contentFailures).toEqual([]);
+    expect(hydrated.snapshot!.books[0]!.segments).toEqual(original.books[0]!.segments);
+    expect(objects.has(oldKey)).toBe(true);
+    if (aiTtsArtifacts) expect(converted.books[0]!.aiTtsObject!.objectKey).not.toBe(oldKey);
+    else expect(converted.books[0]!.aiTtsObject).toBeUndefined();
+    await service.sync({ ...input, passphrase: '' });
+    expect(provider.write).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not replace the old manifest or apply local changes when a legacy sidecar is missing', async () => {
+    const { provider: objectsProvider, objects } = memoryProvider();
+    const original = snapshot(book(true));
+    const legacy = await new CloudVaultAiTtsTransferService().externalize(original, objectsProvider, passphrase);
+    const stored = await encryptCloudVault(legacy.snapshot, passphrase);
+    objects.clear();
+    const provider = {
+      ...objectsProvider,
+      read: async () => ({ bytes: stored, revision: 'revision' }),
+      write: vi.fn(objectsProvider.write),
+    };
+    const apply = vi.fn();
+    const service = new CloudVaultService({ capture: async () => original, apply });
+    await expect(
+      service.sync({ provider, passphrase, accountAccess: true, deviceId: 'device', scope: original.scope }),
+    ).rejects.toThrow();
+    expect(provider.write).not.toHaveBeenCalled();
+    expect(apply).not.toHaveBeenCalled();
+    expect(await decryptCloudVault(stored, passphrase)).toEqual(legacy.snapshot);
+  });
+});
 
 describe('Cloud Vault per-book AI/TTS transfer', () => {
   it('externalizes inline artifacts and restores only the referenced work file', async () => {

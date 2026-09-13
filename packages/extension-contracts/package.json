@@ -6,10 +6,35 @@
   "type": "module",
   "types": "./index.ts",
   "main": "./index.ts",
+  "typesVersions": {
+    "*": {
+      "package": [
+        "./package-manifest.ts"
+      ],
+      "source-sdk": [
+        "./source-sdk.ts"
+      ],
+      "source-protocol": [
+        "./source-protocol.ts"
+      ]
+    }
+  },
   "exports": {
+    "./package": {
+      "types": "./package-manifest.ts",
+      "default": "./package-manifest.ts"
+    },
     ".": {
       "types": "./index.ts",
       "default": "./index.ts"
+    },
+    "./source-sdk": {
+      "types": "./source-sdk.ts",
+      "default": "./source-sdk.ts"
+    },
+    "./source-protocol": {
+      "types": "./source-protocol.ts",
+      "default": "./source-protocol.ts"
     }
   },
   "scripts": {

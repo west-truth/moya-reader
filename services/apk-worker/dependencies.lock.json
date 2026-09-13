@@ -1,0 +1,178 @@
+[
+  {
+    "file": "android-4.1.1.4.jar",
+    "sha256": "84072541cbb711eff89f7277100ff854929a446dba7ceb1b195c340e0b4fd3cb"
+  },
+  {
+    "file": "annotations-13.0.jar",
+    "sha256": "ace2a10dc8e2d5fd34925ecac03e4988b2c0f851650c94b8cef49ba1bd111478"
+  },
+  {
+    "file": "antlr-runtime-3.5.3.jar",
+    "sha256": "68bf9f5a33dfcb34033495c587e6236bef4e37aa6612919f5b1e843b90669fb9"
+  },
+  {
+    "file": "antlr4-runtime-4.13.2.jar",
+    "sha256": "dd3e8a13a2d669bf84fb8d834de35ce4875f27157698d206241ec8488aadcaf7"
+  },
+  {
+    "file": "apk-parser-2.6.10.jar",
+    "sha256": "4e07ef65005c0d7e7149f6e903828fdaa031f542ad3956f0d827197a5ccac640"
+  },
+  {
+    "file": "apksig-8.10.1.jar",
+    "sha256": "c070ed1394629d74641aa0906f60b2ffa1ee77e6366a1f93437f59717b1aeb89"
+  },
+  {
+    "file": "asm-analysis-9.10.1.jar",
+    "sha256": "dede75a21306b65974ecd8f87114ff6970f09fb794157a4ca09ab25c888c2bfc"
+  },
+  {
+    "file": "asm-commons-9.10.1.jar",
+    "sha256": "6d0abefb7cbf972ea16edb37ec14835372505063a45f976ab7ea889ed9497895"
+  },
+  {
+    "file": "asm-tree-9.10.1.jar",
+    "sha256": "3dfb0d5b6a106cd40b5b250e39935fbf2f927f4477546a5369a3ac609cf0506b"
+  },
+  {
+    "file": "asm-util-9.10.1.jar",
+    "sha256": "1bb99d091fba2597dc6d51193e9bbcf0d8447e7ed96bd8f0198b18152f09655c"
+  },
+  {
+    "file": "commons-codec-1.3.jar",
+    "sha256": "1bafd2ece2e88db4cdf835a7f8f0de65fab5b1147977a5dcc59b7c1b8c6f5080"
+  },
+  {
+    "file": "commons-logging-1.1.1.jar",
+    "sha256": "ce6f913cad1f0db3aad70186d65c5bc7ffcc9a99e3fe8e0b137312819f7c362f"
+  },
+  {
+    "file": "d2j-base-cmd-2.4.37.jar",
+    "sha256": "c77f3aeb86b51edd390900740bf352b5d2e21132aac875c8597cc92034bb71e2"
+  },
+  {
+    "file": "d2j-external-2.4.37.jar",
+    "sha256": "90350ef7625283fbe7d1740498739c6161817b61b351d98c1635f576588760a6"
+  },
+  {
+    "file": "d2j-jasmin-2.4.37.jar",
+    "sha256": "65e432bde1ea2343ed179b63096f776cd183549c493ed5dafb2b43b0dfff2ea1"
+  },
+  {
+    "file": "d2j-smali-2.4.37.jar",
+    "sha256": "cec53ab27f8df9150b7e4e8394de856652aff4eaeaf19b6d1aab93b940d6f07e"
+  },
+  {
+    "file": "dex-ir-2.4.37.jar",
+    "sha256": "6d58194d25bce20a476219f615bb44b24cdc5c0a91c35f48116b45bb47320e31"
+  },
+  {
+    "file": "dex-reader-2.4.37.jar",
+    "sha256": "03949286dea6a13dd02894f7c394a1c18a2fb1d5a6a328d2b4ba4ce1d29ad922"
+  },
+  {
+    "file": "dex-reader-api-2.4.37.jar",
+    "sha256": "fda83594ac0b4d31d18398aa830691558a169bf54fe5e1e5019c134fffa03a6b"
+  },
+  {
+    "file": "dex-tools-2.4.37.jar",
+    "sha256": "1ffb69f6ecdf4a2e282a69e4dc3839c114b448f9ef9ab76beb96a709541796ec"
+  },
+  {
+    "file": "dex-translator-2.4.37.jar",
+    "sha256": "b99cb078d50c06b5d81bf94c7d935970efc7e81579d6e8fb63584233687042d1"
+  },
+  {
+    "file": "dex-writer-2.4.37.jar",
+    "sha256": "d2dffd64ac218a87430f390f8bdf70050a24705073ea4756853772159b04b5bf"
+  },
+  {
+    "file": "httpclient-4.0.1.jar",
+    "sha256": "752596ebdc7c9ae5d9a655de3bb06d078734679a9de23321dbf284ee44563c03"
+  },
+  {
+    "file": "httpcore-4.0.1.jar",
+    "sha256": "3b6bf92affa85d4169a91547ce3c7093ed993b41ad2df80469fc768ad01e6b6b"
+  },
+  {
+    "file": "injekt-koin-ee267b2e27.jar",
+    "sha256": "7e901958f42bbf263502052129901d70637e0d8d2f24335c3ad31631ddeaa531"
+  },
+  {
+    "file": "jackson-annotations-2.20.jar",
+    "sha256": "959a2ffb2d591436f51f183c6a521fc89347912f711bf0cae008cdf045d95319"
+  },
+  {
+    "file": "json-20250517.jar",
+    "sha256": "3ea61b2a06e31edf1c91134fe9106b0ebb16628be169f3db75bc7a2b06b45796"
+  },
+  {
+    "file": "jsoup-1.22.2.jar",
+    "sha256": "596785996d3c6df16f544c232d10a9a1d88783b2a4740cf5251cb616f2be704d"
+  },
+  {
+    "file": "koin-core-jvm-4.0.0.jar",
+    "sha256": "87eb8a9a5604920dbc225082f272f575155489ed9b78e0595f36d611645d2281"
+  },
+  {
+    "file": "kotlin-reflect-2.4.0.jar",
+    "sha256": "f0d8e8908624eb4478bb131e9f887366680d2e239741195e548fa5c906963b90"
+  },
+  {
+    "file": "kotlin-stdlib-2.4.0.jar",
+    "sha256": "ccb14ff83fabcb11458b798dbc9824748ccdffeec79c9aba789e6ed1cda86b1c"
+  },
+  {
+    "file": "kotlinx-coroutines-core-jvm-1.11.0.jar",
+    "sha256": "d1d75aa01dffbb4d1c520e67e4c4e7f5f6174718e7cb4632412503f2f0e604fa"
+  },
+  {
+    "file": "kotlinx-serialization-core-jvm-1.11.0.jar",
+    "sha256": "f4a801c647d4351327cd9e1ac4113e2be9ea37a64ab0abae269c25a52e28f35d"
+  },
+  {
+    "file": "kotlinx-serialization-json-jvm-1.11.0.jar",
+    "sha256": "563a25b4eb5c9128ae9c2479f3d1a5c44dcd176112b91cf03682e906eba5c935"
+  },
+  {
+    "file": "kotlinx-serialization-json-okio-jvm-1.11.0.jar",
+    "sha256": "746b0ab2709dc42e8ddcdefc2a730c98d1bd65ed47eb5163375a82380153a5a0"
+  },
+  {
+    "file": "okhttp-jvm-5.4.0.jar",
+    "sha256": "b15e605ca0a4b12c62ea7f657dad413c236c947e875854767349cdbe20df473c"
+  },
+  {
+    "file": "okio-jvm-3.17.0.jar",
+    "sha256": "3b13dcc3e1573047c2d507fc4f7fcb0bb0cbcd9d395da21d20e09406e2cd6a73"
+  },
+  {
+    "file": "opengl-api-gl1.1-android-2.1_r1.jar",
+    "sha256": "cc08393220f706ef9299b453cd88f741382cee49dbeea2c667b4be1435768145"
+  },
+  {
+    "file": "rxjava-1.3.8.jar",
+    "sha256": "387df880f226b01cea4b1026d96d34e1da27d5801562742cfce0413c21ef7690"
+  },
+  {
+    "file": "stately-concurrency-jvm-2.1.0.jar",
+    "sha256": "86739675892fb1c17d6bd36d05347e89ff313957421bb01a45a743ce774e8e29"
+  },
+  {
+    "file": "stately-concurrent-collections-jvm-2.1.0.jar",
+    "sha256": "0e0d9e7f20eaee18f7862309064c8db58ce6a3a861d8871f561546af63df1893"
+  },
+  {
+    "file": "stately-strict-jvm-2.1.0.jar",
+    "sha256": "581070db2802cbad81f6e6e2d9d2494835443153b314458d53aa43c68260c9fa"
+  },
+  {
+    "file": "xmlParserAPIs-2.6.2.jar",
+    "sha256": "1c2867be1faa73c67e9232631241eb1df4cd0763048646e7bb575a9980e9d7e5"
+  },
+  {
+    "file": "xpp3-1.1.4c.jar",
+    "sha256": "0341395a481bb887803957145a6a37879853dd625e9244c2ea2509d9bb7531b9"
+  }
+]

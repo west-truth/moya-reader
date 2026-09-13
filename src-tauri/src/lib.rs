@@ -4,6 +4,8 @@ mod android_document_io;
 mod android_plugins;
 mod app;
 mod desktop_oauth;
+mod extension_runtime;
+mod google_oauth;
 mod google_service_account;
 mod metadata_collector;
 mod native_identity;

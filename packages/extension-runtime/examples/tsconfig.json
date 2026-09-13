@@ -1,0 +1,14 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "strict": true,
+    "noEmit": true,
+    "lib": ["ES2022"],
+    "paths": {
+      "@moya/extension-sdk": ["../../extension-contracts/source-sdk.ts"]
+    }
+  },
+  "include": ["*/src/**/*.ts"]
+}

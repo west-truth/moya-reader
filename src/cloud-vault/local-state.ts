@@ -19,6 +19,8 @@ export interface CloudVaultLocalConfig {
   readonly directoryName?: string;
   readonly dropboxCredentialEnvelope?: string;
   readonly dropboxAccountLabel?: string;
+  readonly googleDriveAccountId?: string;
+  readonly googleDriveAccountLabel?: string;
   readonly lastSyncAt?: string;
   readonly lastSyncProviderKind?: CloudVaultProviderKind;
   readonly lastRemoteRevision?: string;
@@ -96,6 +98,27 @@ function openCloudVaultStateDb(): Promise<IDBDatabase> {
 }
 
 export class CloudVaultLocalStateStore {
+  async saveDropboxCredential(value: string): Promise<void> {
+    const db = await openCloudVaultStateDb();
+    const envelope = await sealCloudVaultDevicePassphrase(value, await this.getOrCreateDeviceKey());
+    const tx = db.transaction('deviceSecrets', 'readwrite');
+    tx.objectStore('deviceSecrets').put({ id: 'dropbox-credential', envelope });
+    await transactionDone(tx);
+  }
+  async getDropboxCredential(): Promise<string | undefined> {
+    const db = await openCloudVaultStateDb();
+    const tx = db.transaction('deviceSecrets', 'readonly');
+    const row = await requestToPromise<{ envelope: string } | undefined>(
+      tx.objectStore('deviceSecrets').get('dropbox-credential'),
+    );
+    return row ? unsealCloudVaultDevicePassphrase(row.envelope, await this.getOrCreateDeviceKey()) : undefined;
+  }
+  async clearDropboxCredential(): Promise<void> {
+    const db = await openCloudVaultStateDb();
+    const tx = db.transaction('deviceSecrets', 'readwrite');
+    tx.objectStore('deviceSecrets').delete('dropbox-credential');
+    await transactionDone(tx);
+  }
   private async getOrCreateDeviceKey(): Promise<CryptoKey> {
     if (deviceKeyPromise) return deviceKeyPromise;
     deviceKeyPromise = this.loadOrCreateDeviceKey().catch((error) => {

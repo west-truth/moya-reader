@@ -1288,13 +1288,39 @@
 
 .source-auto-download-option {
   display: flex;
-  flex-wrap: wrap;
   align-items: center;
   gap: 8px;
-  padding: 10px 14px;
+  padding: 6px 10px;
+  font-size: 12px;
 }
-.source-auto-download-option small {
-  color: var(--muted);
+.source-auto-download-option label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+.source-auto-download-count {
+  display: inline-flex;
+  flex-shrink: 0;
+  gap: 2px;
+}
+.source-auto-download-count button {
+  width: 32px;
+  min-height: 28px;
+  padding: 3px 0;
+  color: var(--text);
+  background: var(--app-field);
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  font: inherit;
+}
+.source-auto-download-count button[aria-pressed='true'] {
+  color: var(--accent);
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 12%, var(--app-field));
+}
+.source-auto-download-count button:disabled {
+  opacity: 0.45;
 }
 
 .source-release-menu {

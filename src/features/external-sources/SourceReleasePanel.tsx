@@ -38,6 +38,8 @@ export function SourceReleasePanel({
     sorted.findIndex((item) => item.readingState === 'current'),
     sorted.length,
     SOURCE_RELEASE_PAGE_SIZE,
+    // A complete cached catalog is usable while its background freshness check runs.
+    !controller.loading && !controller.nextCursor && !controller.listError && !controller.stale,
   );
   const page = paginateReleases(sorted, requestedPage);
   const headingRef = useRef<HTMLHeadingElement>(null);
@@ -121,15 +123,31 @@ export function SourceReleasePanel({
         </label>
       </div>
       {controller.setAutoDownloadNext && controller.activeSourceId && (
-        <label className="source-auto-download-option">
-          <input
-            type="checkbox"
-            checked={controller.autoDownloadNext ?? false}
-            onChange={(event) => controller.setAutoDownloadNext?.(event.target.checked)}
-          />
-          읽는 동안 다음 회차 자동 다운로드
-          <small>다음 한 회차만 미리 받으며 읽는 위치는 유지합니다.</small>
-        </label>
+        <div className="source-auto-download-option">
+          <label>
+            <input
+              type="checkbox"
+              checked={controller.autoDownloadNext ?? false}
+              onChange={(event) => controller.setAutoDownloadNext?.(event.target.checked)}
+            />
+            읽는 동안 다음 회차 자동 다운로드
+          </label>
+          {controller.setAutoDownloadNextCount && (
+            <div className="source-auto-download-count" role="group" aria-label="자동 다운로드 회차 수">
+              {([1, 2, 3] as const).map((count) => (
+                <button
+                  key={count}
+                  type="button"
+                  aria-pressed={(controller.autoDownloadNextCount ?? 1) === count}
+                  disabled={!controller.autoDownloadNext}
+                  onClick={() => controller.setAutoDownloadNextCount?.(count)}
+                >
+                  {count}화
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
       )}
       <div className="chapter-toolbar">
         <label className="chapter-search">

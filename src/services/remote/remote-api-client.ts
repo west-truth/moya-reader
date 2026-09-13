@@ -728,7 +728,11 @@ export class RemoteApiClient {
     return result;
   }
 
-  async requestBlob(path: string, init: RequestInit = {}): Promise<{ blob: Blob; headers: Headers; status: number }> {
+  async requestBlob(
+    path: string,
+    init: RequestInit = {},
+    timeoutMs?: number,
+  ): Promise<{ blob: Blob; headers: Headers; status: number }> {
     const authToken = this.options.getAuthToken?.()?.trim();
     let blob!: Blob;
     const response = await this.fetch(
@@ -740,7 +744,7 @@ export class RemoteApiClient {
           ...init.headers,
         },
       },
-      undefined,
+      timeoutMs,
       async (download) => {
         if (!download.ok) {
           if (download.status === 401) this.options.onUnauthorized?.();
@@ -1133,11 +1137,12 @@ export class RemoteApiClient {
     return this.request('/trash/books', { method: 'DELETE' });
   }
 
-  saveReadingPosition(
+  async saveReadingPosition(
     bookId: string,
     position: Omit<ReadingPosition, 'id' | 'novelId'> & { readonly documentSectionId?: string },
   ): Promise<RemoteMutationResult> {
-    return this.request(`/books/${encodeURIComponent(bookId)}/reading-position`, {
+    const path = `/books/${encodeURIComponent(bookId)}/reading-position`;
+    const init: RequestInit = {
       method: 'PATCH',
       body: JSON.stringify({
         chapterId: position.chapterId,
@@ -1150,7 +1155,23 @@ export class RemoteApiClient {
         deviceId: position.deviceId,
         updatedAt: position.updatedAt,
       }),
-    });
+    };
+    const budget = Math.max(1, this.options.requestTimeoutMs ?? DEFAULT_REMOTE_REQUEST_TIMEOUT_MS);
+    const deadline = Date.now() + budget;
+    try {
+      return await this.request(path, init, budget);
+    } catch (error) {
+      const transient =
+        error instanceof TypeError ||
+        (error instanceof RemoteApiError && [408, 500, 502, 503, 504].includes(error.status));
+      // Replay only this idempotent mutation, with the original timestamp and body.
+      // A late retry must not become newer than another device's/reset position.
+      if (!transient || deadline - Date.now() <= 750) throw error;
+      await new Promise<void>((resolve) => globalThis.setTimeout(resolve, 750));
+      const remaining = deadline - Date.now();
+      if (remaining <= 0) throw error;
+      return this.request(path, init, remaining);
+    }
   }
 
   deleteReadingPosition(bookId: string, body: { deviceId?: string; updatedAt: string }): Promise<RemoteMutationResult> {

@@ -3,6 +3,53 @@
 Status: current
 Last verified: 2026-08-31
 
+## 선택적 외부 소스 전용 WARP 경로
+
+Windows의 Docker Desktop bridge network는 자체 인터넷 회선을 만들지 않는다. 컨테이너의 외부 연결도
+호스트의 `com.docker.backend` 프로세스를 통해 나가므로, 새 bridge network나 DNS만 추가해도 호스트의
+AdGuard/VPN 경로를 자동으로 우회하지 않는다.
+
+로컬 진단용으로 `compose.source-egress.yaml`을 함께 적용하면 설치형 SDK 소스 요청에만 별도의 SOCKS5
+egress를 사용한다.
+
+```powershell
+docker compose -p moya-local-ui -f compose.yaml -f compose.source-egress.yaml up -d
+```
+
+이 overlay는 명령에 파일을 명시한 경우에만 다음을 적용한다.
+
+- Cloudflare Linux WARP client를 감싼 외부 이미지를 amd64 digest로 고정해 실행한다.
+- 프록시 포트를 Windows나 LAN에 공개하지 않고 Compose 내부 network에서만 접근한다.
+- WARP 등록 상태는 `moya-source-egress-state` volume에 보존한다.
+- API에는 `SOURCE_OUTBOUND_PROXY=socks5://source-egress:40000`만 전달한다. DB, object storage, Moya API,
+  reader traffic은 이 proxy를 사용하지 않는다.
+- 설치형 SDK의 저장소 및 catalog/detail/download HTTP broker가 적용 대상이다. APK/Mangayomi의 개별 proxy
+  설정은 기존대로 유지한다.
+
+`SOURCE_OUTBOUND_PROXY`에는 credential/path/query가 없는 `http`, `https`, `socks5` 주소만 허용한다.
+확장 코드는 proxy 주소를 보거나 바꿀 수 없고, host는 proxy 사용 시에도 허용 origin, DNS 결과의 public
+address 여부, 고정 destination IP, TLS hostname/certificate를 계속 검증한다.
+
+이 overlay는 외부 인증/본문 공급자 컨테이너의 Chromium 트래픽을 자동으로 변경하지 않는다. 그 서버도
+분리해야 한다면 해당 서버가 browser proxy를 지원하거나 컨테이너 전체를 별도 tunnel namespace에 두어야
+한다. Moya의 일반 API를 WARP에 태우는 것으로 해결하지 않는다.
+
+현재 overlay는 제3자 wrapper가 배포한 이미지에 Cloudflare의 공식 Linux client를 포함하는 구조다.
+기본 Compose에는 포함되지 않으며 운영 배포 전에 이미지 출처와 Cloudflare WARP 이용 조건을 별도로
+검토한다. Docker Desktop의 host routing 설명은
+[Docker networking](https://docs.docker.com/desktop/features/networking/)을, WARP 동작은
+[Cloudflare Linux client](https://developers.cloudflare.com/warp-client/get-started/linux/)를 따른다.
+
+## 로컬에서 self-host 확장 UI 확인 (2026-09-13)
+
+- `docker compose -p moya-local-ui up -d --build`로 메인 self-host 제품을 실행하고
+  `http://127.0.0.1:8080`에서 설정 → 익스텐션을 연다. 기본 구성은 PC의 loopback에만 공개된다.
+- 이 프로젝트의 DB·파일·확장 설정은 `moya-local-ui` Compose 볼륨에 유지된다. 재시작은 같은 명령을 쓰며,
+  단순 UI 확인을 위해 볼륨을 삭제하거나 운영 서버의 데이터를 초기화하지 않는다.
+- `apps/web`의 1422 개발 서버는 별도 local-static 제품이다. 서버의 설치형 확장 UI 확인용으로 대체하지 않는다.
+- Docker Web 빌드의 TypeScript 검사는 확장 통합 테스트도 포함하므로 `.dockerignore`는 해당 테스트가 참조하는
+  `scripts/extensions/project.ts`만 예외로 포함한다. 다른 개발 스크립트와 private handoff는 계속 제외한다.
+
 ## 만화 회차 추가 시 서버 저장 최적화
 
 - Suwayomi 또는 로컬 만화의 `회차 추가`에서 변하지 않은 기존 페이지 이미지는 다시 저장하지 않는다.

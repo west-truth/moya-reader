@@ -1,4 +1,5 @@
 import { X } from 'lucide-react';
+import { platformCloudVaultProvider } from './platform/cloud-account-provider';
 import type { ExtensionContributionId } from '@noveldesk/extension-contracts';
 import {
   lazy,
@@ -193,6 +194,12 @@ import { createPlatformLibraryFolderIo } from './platform/library-folder-io';
 import { LibraryFolderLocalStateStore } from './library-folders/local-state';
 import { ExternalSourceLocalStateStore } from './external-sources/local-state';
 import { AppExternalSourceRegistry } from './external-sources/app-external-source-registry';
+import { compositeSourceRegistry } from './external-sources/composite-source-registry';
+import { LocalInstalledExtensions } from './extensions/packages/local-installed-extensions';
+import { NativePackageExecution } from './platform/tauri/native-package-execution';
+import type { InstalledExtensionManager } from './extensions/packages/installed-extension-manager';
+import { RemoteInstalledExtensions } from './extensions/packages/remote-installed-extensions';
+import { InstalledExtensionsPanel } from './features/extensions/InstalledExtensionsPanel';
 import { DropboxSourceAccountBroker } from './external-sources/dropbox-source-account-broker';
 import { GoogleDriveSourceAccountBroker } from './external-sources/google-drive-source-account-broker';
 import type { TrustedExternalSourceHostContext } from './external-sources/contracts';
@@ -368,6 +375,36 @@ export default function App() {
     readerRuntime,
   } = useAppRuntime();
   const localStatic = product?.kind === 'local-static';
+  const installedExtensions = useMemo<InstalledExtensionManager | undefined>(
+    () =>
+      providerApiClient
+        ? new RemoteInstalledExtensions(providerApiClient)
+        : platformRuntime.kind === 'tauri-desktop'
+          ? new LocalInstalledExtensions(new NativePackageExecution())
+          : undefined,
+    [providerApiClient, platformRuntime.kind],
+  );
+  const installedSnapshot = useSyncExternalStore(
+    installedExtensions?.subscribe ?? (() => () => {}),
+    installedExtensions?.getSnapshot ?? (() => undefined),
+    installedExtensions?.getSnapshot ?? (() => undefined),
+  );
+  useEffect(() => {
+    if (!installedExtensions) return;
+    void installedExtensions.refresh();
+    if (typeof window === 'undefined') return;
+    let lastRefresh = Date.now();
+    const focus = () => {
+      if (Date.now() - lastRefresh < 60000) return;
+      lastRefresh = Date.now();
+      void installedExtensions.refresh();
+    };
+    window.addEventListener('focus', focus);
+    return () => {
+      window.removeEventListener('focus', focus);
+      installedExtensions.releaseCovers();
+    };
+  }, [installedExtensions]);
   const SyncPanel = product?.SyncPanel ?? DefaultSyncPanel;
   const extensionRevision = useSyncExternalStore(
     extensionRuntime.manager.subscribe,
@@ -485,9 +522,11 @@ export default function App() {
           googleDriveBuiltInExternalSource,
           ...(localStatic ? [] : [suwayomiBuiltInExternalSource, textServerBuiltInExternalSource]),
         ],
-        extensionRuntime.trustedExtensions,
+        installedExtensions
+          ? compositeSourceRegistry(extensionRuntime.trustedExtensions, installedExtensions)
+          : extensionRuntime.trustedExtensions,
       ),
-    [extensionRuntime.trustedExtensions, localStatic],
+    [extensionRuntime.trustedExtensions, localStatic, installedExtensions],
   );
   const desktopLocalLLMProviderIds = useMemo(
     () => new Set<string>(nativeLocalLLMProviderIds(platformRuntime.kind)),
@@ -1327,6 +1366,7 @@ export default function App() {
     notify: showToast,
     confirm: (message) => window.confirm(message),
     dropboxAppKey: dropboxCloudVaultAppKey,
+    externalProvider: product?.cloudVaultProvider ?? platformCloudVaultProvider,
     localMutationRevisions: cloudVaultMutationRevisions,
   });
 
@@ -1387,7 +1427,7 @@ export default function App() {
     state: externalSourceState,
     importService,
     assets: bookAssetRepository,
-    extensionRevision: extensionRevision + externalSourceBrokerRevision,
+    extensionRevision: extensionRevision + externalSourceBrokerRevision + (installedSnapshot?.revision ?? 0),
     libraryRevision: cloudVaultMutationRevisions.library,
     getNovel: (id) => readerRepository.getNovel(id),
     listChapters: (novelId) => readerRepository.listChapters(novelId),
@@ -2583,13 +2623,18 @@ export default function App() {
     !(await mayHaveQueuedProviderMetadata(readerRepository)) ||
     (await syncConnectedProviderState('before_job'));
   const syncUiState = readerRuntime.mode === 'remote' || syncService ? syncState : undefined;
-  const cloudVaultProviderName = cloudVault.providerKind === 'dropbox' ? 'Dropbox' : '로컬 폴더';
+  const cloudVaultProviderName =
+    cloudVault.providerKind === 'google-drive'
+      ? 'Google Drive'
+      : cloudVault.providerKind === 'dropbox'
+        ? 'Dropbox'
+        : '로컬 폴더';
   const syncLabel =
     cloudVault.activity === 'syncing'
       ? '동기화 중'
       : cloudVault.activity !== 'idle'
         ? '확인 중'
-        : cloudVault.connected && cloudVault.config?.lastError
+        : cloudVault.connected && (cloudVault.config?.lastError || cloudVault.connectionReady === false)
           ? `${cloudVaultProviderName} 확인 필요`
           : cloudVault.connected
             ? `${cloudVaultProviderName} · ${cloudVault.config?.autoSync === false ? '수동' : '자동'}`
@@ -2599,7 +2644,7 @@ export default function App() {
   const syncTone =
     cloudVault.activity !== 'idle'
       ? 'syncing'
-      : cloudVault.connected && cloudVault.config?.lastError
+      : cloudVault.connected && (cloudVault.config?.lastError || cloudVault.connectionReady === false)
         ? 'danger'
         : cloudVault.connected
           ? 'ready'
@@ -6379,6 +6424,17 @@ export default function App() {
             selfHostAccount={selfHostAuth?.account}
             logoutSelfHostAccount={selfHostAuth?.logout}
             extensions={extensionSnapshots}
+            installedPackages={
+              installedExtensions ? (
+                <InstalledExtensionsPanel
+                  manager={installedExtensions}
+                  suwayomi={
+                    externalSourceFeature.sources.find((source) => source.id === SUWAYOMI_EXTERNAL_SOURCE_ID)
+                      ?.extensionManager
+                  }
+                />
+              ) : undefined
+            }
             externalSources={externalSourceFeature}
             webNovelMetadataCollector={webNovelMetadataCollector}
             bookEnrichmentAutomation={bookEnrichmentAutomation}

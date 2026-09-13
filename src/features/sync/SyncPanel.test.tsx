@@ -57,7 +57,6 @@ function cloudVault(): CloudVaultController {
     dropboxAvailable: true,
     backupOnly: false,
     setPassphrase: vi.fn(),
-    setRememberPassphrase: vi.fn().mockResolvedValue(undefined),
     setAutoSync: vi.fn().mockResolvedValue(undefined),
     setScope: vi.fn().mockResolvedValue(undefined),
     selectDirectory: vi.fn().mockResolvedValue(undefined),
@@ -136,12 +135,12 @@ describe('SyncPanel', () => {
     expect(markup).toContain('role="dialog"');
     expect(markup).toContain('aria-modal="true"');
     expect(markup).toContain('기기 간 동기화');
-    expect(markup).toContain('Dropbox 연결');
-    expect(markup).toContain('8자 이상');
-    expect(markup).toContain('이 기기에서 기억');
+    expect(markup).toContain('Dropbox로 연결');
+    expect(markup).not.toContain('8자 이상');
+    expect(markup).not.toContain('이 기기에서 기억');
     expect(markup).toContain('자동 동기화');
-    expect(markup).toContain('다른 저장 위치');
-    expect(markup.indexOf('Dropbox 연결')).toBeLessThan(markup.indexOf('로컬 폴더'));
+    expect(markup).toContain('로컬 폴더에 동기화');
+    expect(markup.indexOf('Dropbox로 연결')).toBeLessThan(markup.indexOf('로컬 폴더'));
     expect(markup).not.toContain('서버 없이 독서 기록을 암호화해 보관합니다.');
     expect(markup).toContain('개인 서버');
     expect(markup).toContain('선택 사항');
@@ -222,7 +221,7 @@ describe('SyncPanel', () => {
     );
 
     expect(staleMarkup).toContain('아직 동기화하지 않았습니다.');
-    expect(staleMarkup).not.toContain('암호화 기록 1 KB');
+    expect(staleMarkup).not.toContain('동기화 기록 1 KB');
 
     const currentMarkup = renderToStaticMarkup(
       <SyncPanel
@@ -235,10 +234,19 @@ describe('SyncPanel', () => {
         actions={actions()}
       />,
     );
-    expect(currentMarkup).toContain('암호화 기록 1 KB');
+    expect(currentMarkup).toContain('동기화 기록 1 KB');
   });
 
-  it('keeps a remembered device unlocked without rendering the Vault password input', () => {
+  it('only requests an old password when an encrypted legacy file was actually found', () => {
+    const markup = renderToStaticMarkup(
+      <SyncPanel data={data({ cloudVault: { ...cloudVault(), needsLegacyPassphrase: true } })} actions={actions()} />,
+    );
+    expect(markup).toContain('기존 동기화 파일 열기');
+    expect(markup).toContain('type="password"');
+    expect(markup).not.toContain('이 기기에서 기억');
+  });
+
+  it('connects an account without rendering a Vault password input', () => {
     const base = cloudVault();
     const markup = renderToStaticMarkup(
       <SyncPanel
@@ -256,7 +264,7 @@ describe('SyncPanel', () => {
       />,
     );
 
-    expect(markup).toContain('이 기기에서 잠금 해제됨');
+    expect(markup).not.toContain('이 기기에서 잠금 해제됨');
     expect(markup).not.toContain('placeholder="8자 이상"');
   });
 });

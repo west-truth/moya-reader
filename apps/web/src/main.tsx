@@ -4,6 +4,7 @@ import App from '../../../src/App';
 import { RuntimeProvider } from '../../../src/app/runtime/RuntimeProvider';
 import { createWebRuntime } from './web-runtime';
 import { relayDropboxOAuthPopup } from '../../../src/cloud-vault/dropbox-oauth';
+import { googleSession } from './google/google-session';
 import '../../../src/styles/tokens.css';
 import '../../../src/styles/base.css';
 import '../../../src/styles/shell.css';
@@ -21,6 +22,10 @@ import '../../../src/styles/feedback.css';
 import '../../../src/styles/responsive.css';
 
 if (!relayDropboxOAuthPopup()) {
+  void googleSession.restore();
+  window.addEventListener('online', () => {
+    void googleSession.restore();
+  });
   const runtime = createWebRuntime();
   ReactDOM.createRoot(document.getElementById('root')!).render(
     <React.StrictMode>

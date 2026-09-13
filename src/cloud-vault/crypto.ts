@@ -15,6 +15,17 @@ const CLOUD_SECRET_FORMAT = 'noveldesk-cloud-secret' as const;
 const textEncoder = new TextEncoder();
 const textDecoder = new TextDecoder();
 
+/** Account/folder permission protects v2 data; it has no additional application password. */
+export function isAccountCloudVault(bytes: Uint8Array): boolean {
+  let value;
+  try {
+    value = JSON.parse(textDecoder.decode(bytes));
+  } catch {
+    throw new Error('Cloud vault file is not valid JSON.');
+  }
+  return value?.format === CLOUD_VAULT_FORMAT && value.version === 2 && value.protection === 'storage-account';
+}
+
 function bytesToBase64(bytes: Uint8Array): string {
   let binary = '';
   for (let index = 0; index < bytes.length; index += 0x8000) {
@@ -78,6 +89,16 @@ async function encryptJsonPayload(
   passphrase: string,
   payloadKind: 'vault' | 'ai-tts',
 ): Promise<Uint8Array> {
+  if (passphrase === '')
+    return textEncoder.encode(
+      JSON.stringify({
+        format: CLOUD_VAULT_FORMAT,
+        version: 2,
+        protection: 'storage-account',
+        payloadKind,
+        payload: value,
+      }),
+    );
   const crypto = cryptoRuntime();
   const salt = crypto.getRandomValues(new Uint8Array(16));
   const iv = crypto.getRandomValues(new Uint8Array(12));
@@ -101,7 +122,13 @@ async function encryptJsonPayload(
 }
 
 async function decryptJsonPayload(bytes: Uint8Array, passphrase: string, expectedKind: 'vault' | 'ai-tts') {
+  if (isAccountCloudVault(bytes)) {
+    const value = JSON.parse(textDecoder.decode(bytes));
+    if (value.payloadKind !== expectedKind) throw new Error('Cloud vault payload kind is invalid.');
+    return value.payload as unknown;
+  }
   const envelope = parseEnvelope(bytes);
+  if (!passphrase) throw new Error('legacy_cloud_vault_passphrase_required');
   const actualKind = envelope.payloadKind ?? 'vault';
   if (actualKind !== expectedKind) throw new Error('Cloud vault payload kind is invalid.');
   if (!Number.isSafeInteger(envelope.kdf.iterations) || envelope.kdf.iterations < 100_000) {

@@ -22,7 +22,7 @@ export const CLOUD_VAULT_FILE_NAME = 'noveldesk-vault-v1.enc.json';
 export const CLOUD_VAULT_AI_TTS_FORMAT = 'noveldesk-cloud-vault-ai-tts' as const;
 export const CLOUD_VAULT_AI_TTS_VERSION = 1 as const;
 
-export type CloudVaultProviderKind = 'directory' | 'dropbox';
+export type CloudVaultProviderKind = 'directory' | 'dropbox' | 'google-drive';
 
 export interface CloudVaultSyncScope {
   readonly library: boolean;

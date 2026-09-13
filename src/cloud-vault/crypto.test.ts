@@ -28,6 +28,30 @@ function snapshot(): CloudVaultSnapshotV1 {
 }
 
 describe('cloud vault encryption', () => {
+  it('round-trips account-owned data without an application secret', async () => {
+    const encoded = await encryptCloudVault(snapshot(), '');
+    expect(JSON.parse(new TextDecoder().decode(encoded))).toMatchObject({
+      version: 2,
+      protection: 'storage-account',
+      payloadKind: 'vault',
+    });
+    await expect(decryptCloudVault(encoded, '')).resolves.toEqual(snapshot());
+    await expect(
+      decryptCloudVault(
+        new TextEncoder().encode(
+          JSON.stringify({
+            format: CLOUD_VAULT_FORMAT,
+            version: 2,
+            protection: 'storage-account',
+            payloadKind: 'ai-tts',
+            payload: snapshot(),
+          }),
+        ),
+        '',
+      ),
+    ).rejects.toThrow('payload kind');
+    await expect(decryptCloudVault(new TextEncoder().encode('{}'), '')).rejects.toThrow('format');
+  });
   it('round-trips an encrypted snapshot without exposing its payload', async () => {
     const encrypted = await encryptCloudVault(snapshot(), 'correct horse battery staple');
     const text = new TextDecoder().decode(encrypted);

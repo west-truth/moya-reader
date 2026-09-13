@@ -40,6 +40,24 @@ export interface TextSourcePageInput {
 /** Injected server-side body provider. The caller owns URL/scope validation; the provider owns bounded I/O and cleanup. */
 export type ContentProvider = (url: string, signal?: AbortSignal) => Promise<Uint8Array>;
 
+/** Optional lifecycle for host-injected drivers. Called at shutdown or partial startup failure. */
+export type ManagedContentProvider = ContentProvider & { dispose?(): void | Promise<void> };
+/** Driver validates its own data options. Code registration is trusted composition, never a module URL. */
+export type ContentProviderFactory = (
+  options: Record<string, unknown>,
+) => ManagedContentProvider | Promise<ManagedContentProvider>;
+export interface ContentProviderDefinition {
+  /** Unique host-local binding ID; `default` is reserved for the existing global connection. */
+  id: string;
+  protocol: string;
+  /** Host-only configuration; never included in adapter settings, SDK values or public catalogs. */
+  options: Record<string, unknown>;
+}
+export interface SourceProviderBinding {
+  /** Omit to retain the existing global connection; null means no injected provider; otherwise exact named binding. */
+  contentProviderId?: string | null;
+}
+
 export interface TextSourceContent {
   /** Exact, owned UTF-8 bytes, nonempty and <=2 MiB; adapter must not mutate after returning. */
   bytes: Uint8Array;

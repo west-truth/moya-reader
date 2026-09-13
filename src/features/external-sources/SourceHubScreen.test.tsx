@@ -69,6 +69,7 @@ function controller(overrides: Partial<ExternalSourceController> = {}): External
     setQuery: vi.fn(),
     search: vi.fn(async () => undefined),
     setBrowseMode: vi.fn(async () => undefined),
+    openCatalogBrowse: vi.fn(async () => undefined),
     setFilterValue: vi.fn(),
     applyFilters: vi.fn(async () => undefined),
     resetFilters: vi.fn(async () => undefined),

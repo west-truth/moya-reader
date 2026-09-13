@@ -5,6 +5,9 @@ import { runMigrations } from './db/migrate.js';
 import { createImportQueue, createProviderQueue } from './queue.js';
 import { registerHealthRoutes } from './routes/health.js';
 import { registerUploadRoutes } from './routes/uploads.js';
+import { stageServerImport } from './services/stage-server-import.js';
+import { createDocumentSeriesSnapshot } from './services/document-series-snapshot.js';
+import { createS3Client as createDocumentS3Client } from './services/object-storage.js';
 import { registerBookRoutes } from './routes/books.js';
 import { registerAIRoutes } from './routes/ai.js';
 import { registerSyncRoutes } from './routes/sync.js';
@@ -12,6 +15,20 @@ import { registerBackupRoutes } from './routes/backups.js';
 import { registerSelfHostAuthRoutes } from './routes/auth.js';
 import { registerWebNovelMetadataCollectorGateway } from './routes/webnovel-metadata-collector-gateway.js';
 import { registerTextSourceGateway } from './routes/text-source-gateway.js';
+import { registerExtensionPackageRoutes } from './routes/extension-packages.js';
+import { PostgresPackageInstallStore } from './extensions/postgres-package-store.js';
+import { createNodePackageExecution } from './extensions/node-package-execution.js';
+import { createSourceProxyTransport } from './extensions/source-proxy-transport.js';
+import { createConfiguredContentService } from './extensions/configured-content-service.js';
+import { parseInstalledTextMigration, createInstalledTextGateway } from './extensions/installed-text-gateway.js';
+import { EncryptedSourceCredentialVault } from './extensions/source-credential-vault.js';
+import { loadProviderSecretMasterKey } from './providers/server-provider-secrets.js';
+import { createHash } from 'node:crypto';
+import { access } from 'node:fs/promises';
+import { ApkExtensionHost, apkOwnerDirectory } from './extensions/apk-extension-host.js';
+import { registerApkExtensionRoutes } from './routes/apk-extensions.js';
+import { MangayomiExtensionHost } from './extensions/mangayomi/host.js';
+import path from 'node:path';
 import { pruneStaleUploadSessions } from './services/upload-cleanup.js';
 import { registerAuthHook } from './auth.js';
 import { PostgresSelfHostAuthStore, SelfHostAuthService } from './services/self-host-auth-service.js';
@@ -226,7 +243,67 @@ export async function buildServer(config: ServerConfig): Promise<FastifyInstance
   await registerSyncRoutes(app, pool, config);
   await registerBackupRoutes(app, pool, config);
   await registerWebNovelMetadataCollectorGateway(app, config);
-  await registerTextSourceGateway(app, config);
+  const contentService = createConfiguredContentService(process.env, config.defaultUserId);
+  app.addHook('onClose', () => contentService.dispose());
+  const apkBuild = path.resolve(process.env.MOYA_APK_RUNTIME_DIR ?? 'services/apk-worker/build');
+  let apk: ApkExtensionHost | undefined;
+  if (
+    await access(path.join(apkBuild, 'target', 'apk-worker-0.1.0.jar')).then(
+      () => true,
+      () => false,
+    )
+  ) {
+    const java =
+      process.env.MOYA_APK_JAVA ?? (process.env.JAVA_HOME ? path.join(process.env.JAVA_HOME, 'bin', 'java') : 'java');
+    try {
+      apk = await ApkExtensionHost.open(java, apkBuild, apkOwnerDirectory(config.dataDir, config.defaultUserId));
+    } catch {
+      app.log.warn('APK extension runtime unavailable; existing sources remain available');
+    }
+  }
+  await registerApkExtensionRoutes(app, apk);
+  const extensionVault = new EncryptedSourceCredentialVault(
+    path.join(config.dataDir, 'extension-credentials', createHash('sha256').update(config.defaultUserId).digest('hex')),
+    loadProviderSecretMasterKey(config, process.env),
+  );
+  let mangayomi: MangayomiExtensionHost | undefined;
+  try {
+    mangayomi = await MangayomiExtensionHost.open(
+      path.join(
+        config.dataDir,
+        'mangayomi-extensions',
+        createHash('sha256').update(config.defaultUserId).digest('hex'),
+      ),
+      extensionVault,
+    );
+  } catch {
+    app.log.warn('Mangayomi extension state unavailable; existing sources remain available');
+  }
+  await registerApkExtensionRoutes(app, mangayomi, '/api/mangayomi-extensions');
+  const textMigration = parseInstalledTextMigration(process.env.EXTENSION_TEXT_MIGRATION);
+  const documentS3 = createDocumentS3Client(config);
+  app.addHook('onClose', async () => documentS3.destroy());
+  const installedCatalog = await registerExtensionPackageRoutes(
+    app,
+    new PostgresPackageInstallStore(pool, config.defaultUserId),
+    createNodePackageExecution('self-host-gateway', {
+      contentResolver: contentService.resolve,
+      contentConfigured: contentService.configured,
+      vault: extensionVault,
+      transport: createSourceProxyTransport(config.sourceOutboundProxy),
+    }),
+    apk,
+    mangayomi,
+    new Set(textMigration?.sources.map((source) => source.sourceId)),
+    (file, input, signal) => stageServerImport(pool, config, file, input, signal),
+    {
+      read: createDocumentSeriesSnapshot(pool, config, documentS3),
+      stage: (file, input, signal) => stageServerImport(pool, config, file, input, signal),
+    },
+  );
+  await registerTextSourceGateway(app, config, {
+    installedFetch: textMigration ? createInstalledTextGateway(installedCatalog, textMigration) : undefined,
+  });
 
   return app;
 }

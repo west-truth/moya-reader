@@ -1,0 +1,57 @@
+{
+  "packageFormat": "moya.extension.package",
+  "packageVersion": 1,
+  "extension": {
+    "manifestVersion": 1,
+    "id": "org.example.provider-text",
+    "name": "provider-text",
+    "version": "1.0.0",
+    "engine": {
+      "moyaApi": 1
+    },
+    "permissions": ["external.source.list", "external.source.download"],
+    "contributes": {
+      "externalSources": [
+        {
+          "schemaVersion": 2,
+          "id": "org.example.provider-text.source",
+          "title": "provider-text",
+          "kind": "catalog",
+          "runtimes": ["tauri-native", "self-host-gateway"],
+          "capabilities": [
+            "browse",
+            "search",
+            "work-details",
+            "release-list",
+            "release-download",
+            "document-content",
+            "subscriptions"
+          ],
+          "seriesProfile": {
+            "kind": "document_series",
+            "format": "txt",
+            "encoding": "utf-8",
+            "chapterSplitMode": "single"
+          }
+        }
+      ]
+    }
+  },
+  "execution": {
+    "kind": "moya-js",
+    "apiVersion": 1,
+    "entry": "dist/main.js"
+  },
+  "requestedAccess": {
+    "networkOrigins": ["https://catalog.example"],
+    "storageKiB": 0,
+    "contentServices": [
+      {
+        "sourceId": "org.example.provider-text.source",
+        "version": 1,
+        "origins": ["https://catalog.example"]
+      }
+    ]
+  },
+  "license": "Apache-2.0"
+}

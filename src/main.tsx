@@ -9,6 +9,8 @@ import { initializeAppCredentialStore } from './platform/secure-credentials';
 import { SelfHostAccountGate } from './features/auth/SelfHostAccountGate';
 import { DesktopWindowShell } from './platform/DesktopWindowFrame';
 import { detectPlatformRuntime } from './platform/runtime';
+import { desktopGoogleSession } from './platform/desktop-google-session';
+import { googleSession } from './cloud-vault/google/google-session';
 import { clearWebAppRuntimeState } from './platform/web-app-cache';
 import { createPlatformWebNovelMetadataCollector } from './platform/webnovel-metadata-collector';
 import './styles/tokens.css';
@@ -112,6 +114,9 @@ async function startApp(): Promise<void> {
         webNovelMetadataCollector: createPlatformWebNovelMetadataCollector(platformRuntime),
       }),
   });
+
+  if (platformRuntime.kind === 'tauri-desktop') void desktopGoogleSession.restore();
+  else if (platformRuntime.kind === 'browser') void googleSession.restore();
 
   ReactDOM.createRoot(document.getElementById('root') as HTMLElement).render(
     <React.StrictMode>

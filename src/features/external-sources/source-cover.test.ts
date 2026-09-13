@@ -38,6 +38,42 @@ afterEach(() => {
 });
 
 describe('source cover persistence', () => {
+  it('scales a large source cover to the hosted cover bounds and hashes the uploaded bytes', async () => {
+    const { assets, save } = repository();
+    const encoded = new Blob([Uint8Array.from([0xff, 0xd8, 0xff, 0xdb])], { type: 'image/jpeg' });
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => new Response('large jpeg', { headers: { 'Content-Type': 'image/jpeg' } })),
+    );
+    const close = vi.fn();
+    const bitmap = { width: 1500, height: 2100, close };
+    vi.stubGlobal(
+      'createImageBitmap',
+      vi.fn(async () => bitmap),
+    );
+    const drawImage = vi.fn();
+    const canvas = {
+      width: 0,
+      height: 0,
+      getContext: () => ({ drawImage }),
+      toBlob: (callback: BlobCallback) => callback(encoded),
+    };
+    vi.stubGlobal('document', { createElement: () => canvas });
+    await expect(persistSourceCover(assets, novel, URL)).resolves.toBe(true);
+    expect(drawImage).toHaveBeenCalledWith(bitmap, 0, 0, 1200, 1680);
+    expect(save).toHaveBeenCalledWith(
+      novel.id,
+      expect.objectContaining({
+        blob: encoded,
+        pixelWidth: 1200,
+        pixelHeight: 1680,
+        contentType: 'image/jpeg',
+        contentHash: integrityHash(await encoded.arrayBuffer()),
+        expectedMetadataRevision: 7,
+      }),
+    );
+    expect(close).toHaveBeenCalledOnce();
+  });
   it.each(['headers', 'body'] as const)('cancels a stalled %s request without saving a cover', async (stage) => {
     const { assets, save } = repository();
     const { fetchMock, pull, cancel } = stalledResponse(stage);
@@ -102,7 +138,11 @@ describe('source cover persistence', () => {
     } as ExportedBookCover);
     const fetchMock = vi.fn();
     vi.stubGlobal('fetch', fetchMock);
-    await expect(persistSourceCover(assets, novel, URL)).resolves.toBe(false);
+    const resolveCover = vi.fn(async (): Promise<string> => {
+      throw new Error('source_connection_failed');
+    });
+    await expect(persistSourceCover(assets, novel, resolveCover)).resolves.toBe(false);
+    expect(resolveCover).not.toHaveBeenCalled();
     expect(fetchMock).not.toHaveBeenCalled();
     expect(save).not.toHaveBeenCalled();
   });

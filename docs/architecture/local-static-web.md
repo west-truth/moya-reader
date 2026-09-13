@@ -8,6 +8,14 @@ Web 기능을 `apps/web`으로 통합한다. Git·workspace·lockfile은 메인 
 
 ## 제품 조합
 
+Google 계정과 동기화는 `product.cloudVaultProvider`로 주입한다. Web의 `google-session`은 공식 GIS 버튼,
+nonce/서명 검증과 별도 Drive 동의를 관리한다. 서버 없는 모드는 토큰을 메모리에만 보관하며,
+선택적 `services/web-auth` 연결 시 브라우저 재시작 후 모야 세션을 복원하고 Google 접근 토큰을 자동 갱신한다.
+Google refresh token은 인증 서버에 암호화해 보관한다. 책 원문은 인증 서버를 통하지 않는다. 공유 controller는 계정 라벨/subject와
+기존 Vault 설정만 저장하며, 원문·파서·병합은 기존 경계를 유지한다. 동기화 메뉴는 ‘계정 · 동기화’와
+‘저장 · 오프라인’으로 나누고 메인의 ‘인터넷 없이 읽기’는 후자를 바로 연다.
+설정/검증은 [Google 설정 안내](../operations/google-login-drive-setup.md)와 [인증 서버 운영](../../services/web-auth/README.md)을 따른다.
+
 - 기존 root `src/main.tsx`와 self-host/native 실행 경로는 유지한다.
 - `apps/web/src/main.tsx`는 같은 `src/App.tsx`를 사용한다.
 - Web runtime은 repository factory에 `mode: local`, `allowServerSync: false`를 명시한다.

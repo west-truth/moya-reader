@@ -10,11 +10,13 @@ const ACTIONS = {
   invalid_source_http_transport:
     'SOURCE_HTTP_TRANSPORT는 http 또는 browser입니다. SOURCE_BROWSER_CHANNEL은 browser에서만 chromium·chrome·msedge를 선택하세요.',
   invalid_source_configuration: 'SOURCE_ADAPTERS가 지원하는 ID·필드로 이루어진 JSON 배열인지 확인하세요.',
-  unsupported_content_provider_protocol: 'CONTENT_PROVIDER_PROTOCOL을 지원하는 job-v1로 설정하세요.',
+  unsupported_content_provider_protocol:
+    '본문 공급자의 protocol이 서버에 등록된 driver인지 확인하세요. 기본 제공은 job-v1입니다.',
+  invalid_content_provider_registry: '본문 공급자 driver는 신뢰된 서버 조립 코드에서 등록해야 합니다.',
   content_provider_not_configured:
-    '선택한 소스에 필요한 CONTENT_PROVIDER_ENDPOINT와 CONTENT_PROVIDER_KEY를 설정하세요.',
+    '소스의 contentProviderId가 등록된 연결인지 확인하세요. 기존 기본 연결은 CONTENT_PROVIDER_ENDPOINT와 CONTENT_PROVIDER_KEY를 사용합니다.',
   invalid_content_provider_configuration:
-    '본문 공급자의 API origin과 접속 키를 확인하세요. URL 경로·query·내장 credential은 허용하지 않습니다.',
+    '본문 공급자의 연결 설정과 CONTENT_PROVIDERS JSON을 확인하세요. job-v1은 API origin과 접속 키가 필요합니다.',
   duplicate_source_adapter: '수동 catalog와 SOURCE_ADAPTERS 사이의 중복 source ID를 수정하세요.',
   invalid_source_adapter: '어댑터의 버전·ID·제목·필수 메서드를 ADAPTERS.md 계약과 맞추세요.',
   invalid_source_registry: '등록 소스 수와 어댑터 목록 형식을 확인하세요.',
@@ -129,7 +131,11 @@ export async function diagnoseSourceServer({
   }
 
   if (!environment.CONTENT_PROVIDER_ENDPOINT)
-    add('warning', 'provider_health', '본문 공급자는 비활성입니다. 로컬 TXT만 사용한다면 설정할 필요가 없습니다.');
+    add(
+      'warning',
+      'provider_health',
+      '기본 본문 공급자는 미설정입니다. 직접 가져오는 소스에는 필요하지 않으며, 소스별 별도 연결의 상태는 이 검사에 포함하지 않습니다.',
+    );
   else if (!configured)
     add('warning', 'provider_health', '잘못된 설정을 수정한 뒤 다시 진단하면 공급자 health를 확인합니다.');
   else {

@@ -22,7 +22,7 @@ import {
 import { formatCount, formatDateTime, formatProgress } from '../../utils/format';
 import { outboxStatusLabel, runSyncMergeAction, syncEventTypeLabel, syncLastSyncedLabel } from './sync-panel-model';
 import type { SyncPanelProps } from './sync-panel-contract';
-import { CloudVaultSection } from '../cloud-vault/CloudVaultSection';
+import { CloudAccountsPanel } from '../cloud-vault/CloudAccountsPanel';
 
 type RemoteSnapshotState =
   | { readonly status: 'loading' }
@@ -130,7 +130,7 @@ export default function SyncPanel({ data, actions }: SyncPanelProps) {
             <X size={18} />
           </button>
         </header>
-        <CloudVaultSection controller={data.cloudVault} />
+        <CloudAccountsPanel controller={data.cloudVault} />
         {syncConfigured && (
           <section>
             <div className={classNames('sync-detail-card', syncStatusTone(syncUiState))}>

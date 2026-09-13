@@ -2,6 +2,18 @@ import { describe, expect, it } from 'vitest';
 import { DEFAULT_SUWAYOMI_BASE_URL, resolveAppPublicRuntimeConfig } from './public-runtime-config';
 
 describe('public runtime config', () => {
+  it('allows only a secure auth-service origin or a local development origin', () => {
+    for (const value of ['https://auth.example.test', 'http://localhost:1432'])
+      expect(resolveAppPublicRuntimeConfig(undefined, { VITE_GOOGLE_AUTH_URL: value }).googleDrive.authUrl).toBe(value);
+    for (const value of [
+      'http://auth.example.test',
+      'https://auth.example.test/path',
+      'https://user:secret@auth.example.test',
+    ])
+      expect(
+        resolveAppPublicRuntimeConfig(undefined, { VITE_GOOGLE_AUTH_URL: value }).googleDrive.authUrl,
+      ).toBeUndefined();
+  });
   it('uses the allow-listed runtime identifiers before local VITE fallbacks', () => {
     const config = resolveAppPublicRuntimeConfig(
       {

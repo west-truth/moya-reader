@@ -1,0 +1,7 @@
+[
+  {
+    "url": "https://catalog.example/chapter.txt",
+    "contentType": "text/plain",
+    "body": "This is a synthetic chapter.\r\n\r\n  Leading spaces and original line breaks are preserved.\n"
+  }
+]

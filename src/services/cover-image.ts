@@ -42,7 +42,7 @@ async function defaultDecode(blob: Blob): Promise<DecodedCover> {
   return { source: bitmap, width: bitmap.width, height: bitmap.height, close: () => bitmap.close() };
 }
 
-async function defaultEncode(
+export async function encodeCoverImage(
   source: CanvasImageSource,
   width: number,
   height: number,
@@ -64,7 +64,7 @@ async function defaultEncode(
   });
 }
 
-const browserAdapter: CoverImageAdapter = { decode: defaultDecode, encode: defaultEncode };
+const browserAdapter: CoverImageAdapter = { decode: defaultDecode, encode: encodeCoverImage };
 
 export async function normalizeCoverImage(
   file: File,

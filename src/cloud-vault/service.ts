@@ -9,7 +9,8 @@ import {
 import type { CloudVaultContentTransferService } from './content-transfer';
 import { canonicalJson } from '../domain/canonical-json';
 import { CloudVaultAiTtsTransferService, EMPTY_AI_TTS_TRANSFER_REPORT } from './ai-tts-transfer';
-import { decryptCloudVault, encryptCloudVault } from './crypto';
+import { decryptCloudVault, encryptCloudVault, isAccountCloudVault } from './crypto';
+import { migrateLegacyCloudVault } from './account-migration';
 import { mergeCloudVaultSnapshots } from './merge';
 
 export class CloudVaultService {
@@ -22,6 +23,7 @@ export class CloudVaultService {
   async sync(input: {
     readonly provider: CloudVaultFileProvider;
     readonly passphrase: string;
+    readonly accountAccess?: boolean;
     readonly deviceId: string;
     readonly scope: CloudVaultSyncScope;
     readonly backupOnly?: boolean;
@@ -33,7 +35,15 @@ export class CloudVaultService {
     let conflict: unknown;
     for (let attempt = 0; attempt < 3; attempt += 1) {
       const remoteObject = await input.provider.read();
-      const remoteCore = remoteObject ? await decryptCloudVault(remoteObject.bytes, input.passphrase) : undefined;
+      const migrating = !!(input.accountAccess && remoteObject && !isAccountCloudVault(remoteObject.bytes));
+      let remoteCore = remoteObject ? await decryptCloudVault(remoteObject.bytes, input.passphrase) : undefined;
+      if (migrating && remoteCore)
+        remoteCore = await migrateLegacyCloudVault(
+          remoteCore,
+          asOptionalContentProvider(input.provider),
+          input.passphrase,
+        );
+      const writePassphrase = input.accountAccess ? '' : input.passphrase;
       const local = await this.artifacts.capture({ deviceId: input.deviceId, scope: input.scope });
       let uploadedContent = {
         uploadedSourceFiles: 0,
@@ -51,7 +61,7 @@ export class CloudVaultService {
               remoteCore,
               local,
               contentProvider,
-              input.passphrase,
+              writePassphrase,
               input.knownAiTtsObjectKeys,
             )
           : { snapshot: remoteCore, report: EMPTY_AI_TTS_TRANSFER_REPORT };
@@ -66,20 +76,20 @@ export class CloudVaultService {
           ? await this.aiTts.externalize(
               merged,
               contentProvider,
-              input.passphrase,
+              writePassphrase,
               hydratedAi.report.aiTtsObjectKeys,
               new Set(local.books.map((book) => book.identity.normalizedTextHash)),
             )
           : { snapshot: merged, report: EMPTY_AI_TTS_TRANSFER_REPORT };
       const syncedAt = new Date().toISOString();
-      const unchanged = Boolean(remoteCore && equivalentSnapshot(externalizedAi.snapshot, remoteCore));
+      const unchanged = Boolean(!migrating && remoteCore && equivalentSnapshot(externalizedAi.snapshot, remoteCore));
       let remoteRevision = remoteObject?.revision;
       let uploadedBytes = 0;
       try {
         if (!unchanged) {
           const bytes = await encryptCloudVault(
             { ...externalizedAi.snapshot, generatedAt: syncedAt, deviceId: input.deviceId },
-            input.passphrase,
+            writePassphrase,
           );
           const written = await input.provider.write(bytes, remoteObject?.revision);
           remoteRevision = written.revision;

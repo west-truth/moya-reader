@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import {
   DEFAULT_CLOUD_VAULT_SCOPE,
   type CloudVaultFileProvider,
@@ -6,11 +6,7 @@ import {
   type CloudVaultSyncReport,
   type CloudVaultSyncScope,
 } from '../../cloud-vault/contracts';
-import {
-  CLOUD_VAULT_MIN_PASSPHRASE_LENGTH,
-  sealCloudVaultSecret,
-  unsealCloudVaultSecret,
-} from '../../cloud-vault/crypto';
+import { CLOUD_VAULT_MIN_PASSPHRASE_LENGTH, unsealCloudVaultSecret } from '../../cloud-vault/crypto';
 import {
   DirectoryCloudVaultProvider,
   directoryPickerAvailable,
@@ -44,6 +40,7 @@ import {
   saveNativeCloudVaultPassphrase,
 } from '../../platform/secure-credentials';
 import { detectPlatformRuntime } from '../../platform/runtime';
+import type { CloudVaultExternalProvider } from '../../cloud-vault/external-provider';
 import {
   CLOUD_VAULT_MUTATION_KINDS,
   cloudVaultMutationDelay,
@@ -54,6 +51,8 @@ import {
 } from '../../cloud-vault/sync-policy';
 
 type CloudVaultActivity = 'idle' | 'loading' | 'connecting' | 'syncing' | 'disconnecting';
+const noExternalSubscription = () => () => {};
+const noExternalSnapshot = () => undefined;
 
 export interface CloudVaultController {
   readonly available: boolean;
@@ -63,19 +62,21 @@ export interface CloudVaultController {
   readonly providerKind?: CloudVaultProviderKind;
   readonly providerLabel?: string;
   readonly connected: boolean;
+  readonly connectionReady?: boolean;
   readonly passphrase: string;
   readonly unlocked: boolean;
+  readonly needsLegacyPassphrase?: boolean;
   readonly directoryAvailable: boolean;
   readonly dropboxAvailable: boolean;
   readonly dropboxSetupHint?: string;
   readonly backupOnly: boolean;
   readonly lastReport?: CloudVaultSyncReport;
   readonly setPassphrase: (value: string) => void;
-  readonly setRememberPassphrase: (enabled: boolean) => Promise<void>;
   readonly setAutoSync: (enabled: boolean) => Promise<void>;
   readonly setScope: (key: keyof Omit<CloudVaultSyncScope, 'ttsAudio'>, enabled: boolean) => Promise<void>;
   readonly selectDirectory: () => Promise<void>;
   readonly connectDropbox: () => Promise<void>;
+  readonly connectGoogleDrive?: () => Promise<void>;
   readonly syncNow: () => Promise<void>;
   readonly disconnect: () => Promise<void>;
 }
@@ -92,6 +93,7 @@ interface UseCloudVaultControllerOptions {
   readonly notify: (message: string, tone?: ToastTone) => void;
   readonly confirm: (message: string) => boolean;
   readonly dropboxAppKey?: string;
+  readonly externalProvider?: CloudVaultExternalProvider;
   readonly localMutationRevisions?: CloudVaultMutationRevisions;
 }
 
@@ -108,6 +110,8 @@ export function cloudVaultErrorMessage(error: unknown): string {
   if (name === 'AbortError') return '';
   if (!message.trim()) return 'Cloud Vault 작업을 완료하지 못했습니다.';
   const normalized = message.toLowerCase();
+  if (normalized === 'legacy_cloud_vault_passphrase_required')
+    return '이전에 암호로 잠근 동기화 파일입니다. 기존 암호로 한 번 열면 이후에는 계정 연결만 사용합니다.';
   if (normalized.includes('passphrase')) return '암호가 틀렸거나 Vault 파일을 열 수 없습니다.';
   if (normalized.includes('permission')) return '선택한 폴더의 읽기·쓰기 권한이 필요합니다.';
   return message.trim();
@@ -147,9 +151,15 @@ export function useCloudVaultController(options: UseCloudVaultControllerOptions)
     notify,
     confirm,
     dropboxAppKey: configuredDropboxAppKey,
+    externalProvider,
     localMutationRevisions = initialCloudVaultMutationRevisions(),
   } = options;
   const available = repository.capabilities.backend === 'indexeddb';
+  const externalSnapshot = useSyncExternalStore(
+    externalProvider?.subscribe ?? noExternalSubscription,
+    externalProvider?.getSnapshot ?? noExternalSnapshot,
+    noExternalSnapshot,
+  );
   const stateStore = useMemo(() => new CloudVaultLocalStateStore(), []);
   const service = useMemo(
     () =>
@@ -162,6 +172,7 @@ export function useCloudVaultController(options: UseCloudVaultControllerOptions)
   const [config, setConfig] = useState<CloudVaultLocalConfig>();
   const [passphrase, setPassphraseDraft] = useState('');
   const [unlocked, setUnlocked] = useState(false);
+  const [needsLegacyPassphrase, setNeedsLegacyPassphrase] = useState(false);
   const [activity, setActivity] = useState<CloudVaultActivity>(available ? 'loading' : 'idle');
   const [lastReport, setLastReport] = useState<CloudVaultSyncReport>();
   const configRef = useRef<CloudVaultLocalConfig>();
@@ -206,12 +217,12 @@ export function useCloudVaultController(options: UseCloudVaultControllerOptions)
           } catch {
             await stateStore.clearRememberedPassphrase().catch(() => undefined);
             if (nativeSecureCredentials) await deleteNativeCloudVaultPassphrase().catch(() => undefined);
-            if (!cancelled) notify('저장된 Vault 암호를 복구하지 못했습니다. 다시 입력하세요.', 'warning');
           }
         }
         if (cancelled) return;
         configRef.current = value;
         setConfig(value);
+        setUnlocked(true);
         if (rememberedPassphrase && rememberedPassphrase.length >= CLOUD_VAULT_MIN_PASSPHRASE_LENGTH) {
           passphraseRef.current = rememberedPassphrase;
           setUnlocked(true);
@@ -243,42 +254,6 @@ export function useCloudVaultController(options: UseCloudVaultControllerOptions)
     setUnlocked(false);
   }, []);
 
-  const rememberPassphraseOnDevice = useCallback(
-    async (value: string, shouldRemember: boolean) => {
-      passphraseRef.current = value;
-      setPassphraseDraft('');
-      setUnlocked(true);
-      if (nativeSecureCredentials) {
-        if (shouldRemember) await saveNativeCloudVaultPassphrase(value);
-        else await deleteNativeCloudVaultPassphrase();
-        await stateStore.clearRememberedPassphrase();
-      } else if (shouldRemember) {
-        await stateStore.saveRememberedPassphrase(value);
-      } else {
-        await stateStore.clearRememberedPassphrase();
-      }
-    },
-    [nativeSecureCredentials, stateStore],
-  );
-
-  const setRememberPassphrase = useCallback(
-    async (enabled: boolean) => {
-      await saveConfig({ rememberPassphrase: enabled });
-      if (!enabled) {
-        await stateStore.clearRememberedPassphrase();
-        if (nativeSecureCredentials) await deleteNativeCloudVaultPassphrase();
-      } else if (passphraseRef.current.length >= CLOUD_VAULT_MIN_PASSPHRASE_LENGTH) {
-        if (nativeSecureCredentials) {
-          await saveNativeCloudVaultPassphrase(passphraseRef.current);
-          await stateStore.clearRememberedPassphrase();
-        } else {
-          await stateStore.saveRememberedPassphrase(passphraseRef.current);
-        }
-      }
-    },
-    [nativeSecureCredentials, saveConfig, stateStore],
-  );
-
   const setAutoSync = useCallback(
     async (enabled: boolean) => {
       await saveConfig({ autoSync: enabled });
@@ -308,7 +283,8 @@ export function useCloudVaultController(options: UseCloudVaultControllerOptions)
       if (!(await ensureDirectoryPermission(handle, true)))
         throw new Error('Cloud vault folder permission was denied.');
       await stateStore.saveDirectoryHandle(handle);
-      const nextConfig = await saveConfig({
+      setUnlocked(true);
+      await saveConfig({
         providerKind: 'directory',
         directoryName: handle.name,
         dropboxCredentialEnvelope: undefined,
@@ -321,11 +297,6 @@ export function useCloudVaultController(options: UseCloudVaultControllerOptions)
         waitingBookTitles: [],
         aiTtsObjectKeys: {},
       });
-      if (passphraseRef.current.length >= CLOUD_VAULT_MIN_PASSPHRASE_LENGTH) {
-        await rememberPassphraseOnDevice(passphraseRef.current, nextConfig.rememberPassphrase).catch(() => {
-          notify('Vault 암호는 현재 실행 중에만 유지됩니다.', 'warning');
-        });
-      }
       startupAutoSyncDoneRef.current = false;
       setLastReport(undefined);
       notify('Cloud Vault 동기화 폴더를 연결했습니다.', 'success');
@@ -336,7 +307,7 @@ export function useCloudVaultController(options: UseCloudVaultControllerOptions)
       busyRef.current = false;
       setActivity('idle');
     }
-  }, [activity, available, notify, rememberPassphraseOnDevice, saveConfig, stateStore]);
+  }, [activity, available, notify, saveConfig, stateStore]);
 
   const connectDropbox = useCallback(async () => {
     if (!available || activity !== 'idle' || busyRef.current) return;
@@ -346,11 +317,6 @@ export function useCloudVaultController(options: UseCloudVaultControllerOptions)
     }
     if (!dropboxAppKey) {
       notify('이 빌드에는 Dropbox 앱 키가 설정되지 않았습니다.', 'warning');
-      return;
-    }
-    const currentPassphrase = passphraseRef.current;
-    if (currentPassphrase.length < CLOUD_VAULT_MIN_PASSPHRASE_LENGTH) {
-      notify(`Dropbox 연결 전에 ${CLOUD_VAULT_MIN_PASSPHRASE_LENGTH}자 이상의 Vault 암호를 입력하세요.`, 'warning');
       return;
     }
     busyRef.current = true;
@@ -371,11 +337,11 @@ export function useCloudVaultController(options: UseCloudVaultControllerOptions)
       const [envelope, accountLabel] = await Promise.all([
         nativeSecureCredentials
           ? saveNativeCloudVaultDropboxCredential(JSON.stringify(credential)).then(() => undefined)
-          : sealCloudVaultSecret(credential, currentPassphrase),
+          : stateStore.saveDropboxCredential(JSON.stringify(credential)).then(() => undefined),
         fetchDropboxAccountLabel(credential).catch(() => undefined),
       ]);
       await stateStore.clearDirectoryHandle();
-      const nextConfig = await saveConfig({
+      await saveConfig({
         providerKind: 'dropbox',
         directoryName: undefined,
         dropboxCredentialEnvelope: envelope,
@@ -388,9 +354,7 @@ export function useCloudVaultController(options: UseCloudVaultControllerOptions)
         waitingBookTitles: [],
         aiTtsObjectKeys: {},
       });
-      await rememberPassphraseOnDevice(currentPassphrase, nextConfig.rememberPassphrase).catch(() => {
-        notify('Dropbox는 연결했지만 Vault 암호는 현재 실행 중에만 유지됩니다.', 'warning');
-      });
+      setUnlocked(true);
       startupAutoSyncDoneRef.current = false;
       setLastReport(undefined);
       notify('Dropbox App Folder를 연결했습니다.', 'success');
@@ -408,13 +372,46 @@ export function useCloudVaultController(options: UseCloudVaultControllerOptions)
     nativeSecureCredentials,
     notify,
     platformRuntime.kind,
-    rememberPassphraseOnDevice,
     saveConfig,
     stateStore,
   ]);
 
+  const connectGoogleDrive = useCallback(async () => {
+    if (!available || busyRef.current || activity !== 'idle' || !externalProvider?.available) return;
+    const current = configRef.current;
+    if (current?.providerKind && current.providerKind !== 'google-drive') {
+      notify('현재 동기화 연결을 해제한 뒤 Google Drive를 연결하세요.', 'warning');
+      return;
+    }
+    busyRef.current = true;
+    setActivity('connecting');
+    try {
+      const account = await externalProvider.connect(current?.googleDriveAccountId);
+      await saveConfig({
+        providerKind: 'google-drive',
+        googleDriveAccountId: account.accountId,
+        googleDriveAccountLabel: account.label,
+        lastError: undefined,
+      });
+      setUnlocked(true);
+      startupAutoSyncDoneRef.current = false;
+      setLastReport(undefined);
+      notify('Google Drive를 연결했습니다.', 'success');
+    } catch (error) {
+      const message = cloudVaultErrorMessage(error);
+      if (message) notify(message, 'danger');
+    } finally {
+      busyRef.current = false;
+      setActivity('idle');
+    }
+  }, [activity, available, externalProvider, notify, saveConfig]);
+
   const createProvider = useCallback(
     async (currentConfig: CloudVaultLocalConfig, currentPassphrase: string) => {
+      if (currentConfig.providerKind === 'google-drive') {
+        if (!externalProvider) throw new Error('이 버전에서는 Google Drive 연결을 사용할 수 없습니다.');
+        return externalProvider.createProvider(currentConfig);
+      }
       if (currentConfig.providerKind === 'directory') {
         const handle = await stateStore.getDirectoryHandle();
         if (!handle) throw new Error('동기화 폴더 연결 정보가 없습니다. 폴더를 다시 선택하세요.');
@@ -440,12 +437,16 @@ export function useCloudVaultController(options: UseCloudVaultControllerOptions)
             throw new Error('이 기기의 보안 저장소에 Dropbox 연결 정보가 없습니다. 다시 연결하세요.');
           }
         } else {
-          if (!currentConfig.dropboxCredentialEnvelope)
-            throw new Error('Dropbox 연결 정보가 없습니다. 다시 연결하세요.');
-          credential = await unsealCloudVaultSecret<DropboxCredential>(
-            currentConfig.dropboxCredentialEnvelope,
-            currentPassphrase,
-          );
+          const saved = await stateStore.getDropboxCredential();
+          if (saved) credential = parseDropboxCredential(saved);
+          else if (currentConfig.dropboxCredentialEnvelope) {
+            credential = await unsealCloudVaultSecret<DropboxCredential>(
+              currentConfig.dropboxCredentialEnvelope,
+              currentPassphrase,
+            );
+            await stateStore.saveDropboxCredential(JSON.stringify(credential));
+            await saveConfig({ dropboxCredentialEnvelope: undefined });
+          } else throw new Error('Dropbox 연결 정보가 없습니다. 다시 연결하세요.');
         }
         const credentialStore: DropboxCredentialStore = {
           get: async () => credential,
@@ -454,8 +455,7 @@ export function useCloudVaultController(options: UseCloudVaultControllerOptions)
             if (nativeSecureCredentials) {
               await saveNativeCloudVaultDropboxCredential(JSON.stringify(next));
             } else {
-              const envelope = await sealCloudVaultSecret(next, currentPassphrase);
-              await saveConfig({ dropboxCredentialEnvelope: envelope });
+              await stateStore.saveDropboxCredential(JSON.stringify(next));
             }
           },
         };
@@ -463,7 +463,7 @@ export function useCloudVaultController(options: UseCloudVaultControllerOptions)
       }
       throw new Error('먼저 Cloud Vault 저장 위치를 연결하세요.');
     },
-    [dropboxAppKey, nativeSecureCredentials, saveConfig, stateStore],
+    [dropboxAppKey, externalProvider, nativeSecureCredentials, saveConfig, stateStore],
   );
 
   const runSync = useCallback(
@@ -482,9 +482,15 @@ export function useCloudVaultController(options: UseCloudVaultControllerOptions)
         return;
       }
       if (automatic && !currentConfig.autoSync) return;
+      if (currentConfig.providerKind === 'google-drive' && !externalProvider?.isReady(currentConfig)) {
+        if (!automatic)
+          notify('Google 로그인 후 Drive를 다시 연결하세요. 책과 독서 기록은 이 기기에 유지됩니다.', 'warning');
+        return;
+      }
+      if (automatic && typeof navigator !== 'undefined' && !navigator.onLine) return;
       const currentPassphrase = passphraseRef.current;
-      if (currentPassphrase.length < CLOUD_VAULT_MIN_PASSPHRASE_LENGTH) {
-        if (!automatic) notify(`${CLOUD_VAULT_MIN_PASSPHRASE_LENGTH}자 이상의 Vault 암호를 입력하세요.`, 'warning');
+      if (needsLegacyPassphrase && currentPassphrase.length < CLOUD_VAULT_MIN_PASSPHRASE_LENGTH) {
+        if (!automatic) notify('기존 동기화 파일을 열 때 사용했던 암호를 입력하세요.', 'warning');
         return;
       }
       syncInFlightRef.current = true;
@@ -509,6 +515,7 @@ export function useCloudVaultController(options: UseCloudVaultControllerOptions)
         const report = await service.sync({
           provider,
           passphrase: currentPassphrase,
+          accountAccess: true,
           deviceId,
           scope: currentConfig.scope,
           backupOnly: serverSyncConnected,
@@ -533,11 +540,12 @@ export function useCloudVaultController(options: UseCloudVaultControllerOptions)
           }
         }
         if (dirtyMutationKindsRef.current.size === 0) dirtySinceRef.current = undefined;
-        if (!unlocked) {
-          await rememberPassphraseOnDevice(currentPassphrase, currentConfig.rememberPassphrase).catch(() => {
-            notify('Vault 암호는 현재 실행 중에만 유지됩니다.', 'warning');
-          });
-        }
+        setUnlocked(true);
+        setNeedsLegacyPassphrase(false);
+        passphraseRef.current = '';
+        setPassphraseDraft('');
+        await stateStore.clearRememberedPassphrase().catch(() => undefined);
+        if (nativeSecureCredentials) await deleteNativeCloudVaultPassphrase().catch(() => undefined);
         if (!serverSyncConnected) await refreshLibrary();
         const message =
           report.contentFailures.length > 0
@@ -547,7 +555,7 @@ export function useCloudVaultController(options: UseCloudVaultControllerOptions)
                 ? `동기화했습니다. 클라우드 원본이 없는 ${report.waitingForSourceBooks}개 작품은 연결 대기로 남겼습니다.`
                 : `동기화했습니다. 같은 원문을 가져오면 ${report.waitingForSourceBooks}개 작품의 기록을 연결할 수 있습니다.`
               : serverSyncConnected
-                ? '암호화된 Cloud Vault 백업을 갱신했습니다.'
+                ? 'Cloud Vault 백업을 갱신했습니다.'
                 : report.restoredSourceFiles > 0
                   ? `Cloud Vault 동기화를 완료하고 작품 ${report.restoredSourceFiles}개를 복원했습니다.`
                   : 'Cloud Vault 동기화를 완료했습니다.';
@@ -559,6 +567,7 @@ export function useCloudVaultController(options: UseCloudVaultControllerOptions)
         const message = cloudVaultErrorMessage(error) || 'Cloud Vault 동기화에 실패했습니다.';
         await saveConfig({ lastError: message }).catch(() => undefined);
         if (isPassphraseError(error)) {
+          setNeedsLegacyPassphrase(true);
           passphraseRef.current = '';
           setPassphraseDraft('');
           setUnlocked(false);
@@ -581,16 +590,16 @@ export function useCloudVaultController(options: UseCloudVaultControllerOptions)
     },
     [
       available,
+      needsLegacyPassphrase,
       createProvider,
+      externalProvider,
       deviceId,
       notify,
       refreshLibrary,
-      rememberPassphraseOnDevice,
       saveConfig,
       serverSyncConnected,
       service,
       stateStore,
-      unlocked,
       nativeSecureCredentials,
     ],
   );
@@ -604,6 +613,7 @@ export function useCloudVaultController(options: UseCloudVaultControllerOptions)
       startupAutoSyncDoneRef.current ||
       activity !== 'idle' ||
       !config?.providerKind ||
+      (config.providerKind === 'google-drive' && !externalProvider?.isReady(config)) ||
       !config.autoSync ||
       !unlocked
     ) {
@@ -613,7 +623,7 @@ export function useCloudVaultController(options: UseCloudVaultControllerOptions)
     // A full startup sync is intentional: an earlier browser shutdown may have
     // happened before the in-memory dirty marker could be flushed.
     void runSyncRef.current(true, 'startup');
-  }, [activity, config?.autoSync, config?.providerKind, unlocked]);
+  }, [activity, config, unlocked, externalProvider, externalSnapshot]);
 
   useEffect(() => {
     if (!available) return;
@@ -663,16 +673,19 @@ export function useCloudVaultController(options: UseCloudVaultControllerOptions)
 
   const disconnect = useCallback(async () => {
     if (!available || activity !== 'idle' || !config?.providerKind || busyRef.current) return;
-    if (!confirm('이 기기에서 Cloud Vault 연결을 해제할까요? 클라우드의 암호화 파일은 삭제하지 않습니다.')) {
+    if (!confirm('이 기기에서 Cloud Vault 연결을 해제할까요? 클라우드의 파일은 삭제하지 않습니다.')) {
       return;
     }
     busyRef.current = true;
     setActivity('disconnecting');
     try {
       await stateStore.clearDirectoryHandle();
+      if (config.providerKind === 'google-drive') externalProvider?.disconnect();
       if (nativeSecureCredentials) await deleteNativeCloudVaultDropboxCredential();
       await saveConfig({
         providerKind: undefined,
+        googleDriveAccountId: undefined,
+        googleDriveAccountLabel: undefined,
         directoryName: undefined,
         dropboxCredentialEnvelope: undefined,
         dropboxAccountLabel: undefined,
@@ -685,6 +698,8 @@ export function useCloudVaultController(options: UseCloudVaultControllerOptions)
         aiTtsObjectKeys: {},
       });
       await stateStore.clearRememberedPassphrase();
+      await stateStore.clearDropboxCredential();
+      setNeedsLegacyPassphrase(false);
       if (nativeSecureCredentials) await deleteNativeCloudVaultPassphrase();
       passphraseRef.current = '';
       setPassphrase('');
@@ -702,6 +717,7 @@ export function useCloudVaultController(options: UseCloudVaultControllerOptions)
     activity,
     available,
     config?.providerKind,
+    externalProvider,
     confirm,
     notify,
     nativeSecureCredentials,
@@ -715,7 +731,9 @@ export function useCloudVaultController(options: UseCloudVaultControllerOptions)
       ? config.directoryName || '동기화 폴더'
       : config?.providerKind === 'dropbox'
         ? config.dropboxAccountLabel || 'Dropbox'
-        : undefined;
+        : config?.providerKind === 'google-drive'
+          ? config.googleDriveAccountLabel || 'Google Drive'
+          : undefined;
 
   return {
     available,
@@ -725,8 +743,10 @@ export function useCloudVaultController(options: UseCloudVaultControllerOptions)
     providerKind: config?.providerKind,
     providerLabel,
     connected: Boolean(config?.providerKind),
+    connectionReady: config?.providerKind === 'google-drive' ? (externalProvider?.isReady(config) ?? false) : true,
     passphrase,
     unlocked,
+    needsLegacyPassphrase,
     directoryAvailable: directoryPickerAvailable(),
     dropboxAvailable: Boolean(dropboxAppKey) && platformRuntime.kind !== 'tauri-mobile',
     dropboxSetupHint:
@@ -738,11 +758,11 @@ export function useCloudVaultController(options: UseCloudVaultControllerOptions)
     backupOnly: serverSyncConnected,
     lastReport,
     setPassphrase,
-    setRememberPassphrase,
     setAutoSync,
     setScope,
     selectDirectory,
     connectDropbox,
+    connectGoogleDrive: externalProvider?.available ? connectGoogleDrive : undefined,
     syncNow,
     disconnect,
   };

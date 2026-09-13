@@ -67,6 +67,39 @@ contentProviderLimits?, sourceAdapters })`가 맡고 `{ contentProvider, additio
 지정하지 않는다. 다른 프로토콜 공급자를 추가할 때는 새 driver와 composition 등록을 구현하면 되며 어댑터의
 네 메서드 또는 Moya UI에 공급자 분기를 추가하지 않는다.
 
+## 소스별 선택형 본문 공급자 (2026-09-13)
+
+`job-v1`의 `key`는 선택값이다. 공급자가 접속 인증을 사용하지 않으면 생략하거나 빈 문자열로 둔다.
+이때 작업 생성·조회·manifest·close 모두 Authorization 헤더를 생략한다. 키가 설정돼 있으면 기존 Bearer
+헤더를 그대로 사용하며, 401/403 이후 키를 제거해서 다시 요청하는 자동 우회는 하지 않는다.
+
+모든 소스가 별도 인증/본문 서버를 사용할 필요는 없다. 직접 HTTP로 본문을 읽는 adapter는 callback을 사용하지
+않는다. 별도 공급자가 필요한 adapter도 같은 `getContent` 결과를 반환하므로 앱의 Reader·다운로드 계약은 같다.
+
+기존 `CONTENT_PROVIDER_ENDPOINT/KEY/PROTOCOL`과 adapter 설정은 그대로 사용한다. 여러 연결이 필요할 때만
+다음 선택형 설정을 추가한다. 아래 소스 ID는 예시이며 해당 factory를 조립 코드에 등록해야 한다.
+
+```dotenv
+CONTENT_PROVIDERS='[{"id":"secondary","protocol":"job-v1","options":{"endpoint":"https://provider.example","key":"<operator-secret>"}}]'
+SOURCE_ADAPTERS='[{"id":"existing-source"},{"id":"another-source","contentProviderId":"secondary"},{"id":"direct-source","contentProviderId":null}]'
+```
+
+- `contentProviderId` 생략은 기존 기본 연결, `null`은 주입하지 않음, 문자열은 지정한 연결만 사용한다.
+  없는 연결에 기본값으로 fallback하지 않는다. `default`는 기존 전역 연결을 명시적으로 가리키는 예약 이름이다.
+- `contentProviderId`는 host가 소비한다. 기존 adapter factory에는 이를 뺀 기존 settings와 선택한 callback만
+  전달한다. 따라서 엄격한 기존 settings 검증을 변경하지 않아도 된다. 키는 서버 환경/조립 설정에만 둔다.
+- 코드 조립에서는 `createConfiguredSources({ contentProviders, contentProviderFactories, sourceAdapters,
+sourceAdapterFactories })`를 사용한다. 새로운 프로토콜은 신뢰된 `Map<protocol, factory>`로 등록한다.
+  factory는 자신의 options를 검증하고 `ContentProvider` 함수를 반환한다. `dispose()`를 함수에 붙이면 정상 종료/
+  일부 초기화 실패 때 호출한다. factory와 dispose는 유한하게 종료해야 한다. 사용하지 않는 별도 연결은 실행하지 않는다.
+- 환경 조립에서도 두 factory Map을 두 번째 인자로 주입할 수 있다. 배포 패키지명/모듈 URL을 JSON으로 전달해
+  실행하는 기능은 아니다. 기본 `job-v1` driver를 같은 이름으로 바꿔치기할 수 없다.
+- 이름 있는 연결은 최대 32개, 환경 JSON은 64 KiB다. `options`는 driver별 데이터다. 수동 catalog의 `contentUrl`은
+  기존 기본 공급자를 유지한다. 진단 명령의 health 검사는 기존 기본 연결 대상이며 별도 연결의 실제 가용성은 미검증이다.
+
+이는 **기존 신뢰된 서버 adapter의 조립 기능**이다. 설치형 SDK의 승인된 서비스 연결은
+[별도 계획](../../docs/project/0913-optional-source-content-providers.md)을 따른다.
+
 ## ABI version 1
 
 어댑터 객체의 필수 필드는 `apiVersion`, `id`, `title`과 아래 네 메서드다. `capabilities`를 생략하면
