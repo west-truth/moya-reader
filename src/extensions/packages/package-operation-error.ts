@@ -8,6 +8,8 @@ const messages: Readonly<Record<string, string>> = {
   source_request_timeout: '소스 사이트의 응답 시간이 초과됐습니다. 잠시 후 다시 시도해 주세요.',
   source_body_limit: '소스가 반환한 데이터가 처리 가능한 크기를 넘었습니다. 앱이 최신 버전인지 확인해 주세요.',
   source_http_failed: '소스 사이트가 요청을 처리하지 못했습니다. 잠시 후 다시 시도해 주세요.',
+  source_access_denied: '사이트에서 접근을 거부했습니다. 네트워크·프록시 설정이나 사이트의 접근 제한을 확인해 주세요.',
+  source_dns_failed: '프록시를 통한 DNS 조회에 실패했습니다. 프록시 주소와 암호화 DNS 연결을 확인해 주세요.',
   execution_busy: '다른 확장 요청을 처리하고 있습니다. 잠시 후 다시 시도해 주세요.',
   execution_timeout: '확장 처리 시간이 초과됐습니다. 잠시 후 다시 시도해 주세요.',
   source_work_unavailable: '소스에서 작품 정보를 찾지 못했습니다. 작품 목록을 새로고침해 주세요.',

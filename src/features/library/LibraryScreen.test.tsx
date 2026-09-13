@@ -162,6 +162,25 @@ function model(novels: Novel[], overrides: Partial<LibraryScreenModel> = {}): Li
 }
 
 describe('LibraryScreen', () => {
+  it.each(['compact', 'mobile'] as const)(
+    'never renders or previews an inspector in %s layout even with stale open state',
+    (layoutMode) => {
+      const reading = novel();
+      const screenModel = model([reading]);
+      screenModel.presentation = {
+        ...screenModel.presentation,
+        layoutMode,
+        focusedBookId: reading.id,
+        inspectorOpen: true,
+      };
+      const screenActions = actions();
+      const elements = collectHostElements(<LibraryScreen model={screenModel} actions={screenActions} />);
+      expect(elements.some((row) => String(row.props.className).includes('library-inspector'))).toBe(false);
+      const article = elements.find((row) => row.type === 'article')!;
+      (article.props.onPointerEnter as (event: { pointerType: string }) => void)({ pointerType: 'mouse' });
+      expect(screenActions.presentation.previewBook).not.toHaveBeenCalled();
+    },
+  );
   it.each([undefined, {}])('mounts responsive navigation without browser media APIs: %j', (browserWindow) => {
     vi.stubGlobal('window', browserWindow);
     try {

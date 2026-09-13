@@ -251,7 +251,7 @@ function LibraryBookCard(props: LibraryBookItemProps) {
 
   return (
     <article
-      {...libraryBookPreviewHandlers(book.novel, !model.management.selectionMode, props.actions.presentation)}
+      {...libraryBookPreviewHandlers(book.novel, model, props.actions.presentation)}
       className={classNames('book-card', selected && 'is-selected', focused && 'is-focused')}
       role="listitem"
       data-focused={focused || undefined}
@@ -311,7 +311,7 @@ function LibraryBookListRow(props: LibraryBookItemProps) {
 
   return (
     <article
-      {...libraryBookPreviewHandlers(book.novel, !model.management.selectionMode, props.actions.presentation)}
+      {...libraryBookPreviewHandlers(book.novel, model, props.actions.presentation)}
       className={classNames('book-list-row', selected && 'is-selected', focused && 'is-focused')}
       role="listitem"
       data-focused={focused || undefined}

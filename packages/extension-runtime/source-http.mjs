@@ -198,12 +198,12 @@ export function createSourceHttp(origins, { lookup, transport = pinnedRequest, a
       if (response.status < 200 || response.status >= 300) {
         response.body.destroy();
         throw new Error(
-          response.status === 401
+          response.status === 401 && input.authenticated
             ? 'source_auth_required'
             : response.status === 403 && input.authenticated
               ? 'source_auth_forbidden'
-              : response.status === 403
-                ? 'source_auth_required'
+              : response.status === 403 || response.status === 401
+                ? 'source_access_denied'
                 : response.status === 429
                   ? 'source_rate_limited'
                   : 'source_http_failed',

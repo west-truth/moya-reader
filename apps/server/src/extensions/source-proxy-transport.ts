@@ -2,6 +2,7 @@ import { request as httpsRequest } from 'node:https';
 import type { IncomingHttpHeaders, IncomingMessage } from 'node:http';
 import type { SourceTransport } from './source-authentication.js';
 import { parseOutboundProxy, pinnedProxyAgent } from './outbound-proxy.js';
+import { resolveProxyAddress, type ProxyDnsMode } from './proxy-dns.js';
 
 function publicHeaders(headers: IncomingHttpHeaders): Record<string, string> {
   return Object.fromEntries(
@@ -12,10 +13,14 @@ function publicHeaders(headers: IncomingHttpHeaders): Record<string, string> {
 }
 
 /** Operator-owned egress for installed SDK sources. Guest packages never see or select the proxy. */
-export function createSourceProxyTransport(proxyValue: string | undefined): SourceTransport {
+export function createSourceProxyTransport(
+  proxyValue: string | undefined,
+  dns: ProxyDnsMode = 'local',
+): SourceTransport {
   const proxy = parseOutboundProxy(proxyValue);
   if (!proxy) return {};
   return {
+    lookup: (host) => resolveProxyAddress(host, proxy, dns),
     transport: (approved, input, signal) =>
       new Promise((resolve, reject) => {
         const agent = pinnedProxyAgent(proxy, approved.url, approved.address.address, signal)!;
