@@ -6,6 +6,7 @@ import { parseOutboundProxy, pinnedProxyAgent } from './outbound-proxy.js';
 describe('owner-selected outbound proxy', () => {
   it('accepts optional HTTP/SOCKS5 addresses and rejects credentials, paths and unsupported schemes', () => {
     expect(parseOutboundProxy('')).toBeUndefined();
+    expect(parseOutboundProxy('   ')).toBeUndefined();
     expect(parseOutboundProxy('socks5://127.0.0.1:40000')).toBe('socks5://127.0.0.1:40000');
     for (const url of [
       'file:///tmp/a',

@@ -21,8 +21,7 @@ import { invokeMangayomi, type PreferenceValues } from './runtime.js';
 import { sourceWebViewHost } from '../source-webview.js';
 import { sourceBrowserHttp } from '../source-browser-cookies.js';
 import { preferenceSchema, validatePreferenceChanges } from './preferences.js';
-import { OUTBOUND_PROXY_KEY, parseOutboundProxy } from '../outbound-proxy.js';
-import { PROXY_DNS_KEY, proxyDnsMode, proxyDnsField, type ProxyDnsMode } from '../proxy-dns.js';
+import { OUTBOUND_PROXY_KEY, LEGACY_PROXY_DNS_KEY, parseOutboundProxy, outboundProxyField } from '../outbound-proxy.js';
 import type { CompatibilityPreference } from '../../../../../src/extensions/packages/compatibility-preferences.js';
 
 const hash = (value: string | Uint8Array) => createHash('sha256').update(value).digest('hex');
@@ -44,7 +43,6 @@ interface Inventory {
 interface StoredOptions {
   browserMode?: SourceBrowserMode;
   outboundProxy?: string;
-  proxyDns?: ProxyDnsMode;
   values: PreferenceValues;
   privateOrigins: string[];
 }
@@ -377,7 +375,10 @@ export class MangayomiExtensionHost {
   }
   private options(record: RecordEntry): StoredOptions {
     const stored = this.vault.read(scope(record));
-    return stored ? JSON.parse(stored.secret) : { values: {}, privateOrigins: [] };
+    const options = stored ? JSON.parse(stored.secret) : { values: {}, privateOrigins: [] };
+    delete options.proxyDns;
+    delete options.values[LEGACY_PROXY_DNS_KEY];
+    return options;
   }
   preferences(pkg: string) {
     const record = this.state.packages.find((p) => p.pkg === pkg);
@@ -388,18 +389,9 @@ export class MangayomiExtensionHost {
       privateOrigins: options.privateOrigins,
       fields: [
         sourceBrowserModeField(options.browserMode),
-        proxyDnsField(options.proxyDns),
-        {
-          key: OUTBOUND_PROXY_KEY,
-          title: '요청에 사용할 프록시 (선택)',
-          kind: 'text' as const,
-          secret: false,
-          value: options.outboundProxy ?? '',
-          summary:
-            '비워두면 기존 연결을 사용합니다. HTTP·HTTPS·SOCKS5 주소를 입력하세요. 서버 실행 시 주소는 서버 기준이며, 운영체제의 VPN 경로와 DNS 설정은 유지됩니다.',
-        },
+        outboundProxyField(options.outboundProxy),
         ...record.fields
-          .filter((field) => ![OUTBOUND_PROXY_KEY, SOURCE_BROWSER_MODE_KEY, PROXY_DNS_KEY].includes(field.key))
+          .filter((field) => ![OUTBOUND_PROXY_KEY, SOURCE_BROWSER_MODE_KEY, LEGACY_PROXY_DNS_KEY].includes(field.key))
           .map((field) => {
             const value = options.values[field.key] ?? field.value;
             return field.secret ? { ...field, value: undefined, configured: !!value } : { ...field, value };
@@ -426,10 +418,7 @@ export class MangayomiExtensionHost {
       if (!record || revision !== this.state.revision) throw new Error('apk_install_conflict');
       if (
         Object.entries(changes).some(([key, value]) => {
-          if (key === PROXY_DNS_KEY) {
-            proxyDnsMode(value);
-            return false;
-          }
+          if (key === LEGACY_PROXY_DNS_KEY) return false;
           if (key === SOURCE_BROWSER_MODE_KEY) {
             sourceBrowserMode(value);
             return false;
@@ -453,10 +442,7 @@ export class MangayomiExtensionHost {
         throw new Error('compatibility_preferences_invalid');
       const options = this.options(record);
       for (const [key, value] of Object.entries(changes)) {
-        if (key === PROXY_DNS_KEY) {
-          options.proxyDns = proxyDnsMode(value);
-          continue;
-        }
+        if (key === LEGACY_PROXY_DNS_KEY) continue;
         if (key === SOURCE_BROWSER_MODE_KEY) {
           options.browserMode = sourceBrowserMode(value);
           continue;
@@ -496,7 +482,6 @@ export class MangayomiExtensionHost {
       vault: this.vault,
       privateOrigins: options.privateOrigins,
       outboundProxy: options.outboundProxy,
-      proxyDns: options.proxyDns,
       browserMode: options.browserMode,
     };
     if (hash(source) !== record.digest) throw new Error('package_repository_integrity');
@@ -556,7 +541,6 @@ export class MangayomiExtensionHost {
               vault: this.vault,
               privateOrigins: options.privateOrigins,
               outboundProxy: options.outboundProxy,
-              proxyDns: options.proxyDns,
               browserMode: options.browserMode,
             },
             requestSignal,

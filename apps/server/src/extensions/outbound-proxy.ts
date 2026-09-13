@@ -5,11 +5,25 @@ import type { ClientRequest } from 'node:http';
 import { HttpsProxyAgent } from 'https-proxy-agent';
 import { Agent, type AgentConnectOpts } from 'agent-base';
 import { SocksClient } from 'socks';
+import type { CompatibilityPreference } from '../../../../src/extensions/packages/compatibility-preferences.js';
 
 /** Host-owned option. Source scripts cannot select a proxy or weaken destination validation. */
 export const OUTBOUND_PROXY_KEY = '__moya_outbound_proxy';
+/** Retired fixed-provider DNS preference. Ignore stale clients and discard persisted values. */
+export const LEGACY_PROXY_DNS_KEY = '__moya_proxy_dns';
+export function outboundProxyField(value?: string): CompatibilityPreference {
+  return {
+    key: OUTBOUND_PROXY_KEY,
+    title: '프록시 주소 (선택)',
+    kind: 'text',
+    secret: false,
+    value: value ?? '',
+    summary:
+      'HTTP·HTTPS·SOCKS5 주소. 비워두면 기본 연결을 사용합니다. DNS는 서버·기기의 설정을 따르며, 프록시에는 확인한 IP로 연결합니다. 주소는 서버·앱이 실행되는 환경 기준입니다.',
+  };
+}
 export function parseOutboundProxy(value: unknown): string | undefined {
-  if (value === null || value === undefined || value === '') return undefined;
+  if (value === null || value === undefined || (typeof value === 'string' && !value.trim())) return undefined;
   if (typeof value !== 'string' || value.length > 2048) throw new Error('compatibility_preferences_invalid');
   let url: URL;
   try {

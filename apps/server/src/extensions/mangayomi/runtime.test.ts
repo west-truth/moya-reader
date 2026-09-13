@@ -11,6 +11,27 @@ import { validateRepositoryIndex } from '../../../../../src/extensions/packages/
 
 import { fixtureRow, fixtureSource } from './test-fixture.js';
 describe('Mangayomi compatibility runtime', () => {
+  it('supports the direct WebView message bridge used by novel content and preserves its timeout and string result', async () => {
+    const calls: { timeoutMs?: number }[] = [];
+    const value = await invokeMangayomi({
+      entry: parseMangayomiIndex([{ ...fixtureRow, itemType: 2, isManga: false }])[0],
+      source: `class DefaultExtension extends MProvider {
+        getSourcePreferences(){return []}
+        async getHtmlContent(name,url){return await sendMessage('evaluateJavascriptViaWebview',JSON.stringify([url,{},['window.flutter_inappwebview.callHandler("setResponse","<p>본문</p>")'],45]));}
+        async cleanHtmlContent(html){return html;}
+      }`,
+      action: 'html',
+      params: { title: '회차', chapterUrl: 'https://site.example/chapter/1' },
+      signal: AbortSignal.timeout(5000),
+      webview: async (request) => {
+        calls.push(request);
+        return '<p>본문</p>';
+      },
+    });
+    expect(calls).toHaveLength(1);
+    expect(calls[0].timeoutMs).toBe(45000);
+    expect(novelHtmlText(value.result)).toBe('본문');
+  });
   it('does not save empty markup or a WebView bridge failure as a novel chapter', () => {
     expect(() => novelHtmlText('<script>ignored()</script><img src="cover.jpg">')).toThrow('invalid_source_result');
     expect(() => novelHtmlText('<h2>Chapter</h2><p>WEBVIEW_BRIDGE_ERROR</p>')).toThrow('source_connection_failed');
