@@ -90,11 +90,7 @@ async function copyPackage(name, from) {
   const target = join(output, 'node_modules', name);
   await mkdir(target, { recursive: true });
   if (name === '@moya/extension-runtime')
-    for (const file of ['package.json', ...manifest.files]) {
-      // The standalone runtime ships the contract constants, not a workspace-relative re-export.
-      const sourceFolder = file.startsWith('content-limits.') ? join(root, 'packages/extension-contracts') : folder;
-      await cp(join(sourceFolder, file), join(target, file));
-    }
+    for (const file of ['package.json', ...manifest.files]) await cp(join(folder, file), join(target, file));
   else
     await cp(folder, target, {
       recursive: true,
