@@ -1,4 +1,5 @@
 import { BookOpen, Check, Pencil, Play, RotateCcw, Star, Trash2 } from 'lucide-react';
+import type { PointerEvent } from 'react';
 import { bookFormatLabel, isFixedDocumentFormat } from '../../domain/book-format';
 import { formatCount, formatProgress } from '../../utils/format';
 import type { LibraryBookView } from './library-screen-model';
@@ -42,8 +43,19 @@ function activateBook({ book, model, actions }: LibraryBookItemProps): void {
     if (model.presentation.layoutMode !== 'mobile') actions.presentation.focusBook(book.novel);
     return;
   }
-  actions.presentation.focusBook(book.novel);
   void actions.books.open(book.novel);
+}
+
+function previewHandlers({ book, model, actions }: LibraryBookItemProps) {
+  return {
+    onPointerEnter: (event: PointerEvent<HTMLElement>) => {
+      if (event.pointerType === 'mouse' && !model.management.selectionMode)
+        actions.presentation.previewBook(book.novel);
+    },
+    onPointerLeave: (event: PointerEvent<HTMLElement>) => {
+      if (event.pointerType === 'mouse') actions.presentation.closeInspectorSoon();
+    },
+  };
 }
 
 function BookItemActions({ book, model, actions, importTask }: LibraryBookItemProps) {
@@ -251,6 +263,7 @@ function LibraryBookCard(props: LibraryBookItemProps) {
 
   return (
     <article
+      {...previewHandlers(props)}
       className={classNames('book-card', selected && 'is-selected', focused && 'is-focused')}
       role="listitem"
       data-focused={focused || undefined}
@@ -310,6 +323,7 @@ function LibraryBookListRow(props: LibraryBookItemProps) {
 
   return (
     <article
+      {...previewHandlers(props)}
       className={classNames('book-list-row', selected && 'is-selected', focused && 'is-focused')}
       role="listitem"
       data-focused={focused || undefined}

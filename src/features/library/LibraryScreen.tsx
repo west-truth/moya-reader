@@ -176,14 +176,6 @@ export function LibraryScreen({ model, actions, notice }: LibraryScreenProps) {
                 </>
               )}
             </section>
-            {model.presentation.layoutMode === 'compact' && model.presentation.inspectorOpen && (
-              <button
-                className="library-inspector-backdrop"
-                type="button"
-                aria-label="작품 정보 닫기"
-                onClick={actions.presentation.closeInspector}
-              />
-            )}
             <LibraryInspector book={focusedBook} model={model} actions={actions} />
           </div>
         </section>
