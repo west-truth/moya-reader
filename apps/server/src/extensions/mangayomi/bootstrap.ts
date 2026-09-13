@@ -86,6 +86,7 @@ globalThis.moyaExtension=async function(method,input,host){
  }
  else if(input.action==='detail'||input.action==='chapters')result=await extension.getDetail(p.workUrl);
  else if(input.action==='pages'){result=await extension.getPageList(p.chapterUrl);if(Array.isArray(result))result=result.map(page=>{const url=typeof page==='string'?page:page.url;return {url,headers:(typeof page==='object'&&page.headers)||extension.getHeaders(url)||{}};});}
+ else if(input.action==='html'){if(sourceMetadata.itemType!==2||typeof extension.getHtmlContent!=='function')unsupported();result=await extension.getHtmlContent(p.title,p.chapterUrl);if(typeof extension.cleanHtmlContent==='function')result=await extension.cleanHtmlContent(result);}
  else if(input.action==='headers')result=extension.getHeaders(p.url)||{};
  else unsupported();
  return {result,changes:preferenceChanges};

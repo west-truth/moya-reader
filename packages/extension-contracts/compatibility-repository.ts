@@ -10,6 +10,7 @@ export interface MangayomiEntry {
   dateFormatLocale?: string;
   typeSource?: string;
   isManga?: boolean;
+  itemType?: 0 | 2;
   sourceCodeUrl: string;
   format: 'mangayomi-js' | 'mangayomi-dart';
   isNsfw: boolean;
@@ -53,8 +54,8 @@ export function parseMangayomiIndex(value: unknown): MangayomiEntry[] {
       !['name', 'lang', 'version', 'baseUrl', 'sourceCodeUrl'].every(
         (key) => typeof row[key] === 'string' && row[key].length > 0 && row[key].length < 2048,
       ) ||
-      (row.itemType !== undefined && row.itemType !== 0) ||
-      row.isManga === false
+      (row.itemType !== undefined && ![0, 2].includes(row.itemType)) ||
+      (row.itemType !== 2 && row.isManga === false)
     )
       throw new Error('compatibility_repository_invalid');
     ids.add(id);
@@ -81,7 +82,8 @@ export function parseMangayomiIndex(value: unknown): MangayomiEntry[] {
           typeof row[key] === 'string' && row[key].length <= 2048 ? [[key, row[key]]] : [],
         ),
       ),
-      isManga: true,
+      isManga: row.itemType !== 2,
+      itemType: row.itemType === 2 ? 2 : 0,
       sourceCodeUrl: code.href,
       format: row.sourceCodeLanguage === 1 ? 'mangayomi-js' : 'mangayomi-dart',
       isNsfw: row.isNsfw === true,

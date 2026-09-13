@@ -6,6 +6,7 @@ export interface ApkMetadata {
   signers: string[];
 }
 export interface ApkSource {
+  contentKind?: 'text' | 'images';
   id: string;
   name: string;
   lang: string;

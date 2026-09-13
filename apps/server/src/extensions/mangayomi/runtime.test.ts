@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { invokeMangayomi } from './runtime.js';
+import { novelHtmlText } from './novel-content.js';
 import {
   parseMangayomiIndex,
   detectCompatibilityRepository,
@@ -10,6 +11,19 @@ import { validateRepositoryIndex } from '../../../../../src/extensions/packages/
 
 import { fixtureRow, fixtureSource } from './test-fixture.js';
 describe('Mangayomi compatibility runtime', () => {
+  it('does not save empty markup or a WebView bridge failure as a novel chapter', () => {
+    expect(() => novelHtmlText('<script>ignored()</script><img src="cover.jpg">')).toThrow('invalid_source_result');
+    expect(() => novelHtmlText('<h2>Chapter</h2><p>WEBVIEW_BRIDGE_ERROR</p>')).toThrow('source_connection_failed');
+    expect(novelHtmlText('<p>&lt;안녕&gt; <em>세계</em></p>')).toBe('<안녕> 세계');
+  });
+  it('distinguishes novel metadata from manga and rejects video extensions', () => {
+    const entries = parseMangayomiIndex([fixtureRow, { ...fixtureRow, id: 124, itemType: 2, isManga: false }]);
+    expect(entries.map((entry) => [entry.itemType, entry.isManga])).toEqual([
+      [0, true],
+      [2, false],
+    ]);
+    expect(() => parseMangayomiIndex([{ ...fixtureRow, itemType: 1, isManga: false }])).toThrow();
+  });
   it('runs maker-declared optional WebView behavior without inventing a service requirement', async () => {
     const browserCalls: unknown[] = [];
     const source = `class DefaultExtension extends MProvider {
