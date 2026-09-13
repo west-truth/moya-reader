@@ -22,7 +22,7 @@ mod desktop {
     use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
     const DRIVE: &str = "https://www.googleapis.com/auth/drive.file";
-    const CLIENT: &str = match option_env!("MOYA_GOOGLE_DESKTOP_CLIENT_ID") {
+    static CLIENT: &str = match option_env!("MOYA_GOOGLE_DESKTOP_CLIENT_ID") {
         Some(value) => value,
         None => "",
     };
@@ -231,7 +231,7 @@ mod desktop {
         if drive && !granted {
             return Err("Drive 접근 권한이 허용되지 않았습니다.".into());
         }
-        let account_id = field(&info, "sub")?;
+        let account_id = field(info, "sub")?;
         if expected.is_some_and(|id| id != account_id) {
             return Err(
                 "기존 연결과 다른 Google 계정입니다. 기존 연결을 해제한 뒤 다시 시도하세요.".into(),
@@ -251,43 +251,9 @@ mod desktop {
                 .as_str()
                 .filter(|v| v.len() <= 8192)
                 .map(str::to_string),
-            expires_at: expiry(&token)?,
+            expires_at: expiry(token)?,
             drive: granted,
         })
-    }
-
-    #[cfg(test)]
-    mod tests {
-        use super::*;
-        #[test]
-        fn consent_and_account_must_match_before_credentials_are_saved() {
-            let info = serde_json::json!({"sub":"reader","email":"reader@example.test"});
-            let mut token = serde_json::json!({"access_token":"test-token","expires_in":3600,"scope":"openid email"});
-            assert!(!credential(&token, &info, false, None).unwrap().drive);
-            assert!(credential(&token, &info, true, Some("reader")).is_err());
-            token["scope"] = serde_json::json!(DRIVE);
-            assert!(credential(&token, &info, true, Some("other-reader")).is_err());
-            assert!(
-                credential(&token, &info, true, Some("reader"))
-                    .unwrap()
-                    .drive
-            );
-            token["expires_in"] = serde_json::json!(0);
-            assert!(credential(&token, &info, true, Some("reader")).is_err());
-        }
-        #[test]
-        fn tokens_are_excluded_from_status_and_pkce_is_random() {
-            let value = credential(&serde_json::json!({"access_token":"private-token","expires_in":3600,"scope":DRIVE}),
-                &serde_json::json!({"sub":"reader"}), true, None).unwrap();
-            assert!(snapshot(Some(&value), false).access_token.is_none());
-            assert_eq!(
-                snapshot(Some(&value), true).access_token.as_deref(),
-                Some("private-token")
-            );
-            let first = random().unwrap();
-            assert_eq!(first.len(), 43);
-            assert_ne!(first, random().unwrap());
-        }
     }
 
     pub(super) async fn run(
@@ -339,6 +305,40 @@ mod desktop {
             save(&value)?;
         }
         Ok(snapshot(Some(&value), true))
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+        #[test]
+        fn consent_and_account_must_match_before_credentials_are_saved() {
+            let info = serde_json::json!({"sub":"reader","email":"reader@example.test"});
+            let mut token = serde_json::json!({"access_token":"test-token","expires_in":3600,"scope":"openid email"});
+            assert!(!credential(&token, &info, false, None).unwrap().drive);
+            assert!(credential(&token, &info, true, Some("reader")).is_err());
+            token["scope"] = serde_json::json!(DRIVE);
+            assert!(credential(&token, &info, true, Some("other-reader")).is_err());
+            assert!(
+                credential(&token, &info, true, Some("reader"))
+                    .unwrap()
+                    .drive
+            );
+            token["expires_in"] = serde_json::json!(0);
+            assert!(credential(&token, &info, true, Some("reader")).is_err());
+        }
+        #[test]
+        fn tokens_are_excluded_from_status_and_pkce_is_random() {
+            let value = credential(&serde_json::json!({"access_token":"private-token","expires_in":3600,"scope":DRIVE}),
+                &serde_json::json!({"sub":"reader"}), true, None).unwrap();
+            assert!(snapshot(Some(&value), false).access_token.is_none());
+            assert_eq!(
+                snapshot(Some(&value), true).access_token.as_deref(),
+                Some("private-token")
+            );
+            let first = random().unwrap();
+            assert_eq!(first.len(), 43);
+            assert_ne!(first, random().unwrap());
+        }
     }
 }
 

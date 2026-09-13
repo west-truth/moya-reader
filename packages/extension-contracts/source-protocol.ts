@@ -7,7 +7,7 @@ import type {
   SourceRelease,
   SourceWork,
 } from './source-sdk';
-import { MAX_SOURCE_IMAGES, MAX_SOURCE_ASSET_BYTES } from '../extension-runtime/content-limits.mjs';
+import { MAX_SOURCE_IMAGES, MAX_SOURCE_ASSET_BYTES } from './content-limits.mjs';
 
 /** This intermediate result must never cross the public catalog/Reader boundary. */
 export function validateSourceContentRequest(value: unknown): value is SourceContentRequest {
