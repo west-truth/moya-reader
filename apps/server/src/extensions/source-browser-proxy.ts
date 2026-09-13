@@ -1,6 +1,6 @@
 import { createServer, request as httpRequest } from 'node:http';
 import { request as httpsRequest } from 'node:https';
-import { resolveProxyAddress } from './proxy-dns.js';
+import { lookup } from 'node:dns/promises';
 import { connect, isIP, type Socket } from 'node:net';
 import type { Duplex } from 'node:stream';
 import { once } from 'node:events';
@@ -106,7 +106,9 @@ export async function openSourceBrowserProxy(scope: SourceWebViewScope, signal: 
     )
       throw new Error('source_url_denied');
     const host = url.hostname.replace(/^\[|\]$/g, '');
-    const addresses = await resolveProxyAddress(host, local ? undefined : scope.outboundProxy, scope.proxyDns, signal);
+    const addresses = isIP(host)
+      ? [{ address: host, family: isIP(host) }]
+      : await lookup(host, { all: true, verbatim: true });
     signal.throwIfAborted();
     if (!addresses.length || (!local && addresses.some((row) => !isPublicSourceAddress(row.address))))
       throw new Error('source_address_denied');

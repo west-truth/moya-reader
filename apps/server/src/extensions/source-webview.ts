@@ -17,7 +17,6 @@ export interface SourceWebViewScope {
   origins?: readonly string[];
   privateOrigins?: readonly string[];
   outboundProxy?: string;
-  proxyDns?: import('./proxy-dns.js').ProxyDnsMode;
   browserMode?: 'browser' | 'broker' | 'patchright';
 }
 
@@ -185,7 +184,6 @@ export class SourceWebViewHost {
               8 * 1024 * 1024,
               scope.outboundProxy,
               false,
-              scope.proxyDns,
             );
             total += response.bytes.length;
             if (total > 32 * 1024 * 1024) throw new Error('source_body_limit');

@@ -96,7 +96,6 @@ export async function invokeMangayomi(input: MangayomiInvocation, transport = co
           if (
             [
               'source_connection_failed',
-              'source_dns_failed',
               'source_request_timeout',
               'source_address_denied',
               'source_body_limit',

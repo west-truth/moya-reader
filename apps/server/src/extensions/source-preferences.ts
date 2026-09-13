@@ -5,8 +5,7 @@ import {
   type SourceBrowserMode,
 } from './source-browser-mode.js';
 import type { VerifiedMoyaPackage } from '../../../../src/extensions/packages/package-archive.js';
-import { OUTBOUND_PROXY_KEY, parseOutboundProxy } from './outbound-proxy.js';
-import { PROXY_DNS_KEY, proxyDnsMode, proxyDnsField, type ProxyDnsMode } from './proxy-dns.js';
+import { OUTBOUND_PROXY_KEY, LEGACY_PROXY_DNS_KEY, parseOutboundProxy, outboundProxyField } from './outbound-proxy.js';
 import type { SourceCredentialVault } from './source-credential-vault.js';
 import type { CompatibilityPreferences } from '../../../../src/extensions/packages/compatibility-preferences.js';
 import {
@@ -25,13 +24,15 @@ export function createSourcePreferences(vault: SourceCredentialVault) {
   ): {
     browserMode?: SourceBrowserMode;
     outboundProxy?: string;
-    proxyDns?: ProxyDnsMode;
     revision: number;
     values: Record<string, SourcePreferenceValue>;
     privateOrigins: string[];
   } => {
     const secret = vault.read(key(pkg, source, epoch))?.secret;
-    return secret ? JSON.parse(secret) : { revision: 0, values: {}, privateOrigins: [] };
+    const saved = secret ? JSON.parse(secret) : { revision: 0, values: {}, privateOrigins: [] };
+    delete saved.proxyDns;
+    delete saved.values[LEGACY_PROXY_DNS_KEY];
+    return saved;
   };
   return {
     values(pkg: VerifiedMoyaPackage, source: string, epoch: string) {
@@ -70,10 +71,7 @@ export function createSourcePreferences(vault: SourceCredentialVault) {
             saved.outboundProxy = parseOutboundProxy(value);
             continue;
           }
-          if (name === PROXY_DNS_KEY) {
-            saved.proxyDns = proxyDnsMode(value);
-            continue;
-          }
+          if (name === LEGACY_PROXY_DNS_KEY) continue;
           if (name === SOURCE_BROWSER_MODE_KEY && pkg.manifest.requestedAccess.webview) {
             saved.browserMode = sourceBrowserMode(value);
             continue;
@@ -102,19 +100,10 @@ export function createSourcePreferences(vault: SourceCredentialVault) {
         privateOrigins: saved.privateOrigins,
         networkPolicy: 'restricted',
         fields: [
-          {
-            key: OUTBOUND_PROXY_KEY,
-            title: '요청에 사용할 프록시 (선택)',
-            kind: 'text',
-            secret: false,
-            value: saved.outboundProxy ?? '',
-            summary:
-              'HTTP·HTTPS·SOCKS5 주소. 비워두면 서버 기본 연결을 사용합니다. 주소는 서버 또는 앱이 실행되는 환경 기준입니다.',
-          },
-          proxyDnsField(saved.proxyDns),
+          outboundProxyField(saved.outboundProxy),
           ...(pkg.manifest.requestedAccess.webview ? [sourceBrowserModeField(saved.browserMode)] : []),
           ...fields
-            .filter((field) => ![SOURCE_BROWSER_MODE_KEY, OUTBOUND_PROXY_KEY, PROXY_DNS_KEY].includes(field.key))
+            .filter((field) => ![SOURCE_BROWSER_MODE_KEY, OUTBOUND_PROXY_KEY, LEGACY_PROXY_DNS_KEY].includes(field.key))
             .map(({ defaultValue, ...field }) => ({
               ...field,
               ...(field.secret

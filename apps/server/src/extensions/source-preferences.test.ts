@@ -27,7 +27,7 @@ describe('maker-defined source preferences', () => {
         if (value) values.set(key, value);
       },
     });
-    return { store, pkg };
+    return { store, pkg, records: values };
   };
   it('does not invent a required service or token, and masks saved secrets', () => {
     const { store, pkg } = setup();
@@ -85,8 +85,13 @@ describe('maker-defined source preferences', () => {
     expect(store.values(browserPkg, sourceId, 'epoch').browserMode).toBe('patchright');
     expect(store.values(browserPkg, sourceId, 'epoch')).toMatchObject({
       outboundProxy: 'socks5://proxy:1080',
-      proxyDns: 'proxy',
     });
+    expect(store.values(browserPkg, sourceId, 'epoch')).not.toHaveProperty('proxyDns');
+    expect(
+      store
+        .manage(browserPkg, sourceId, 'epoch', { action: 'read' }, AbortSignal.timeout(1000))
+        .fields.some((field) => field.key === '__moya_proxy_dns'),
+    ).toBe(false);
     expect(store.values(browserPkg, sourceId, 'epoch').values).not.toHaveProperty('__moya_proxy_dns');
     expect(store.values(browserPkg, sourceId, 'epoch').values).not.toHaveProperty('__moya_webview_mode');
     expect(
@@ -94,6 +99,34 @@ describe('maker-defined source preferences', () => {
         .manage(browserPkg, sourceId, 'epoch', { action: 'read' }, AbortSignal.timeout(1000))
         .fields.find((f) => f.key === '__moya_webview_mode')?.value,
     ).toBe('patchright');
+  });
+  it('discards previously persisted fixed DNS options while retaining the proxy and maker secrets', () => {
+    const { store, pkg, records } = setup();
+    const key = JSON.stringify([pkg.manifest.extension.id, `preferences:${sourceId}`, 'epoch']);
+    records.set(key, {
+      secret: JSON.stringify({
+        revision: 3,
+        outboundProxy: 'http://proxy:8080',
+        proxyDns: 'proxy',
+        values: { token: 'private', __moya_proxy_dns: 'proxy' },
+        privateOrigins: [],
+      }),
+    });
+    const saved = store.values(pkg, sourceId, 'epoch');
+    expect(saved).not.toHaveProperty('proxyDns');
+    expect(saved.outboundProxy).toBe('http://proxy:8080');
+    expect(saved.values).toMatchObject({ token: 'private' });
+    store.manage(
+      pkg,
+      sourceId,
+      'epoch',
+      { action: 'save', revision: 3, changes: { __moya_proxy_dns: 'proxy' }, privateOrigins: [] },
+      AbortSignal.timeout(1000),
+    );
+    const persisted = JSON.parse(records.get(key)!.secret);
+    expect(persisted).not.toHaveProperty('proxyDns');
+    expect(persisted.values).not.toHaveProperty('__moya_proxy_dns');
+    expect(persisted.outboundProxy).toBe('http://proxy:8080');
   });
   it('rejects defaults containing credentials and invalid source settings', () => {
     expect(

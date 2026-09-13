@@ -111,7 +111,6 @@ export function createNodePackageExecution(
               values: {} as Record<string, string | number | boolean>,
               privateOrigins: [],
               outboundProxy: undefined,
-              proxyDns: undefined,
             };
       const outboundProxy = sourceOptions.outboundProxy ?? process.env.SOURCE_OUTBOUND_PROXY;
       const broker = createSourceBroker(
@@ -123,7 +122,7 @@ export function createNodePackageExecution(
           ...(credentialEpoch && authentication
             ? authentication.transport(pkg, String(input.sourceId), credentialEpoch)
             : options.transport),
-          ...(outboundProxy ? createSourceProxyTransport(outboundProxy, sourceOptions.proxyDns) : {}),
+          ...(outboundProxy ? createSourceProxyTransport(outboundProxy) : {}),
         },
       );
       const storage = createSourceStateSession(state, pkg.manifest.requestedAccess.storageKiB);
@@ -166,7 +165,6 @@ export function createNodePackageExecution(
                   vault: options.vault,
                   privateOrigins: sourceOptions.privateOrigins,
                   outboundProxy,
-                  proxyDns: sourceOptions.proxyDns,
                   browserMode: 'browserMode' in sourceOptions ? sourceOptions.browserMode : undefined,
                 },
                 2 * 1024 * 1024,
@@ -194,7 +192,6 @@ export function createNodePackageExecution(
                   origins: pkg.manifest.requestedAccess.networkOrigins,
                   privateOrigins: sourceOptions.privateOrigins,
                   outboundProxy,
-                  proxyDns: sourceOptions.proxyDns,
                   browserMode: 'browserMode' in sourceOptions ? sourceOptions.browserMode : undefined,
                 },
                 requestSignal,

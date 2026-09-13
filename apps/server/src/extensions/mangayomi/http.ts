@@ -1,6 +1,7 @@
 import { request as httpsRequest } from 'node:https';
 import { request as httpRequest } from 'node:http';
-import { resolveProxyAddress, type ProxyDnsMode } from '../proxy-dns.js';
+import { lookup } from 'node:dns/promises';
+import { isIP } from 'node:net';
 import { createBrotliDecompress, createGunzip, createInflate } from 'node:zlib';
 import { isPublicSourceAddress } from '@moya/extension-runtime/source-http';
 import { pinnedProxyAgent } from '../outbound-proxy.js';
@@ -19,20 +20,11 @@ export async function compatibilityHttp(
   maximum = 768 * 1024,
   outboundProxy?: string,
   followRedirects = true,
-  proxyDns: ProxyDnsMode = 'local',
 ) {
   const deadline = AbortSignal.any([signal, AbortSignal.timeout(15000)]);
   try {
     try {
-      return await compatibilityRequest(
-        input,
-        deadline,
-        privateOrigins,
-        maximum,
-        outboundProxy,
-        followRedirects,
-        proxyDns,
-      );
+      return await compatibilityRequest(input, deadline, privateOrigins, maximum, outboundProxy, followRedirects);
     } catch (error) {
       // Replay only reads after transport failure, with one shared deadline. Never replay provider job creation.
       if (
@@ -55,15 +47,7 @@ export async function compatibilityHttp(
         deadline.addEventListener('abort', cancel, { once: true });
         if (deadline.aborted) cancel();
       });
-      return await compatibilityRequest(
-        input,
-        deadline,
-        privateOrigins,
-        maximum,
-        outboundProxy,
-        followRedirects,
-        proxyDns,
-      );
+      return await compatibilityRequest(input, deadline, privateOrigins, maximum, outboundProxy, followRedirects);
     }
   } catch (error) {
     if (signal.aborted) throw Object.assign(new Error('cancelled'), { cause: error });
@@ -90,7 +74,6 @@ async function compatibilityRequest(
   maximum: number,
   outboundProxy?: string,
   followRedirects = true,
-  proxyDns: ProxyDnsMode = 'local',
 ) {
   if (
     !input ||
@@ -127,7 +110,9 @@ async function compatibilityRequest(
       throw new Error('source_url_denied');
     const host = url.hostname.replace(/^\[|\]$/g, '');
     const local = privateOrigins.includes(url.origin);
-    const addresses = await resolveProxyAddress(host, local ? undefined : outboundProxy, proxyDns, deadline);
+    const addresses = isIP(host)
+      ? [{ address: host, family: isIP(host) }]
+      : await lookup(host, { all: true, verbatim: true });
     if (!addresses.length || (addresses.some((row) => !isPublicSourceAddress(row.address)) && !local))
       throw new Error('source_address_denied');
     if (url.protocol === 'http:' && !local) throw new Error('source_url_denied');
