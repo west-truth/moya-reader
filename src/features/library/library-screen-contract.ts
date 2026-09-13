@@ -100,6 +100,9 @@ export interface LibraryScreenActions {
   presentation: {
     goHome(): void;
     focusBook(novel: Novel): void;
+    previewBook(novel: Novel): void;
+    keepInspectorOpen(): void;
+    closeInspectorSoon(): void;
     closeInspector(): void;
   };
   controls: {

@@ -1396,10 +1396,6 @@
   line-height: 1.55;
 }
 
-.library-inspector-backdrop {
-  display: none;
-}
-
 .segmented,
 .reader-mode-switch,
 .panel-tabs {
@@ -2120,14 +2116,6 @@
     display: inline-flex;
   }
 
-  .library-inspector-backdrop {
-    position: absolute;
-    z-index: calc(var(--layer-drawer) - 1);
-    inset: 0;
-    display: block;
-    background: var(--app-menu-backdrop);
-  }
-
   .library-batch-bar {
     left: 18px;
     right: 18px;
@@ -2399,8 +2387,7 @@
     font-size: 18px;
   }
 
-  .library-inspector,
-  .library-inspector-backdrop {
+  .library-inspector {
     display: none;
   }
 

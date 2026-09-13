@@ -87,6 +87,9 @@ function actions(): LibraryScreenActions {
     presentation: {
       goHome: vi.fn(),
       focusBook: vi.fn(),
+      previewBook: vi.fn(),
+      keepInspectorOpen: vi.fn(),
+      closeInspectorSoon: vi.fn(),
       closeInspector: vi.fn(),
     },
     controls: {
@@ -458,6 +461,10 @@ describe('LibraryScreen', () => {
         (element) => element.type === 'button' && element.props['aria-label'] === '읽는 작품 이어 읽기',
       );
 
+      (article!.props.onPointerEnter as (event: { pointerType: string }) => void)({ pointerType: 'mouse' });
+      (article!.props.onPointerLeave as (event: { pointerType: string }) => void)({ pointerType: 'mouse' });
+      (article!.props.onPointerEnter as (event: { pointerType: string }) => void)({ pointerType: 'touch' });
+
       expect(article?.props.onClick).toBeUndefined();
       expect(openButton?.props.type).toBe('button');
       expect(openButton?.props['aria-label']).toBe('읽는 작품 작품 상세 열기');
@@ -468,8 +475,10 @@ describe('LibraryScreen', () => {
       (continueButton!.props.onClick as () => void)();
       (favoriteButton!.props.onClick as () => void)();
 
-      expect(screenActions.presentation.focusBook).toHaveBeenCalledOnce();
-      expect(screenActions.presentation.focusBook).toHaveBeenCalledWith(reading);
+      expect(screenActions.presentation.focusBook).not.toHaveBeenCalled();
+      expect(screenActions.presentation.previewBook).toHaveBeenCalledWith(reading);
+      expect(screenActions.presentation.previewBook).toHaveBeenCalledTimes(1);
+      expect(screenActions.presentation.closeInspectorSoon).toHaveBeenCalledOnce();
       expect(screenActions.books.open).toHaveBeenCalledOnce();
       expect(screenActions.books.open).toHaveBeenCalledWith(reading);
       expect(screenActions.books.continueReading).toHaveBeenCalledOnce();
@@ -688,7 +697,7 @@ describe('LibraryScreen', () => {
     (openButton!.props.onClick as () => void)();
 
     expect(screenActions.books.open).toHaveBeenCalledWith(reading);
-    expect(screenActions.presentation.focusBook).toHaveBeenCalledWith(reading);
+    expect(screenActions.presentation.focusBook).not.toHaveBeenCalled();
   });
 
   it('derives direct action labels and exposes only whole-book progress in library projections', () => {

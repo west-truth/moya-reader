@@ -1,7 +1,6 @@
 import { BookOpen, Download, Pencil, Play, RotateCcw, Star, Trash2, X } from 'lucide-react';
 import { useEffect, useRef } from 'react';
 import { bookFormatLabel, bookUnitLabel, isFixedDocumentFormat } from '../../domain/book-format';
-import { useDismissibleLayer } from '../../shared/ui/use-dismissible-layer';
 import { formatBytes, formatCount, formatProgress } from '../../utils/format';
 import { BookCover } from './BookCover';
 import type { LibraryScreenProps } from './library-screen-contract';
@@ -14,7 +13,6 @@ function classNames(...values: Array<string | false | undefined>): string {
 
 export function LibraryInspector({ book, model, actions }: LibraryScreenProps & { readonly book?: LibraryBookView }) {
   const inspectorRef = useRef<HTMLElement>(null);
-  const closeRef = useRef<HTMLButtonElement>(null);
   const compact = model.presentation.layoutMode === 'compact';
   const compactOpen = compact && model.presentation.inspectorOpen;
   useEffect(() => {
@@ -22,13 +20,6 @@ export function LibraryInspector({ book, model, actions }: LibraryScreenProps & 
     if (compact && !compactOpen) inspectorRef.current.setAttribute('inert', '');
     else inspectorRef.current.removeAttribute('inert');
   }, [compact, compactOpen]);
-  useDismissibleLayer({
-    open: compactOpen,
-    modal: true,
-    containerRef: inspectorRef,
-    initialFocusRef: closeRef,
-    onClose: actions.presentation.closeInspector,
-  });
 
   if (!book) {
     return (
@@ -54,15 +45,17 @@ export function LibraryInspector({ book, model, actions }: LibraryScreenProps & 
       ref={inspectorRef}
       className={classNames('library-inspector', model.presentation.inspectorOpen && 'is-open')}
       aria-label={`선택한 작품: ${novel.title}`}
-      role={compact ? 'dialog' : undefined}
-      aria-modal={compact ? true : undefined}
       aria-hidden={compact && !compactOpen ? true : undefined}
-      tabIndex={compact ? -1 : undefined}
+      onPointerEnter={(event) => {
+        if (event.pointerType === 'mouse') actions.presentation.keepInspectorOpen();
+      }}
+      onPointerLeave={(event) => {
+        if (event.pointerType === 'mouse') actions.presentation.closeInspectorSoon();
+      }}
     >
       <header className="library-inspector-header">
         <span>작품 정보</span>
         <button
-          ref={closeRef}
           className="mini-icon-btn library-inspector-close"
           type="button"
           aria-label="작품 정보 닫기"
