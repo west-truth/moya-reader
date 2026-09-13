@@ -60,13 +60,15 @@ export async function invokeMangayomi(input: MangayomiInvocation, transport = co
     signal: input.signal,
     broker: {
       'compatibility.webview': async (raw, signal) => {
-        const request = raw as { url: string; headers?: Record<string, string>; scripts?: unknown };
+        const request = raw as { url: string; headers?: Record<string, string>; scripts?: unknown; timeout?: unknown };
         if (['preferences', 'metadata'].includes(input.action) || !input.webview)
           throw new Error('source_browser_unavailable');
         if (
           !Array.isArray(request?.scripts) ||
           request.scripts.length > 32 ||
-          request.scripts.some((script) => typeof script !== 'string' || script.length > 65536)
+          request.scripts.some((script) => typeof script !== 'string' || script.length > 65536) ||
+          (request.timeout !== undefined &&
+            (typeof request.timeout !== 'number' || !Number.isFinite(request.timeout) || request.timeout <= 0))
         )
           throw new Error('invalid_source_invocation');
         return await input.webview(
@@ -75,7 +77,10 @@ export async function invokeMangayomi(input: MangayomiInvocation, transport = co
             headers: request.headers,
             script: mangayomiWebViewScript(request.scripts as string[]),
             waitUntil: 'load',
-            timeoutMs: 25000,
+            timeoutMs:
+              request.timeout === undefined
+                ? 25000
+                : Math.max(100, Math.min(90000, Math.round(Number(request.timeout) * 1000))),
           },
           signal,
         );

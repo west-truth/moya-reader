@@ -61,8 +61,14 @@ function clearTimeout(id){timers.delete(id);}
 // Timers never occupy HTTP RPC slots, and cancellation immediately drops the callback.
 globalThis.__moyaRunTimers=()=>{const now=Date.now();const due=[...timers].filter(([,t])=>t.at<=now).sort((a,b)=>a[1].at-b[1].at||a[0]-b[0]).slice(0,32);for(const [id,t] of due){if(timers.delete(id))t.fn(...t.args);}};
 const evaluate=unsupported,fetch=unsupported;
-async function evaluateJavascriptViaWebview(url,headers,scripts){
-  return queuedRequest('compatibility.webview',{url,headers:headers||{},scripts});
+async function evaluateJavascriptViaWebview(url,headers,scripts,timeout){
+  return queuedRequest('compatibility.webview',{url,headers:headers||{},scripts,timeout});
+}
+async function sendMessage(method,payload){
+  if(method!=='evaluateJavascriptViaWebview')unsupported();
+  const args=typeof payload==='string'?JSON.parse(payload):payload;
+  if(!Array.isArray(args)||args.length<3||args.length>4)throw new Error('invalid_source_invocation');
+  return evaluateJavascriptViaWebview(...args);
 }
 `;
 export const mangayomiDispatch =
