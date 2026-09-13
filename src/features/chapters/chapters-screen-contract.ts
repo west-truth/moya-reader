@@ -5,6 +5,7 @@ import type { ChapterListModel, ChapterReadFilter, ChapterSort } from './chapter
 type MaybePromise = void | Promise<void>;
 
 export interface ChaptersScreenModel {
+  loading?: boolean;
   book: LibraryBookView;
   titleEditor: {
     editing: boolean;

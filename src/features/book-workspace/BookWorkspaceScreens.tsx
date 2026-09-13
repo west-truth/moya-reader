@@ -1,4 +1,4 @@
-import { lazy, Suspense, useEffect, useMemo, useState, type ReactNode } from 'react';
+import { lazy, Suspense, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import type { LibraryScreenActions, LibraryScreenModel } from '../library/library-screen-contract';
 import { LibraryHeader, LibraryMobileHeader, LibrarySidebar } from '../library/LibraryChrome';
 import { LibraryScreen } from '../library/LibraryScreen';
@@ -89,6 +89,20 @@ export function BookWorkspaceScreens({
   const layoutMode = useResponsiveLayoutMode();
   const [focusedBookId, setFocusedBookId] = useState<string>();
   const [inspectorOpen, setInspectorOpen] = useState(false);
+  const inspectorCloseTimer = useRef<ReturnType<typeof globalThis.setTimeout> | undefined>(undefined);
+  const keepInspectorOpen = () => {
+    if (inspectorCloseTimer.current !== undefined) globalThis.clearTimeout(inspectorCloseTimer.current);
+    inspectorCloseTimer.current = undefined;
+  };
+  const closeInspector = () => {
+    keepInspectorOpen();
+    setInspectorOpen(false);
+  };
+  const closeInspectorSoon = () => {
+    if (layoutMode !== 'compact') return;
+    keepInspectorOpen();
+    inspectorCloseTimer.current = globalThis.setTimeout(() => setInspectorOpen(false), 140);
+  };
   const activeShelfBookIds = useMemo(
     () =>
       libraryManagement.activeShelfId
@@ -168,12 +182,21 @@ export function BookWorkspaceScreens({
   }, [focusedBookId, libraryCollection.featuredBook?.novel.id, libraryCollection.visibleBooks, state.view]);
 
   useEffect(() => {
-    if (layoutMode === 'mobile') setInspectorOpen(false);
-  }, [layoutMode]);
+    if (layoutMode === 'mobile' || state.view !== 'library') setInspectorOpen(false);
+    return () => {
+      if (inspectorCloseTimer.current !== undefined) globalThis.clearTimeout(inspectorCloseTimer.current);
+      inspectorCloseTimer.current = undefined;
+    };
+  }, [layoutMode, state.view]);
 
   const focusBook = (novel: import('../../domain/types').Novel) => {
     setFocusedBookId(novel.id);
-    if (layoutMode === 'compact') setInspectorOpen(true);
+  };
+
+  const previewBook = (novel: import('../../domain/types').Novel) => {
+    if (layoutMode !== 'wide') return;
+    keepInspectorOpen();
+    setFocusedBookId(novel.id);
   };
 
   const goLibraryHome = () => {
@@ -182,11 +205,12 @@ export function BookWorkspaceScreens({
     controller.setLibraryFilter('all');
     libraryManagement.setActiveShelf(undefined);
     if (libraryManagement.selectionMode) libraryManagement.clearSelection();
-    setInspectorOpen(false);
+    closeInspector();
     controller.setView('library');
   };
 
   const openLibraryNovel = (novel: import('../../domain/types').Novel) => {
+    closeInspector();
     void openLibraryBook(novel, controller, externalSources);
   };
 
@@ -269,7 +293,10 @@ export function BookWorkspaceScreens({
     presentation: {
       goHome: goLibraryHome,
       focusBook,
-      closeInspector: () => setInspectorOpen(false),
+      previewBook,
+      keepInspectorOpen,
+      closeInspectorSoon,
+      closeInspector,
     },
     controls: {
       setFilter: (filter) => {
@@ -380,6 +407,7 @@ export function BookWorkspaceScreens({
               <Suspense fallback={null}>
                 <ChaptersScreen
                   model={{
+                    loading: state.navigationPending,
                     book: projection.selectedNovelScreenBook,
                     titleEditor: { editing: state.bookTitleEditing, draft: state.bookTitleDraft },
                     query: state.chapterQuery,

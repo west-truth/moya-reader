@@ -122,7 +122,7 @@ test('cancellation during a body read destroys the stream and releases the reque
   broker.dispose();
 });
 
-test('authentication failure survives the guest boundary as a safe code, never a raw response', async () => {
+test('ordinary access denial survives the guest boundary without claiming login is required', async () => {
   const broker = createSourceBroker(
     { origins },
     { lookup, transport: async () => ({ status: 401, headers: {}, body: Readable.from(['private upstream body']) }) },
@@ -135,10 +135,29 @@ test('authentication failure survives the guest boundary as a safe code, never a
         input: { url: origins[0] },
         broker: broker.methods,
       }),
-      { code: 'source_auth_required' },
+      { code: 'source_access_denied' },
     );
   } finally {
     broker.dispose();
+  }
+});
+
+test('HTTP denials require explicit authentication context before being classified as account errors', async () => {
+  for (const status of [401, 403]) {
+    for (const authenticated of [false, true]) {
+      const http = createSourceHttp(origins, {
+        lookup,
+        authenticate: async () => ({ authorization: 'Bearer fixture' }),
+        transport: async () => ({ status, headers: {}, body: Readable.from(['denied']) }),
+      });
+      await assert.rejects(http({ url: origins[0], response: 'text', authenticated }, signal()), {
+        message: authenticated
+          ? status === 401
+            ? 'source_auth_required'
+            : 'source_auth_forbidden'
+          : 'source_access_denied',
+      });
+    }
   }
 });
 

@@ -7,6 +7,7 @@ import { LibraryReadingProgress } from './LibraryReadingProgress';
 import { BookCover } from './BookCover';
 import { VirtualizedLibraryCollection } from './VirtualizedLibraryCollection';
 import { importTaskIsActive, type ImportTaskView } from '../import/import-task-projection';
+import { libraryBookPreviewHandlers } from './library-book-preview';
 import {
   LibraryImportTaskActions,
   LibraryImportTaskCard,
@@ -42,7 +43,6 @@ function activateBook({ book, model, actions }: LibraryBookItemProps): void {
     if (model.presentation.layoutMode !== 'mobile') actions.presentation.focusBook(book.novel);
     return;
   }
-  actions.presentation.focusBook(book.novel);
   void actions.books.open(book.novel);
 }
 
@@ -251,6 +251,7 @@ function LibraryBookCard(props: LibraryBookItemProps) {
 
   return (
     <article
+      {...libraryBookPreviewHandlers(book.novel, model, props.actions.presentation)}
       className={classNames('book-card', selected && 'is-selected', focused && 'is-focused')}
       role="listitem"
       data-focused={focused || undefined}
@@ -310,6 +311,7 @@ function LibraryBookListRow(props: LibraryBookItemProps) {
 
   return (
     <article
+      {...libraryBookPreviewHandlers(book.novel, model, props.actions.presentation)}
       className={classNames('book-list-row', selected && 'is-selected', focused && 'is-focused')}
       role="listitem"
       data-focused={focused || undefined}

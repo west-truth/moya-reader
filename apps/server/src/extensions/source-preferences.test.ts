@@ -70,10 +70,24 @@ describe('maker-defined source preferences', () => {
       browserPkg,
       sourceId,
       'epoch',
-      { action: 'save', revision: 0, changes: { __moya_webview_mode: 'patchright' }, privateOrigins: [] },
+      {
+        action: 'save',
+        revision: 0,
+        changes: {
+          __moya_webview_mode: 'patchright',
+          __moya_outbound_proxy: 'socks5://proxy:1080',
+          __moya_proxy_dns: 'proxy',
+        },
+        privateOrigins: [],
+      },
       AbortSignal.timeout(1000),
     );
     expect(store.values(browserPkg, sourceId, 'epoch').browserMode).toBe('patchright');
+    expect(store.values(browserPkg, sourceId, 'epoch')).toMatchObject({
+      outboundProxy: 'socks5://proxy:1080',
+      proxyDns: 'proxy',
+    });
+    expect(store.values(browserPkg, sourceId, 'epoch').values).not.toHaveProperty('__moya_proxy_dns');
     expect(store.values(browserPkg, sourceId, 'epoch').values).not.toHaveProperty('__moya_webview_mode');
     expect(
       store

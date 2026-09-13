@@ -191,6 +191,7 @@ export interface ExternalSourceController {
   readonly open: boolean;
   readonly loading: boolean;
   readonly catalogLoading?: boolean;
+  readonly catalogPreparing?: boolean;
   readonly catalogUpdateAvailable?: boolean;
   applyCatalogUpdate?(): void;
   readonly busy: boolean;
@@ -801,8 +802,10 @@ export function useExternalSourceController(options: UseExternalSourceController
       }
       const abort = new AbortController();
       listAbortRef.current = abort;
-      if (append) setCatalogLoading(true);
-      else {
+      if (append || localSeed) {
+        setLoading(false);
+        setCatalogLoading(true);
+      } else {
         setLoading(true);
         setCatalogLoading(false);
       }
@@ -1169,22 +1172,54 @@ export function useExternalSourceController(options: UseExternalSourceController
       const navigation = new AbortController();
       listAbortRef.current = navigation;
       setListFailure(undefined);
-      const [allLinks, chapters, nextNovels] = await Promise.all([
-        optionsRef.current.state.listLinks(),
-        optionsRef.current.listChapters(novel.id),
-        optionsRef.current.listNovels(),
-      ]);
+      // Show the selected book immediately; never keep the library waiting for network reads.
+      localSeriesPageSeedRef.current = undefined;
+      setLocalSeriesBookId(novel.id);
+      setLocalSeriesSeedNovel(novel);
+      setLocalSeriesSourceId(undefined);
+      setLocalSeriesReadingStates(new Map());
+      setLocalSeriesChapters([]);
+      setRawItems([]);
+      setDetail(localSeriesDetail(novel));
+      setSelectedKeys(new Set());
+      setNextCursor(undefined);
+      setStale(false);
+      setBrowse(undefined);
+      setBreadcrumbs([{ label: '라이브러리' }, { label: novel.title }]);
+      setLoading(true);
+      setCatalogLoading(false);
+      setOpen(true);
+      let localData;
+      try {
+        localData = await Promise.all([
+          optionsRef.current.state.listLinks(),
+          optionsRef.current.listChapters(novel.id),
+          optionsRef.current.getNovel(novel.id),
+        ]);
+      } catch {
+        if (!mountedRef.current || navigation.signal.aborted || listAbortRef.current !== navigation) return;
+        setLoading(false);
+        optionsRef.current.notify('회차 정보를 불러오지 못했습니다. 다시 시도해 주세요.', 'warning');
+        return;
+      }
       if (!mountedRef.current || navigation.signal.aborted || listAbortRef.current !== navigation) return;
+      const [allLinks, chapters, freshNovel] = localData;
+      if (!freshNovel || freshNovel.deletedAt) {
+        setLoading(false);
+        setOpen(false);
+        optionsRef.current.notify('삭제되었거나 사용할 수 없는 작품입니다.', 'warning');
+        return;
+      }
       const relatedLinks = allLinks.filter((link) => link.localBookId === novel.id && link.collectionRemoteId);
       // The caller may hold the pre-reader render snapshot. Prefer the just-loaded progress.
-      novel = nextNovels.find((candidate) => candidate.id === novel.id) ?? novel;
+      novel = freshNovel;
       const sourceId = relatedLinks[0]?.source.connectorId as ExtensionContributionId | undefined;
       const collectionRemoteId = relatedLinks[0]?.collectionRemoteId;
       const source = sourceId ? sources.find((candidate) => candidate.id === sourceId) : undefined;
       const canLoadCatalog = Boolean(sourceId && collectionRemoteId && source?.connection.state === 'connected');
       // Mark provisional local rows before publishing them, including unbatched async renders.
-      setLoading(canLoadCatalog);
-      setCatalogLoading(false);
+      setLoading(false);
+      setCatalogLoading(canLoadCatalog);
       const local = projectLocalSeries(novel, chapters, allLinks);
       const localSeed = {
         sourceId,
@@ -1200,7 +1235,7 @@ export function useExternalSourceController(options: UseExternalSourceController
       setLocalSeriesSourceId(sourceId);
       setLocalSeriesReadingStates(projectLocalSeriesReadingStates(novel, chapters));
       setLocalSeriesChapters(chapters);
-      setNovels([...nextNovels.filter((candidate) => candidate.id !== novel.id), novel]);
+      setNovels((current) => [...current.filter((candidate) => candidate.id !== novel.id), novel]);
       setLinks(local.links);
       setRawItems(local.items);
       setDetail(localSeriesDetail(novel));
@@ -4093,6 +4128,9 @@ export function useExternalSourceController(options: UseExternalSourceController
     busy,
     blockingBusy,
     catalogLoading,
+    catalogPreparing: Boolean(
+      catalogLoading && localSeriesPageSeedRef.current && !localSeriesPageSeedRef.current.remoteItems.length,
+    ),
     catalogUpdateAvailable,
     applyCatalogUpdate,
     importBusy,

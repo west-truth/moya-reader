@@ -9,6 +9,7 @@ import {
   MAX_SOURCE_IMAGES,
   MAX_SOURCE_CONTENT_BYTES,
   MAX_SOURCE_ASSET_BYTES,
+  MAX_SOURCE_TEXT_BYTES,
 } from '../../packages/extension-runtime/content-limits.mjs';
 
 const hash = (value) => createHash('sha256').update(value).digest('hex');
@@ -83,10 +84,13 @@ export class ApkSourceCatalog {
               'cover-read',
               'file-download',
               'release-download',
-              'image-content',
+              source.contentKind === 'text' ? 'document-content' : 'image-content',
             ],
             runtimes: ['self-host-gateway', 'tauri-native'],
-            seriesProfile: { kind: 'image_series', archiveFormat: 'cbz' },
+            seriesProfile:
+              source.contentKind === 'text'
+                ? { kind: 'document_series', format: 'txt', encoding: 'utf-8', chapterSplitMode: 'single' }
+                : { kind: 'image_series', archiveFormat: 'cbz' },
           },
         })),
       );
@@ -361,17 +365,29 @@ export class ApkSourceCatalog {
         } else {
           const chapter = cache.rows.find((row) => hash(row.url) === input.releaseId);
           if (!chapter) throw new Error('source_release_unavailable');
-          const pages = await request('pages', { chapterUrl: chapter.url, title: chapter.title });
-          if (!Array.isArray(pages) || !pages.length || pages.length > MAX_SOURCE_IMAGES)
-            throw new Error('apk_page_limit');
-          let total = 0;
-          const refs = await downloadPagesOrdered(pages, this.pageConcurrency, signal, async (page, pageSignal) => {
-            const ref = asset(await request('image', page, pageSignal));
-            total += ref.byteLength;
-            if (total > MAX_SOURCE_CONTENT_BYTES) throw new Error('source_body_limit');
-            return ref;
-          });
-          result = { kind: 'images', assets: refs };
+          if (source.descriptor.seriesProfile.kind === 'document_series') {
+            const text = await request('html', { chapterUrl: chapter.url, title: chapter.title });
+            if (typeof text !== 'string' || !text.trim() || text.includes('\0'))
+              throw new Error('invalid_source_result');
+            const bytes = Buffer.from(text, 'utf8');
+            if (bytes.length > MAX_SOURCE_TEXT_BYTES) throw new Error('source_body_limit');
+            const handle = randomUUID();
+            const contentType = 'text/plain;charset=utf-8';
+            assets.set(handle, new Blob([bytes], { type: contentType }));
+            result = { kind: 'text', asset: { handle, byteLength: bytes.length, sha256: hash(bytes), contentType } };
+          } else {
+            const pages = await request('pages', { chapterUrl: chapter.url, title: chapter.title });
+            if (!Array.isArray(pages) || !pages.length || pages.length > MAX_SOURCE_IMAGES)
+              throw new Error('apk_page_limit');
+            let total = 0;
+            const refs = await downloadPagesOrdered(pages, this.pageConcurrency, signal, async (page, pageSignal) => {
+              const ref = asset(await request('image', page, pageSignal));
+              total += ref.byteLength;
+              if (total > MAX_SOURCE_CONTENT_BYTES) throw new Error('source_body_limit');
+              return ref;
+            });
+            result = { kind: 'images', assets: refs };
+          }
         }
       } else throw new Error('invalid_source_invocation');
     }
