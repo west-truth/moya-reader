@@ -5,6 +5,7 @@ import {
   type SourceBrowserMode,
 } from '../source-browser-mode.js';
 import { createHash, randomUUID } from 'node:crypto';
+import { novelHtmlText } from './novel-content.js';
 import { mkdir, readFile, writeFile, rename } from 'node:fs/promises';
 import { join } from 'node:path';
 import { ApkSourceCatalog } from '../../../../../services/apk-worker/catalog.mjs';
@@ -102,7 +103,7 @@ export class MangayomiExtensionHost {
       {
         namespace: 'moya.mangayomi',
         sourceFile: 'source.js',
-        description: 'Mangayomi JavaScript 이미지 소스',
+        description: 'Mangayomi JavaScript 소스',
         pageConcurrency: 3,
       },
     );
@@ -329,7 +330,14 @@ export class MangayomiExtensionHost {
         digest: plan.digest,
         enabled: true,
         activation: randomUUID(),
-        sources: [{ id: plan.metadata.id, name: plan.metadata.name, lang: plan.metadata.lang }],
+        sources: [
+          {
+            id: plan.metadata.id,
+            name: plan.metadata.name,
+            lang: plan.metadata.lang,
+            contentKind: plan.metadata.itemType === 2 ? 'text' : 'images',
+          },
+        ],
         metadata: plan.metadata,
         fields,
         repository: plan.repository,
@@ -558,6 +566,7 @@ export class MangayomiExtensionHost {
         validatePreferenceChanges(updated.values);
         this.vault.write(scope(active), { secret: JSON.stringify(updated) });
       });
+    if (method === 'html') return novelHtmlText(output.result);
     const result = output.result as Record<string, unknown>;
     const work = (row: Record<string, unknown>) => ({
       url: row.link ?? row.url,

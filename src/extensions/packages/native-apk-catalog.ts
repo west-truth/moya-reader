@@ -99,8 +99,10 @@ export class NativeApkCatalog implements InstalledSourceCatalogPort {
     if (method === 'source.getCover' && validateSourceResult('source.getCover', value.result) && value.result)
       refs.push(value.result);
     if (method === 'source.getContent' && validateSourceResult('source.getContent', value.result)) {
-      if (value.result.kind !== 'images') throw new Error('invalid_source_result');
-      refs.push(...value.result.assets);
+      const textSource = this.getSource(id)?.descriptor.seriesProfile?.kind === 'document_series';
+      if (textSource !== (value.result.kind === 'text')) throw new Error('invalid_source_result');
+      if (value.result.kind === 'text') refs.push(value.result.asset);
+      else refs.push(...value.result.assets);
     }
     if (value.assets.size !== refs.length) throw new Error('invalid_source_assets');
     for (const ref of refs) {

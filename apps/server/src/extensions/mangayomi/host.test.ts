@@ -18,6 +18,54 @@ import { dispatchApkCommand } from '../apk-command.js';
 import { OUTBOUND_PROXY_KEY } from '../outbound-proxy.js';
 const roots: string[] = [];
 const hosts: MangayomiExtensionHost[] = [];
+it('installs a novel repository and returns cleaned UTF-8 chapters instead of image pages', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'moya-mangayomi-novel-'));
+  roots.push(root);
+  const row = { ...fixtureRow, itemType: 2, isManga: false };
+  const script =
+    fixtureSource +
+    `
+    DefaultExtension.prototype.getHtmlContent=async function(name,url){
+      if(name!=='One'||url!=='/1')throw new Error('wrong chapter');
+      return '<h2>제1화</h2><p>첫 &amp; 문장<br>다음 줄</p><p>둘째 <b>문장</b></p><script>untrusted()</script>';
+    };
+    DefaultExtension.prototype.cleanHtmlContent=async function(html){return html.replace('둘째','마지막');};
+    DefaultExtension.prototype.getPageList=function(){throw new Error('not manga');};`;
+  const host = await MangayomiExtensionHost.open(
+    join(root, 'host'),
+    new EncryptedSourceCredentialVault(join(root, 'vault'), Buffer.alloc(32, 3)),
+    async (input) => ({
+      bytes: Buffer.from(input.url.endsWith('.json') ? JSON.stringify([row]) : script),
+      statusCode: 200,
+      headers: {},
+      contentType: 'text/plain',
+      url: input.url,
+    }),
+  );
+  hosts.push(host);
+  const signal = new AbortController().signal;
+  const repo = 'https://repo.example/index.min.json';
+  await host.refreshRepository(repo, signal);
+  const pkg = host.snapshot().repositories[0].entries[0];
+  const review = await host.inspect(repo, pkg.pkg, pkg.code, signal);
+  await host.install(review.id, review.revision, signal);
+  const descriptor = host.catalog.getSources()[0].descriptor;
+  expect(descriptor.seriesProfile).toMatchObject({ kind: 'document_series', format: 'txt' });
+  const works = await host.catalog.invoke(descriptor.id, 'source.listWorks', {}, signal);
+  const workId = works.result.items[0].id;
+  const releases = await host.catalog.invoke(descriptor.id, 'source.listReleases', { workId }, signal);
+  const content = await host.catalog.invoke(
+    descriptor.id,
+    'source.getContent',
+    { workId, releaseId: releases.result.items[0].id },
+    signal,
+  );
+  expect(content.result.kind).toBe('text');
+  if (content.result.kind !== 'text') throw new Error('wrong content');
+  expect(await content.assets.get(content.result.asset.handle)?.text()).toBe(
+    '제1화\n\n첫 & 문장\n다음 줄\n\n마지막 문장',
+  );
+});
 afterEach(async () => {
   hosts.splice(0).forEach((h) => h.close());
   await Promise.all(roots.splice(0).map((path) => rm(path, { recursive: true, force: true })));

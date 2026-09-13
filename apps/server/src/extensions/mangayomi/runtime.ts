@@ -55,7 +55,7 @@ export async function invokeMangayomi(input: MangayomiInvocation, transport = co
     method: 'invoke',
     input: { action: input.action, params: input.params, preferences: input.preferences },
     profile: 'mangayomi-v1',
-    timeoutMs: input.action === 'chapters' ? 10 * 60_000 : input.action === 'pages' ? 150000 : 30000,
+    timeoutMs: input.action === 'chapters' ? 10 * 60_000 : ['pages', 'html'].includes(input.action) ? 150000 : 30000,
     memoryBytes: 64 * 1024 * 1024,
     signal: input.signal,
     broker: {
