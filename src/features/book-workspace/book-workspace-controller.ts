@@ -187,6 +187,8 @@ export class BookWorkspaceController {
   readonly setReaderMode = (readerMode: ReaderMode): void => this.updateState({ readerMode });
   readonly setReaderSessionDisplaySeconds = (readerSessionDisplaySeconds: number): void =>
     this.updateState({ readerSessionDisplaySeconds });
+  readonly resetReaderSessionTime = (): void =>
+    this.updateState({ readerSessionDisplaySeconds: 0, readerSessionCommittedSeconds: 0 });
 
   private async openNovelForNavigation(
     novel: Novel,
@@ -344,8 +346,6 @@ export class BookWorkspaceController {
     this.updateState({
       readerMode: 'read',
       readerProgress: 0,
-      readerSessionDisplaySeconds: 0,
-      readerSessionCommittedSeconds: 0,
       view: 'reader',
     });
     return true;
@@ -798,7 +798,7 @@ export class BookWorkspaceController {
     );
   }
 
-  readonly commitSessionTime = (novelId: string, deltaSeconds: number, readAt: string): void => {
+  readonly commitSessionTime = (novelId: string, deltaSeconds: number, readAt: string, currentSession = true): void => {
     const applyReadingTime = (novel: Novel): Novel =>
       novel.id === novelId
         ? {
@@ -811,7 +811,10 @@ export class BookWorkspaceController {
     this.updateState({
       selectedNovel: this.state.selectedNovel ? applyReadingTime(this.state.selectedNovel) : undefined,
       novels: this.state.novels.map(applyReadingTime),
-      readerSessionCommittedSeconds: this.state.readerSessionCommittedSeconds + deltaSeconds,
+      readerSessionCommittedSeconds:
+        currentSession && this.state.selectedNovel?.id === novelId
+          ? this.state.readerSessionCommittedSeconds + deltaSeconds
+          : this.state.readerSessionCommittedSeconds,
     });
     void this.ports.adjacent.refreshAfterLocalMutation('statistics');
   };

@@ -337,9 +337,87 @@ describe('reader hot-path ownership', () => {
     expect(committed).not.toHaveBeenCalled();
   });
 
+  it('commits hosted reading time after the raw session event is persisted', async () => {
+    let now = Date.parse('2026-07-10T00:00:00.000Z');
+    const appendReadingSession = vi.fn(async (_event: ReadingSessionEvent) => undefined);
+    const committed = vi.fn();
+    const session = new ReaderSessionTracker(
+      {
+        repository: {
+          capabilities: {
+            backend: 'hosted',
+            readingTimePersistence: 'session_only',
+            syncStorage: 'remote_backend',
+            remoteEventApply: false,
+            parsedNovelImport: 'upload_reparse',
+          },
+          addNovelReadingTime: vi.fn(async () => undefined),
+        },
+        personalizationRepository: { appendReadingSession } as never,
+        novelId: 'hosted-book',
+        onCommitted: committed,
+        onFailed: vi.fn(),
+        onDisplayChanged: vi.fn(),
+      },
+      now,
+      () => now,
+    );
+    now += 5_000;
+
+    await session.flush();
+
+    expect(appendReadingSession).toHaveBeenCalledOnce();
+    expect(committed).toHaveBeenCalledWith('hosted-book', 5, '2026-07-10T00:00:05.000Z');
+  });
+
+  it('retries an uncertain hosted write with the same operation before recording newer time', async () => {
+    let now = Date.parse('2026-07-10T00:00:00.000Z');
+    const attemptedEvents: ReadingSessionEvent[] = [];
+    const appendReadingSession = vi.fn(async (event: ReadingSessionEvent) => {
+      attemptedEvents.push(event);
+      if (attemptedEvents.length === 1) throw new Error('response lost');
+    });
+    const committed = vi.fn();
+    const session = new ReaderSessionTracker(
+      {
+        repository: {
+          capabilities: {
+            backend: 'hosted',
+            readingTimePersistence: 'session_only',
+            syncStorage: 'remote_backend',
+            remoteEventApply: false,
+            parsedNovelImport: 'upload_reparse',
+          },
+        },
+        personalizationRepository: { appendReadingSession } as never,
+        novelId: 'hosted-book',
+        onCommitted: committed,
+        onFailed: vi.fn(),
+        onDisplayChanged: vi.fn(),
+      },
+      now,
+      () => now,
+    );
+    now += 5_000;
+    await session.flush();
+    now += 3_000;
+    await session.flush();
+
+    expect(attemptedEvents).toHaveLength(3);
+    expect(attemptedEvents[1]?.operationId).toBe(attemptedEvents[0]?.operationId);
+    expect(attemptedEvents[1]?.activeSeconds).toBe(5);
+    expect(attemptedEvents[2]?.activeSeconds).toBe(3);
+    expect(committed.mock.calls.map((call) => call[1])).toEqual([5, 3]);
+  });
+
   it('does not duplicate a raw session event when only the legacy aggregate fails', async () => {
     let now = Date.parse('2026-07-10T00:00:00.000Z');
     const appendReadingSession = vi.fn(async (_event: ReadingSessionEvent) => undefined);
+    const addNovelReadingTime = vi
+      .fn<() => Promise<void>>()
+      .mockRejectedValueOnce(new Error('aggregate unavailable'))
+      .mockResolvedValue(undefined);
+    const committed = vi.fn();
     const session = new ReaderSessionTracker(
       {
         repository: {
@@ -350,14 +428,12 @@ describe('reader hot-path ownership', () => {
             remoteEventApply: true,
             parsedNovelImport: 'snapshot',
           },
-          addNovelReadingTime: vi.fn(async () => {
-            throw new Error('aggregate unavailable');
-          }),
+          addNovelReadingTime,
         },
         personalizationRepository: { appendReadingSession } as never,
         novelId: 'book',
         chapterId: 'chapter',
-        onCommitted: vi.fn(),
+        onCommitted: committed,
         onFailed: vi.fn(),
         onDisplayChanged: vi.fn(),
       },
@@ -370,6 +446,8 @@ describe('reader hot-path ownership', () => {
     await session.flush();
 
     expect(appendReadingSession).toHaveBeenCalledOnce();
+    expect(addNovelReadingTime).toHaveBeenCalledTimes(2);
+    expect(committed).toHaveBeenCalledWith('book', 5, '2026-07-10T00:00:05.000Z');
   });
 
   it('stops counting after five idle minutes and resumes on interaction', () => {
