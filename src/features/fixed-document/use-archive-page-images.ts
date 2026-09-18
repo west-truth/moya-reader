@@ -26,6 +26,7 @@ export function useArchivePageImages(input: {
   const [state, setState] = useState({ bookId, sessionKey, snapshot: EMPTY_SNAPSHOT });
   const loaderRef = useRef<ArchivePageLoader>();
   const metadataRef = useRef(new Map<string, NonNullable<Awaited<ReturnType<ReaderRepository['getParagraphPage']>>>>());
+  const legacyAssetIdentityRef = useRef(new Map<string, string>());
   const loadMetadata = useCallback(
     async (chapterId: string, revision: string, signal: AbortSignal) => {
       const key = `${revision}:${chapterId}`;
@@ -44,6 +45,22 @@ export function useArchivePageImages(input: {
   const sessionKeyRef = useRef(sessionKey);
   const snapshotRef = useRef(state.snapshot);
   const wantedKey = [...new Set([currentPage, ...wantedPages])].join(',');
+  const planRef = useRef({ currentPage, wanted: [] as number[], chapters, sourceRevision });
+  planRef.current = {
+    currentPage,
+    wanted: wantedKey.split(',').filter(Boolean).map(Number),
+    chapters,
+    sourceRevision,
+  };
+  const validatedSessionRef = useRef(sessionKey);
+  const resolvedIdentity = useCallback((index: number, planChapters: readonly Chapter[], revision: string) => {
+    const chapter = planChapters[index];
+    if (!chapter || chapter.documentSectionSourceContentHash) return pageIdentity(chapter, revision);
+    const assetId = legacyAssetIdentityRef.current.get(chapter.id);
+    return assetId
+      ? `${chapter.id}:asset:${assetId}`
+      : (snapshotRef.current.pages.get(index)?.identity ?? pageIdentity(chapter, revision));
+  }, []);
 
   useEffect(() => {
     snapshotRef.current = EMPTY_SNAPSHOT;
@@ -60,8 +77,14 @@ export function useArchivePageImages(input: {
           : undefined;
         signal.throwIfAborted();
         if (!resource) throw new Error(`${index + 1}페이지 이미지를 찾을 수 없습니다.`);
+        if (chapter && !chapter.documentSectionSourceContentHash && paragraph?.assetId) {
+          legacyAssetIdentityRef.current.set(chapter.id, paragraph.assetId);
+        }
         return {
           blob: resource.blob,
+          ...(chapter && !chapter.documentSectionSourceContentHash && paragraph?.assetId
+            ? { identity: `${chapter.id}:asset:${paragraph.assetId}` }
+            : {}),
           ...(paragraph?.documentPageType !== undefined || paragraph?.documentPageDouble !== undefined
             ? { hint: { type: paragraph.documentPageType, doublePage: paragraph.documentPageDouble } }
             : {}),
@@ -82,53 +105,46 @@ export function useArchivePageImages(input: {
   useEffect(() => {
     sessionKeyRef.current = sessionKey;
     if (!enabled || !chapters.length) return;
-    const controller = new AbortController();
     const wanted = wantedKey.split(',').filter(Boolean).map(Number);
-    const loader = loaderRef.current;
-    const resolve = async () => {
-      const identities = new Map<number, string>();
-      // Legacy chapter hashes describe titles. Resolve immutable asset IDs before invalidating images on append.
-      await Promise.all(
-        wanted.map(async (index) => {
-          const chapter = chapters[index];
-          if (!chapter || chapter.documentSectionSourceContentHash) {
-            identities.set(index, pageIdentity(chapter, sourceRevision));
-            return;
-          }
-          const page = await loadMetadata(chapter.id, sessionKey, controller.signal);
-          controller.signal.throwIfAborted();
-          identities.set(
-            index,
-            page?.paragraphs[0]?.assetId
-              ? `${chapter.id}:asset:${page.paragraphs[0].assetId}`
-              : pageIdentity(chapter, sourceRevision),
-          );
-        }),
-      );
-      controller.signal.throwIfAborted();
-      loader?.update(
-        currentPage,
-        wanted,
-        (index) =>
-          identities.get(index) ??
-          (chapters[index]?.documentSectionSourceContentHash
-            ? pageIdentity(chapters[index], sourceRevision)
-            : (snapshotRef.current.pages.get(index)?.identity ?? pageIdentity(chapters[index], sourceRevision))),
-      );
-    };
-    void resolve().catch(() => {
-      if (controller.signal.aborted || snapshotRef.current.pages.has(currentPage)) return;
-      setState({
-        bookId,
-        sessionKey,
-        snapshot: {
-          ...snapshotRef.current,
-          errors: new Map([[currentPage, '이미지 정보를 불러오지 못했습니다. 다시 이동해 주세요.']]),
-        },
-      });
+    // Keep scrolling on the loader's bounded queue. Waiting for every neighbour's
+    // metadata here turns rapid page changes into an abort-and-retry storm.
+    loaderRef.current?.update(currentPage, wanted, (index) => resolvedIdentity(index, chapters, sourceRevision));
+  }, [chapters, currentPage, enabled, resolvedIdentity, sessionKey, sourceRevision, wantedKey]);
+
+  useEffect(() => {
+    const previousSession = validatedSessionRef.current;
+    validatedSessionRef.current = sessionKey;
+    if (!enabled || previousSession === sessionKey) return;
+    const controller = new AbortController();
+    const loadedLegacyPages = [...snapshotRef.current.pages.keys()].filter((index) => {
+      const chapter = chapters[index];
+      return chapter && !chapter.documentSectionSourceContentHash;
     });
+    if (!loadedLegacyPages.length) return;
+    // A source revision changes only when content is appended or replaced. Validate
+    // retained legacy images then, without putting the normal scroll path on hold.
+    void Promise.all(
+      loadedLegacyPages.map(async (index) => {
+        const chapter = chapters[index]!;
+        const page = await loadMetadata(chapter.id, sessionKey, controller.signal);
+        controller.signal.throwIfAborted();
+        return { chapterId: chapter.id, assetId: page?.paragraphs[0]?.assetId };
+      }),
+    )
+      .then((identities) => {
+        if (controller.signal.aborted) return;
+        for (const identity of identities) {
+          if (identity.assetId) legacyAssetIdentityRef.current.set(identity.chapterId, identity.assetId);
+          else legacyAssetIdentityRef.current.delete(identity.chapterId);
+        }
+        const plan = planRef.current;
+        loaderRef.current?.update(plan.currentPage, plan.wanted, (index) =>
+          resolvedIdentity(index, plan.chapters, plan.sourceRevision),
+        );
+      })
+      .catch(() => undefined);
     return () => controller.abort();
-  }, [assets, bookId, chapters, currentPage, enabled, loadMetadata, sessionKey, sourceRevision, wantedKey]);
+  }, [chapters, enabled, loadMetadata, resolvedIdentity, sessionKey]);
 
   if (!enabled || state.bookId !== bookId) return EMPTY_SNAPSHOT;
   if (state.sessionKey === sessionKey) return state.snapshot;

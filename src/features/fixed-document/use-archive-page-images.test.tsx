@@ -41,6 +41,9 @@ describe('archive image hook lifecycle', () => {
     await act(async () => {
       renderer = create(<Harness />);
     });
+    await act(async () => {
+      for (let index = 0; index < 8; index += 1) await Promise.resolve();
+    });
     const original = snapshot.pages.get(0)?.url;
     const beforeAppend = renderedUrls.length;
     chapters = [...chapters, testChapter(2, { documentSectionSourceContentHash: 'episode-new' })];
@@ -96,6 +99,7 @@ describe('archive image hook lifecycle', () => {
     let renderer!: ReactTestRenderer;
     await act(async () => {
       renderer = create(<Harness />);
+      for (let index = 0; index < 8; index += 1) await Promise.resolve();
     });
     const start = urls.length;
     chapters = [...chapters, testChapter(2)];
@@ -209,5 +213,48 @@ describe('archive image hook lifecycle', () => {
       renderer.unmount();
     });
     expect(requests.slice(2).every((request) => request.signal.aborted)).toBe(true);
+  });
+
+  it('starts the foreground asset without waiting for neighbouring metadata', async () => {
+    vi.spyOn(URL, 'createObjectURL').mockReturnValue('blob:foreground');
+    vi.spyOn(URL, 'revokeObjectURL').mockImplementation(() => {});
+    const chapters = [testChapter(1), testChapter(2), testChapter(3)];
+    let resolvedNeighbours = 0;
+    const getParagraphPage = vi.fn(async (chapterId: string) => {
+      if (chapterId === chapters[1]!.id) return { paragraphs: [{ assetId: 'foreground' }] };
+      await new Promise((resolve) => setTimeout(resolve, 30));
+      resolvedNeighbours += 1;
+      return { paragraphs: [{ assetId: chapterId }] };
+    });
+    const neighbourCountsAtAssetLoad: number[] = [];
+    const getEmbeddedResource = vi.fn(async () => {
+      neighbourCountsAtAssetLoad.push(resolvedNeighbours);
+      return { blob: new Blob(['image']) };
+    });
+    const repository = { getParagraphPage } as unknown as ReaderRepository;
+    const assets = { getEmbeddedResource } as unknown as BookAssetRepository;
+    function Harness() {
+      useArchivePageImages({
+        enabled: true,
+        bookId: 'book',
+        sourceRevision: 'source',
+        chapters,
+        currentPage: 1,
+        wantedPages: new Set([0, 1, 2]),
+        repository,
+        assets,
+      });
+      return null;
+    }
+    const renderer = create(<Harness />);
+    await new Promise((resolve) => setTimeout(resolve, 60));
+    expect(getParagraphPage.mock.calls.map(([chapterId]) => chapterId)).toEqual([
+      chapters[1]!.id,
+      chapters[0]!.id,
+      chapters[2]!.id,
+    ]);
+    expect(getEmbeddedResource).toHaveBeenCalledWith('book', 'foreground', expect.any(AbortSignal));
+    expect(neighbourCountsAtAssetLoad[0]).toBe(0);
+    renderer.unmount();
   });
 });
