@@ -15,6 +15,7 @@ describe('comic reading profile store', () => {
       seamlessVertical: true,
       fit: 'width',
       background: 'black',
+      pageTurnMotion: 'page',
       pageCrops: { '3': { top: 0.01, right: 0.02, bottom: 0.03, left: 0.04 } },
     });
 
@@ -23,6 +24,7 @@ describe('comic reading profile store', () => {
       seamlessVertical: true,
       fit: 'width',
       background: 'black',
+      pageTurnMotion: 'page',
       pageCrops: undefined,
     });
     await expect(repository.get('book-a')).resolves.toMatchObject({

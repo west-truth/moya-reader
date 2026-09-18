@@ -133,6 +133,8 @@
 }
 
 .reader-paginated-root {
+  --reader-pagination-leaf-width: 100%;
+  --reader-pagination-page-gap: 0px;
   --reader-pagination-page-height: calc(100dvh - var(--reader-content-inset-top) - var(--reader-content-inset-bottom));
   --reader-pagination-image-max-height: max(
     4rem,
@@ -158,25 +160,76 @@
 
 .reader-paginated-page {
   position: absolute;
-  inset: 0;
+  top: 0;
+  bottom: 0;
+  left: max(0px, calc((100% - min(var(--reading-width), 100%)) / 2));
+  width: min(var(--reading-width), 100%);
+  max-width: none;
+  margin: 0;
   min-height: 0;
   overflow: hidden;
+  background: var(--reading-background, var(--reader-canvas));
+  transform-origin: center left;
+  backface-visibility: hidden;
 }
 
-.reader-pagination-stage.turn-next .reader-paginated-page.is-current {
+.reader-paginated-page.is-current {
+  z-index: 1;
+}
+
+.reader-paginated-page.is-outgoing {
+  z-index: 2;
+  pointer-events: none;
+}
+
+.reader-paginated-root.is-spread .reader-paginated-page {
+  left: calc((100% - (2 * var(--reader-pagination-leaf-width)) - var(--reader-pagination-page-gap)) / 2);
+  width: var(--reader-pagination-leaf-width);
+}
+
+.reader-paginated-root.is-spread .reader-paginated-page.is-secondary {
+  left: calc(
+    (100% - (2 * var(--reader-pagination-leaf-width)) - var(--reader-pagination-page-gap)) / 2 +
+      var(--reader-pagination-leaf-width) + var(--reader-pagination-page-gap)
+  );
+}
+
+.reader-pagination-stage.motion-smooth.turn-next .reader-paginated-page.is-current {
   animation: reader-page-in-next 180ms ease-out both;
 }
 
-.reader-pagination-stage.turn-next .reader-paginated-page.is-outgoing {
+.reader-pagination-stage.motion-smooth.turn-next .reader-paginated-page.is-outgoing {
   animation: reader-page-out-next 180ms ease-out both;
 }
 
-.reader-pagination-stage.turn-previous .reader-paginated-page.is-current {
+.reader-pagination-stage.motion-smooth.turn-previous .reader-paginated-page.is-current {
   animation: reader-page-in-previous 180ms ease-out both;
 }
 
-.reader-pagination-stage.turn-previous .reader-paginated-page.is-outgoing {
+.reader-pagination-stage.motion-smooth.turn-previous .reader-paginated-page.is-outgoing {
   animation: reader-page-out-previous 180ms ease-out both;
+}
+
+.reader-pagination-stage.motion-page {
+  perspective: 1400px;
+}
+
+.reader-pagination-stage.motion-page.turn-next .reader-paginated-page.is-current {
+  animation: reader-sheet-in-next 220ms cubic-bezier(0.22, 0.75, 0.24, 1) both;
+}
+
+.reader-pagination-stage.motion-page.turn-next .reader-paginated-page.is-outgoing {
+  animation: reader-sheet-out-next 220ms cubic-bezier(0.55, 0.05, 0.75, 0.45) both;
+}
+
+.reader-pagination-stage.motion-page.turn-previous .reader-paginated-page.is-current {
+  transform-origin: center right;
+  animation: reader-sheet-in-previous 220ms cubic-bezier(0.22, 0.75, 0.24, 1) both;
+}
+
+.reader-pagination-stage.motion-page.turn-previous .reader-paginated-page.is-outgoing {
+  transform-origin: center right;
+  animation: reader-sheet-out-previous 220ms cubic-bezier(0.55, 0.05, 0.75, 0.45) both;
 }
 
 @keyframes reader-page-in-next {
@@ -200,6 +253,30 @@
 @keyframes reader-page-out-previous {
   to {
     transform: translateY(100%);
+  }
+}
+
+@keyframes reader-sheet-in-next {
+  from {
+    transform: rotateY(7deg) translateX(3%);
+  }
+}
+
+@keyframes reader-sheet-out-next {
+  to {
+    transform: rotateY(-88deg) translateX(-5%);
+  }
+}
+
+@keyframes reader-sheet-in-previous {
+  from {
+    transform: rotateY(-7deg) translateX(-3%);
+  }
+}
+
+@keyframes reader-sheet-out-previous {
+  to {
+    transform: rotateY(88deg) translateX(5%);
   }
 }
 

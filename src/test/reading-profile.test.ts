@@ -46,6 +46,7 @@ describe('reading profile', () => {
       flow: 'scroll',
       modeLock: 'auto',
       pageTurnMotion: 'smooth',
+      pageSpread: 'single',
     });
     const legacyPaginated = {
       ...defaultSettings,
@@ -55,6 +56,7 @@ describe('reading profile', () => {
       flow: 'scroll',
       modeLock: 'auto',
       pageTurnMotion: 'instant',
+      pageSpread: 'single',
     });
   });
 
@@ -72,5 +74,13 @@ describe('reading profile', () => {
       flow: 'page',
       readingProfile: { modeLock: 'paginated', flow: 'paginated' },
     });
+  });
+
+  it('persists the selected page spread and book-style transition', () => {
+    expect(
+      resolveReadingProfile(
+        updateGlobalReadingProfile(defaultSettings, { pageSpread: 'double', pageTurnMotion: 'page' }),
+      ),
+    ).toMatchObject({ pageSpread: 'double', pageTurnMotion: 'page' });
   });
 });

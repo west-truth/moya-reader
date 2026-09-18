@@ -130,6 +130,7 @@ import { fixedDocumentSeekWindow, projectFixedDocumentSections } from './fixed-d
 import { useArchivePageImages } from './use-archive-page-images';
 import {
   fixedDocumentPanAxis,
+  fixedDocumentTapStep,
   handleFixedDocumentKeyDown,
   isFixedDocumentInteractiveTarget,
   parseFixedDocumentPageDraft,
@@ -684,6 +685,8 @@ export default function FixedDocumentScreen({
   const [fullscreen, setFullscreen] = useState(false);
   const [fit, setFit] = useState<FitMode>('page');
   const [viewMode, setViewMode] = useState<ViewMode>('single');
+  const [pageTurnDirection, setPageTurnDirection] = useState<-1 | 1>();
+  const pageTurnTimerRef = useRef<number>();
   const [zoom, setZoom] = useState(1);
   const [rotation, setRotation] = useState(0);
   const [pdf, setPdf] = useState<PDFDocumentProxy>();
@@ -1046,6 +1049,13 @@ export default function FixedDocumentScreen({
 
   const turnPage = useCallback(
     (step: -1 | 1) => {
+      if (!continuousView && comicProfile.pageTurnMotion !== 'instant') {
+        window.clearTimeout(pageTurnTimerRef.current);
+        const visualStep: -1 | 1 =
+          novel.format === 'image_archive' && comicProfile.direction === 'rtl' ? (step === 1 ? -1 : 1) : step;
+        setPageTurnDirection(visualStep);
+        pageTurnTimerRef.current = window.setTimeout(() => setPageTurnDirection(undefined), 240);
+      }
       if (effectiveViewMode === 'spread' && novel.format === 'image_archive') {
         const currentSpread = comicSpreadForPage(comicSpreads, pageIndex);
         const target = comicSpreads[Math.max(0, Math.min(comicSpreads.length - 1, currentSpread + step))];
@@ -1054,8 +1064,19 @@ export default function FixedDocumentScreen({
       }
       goToPage(pageIndex + step);
     },
-    [comicSpreads, effectiveViewMode, goToPage, novel.format, pageIndex],
+    [
+      comicProfile.direction,
+      comicProfile.pageTurnMotion,
+      comicSpreads,
+      continuousView,
+      effectiveViewMode,
+      goToPage,
+      novel.format,
+      pageIndex,
+    ],
   );
+
+  useEffect(() => () => window.clearTimeout(pageTurnTimerRef.current), []);
 
   const updateComicProfile = useCallback(
     (change: Partial<ComicReadingProfile>) => {
@@ -2230,15 +2251,14 @@ export default function FixedDocumentScreen({
     const deltaY = start ? event.clientY - start.y : 0;
     const viewportRect = viewportRef.current?.getBoundingClientRect();
     const horizontalPosition = viewportRect ? (event.clientX - viewportRect.left) / Math.max(1, viewportRect.width) : 0;
-    const shouldToggleImmersive = Boolean(
+    const isTap = Boolean(
       !cancelled &&
       start?.immersiveEligible &&
       !wasPinching &&
       Math.abs(deltaX) <= 12 &&
       Math.abs(deltaY) <= 12 &&
       performance.now() - start.at <= 500 &&
-      horizontalPosition >= 0.33 &&
-      horizontalPosition <= 0.67,
+      zoom <= 1.02,
     );
     const toggleImmersiveFromViewport = () => {
       suppressViewportClickRef.current = true;
@@ -2251,11 +2271,22 @@ export default function FixedDocumentScreen({
       if (!cancelled && start && !wasPinching && zoom <= 1.02)
         scrollSectionBoundary.onVerticalGesture(start.y - event.clientY, event.pointerType);
       scrollSectionBoundary.onPointerEnd();
-      if (shouldToggleImmersive) toggleImmersiveFromViewport();
+      if (isTap && horizontalPosition >= 0.33 && horizontalPosition <= 0.67) toggleImmersiveFromViewport();
       return;
     }
-    if (shouldToggleImmersive) {
-      toggleImmersiveFromViewport();
+    if (isTap) {
+      const step = fixedDocumentTapStep(
+        horizontalPosition,
+        novel.format === 'image_archive' && comicProfile.direction === 'rtl',
+      );
+      if (step === 0) toggleImmersiveFromViewport();
+      else {
+        suppressViewportClickRef.current = true;
+        window.setTimeout(() => {
+          suppressViewportClickRef.current = false;
+        }, 0);
+        if (canTurn(step)) turnPage(step);
+      }
       return;
     }
     if (!start || wasPinching || zoom > 1.02 || cancelled) return;
@@ -2680,7 +2711,7 @@ export default function FixedDocumentScreen({
           </aside>
         )}
         <section
-          className={`fixed-doc-viewport is-${fit} is-${effectiveViewMode} is-bg-${comicProfile.background ?? 'charcoal'}`}
+          className={`fixed-doc-viewport is-${fit} is-${effectiveViewMode} is-bg-${comicProfile.background ?? 'charcoal'}${pageTurnDirection ? ` is-page-turn-${pageTurnDirection > 0 ? 'next' : 'previous'} motion-${comicProfile.pageTurnMotion ?? 'slide'}` : ''}`}
           ref={viewportRef}
           onPointerDown={pointerDown}
           onPointerMove={pointerMove}
@@ -3301,6 +3332,21 @@ export default function FixedDocumentScreen({
               </select>
             </label>
             <label>
+              <span>페이지 전환</span>
+              <select
+                value={comicProfile.pageTurnMotion ?? 'slide'}
+                onChange={(event) =>
+                  updateComicProfile({
+                    pageTurnMotion: event.target.value as NonNullable<ComicReadingProfile['pageTurnMotion']>,
+                  })
+                }
+              >
+                <option value="instant">즉시</option>
+                <option value="slide">부드럽게</option>
+                <option value="page">책장 넘김</option>
+              </select>
+            </label>
+            <label>
               <span>읽는 방향</span>
               <select
                 value={comicProfile.direction}
@@ -3819,7 +3865,18 @@ export default function FixedDocumentScreen({
           )}
         </aside>
       )}
-      <footer className="fixed-doc-footer">
+      <footer className={`fixed-doc-footer${novel.format === 'image_archive' ? ' has-chapter-steps' : ''}`}>
+        {novel.format === 'image_archive' && (
+          <button
+            type="button"
+            className="fixed-doc-chapter-step"
+            disabled={!previousDocumentSection}
+            onClick={() => previousDocumentSection && goToPage(previousDocumentSection.startPageIndex)}
+            aria-label="이전 회차"
+          >
+            <ChevronLeft size={15} /> <span>이전화</span>
+          </button>
+        )}
         <span>
           {seekWindow.pageNumber} / {seekWindow.pageCount}
         </span>
@@ -3842,6 +3899,17 @@ export default function FixedDocumentScreen({
           </div>
         )}
         <span>{Math.round(seekWindow.progressPercent)}%</span>
+        {novel.format === 'image_archive' && (
+          <button
+            type="button"
+            className="fixed-doc-chapter-step"
+            disabled={!nextDocumentSection}
+            onClick={() => nextDocumentSection && goToPage(nextDocumentSection.startPageIndex)}
+            aria-label="다음 회차"
+          >
+            <span>다음화</span> <ChevronRight size={15} />
+          </button>
+        )}
       </footer>
     </main>
   );

@@ -207,6 +207,36 @@ export function ReaderSettingsLayout({
         )}
         {profile.modeLock !== 'scroll' && (
           <div className="reader-settings-subsection">
+            <h3>페이지 조판</h3>
+            <div className="segmented full" aria-label="페이지 조판">
+              <button
+                type="button"
+                className={profile.pageSpread === 'single' ? 'active' : ''}
+                onClick={() => updateProfile({ pageSpread: 'single' })}
+                aria-pressed={profile.pageSpread === 'single'}
+              >
+                한 쪽
+              </button>
+              <button
+                type="button"
+                className={profile.pageSpread === 'double' ? 'active' : ''}
+                onClick={() => updateProfile({ pageSpread: 'double' })}
+                aria-pressed={profile.pageSpread === 'double'}
+              >
+                두 쪽
+              </button>
+              <button
+                type="button"
+                className={profile.pageSpread === 'auto' ? 'active' : ''}
+                onClick={() => updateProfile({ pageSpread: 'auto' })}
+                aria-pressed={profile.pageSpread === 'auto'}
+              >
+                화면에 맞춤
+              </button>
+            </div>
+            <p className="field-help">
+              두 쪽 보기는 가로 760px 이상에서 적용되며, 화면에 맞춤은 넓은 화면에서 자동으로 전환됩니다.
+            </p>
             <h3>페이지 전환</h3>
             <div className="segmented full" aria-label="페이지 전환 효과">
               <button
@@ -224,6 +254,14 @@ export function ReaderSettingsLayout({
                 aria-pressed={profile.pageTurnMotion === 'smooth'}
               >
                 부드럽게
+              </button>
+              <button
+                type="button"
+                className={profile.pageTurnMotion === 'page' ? 'active' : ''}
+                onClick={() => updateProfile({ pageTurnMotion: 'page' })}
+                aria-pressed={profile.pageTurnMotion === 'page'}
+              >
+                책장 넘김
               </button>
             </div>
           </div>

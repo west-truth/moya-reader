@@ -8,6 +8,7 @@ import '../../src/styles/base.css';
 
 const legacy = new URLSearchParams(location.search).has('legacy');
 const seamless = !new URLSearchParams(location.search).has('gapped');
+const pagedComic = new URLSearchParams(location.search).has('paged-comic');
 const sectionSize = new URLSearchParams(location.search).has('long-comic') ? 200 : 40;
 let delay = 0;
 let failedPage = -1;
@@ -88,9 +89,10 @@ function Fixture() {
 async function main() {
   await new IndexedDbComicReadingProfileRepository().save('comic-review', {
     ...DEFAULT_COMIC_READING_PROFILE,
-    mode: 'vertical',
-    seamlessVertical: seamless,
+    mode: pagedComic ? 'single' : 'vertical',
+    seamlessVertical: pagedComic ? false : seamless,
     fit: 'width',
+    pageTurnMotion: 'page',
   });
   createRoot(document.getElementById('root')).render(React.createElement(Fixture));
 }

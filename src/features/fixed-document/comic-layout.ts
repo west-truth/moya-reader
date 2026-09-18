@@ -54,6 +54,7 @@ export const DEFAULT_COMIC_READING_PROFILE: ComicReadingProfile = {
   manualCrop: { top: 0, right: 0, bottom: 0, left: 0 },
   gap: 8,
   background: 'charcoal',
+  pageTurnMotion: 'slide',
 };
 
 function pairedSpread(

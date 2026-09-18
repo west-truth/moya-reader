@@ -15,6 +15,8 @@ const longChapter = new URLSearchParams(location.search).has('long');
 const withNextChapter = new URLSearchParams(location.search).has('next');
 const shortParagraphs = new URLSearchParams(location.search).has('short');
 const withImages = new URLSearchParams(location.search).has('images');
+const spread = new URLSearchParams(location.search).get('spread');
+const pageMotion = new URLSearchParams(location.search).get('motion');
 const chapter = {
   id: `position-chapter-${singleParagraph ? 1 : 120}`,
   novelId: 'position-book',
@@ -97,7 +99,15 @@ const repository = {
 function Fixture() {
   const [flow, setFlow] = useState(new URLSearchParams(location.search).has('paged') ? 'paginated' : 'scroll');
   const [pageTransitionPending, setPageTransitionPending] = useState(false);
-  const [settings, setSettings] = useState(defaultSettings);
+  const [settings, setSettings] = useState(() => ({
+    ...defaultSettings,
+    readingProfile: {
+      ...defaultSettings.readingProfile,
+      ...(spread === 'double' || spread === 'auto' ? { pageSpread: spread } : {}),
+      ...(pageMotion === 'page' ? { pageTurnMotion: 'page' } : {}),
+      ...(new URLSearchParams(location.search).has('paged') ? { modeLock: 'paginated' } : {}),
+    },
+  }));
   const [mounted, setMounted] = useState(true);
   const [openRequest, setOpenRequest] = useState(() => {
     const target = new URLSearchParams(location.search).get('resume');

@@ -28,3 +28,12 @@ The reference was the page-retention approach in Suwayomi WebUI's `BasePager` an
 ## Limits
 
 This intentionally trades memory for stable backward scrolling. The active episode retains visited image URLs and DOM nodes; a very long single episode can consume substantially more memory than the former 20-image cache. Episode changes release old images. These browser checks do not establish stability on every device, external network, or an hours-long session. In particular, the production-data probe measures sampled geometry and mounted images, not subjective smoothness on the user's Chrome session.
+
+## Reader UX follow-up
+
+- Single-page and spread comic modes accept taps in the outer thirds to turn pages; the center third still toggles immersive controls. RTL comics reverse the visual tap direction. Pinch/zoom, drags, controls, and continuous scrolling keep their existing behavior.
+- The comic footer exposes previous/next episode buttons alongside a draggable per-episode seek bar. On mobile the episode buttons collapse to icon-sized controls.
+- Comic page modes can use instant, short slide, or book-style transitions. Continuous modes do not animate page changes, so the stabilized scroll path does not gain per-frame work.
+- Paginated text can render one page, two pages above 760 px, or automatically use two pages above 1100 px. A turn advances or reverses a full spread. Narrow screens fall back to one page without changing the saved preference.
+- The text reader adds an optional book-style transition and preserves the existing instant and smooth choices. Both readers honor reduced-motion preferences.
+- Browser regression covers text spread adjacency and reverse turns, narrow-screen fallback, mobile comic tap turns, footer episode navigation, delayed image geometry (168 checks, no anomalies), and the previous long-comic retention/replacement cases.

@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { dispatchAndroidBackEscape } from '../../platform/android/app-navigation';
 import {
   fixedDocumentPanAxis,
+  fixedDocumentTapStep,
   handleFixedDocumentKeyDown,
   isFixedDocumentInteractiveTarget,
   parseFixedDocumentPageDraft,
@@ -121,5 +122,13 @@ describe('fixed document input boundaries', () => {
     expect(parseFixedDocumentPageDraft('0', 100)).toBe(0);
     expect(parseFixedDocumentPageDraft('-4', 100)).toBe(0);
     expect(parseFixedDocumentPageDraft('101', 100)).toBe(99);
+  });
+
+  it('maps paged-view taps to reading direction while reserving the center for chrome', () => {
+    expect(fixedDocumentTapStep(0.1, false)).toBe(-1);
+    expect(fixedDocumentTapStep(0.5, false)).toBe(0);
+    expect(fixedDocumentTapStep(0.9, false)).toBe(1);
+    expect(fixedDocumentTapStep(0.1, true)).toBe(1);
+    expect(fixedDocumentTapStep(0.9, true)).toBe(-1);
   });
 });
