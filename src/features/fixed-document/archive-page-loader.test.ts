@@ -119,4 +119,16 @@ describe('archive foreground image loading', () => {
     h.loader.update(5, [5]);
     expect(h.requests).toHaveLength(3);
   });
+
+  it('publishes a resolved immutable identity without reloading the ready image', async () => {
+    const h = harness();
+    h.loader.update(4, [4], () => 'page:pending');
+    h.requests[0]!.resolve({ ...page(4), identity: 'page:asset:stable' });
+    await settle();
+    expect(h.snapshot().pages.get(4)?.identity).toBe('page:asset:stable');
+    h.loader.update(4, [4], () => 'page:asset:stable');
+    expect(h.requests).toHaveLength(1);
+    expect(URL.revokeObjectURL).not.toHaveBeenCalled();
+    h.loader.dispose();
+  });
 });

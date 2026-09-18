@@ -2,6 +2,7 @@ import type { ComicPageLayoutHint } from './comic-layout';
 
 export interface LoadedArchivePage {
   readonly blob: Blob;
+  readonly identity?: string;
   readonly hint?: ComicPageLayoutHint;
 }
 
@@ -113,6 +114,7 @@ export class ArchivePageLoader {
     try {
       const page = await this.load(index, controller.signal);
       if (this.disposed || controller.signal.aborted || !this.wanted.includes(index)) return;
+      if (page.identity) this.identities.set(index, page.identity);
       this.pages.set(index, {
         url: URL.createObjectURL(page.blob),
         identity: this.identities.get(index)!,
