@@ -496,6 +496,15 @@
   padding: 0;
   opacity: 1;
 }
+.fixed-doc-viewport.is-continuous-seamless:has(.is-page-flow) {
+  overflow-anchor: none;
+}
+.fixed-doc-pages.is-page-flow article {
+  position: relative;
+  width: 100%;
+  padding: 0;
+  opacity: 1;
+}
 .fixed-doc-viewport.is-continuous-seamless .fixed-doc-pages img {
   width: var(--fixed-doc-seamless-page-width, 100%);
   height: auto;

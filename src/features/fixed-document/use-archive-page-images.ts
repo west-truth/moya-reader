@@ -4,6 +4,8 @@ import type { BookAssetRepository } from '../../repositories/book-asset-reposito
 import type { ReaderRepository } from '../../repositories/reader-repository';
 import { ArchivePageLoader, type ArchivePageSnapshot } from './archive-page-loader';
 import { archivePageSourceIdentity } from './archive-thumbnail';
+import { archiveImageDimensions } from './archive-image-dimensions';
+import type { ContinuousImageDimensions } from './continuous-scroll';
 
 const EMPTY_SNAPSHOT: ArchivePageSnapshot = { pages: new Map(), errors: new Map() };
 
@@ -20,9 +22,14 @@ export function useArchivePageImages(input: {
   readonly wantedPages: ReadonlySet<number>;
   readonly repository: ReaderRepository;
   readonly assets: BookAssetRepository;
+  readonly retainedPages?: readonly number[];
+  readonly onDimensions?: (index: number, dimensions: ContinuousImageDimensions) => void;
 }): ArchivePageSnapshot {
-  const { enabled, bookId, sourceRevision, chapters, currentPage, wantedPages, repository, assets } = input;
+  const { enabled, bookId, sourceRevision, chapters, currentPage, wantedPages, repository, assets, retainedPages } =
+    input;
   const sessionKey = `${bookId}:${sourceRevision}`;
+  const dimensionsCallbackRef = useRef(input.onDimensions);
+  dimensionsCallbackRef.current = input.onDimensions;
   const [state, setState] = useState({ bookId, sessionKey, snapshot: EMPTY_SNAPSHOT });
   const loaderRef = useRef<ArchivePageLoader>();
   const metadataRef = useRef(new Map<string, NonNullable<Awaited<ReturnType<ReaderRepository['getParagraphPage']>>>>());
@@ -45,12 +52,13 @@ export function useArchivePageImages(input: {
   const sessionKeyRef = useRef(sessionKey);
   const snapshotRef = useRef(state.snapshot);
   const wantedKey = [...new Set([currentPage, ...wantedPages])].join(',');
-  const planRef = useRef({ currentPage, wanted: [] as number[], chapters, sourceRevision });
+  const planRef = useRef({ currentPage, wanted: [] as number[], chapters, sourceRevision, retainedPages });
   planRef.current = {
     currentPage,
     wanted: wantedKey.split(',').filter(Boolean).map(Number),
     chapters,
     sourceRevision,
+    retainedPages,
   };
   const validatedSessionRef = useRef(sessionKey);
   const resolvedIdentity = useCallback((index: number, planChapters: readonly Chapter[], revision: string) => {
@@ -82,6 +90,7 @@ export function useArchivePageImages(input: {
         }
         return {
           blob: resource.blob,
+          ...(planRef.current.retainedPages ? { dimensions: await archiveImageDimensions(resource.blob, signal) } : {}),
           ...(chapter && !chapter.documentSectionSourceContentHash && paragraph?.assetId
             ? { identity: `${chapter.id}:asset:${paragraph.assetId}` }
             : {}),
@@ -91,6 +100,11 @@ export function useArchivePageImages(input: {
         };
       },
       (snapshot) => {
+        for (const [index, page] of snapshot.pages) {
+          if (page.dimensions && page !== snapshotRef.current.pages.get(index)) {
+            dimensionsCallbackRef.current?.(index, page.dimensions);
+          }
+        }
         snapshotRef.current = snapshot;
         setState({ bookId, sessionKey: sessionKeyRef.current, snapshot });
       },
@@ -108,8 +122,13 @@ export function useArchivePageImages(input: {
     const wanted = wantedKey.split(',').filter(Boolean).map(Number);
     // Keep scrolling on the loader's bounded queue. Waiting for every neighbour's
     // metadata here turns rapid page changes into an abort-and-retry storm.
-    loaderRef.current?.update(currentPage, wanted, (index) => resolvedIdentity(index, chapters, sourceRevision));
-  }, [chapters, currentPage, enabled, resolvedIdentity, sessionKey, sourceRevision, wantedKey]);
+    loaderRef.current?.update(
+      currentPage,
+      wanted,
+      (index) => resolvedIdentity(index, chapters, sourceRevision),
+      retainedPages,
+    );
+  }, [chapters, currentPage, enabled, resolvedIdentity, sessionKey, sourceRevision, wantedKey, retainedPages]);
 
   useEffect(() => {
     const previousSession = validatedSessionRef.current;
@@ -138,8 +157,11 @@ export function useArchivePageImages(input: {
           else legacyAssetIdentityRef.current.delete(identity.chapterId);
         }
         const plan = planRef.current;
-        loaderRef.current?.update(plan.currentPage, plan.wanted, (index) =>
-          resolvedIdentity(index, plan.chapters, plan.sourceRevision),
+        loaderRef.current?.update(
+          plan.currentPage,
+          plan.wanted,
+          (index) => resolvedIdentity(index, plan.chapters, plan.sourceRevision),
+          plan.retainedPages,
         );
       })
       .catch(() => undefined);

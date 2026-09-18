@@ -26,6 +26,7 @@ jobs:
       - run: corepack pnpm check:web-local
         env:
           WEB_BASE_PATH: /moya-reader/
+      - run: pnpm exec vitest run src/features/fixed-document/ComicPageFlow.test.ts src/features/fixed-document/archive-page-loader.test.ts src/features/fixed-document/use-archive-page-images.test.tsx
       - run: pnpm exec playwright-core install --with-deps chromium
       - run: pnpm check:web-pages:browser
         env:
