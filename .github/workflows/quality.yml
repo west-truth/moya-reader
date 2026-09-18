@@ -30,6 +30,9 @@ jobs:
       - run: pnpm check:web-pages:browser
         env:
           READER_UI_BROWSER_CHANNEL: chromium
+      - run: pnpm check:reader-stability
+        env:
+          READER_UI_BROWSER_CHANNEL: chromium
 
   hosted-source:
     # Keep the source-release license inventory and hosted deployment checks on

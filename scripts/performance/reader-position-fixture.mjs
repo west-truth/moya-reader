@@ -33,10 +33,12 @@ const novel = {
 let offset = 0;
 const paragraphs = Array.from({ length: chapter.paragraphCount }, (_, index) => {
   const text =
-    `문단 ${index + 1}. ` +
-    '이것은 독서 위치를 확인하기 위한 합성 본문입니다. '.repeat(
-      shortParagraphs ? 0 : singleParagraph ? 80 : variableParagraphs ? 1 + (index % 12) : 5,
-    );
+    withImages && index % 20 === 19 && new URLSearchParams(location.search).has('empty-images')
+      ? ''
+      : `문단 ${index + 1}. ` +
+        '이것은 독서 위치를 확인하기 위한 합성 본문입니다. '.repeat(
+          shortParagraphs ? 0 : singleParagraph ? 80 : variableParagraphs ? 1 + (index % 12) : 5,
+        );
   const startOffsetInChapter = offset;
   offset += text.length;
   return {
@@ -93,29 +95,33 @@ const repository = {
   saveReadingPosition: async (position) => writes.push({ ...position, activeFlow: globalThis.readerFixture?.flow }),
 };
 function Fixture() {
-  const [flow, setFlow] = useState('scroll');
+  const [flow, setFlow] = useState(new URLSearchParams(location.search).has('paged') ? 'paginated' : 'scroll');
+  const [pageTransitionPending, setPageTransitionPending] = useState(false);
+  const [settings, setSettings] = useState(defaultSettings);
   const [mounted, setMounted] = useState(true);
   const [openRequest, setOpenRequest] = useState(() => {
     const target = new URLSearchParams(location.search).get('resume');
     return target === null
       ? undefined
-      : {
-          sequence: 1,
-          chapterId: chapter.id,
+      : screenHandle.prepareOpen(chapter.id, {
           restore: true,
           fallbackScrollTop: 0,
           position: { chapterId: chapter.id, paragraphIndex: Number(target) + 1, scrollTop: 0, chapterProgress: 0.75 },
-        };
+        });
   });
   const apiRef = useRef();
   globalThis.readerFixture = {
     setFlow,
+    setPageTransitionPending,
+    setFontSize: (size) =>
+      setSettings((current) => ({ ...current, readingProfile: { ...current.readingProfile, fontSize: size } })),
     setMounted,
     failPages: (value) => {
       failPages = value;
     },
     flow,
     api: () => apiRef.current,
+    pendingOpen: () => screenHandle.peekOpen(chapter.id),
     writes,
     observations,
     pageRequests,
@@ -148,7 +154,7 @@ function Fixture() {
     },
   };
   const style = {
-    '--reading-font-size': '20px',
+    '--reading-font-size': `${settings.readingProfile.fontSize}px`,
     '--reading-font-weight': 400,
     '--reading-line-height': 1.8,
     '--reading-width': '740px',
@@ -158,7 +164,7 @@ function Fixture() {
   };
   return React.createElement(
     'main',
-    { className: 'reader-screen', style },
+    { className: `reader-screen${pageTransitionPending ? ' scroll-to-page-settling' : ''}`, style },
     mounted &&
       React.createElement(ReaderViewport, {
         repository,
@@ -167,7 +173,8 @@ function Fixture() {
         chapters: withNextChapter
           ? [chapter, { ...chapter, id: 'next-chapter', index: 2, title: 'Next chapter' }]
           : [chapter],
-        settings: defaultSettings,
+        settings,
+        pageTransitionPending,
         readingFlow: flow,
         mode: 'read',
         search: { highlightQuery: '' },

@@ -513,3 +513,13 @@
   text-align: center;
   touch-action: none;
 }
+
+/* Keep the restored source frame until the destination page has both geometry and text. */
+.reader-screen.scroll-to-page-settling [data-reader-layer='scroll'].is-inactive {
+  z-index: 2;
+  visibility: visible;
+}
+.reader-screen.scroll-to-page-settling .reader-paginated-root.is-active {
+  visibility: hidden;
+  pointer-events: none;
+}

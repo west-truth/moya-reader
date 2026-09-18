@@ -108,6 +108,7 @@ function ReaderScreenComponent({ model, screenHandle }: ReaderScreenProps) {
     modeLock === 'paginated' ? 'paginated' : 'scroll',
   );
   const [pageToScrollSettling, setPageToScrollSettling] = useState(false);
+  const [scrollToPageSettling, setScrollToPageSettling] = useState(false);
   const settleFrameRef = useRef<number>();
   const scrollHandoffFrameRef = useRef<number>();
   const readingFlowRef = useRef(readingFlow);
@@ -280,6 +281,7 @@ function ReaderScreenComponent({ model, screenHandle }: ReaderScreenProps) {
         setPageToScrollSettling(true);
       }
     }
+    setScrollToPageSettling(targetFlow === 'paginated' && Boolean(anchor));
     setReadingFlow(targetFlow);
   }, [modeLock, readingFlow]);
 
@@ -348,6 +350,7 @@ function ReaderScreenComponent({ model, screenHandle }: ReaderScreenProps) {
             pageDelta: (atChapterEnd || atChapterStart ? request.initialDirection : 0) + request.additionalDelta,
           };
           lastFlowTransitionRef.current = pendingFlowTransitionRef.current;
+          setScrollToPageSettling(true);
           setReadingFlow('paginated');
         });
     },
@@ -408,9 +411,12 @@ function ReaderScreenComponent({ model, screenHandle }: ReaderScreenProps) {
       if (!restored) {
         pendingFlowTransitionRef.current = undefined;
         setPageToScrollSettling(false);
+        setScrollToPageSettling(false);
+        setReadingFlow(pending.sourceFlow ?? 'scroll');
         return;
       }
       pendingFlowTransitionRef.current = undefined;
+      setScrollToPageSettling(false);
       const scrollDelta = pending.targetFlow === 'scroll' ? (pending.scrollDelta ?? 0) : 0;
       const pageDelta = pending.pageDelta ?? 0;
       const direction = Math.sign(pageDelta) as -1 | 0 | 1;
@@ -438,6 +444,7 @@ function ReaderScreenComponent({ model, screenHandle }: ReaderScreenProps) {
     window.cancelAnimationFrame(settleFrameRef.current ?? 0);
     cancelScrollHandoff();
     setPageToScrollSettling(false);
+    setScrollToPageSettling(false);
   }, [cancelScrollHandoff, model.chapter.id]);
 
   useEffect(
@@ -753,6 +760,7 @@ function ReaderScreenComponent({ model, screenHandle }: ReaderScreenProps) {
         mobileSearchOpen && 'mobile-search-open',
         chrome.immersive && 'immersive',
         pageToScrollSettling && 'page-to-scroll-settling',
+        scrollToPageSettling && 'scroll-to-page-settling',
         !chrome.immersive && (chrome.visible || model.settings.keepScreenChrome) && 'chrome-visible',
       )}
       data-reading-mode-lock={modeLock}
@@ -807,6 +815,7 @@ function ReaderScreenComponent({ model, screenHandle }: ReaderScreenProps) {
         chapters={model.chapters}
         settings={model.settings}
         readingFlow={readingFlow}
+        pageTransitionPending={scrollToPageSettling}
         mode={mode}
         ttsIndex={model.ttsIndex}
         search={search}
