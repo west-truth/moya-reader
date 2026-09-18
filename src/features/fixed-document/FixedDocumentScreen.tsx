@@ -688,7 +688,7 @@ export default function FixedDocumentScreen({
   const [rotation, setRotation] = useState(0);
   const [pdf, setPdf] = useState<PDFDocumentProxy>();
   const [pdfPages, setPdfPages] = useState<Map<number, PDFPageProxy>>(() => new Map());
-  const [imageDimensions, setImageDimensions] = useState<Map<number, ContinuousImageDimensions>>(() => new Map());
+  const [imageDimensions, setImageDimensions] = useState<Map<string, ContinuousImageDimensions>>(() => new Map());
   const [status, setStatus] = useState<'loading' | 'ready' | 'failed'>('loading');
   const [errorMessage, setErrorMessage] = useState('');
   const viewportRef = useRef<HTMLElement>(null);
@@ -897,8 +897,8 @@ export default function FixedDocumentScreen({
     zoom,
   ]);
   const comicSpreads = useMemo(
-    () => buildComicSpreads(totalPages, comicProfile, comicPageHints),
-    [comicPageHints, comicProfile, totalPages],
+    () => (effectiveViewMode === 'spread' ? buildComicSpreads(totalPages, comicProfile, comicPageHints) : []),
+    [comicPageHints, comicProfile, effectiveViewMode, totalPages],
   );
   const archiveEstimateDimensions = useMemo(
     () => representativeContinuousImageDimensions(imageDimensions.values()),
@@ -933,12 +933,13 @@ export default function FixedDocumentScreen({
         viewportHeight: viewportSize.height,
         zoom,
         seamless: seamlessContinuousView,
-        dimensions: imageDimensions.get(index) ?? archiveEstimateDimensions,
+        dimensions: imageDimensions.get(sortedChapters[index]?.id ?? '') ?? archiveEstimateDimensions,
       }),
     [
       archiveEstimateDimensions,
       fit,
       imageDimensions,
+      sortedChapters,
       seamlessContinuousView,
       viewportSize.height,
       viewportSize.width,
@@ -953,12 +954,17 @@ export default function FixedDocumentScreen({
         viewportHeight: viewportSize.height,
         zoom,
         seamless: true,
-        dimensions: imageDimensions.get(index) ?? archiveEstimateDimensions,
+        dimensions: imageDimensions.get(sortedChapters[index]?.id ?? '') ?? archiveEstimateDimensions,
       }),
-    [archiveEstimateDimensions, fit, imageDimensions, viewportSize.height, viewportSize.width, zoom],
+    [archiveEstimateDimensions, fit, imageDimensions, sortedChapters, viewportSize.height, viewportSize.width, zoom],
+  );
+  const continuousPageKey = useCallback(
+    (index: number) => sortedChapters[continuousPageIndexes[index]]?.id ?? `${novel.id}:${index}`,
+    [continuousPageIndexes, novel.id, sortedChapters],
   );
   const continuousVirtualizer = useVirtualizer({
     count: continuousView ? continuousPageIndexes.length : 0,
+    getItemKey: continuousPageKey,
     getScrollElement: () => viewportRef.current,
     estimateSize: (virtualIndex) => estimateContinuousPageSize(continuousPageIndexes[virtualIndex] ?? pageIndex),
     gap: seamlessContinuousView ? -1 : 32,
@@ -1069,14 +1075,19 @@ export default function FixedDocumentScreen({
     });
   }, []);
 
-  const recordArchiveImageDimensions = useCallback((index: number, image: HTMLImageElement) => {
-    if (image.naturalWidth <= 0 || image.naturalHeight <= 0) return;
-    setImageDimensions((previous) => {
-      const current = previous.get(index);
-      if (current?.width === image.naturalWidth && current?.height === image.naturalHeight) return previous;
-      return new Map(previous).set(index, { width: image.naturalWidth, height: image.naturalHeight });
-    });
-  }, []);
+  const recordArchiveImageDimensions = useCallback(
+    (index: number, image: HTMLImageElement) => {
+      if (image.naturalWidth <= 0 || image.naturalHeight <= 0) return;
+      setImageDimensions((previous) => {
+        const key = sortedChapters[index]?.id;
+        if (!key) return previous;
+        const current = previous.get(key);
+        if (current?.width === image.naturalWidth && current?.height === image.naturalHeight) return previous;
+        return new Map(previous).set(key, { width: image.naturalWidth, height: image.naturalHeight });
+      });
+    },
+    [sortedChapters],
+  );
 
   const loadComicPageBlob = useCallback(
     async (index: number) => {
@@ -1780,17 +1791,7 @@ export default function FixedDocumentScreen({
 
   useLayoutEffect(() => {
     continuousVirtualizer.measure();
-  }, [
-    archiveEstimateDimensions?.height,
-    archiveEstimateDimensions?.width,
-    continuousVirtualizer,
-    effectiveViewMode,
-    fit,
-    rotation,
-    viewportSize.height,
-    viewportSize.width,
-    zoom,
-  ]);
+  }, [continuousVirtualizer, effectiveViewMode, fit, rotation, viewportSize.height, viewportSize.width, zoom]);
 
   useLayoutEffect(() => {
     if (!continuousView) return;
@@ -2735,8 +2736,14 @@ export default function FixedDocumentScreen({
             >
               {displayedPages.map((index) => (
                 <article
-                  key={index}
-                  ref={continuousView ? continuousVirtualizer.measureElement : undefined}
+                  key={sortedChapters[index]?.id ?? index}
+                  ref={
+                    continuousView &&
+                    (novel.format !== 'image_archive' ||
+                      (archiveImages.pages.has(index) && imageDimensions.has(sortedChapters[index]?.id ?? '')))
+                      ? continuousVirtualizer.measureElement
+                      : undefined
+                  }
                   data-index={continuousVirtualIndexByPage.get(index) ?? index}
                   data-page-index={index}
                   className={`${index === pageIndex ? 'is-current' : ''}${effectiveViewMode === 'spread' ? ' is-spread-page' : ''}${effectiveViewMode === 'spread' && comicSpreads[comicSpreadForPage(comicSpreads, pageIndex)]?.widePage === index ? ' is-double-page' : ''}`}
@@ -2747,6 +2754,15 @@ export default function FixedDocumentScreen({
                             continuousItems.find((item) => item.index === continuousVirtualIndexByPage.get(index))
                               ?.start ?? 0
                           }px)`,
+                          ...(!seamlessContinuousView &&
+                          novel.format === 'image_archive' &&
+                          (!archiveImages.pages.has(index) || !imageDimensions.has(sortedChapters[index]?.id ?? ''))
+                            ? {
+                                height:
+                                  continuousItems.find((item) => item.key === sortedChapters[index]?.id)?.size ??
+                                  estimateContinuousPageSize(index),
+                              }
+                            : {}),
                           ...(seamlessContinuousView
                             ? {
                                 height: estimateContinuousPageSize(index),
@@ -2792,6 +2808,8 @@ export default function FixedDocumentScreen({
                       src={archiveImages.pages.get(index)?.url}
                       alt={`${novel.title} ${index + 1}페이지`}
                       draggable={false}
+                      width={imageDimensions.get(sortedChapters[index]?.id ?? '')?.width}
+                      height={imageDimensions.get(sortedChapters[index]?.id ?? '')?.height}
                       onLoad={(event) => recordArchiveImageDimensions(index, event.currentTarget)}
                       style={
                         comicProfile.crop === 'auto' && comicProfile.pageCrops?.[String(index)]

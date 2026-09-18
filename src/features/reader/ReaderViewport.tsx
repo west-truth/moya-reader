@@ -68,6 +68,7 @@ export interface ReaderViewportProps {
   readonly chapters: readonly Chapter[];
   readonly settings: ReaderSettings;
   readonly readingFlow: ReaderRuntimeFlow;
+  readonly pageTransitionPending?: boolean;
   readonly mode: ReaderMode;
   readonly ttsIndex?: number;
   readonly search: ReaderSearchController;
@@ -1079,6 +1080,7 @@ function ReaderViewportComponent(props: ReaderViewportProps) {
           isActive={pageActive}
           positionPersistence={positionPersistence}
           onPaginationFailure={handlePaginationFailure}
+          initialAnchor={scrollApiRef.current?.getAnchor()}
         />
       )}
     </div>

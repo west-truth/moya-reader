@@ -69,11 +69,51 @@ describe('archive image hook lifecycle', () => {
     });
   });
 
+  it('preserves legacy image elements across append after validating immutable assets', async () => {
+    vi.spyOn(URL, 'createObjectURL').mockReturnValue('blob:legacy');
+    vi.spyOn(URL, 'revokeObjectURL').mockImplementation(() => {});
+    const getParagraphPage = vi.fn(async () => ({ paragraphs: [{ assetId: 'immutable-page' }] }));
+    const getEmbeddedResource = vi.fn(async () => ({ blob: new Blob(['image']) }));
+    const repository = { getParagraphPage } as unknown as ReaderRepository;
+    const assets = { getEmbeddedResource } as unknown as BookAssetRepository;
+    let chapters = [testChapter(1)];
+    let revision = 'before';
+    const urls: Array<string | undefined> = [];
+    function Harness() {
+      const snapshot = useArchivePageImages({
+        enabled: true,
+        bookId: 'legacy',
+        sourceRevision: revision,
+        chapters,
+        currentPage: 0,
+        wantedPages: new Set([0]),
+        repository,
+        assets,
+      });
+      urls.push(snapshot.pages.get(0)?.url);
+      return null;
+    }
+    let renderer!: ReactTestRenderer;
+    await act(async () => {
+      renderer = create(<Harness />);
+    });
+    const start = urls.length;
+    chapters = [...chapters, testChapter(2)];
+    revision = 'after-append';
+    await act(async () => renderer.update(<Harness />));
+    expect(urls.slice(start).every((url) => url === 'blob:legacy')).toBe(true);
+    expect(getEmbeddedResource).toHaveBeenCalledOnce();
+    expect(getParagraphPage).toHaveBeenCalledTimes(2);
+    expect(URL.revokeObjectURL).not.toHaveBeenCalled();
+    await act(async () => renderer.unmount());
+  });
+
   it('reloads legacy images when the source changes even with identical page title hashes', async () => {
     let url = 0;
     vi.spyOn(URL, 'createObjectURL').mockImplementation(() => `blob:legacy-page-${++url}`);
     vi.spyOn(URL, 'revokeObjectURL').mockImplementation(() => {});
-    const getParagraphPage = vi.fn(async () => ({ paragraphs: [{ assetId: 'page' }] }));
+    let assetId = 'page-original';
+    const getParagraphPage = vi.fn(async () => ({ paragraphs: [{ assetId }] }));
     const getEmbeddedResource = vi.fn(async () => ({ blob: new Blob(['image']) }));
     const repository = { getParagraphPage } as unknown as ReaderRepository;
     const assets = { getEmbeddedResource } as unknown as BookAssetRepository;
@@ -99,6 +139,7 @@ describe('archive image hook lifecycle', () => {
     });
     const original = snapshot.pages.get(0)?.url;
 
+    assetId = 'page-replaced';
     revision = 'source-after-replacement';
     await act(async () => renderer.update(<Harness />));
     expect(snapshot.pages.get(0)?.url).not.toBe(original);
@@ -110,7 +151,10 @@ describe('archive image hook lifecycle', () => {
   it('forwards cancellation through metadata and asset loads and clears a replaced source', async () => {
     vi.spyOn(URL, 'createObjectURL').mockReturnValue('blob:ready');
     vi.spyOn(URL, 'revokeObjectURL').mockImplementation(() => {});
-    let chapters = [testChapter(1), testChapter(2)];
+    let chapters = [testChapter(1), testChapter(2)].map((chapter) => ({
+      ...chapter,
+      documentSectionSourceContentHash: 'original',
+    }));
     const getParagraphPage = vi.fn(async (chapterId: string) => ({ paragraphs: [{ assetId: `asset:${chapterId}` }] }));
     const requests: Array<{ signal: AbortSignal; resolve: (value: unknown) => void }> = [];
     const getEmbeddedResource = vi.fn(
@@ -145,7 +189,11 @@ describe('archive image hook lifecycle', () => {
       requests[0]!.resolve({ blob: new Blob(['page']) });
     });
     expect(snapshot.pages.has(0)).toBe(true);
-    chapters = chapters.map((chapter) => ({ ...chapter, textHash: `${chapter.textHash}:replacement` }));
+    chapters = chapters.map((chapter) => ({
+      ...chapter,
+      textHash: `${chapter.textHash}:replacement`,
+      documentSectionSourceContentHash: 'replacement',
+    }));
     revision = 'replacement';
     await act(async () => {
       renderer.update(<Harness />);
