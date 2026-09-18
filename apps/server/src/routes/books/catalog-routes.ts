@@ -38,6 +38,7 @@ const catalogSelect = `
          o.id as source_asset_id, o.raw_text_hash as source_content_hash,
          o.content_type as source_content_type, o.size_bytes as source_byte_length,
          ca.content_hash as cover_content_hash,
+         coalesce(reading_time.reading_seconds, 0)::bigint as reading_seconds,
          rp.chapter_id as last_read_chapter_id, rp.paragraph_id as last_read_paragraph_id,
          rc.chapter_index as last_read_chapter_index, rp.scroll_top as last_read_offset,
          ${catalogBookProgress} as last_read_progress, rp.updated_at as last_read_at
@@ -46,6 +47,12 @@ const catalogSelect = `
   left join book_assets ca on ca.id = b.cover_asset_id
   left join reading_positions rp on rp.book_id = b.id and rp.user_id = b.user_id
   left join chapters rc on rc.id = rp.chapter_id and rc.book_id = b.id
+  left join (
+    select session.book_id, sum(session.active_seconds) as reading_seconds
+    from reading_session_events session
+    where session.user_id = $1 and session.mode = 'reading'
+    group by session.book_id
+  ) reading_time on reading_time.book_id = b.id
 `;
 
 function expectedRevision(request: FastifyRequest, body?: LifecycleBody): number | undefined {

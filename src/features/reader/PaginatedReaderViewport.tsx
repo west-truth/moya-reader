@@ -25,9 +25,9 @@ import {
 import { ReaderPageWindow } from './reader-page-window';
 import { measureAdjacentPage } from './pagination-measurement';
 
-const PAGINATION_RENDERER_VERSION = 'reader-pagination-v8-anchor-window';
+const PAGINATION_RENDERER_VERSION = 'reader-pagination-v9-spread';
 const PAGE_MAP_CACHE_LIMIT = 24;
-const PAGE_TURN_DURATION_MS = 180;
+const PAGE_TURN_DURATION_MS = 240;
 const SHARED_PARAGRAPH_PAGE_CACHE_LIMIT = 64;
 
 interface CachedPageMap {
@@ -133,14 +133,24 @@ export function PaginatedReaderViewport(
   const visibleAnchorRef = useRef<ReaderAnchor>();
   const appliedOpenSequenceRef = useRef<number>();
   const [dimensions, setDimensions] = useState({ width: 0, height: 0 });
+  const spreadActive =
+    dimensions.width >= 760 &&
+    (settings.readingProfile.pageSpread === 'double' ||
+      (settings.readingProfile.pageSpread === 'auto' && dimensions.width >= 1100));
+  const pageGap = spreadActive ? 24 : 0;
+  const availablePageWidth = spreadActive ? Math.floor((dimensions.width - pageGap) / 2) : dimensions.width;
+  const pageWidth = Math.min(settings.readingProfile.contentWidth, availablePageWidth);
   const [view, setView] = useState<{
     key: string;
     boundary: ReaderPageBoundary;
     fragments: readonly ReaderPageFragment[];
+    secondaryBoundary?: ReaderPageBoundary;
+    secondaryFragments?: readonly ReaderPageFragment[];
   }>();
   const viewRef = useRef(view);
   const [preparing, setPreparing] = useState(true);
   const [outgoingFragments, setOutgoingFragments] = useState<readonly ReaderPageFragment[]>([]);
+  const [outgoingSecondaryFragments, setOutgoingSecondaryFragments] = useState<readonly ReaderPageFragment[]>([]);
   const [transitionDirection, setTransitionDirection] = useState<-1 | 1>();
   const [transitionSequence, setTransitionSequence] = useState(0);
   const bodyKey = `${novel.id}:${chapter.id}:${chapter.textHash}:${chapter.paragraphCount}`;
@@ -230,7 +240,7 @@ export function PaginatedReaderViewport(
         contentRevisionId,
         rendererVersion: PAGINATION_RENDERER_VERSION,
         ...(showChapterSequence(chapterHeading) ? {} : { chapterHeading: 'source-title' }),
-        viewportWidth: dimensions.width,
+        viewportWidth: pageWidth,
         viewportHeight: dimensions.height,
         devicePixelRatioBucket: Math.round((globalThis.devicePixelRatio || 1) * 2) / 2,
         fontId: settings.readingProfile.fontId,
@@ -244,7 +254,7 @@ export function PaginatedReaderViewport(
         marginX: settings.readingProfile.marginX,
         marginY: settings.readingProfile.marginY,
       }),
-    [chapterHeading, contentRevisionId, dimensions.height, dimensions.width, settings.readingProfile],
+    [chapterHeading, contentRevisionId, dimensions.height, pageWidth, settings.readingProfile],
   );
 
   const pageMapIdentity = useMemo<ReaderPageMapIdentity>(
@@ -321,32 +331,38 @@ export function PaginatedReaderViewport(
 
   const commitPage = useCallback(
     async (boundary: ReaderPageBoundary, navigation: number, direction?: -1 | 1) => {
-      const fragments = await session.window.materialize(boundary);
+      const primaryBoundary = boundary;
+      const fragments = await session.window.materialize(primaryBoundary);
+      if (navigation !== navigationRef.current || session.controller.signal.aborted) return false;
+      const secondaryBoundary = spreadActive ? await session.window.adjacent(primaryBoundary.end, 1) : undefined;
+      const secondaryFragments = secondaryBoundary ? await session.window.materialize(secondaryBoundary) : [];
       if (navigation !== navigationRef.current || session.controller.signal.aborted) return false;
       const previous = viewRef.current;
       window.clearTimeout(transitionTimerRef.current);
       const animate =
         direction &&
         previous?.key === pageMapKey &&
-        settings.readingProfile.pageTurnMotion === 'smooth' &&
+        settings.readingProfile.pageTurnMotion !== 'instant' &&
         !(window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ?? false);
       setOutgoingFragments(animate ? previous.fragments : []);
+      setOutgoingSecondaryFragments(animate ? (previous.secondaryFragments ?? []) : []);
       setTransitionDirection(animate ? direction : undefined);
       if (animate) {
         setTransitionSequence((value) => value + 1);
         transitionTimerRef.current = window.setTimeout(() => {
           setOutgoingFragments([]);
+          setOutgoingSecondaryFragments([]);
           setTransitionDirection(undefined);
         }, PAGE_TURN_DURATION_MS);
       }
-      const next = { key: pageMapKey, boundary, fragments };
+      const next = { key: pageMapKey, boundary: primaryBoundary, fragments, secondaryBoundary, secondaryFragments };
       viewRef.current = next;
-      visibleAnchorRef.current = boundary.start;
+      visibleAnchorRef.current = primaryBoundary.start;
       setView(next);
       setPreparing(false);
       return true;
     },
-    [pageMapKey, session, settings.readingProfile.pageTurnMotion],
+    [pageMapKey, session, settings.readingProfile.pageTurnMotion, spreadActive],
   );
 
   const seek = useCallback(
@@ -450,15 +466,17 @@ export function PaginatedReaderViewport(
 
   const currentBoundary = view?.key === pageMapKey ? view.boundary : undefined;
   const pageFragments = currentBoundary ? view!.fragments : [];
+  const secondaryBoundary = currentBoundary ? view?.secondaryBoundary : undefined;
+  const secondaryFragments = secondaryBoundary ? (view?.secondaryFragments ?? []) : [];
   const currentParagraph = pageFragments[0]?.paragraph;
   const location = useMemo(
     () =>
       currentBoundary
         ? {
             progress:
-              (currentBoundary.end.blockIndex ?? 0) >= chapter.paragraphCount ||
-              (currentBoundary.end.blockIndex === chapter.paragraphCount - 1 &&
-                currentBoundary.end.offset >=
+              ((secondaryBoundary ?? currentBoundary).end.blockIndex ?? 0) >= chapter.paragraphCount ||
+              ((secondaryBoundary ?? currentBoundary).end.blockIndex === chapter.paragraphCount - 1 &&
+                (secondaryBoundary ?? currentBoundary).end.offset >=
                   (paragraphCacheRef.current.get(chapter.paragraphCount - 1)?.text.length ?? Infinity))
                 ? 1
                 : chapter.paragraphCount > 1
@@ -471,7 +489,7 @@ export function PaginatedReaderViewport(
             ttsIndex: currentBoundary.start.blockIndex ?? 0,
           }
         : undefined,
-    [chapter.paragraphCount, currentBoundary, currentParagraph],
+    [chapter.paragraphCount, currentBoundary, currentParagraph, secondaryBoundary],
   );
   useEffect(() => {
     if (!isActive || preparing || props.pageTransitionPending || !location) return;
@@ -496,7 +514,7 @@ export function PaginatedReaderViewport(
     let cancelled = false;
     const warm = async () => {
       for (const direction of [-1, 1] as const) {
-        let edge = direction > 0 ? currentBoundary.end : currentBoundary.start;
+        let edge = direction > 0 ? (secondaryBoundary ?? currentBoundary).end : currentBoundary.start;
         for (let distance = 0; distance < 2 && !cancelled; distance += 1) {
           const page = await session.window.adjacent(edge, direction);
           if (!page || cancelled) break;
@@ -527,6 +545,7 @@ export function PaginatedReaderViewport(
     chapters,
     contentRevisionId,
     currentBoundary,
+    secondaryBoundary,
     isActive,
     pageMapIdentity,
     pageMapKey,
@@ -574,10 +593,11 @@ export function PaginatedReaderViewport(
             session.controller.signal.aborted
           )
             return;
-          const boundary = await session.window.adjacent(
-            direction > 0 ? current.boundary.end : current.boundary.start,
-            direction,
-          );
+          const edge = direction > 0 ? (current.secondaryBoundary ?? current.boundary).end : current.boundary.start;
+          let boundary = await session.window.adjacent(edge, direction);
+          if (direction < 0 && spreadActive && boundary) {
+            boundary = (await session.window.adjacent(boundary.start, -1)) ?? boundary;
+          }
           if (navigation !== navigationRef.current || session.controller.signal.aborted) return;
           if (boundary) await commitPage(boundary, navigation, direction);
           else await goChapter(direction);
@@ -587,7 +607,7 @@ export function PaginatedReaderViewport(
         });
       onRevealChrome();
     },
-    [commitPage, goChapter, onPaginationFailure, onRevealChrome, pageMapKey, session],
+    [commitPage, goChapter, onPaginationFailure, onRevealChrome, pageMapKey, session, spreadActive],
   );
   const requestScrollAfterPageTurn = useCallback(
     (deltaY: number) => {
@@ -713,18 +733,24 @@ export function PaginatedReaderViewport(
   const paginationStyle = useMemo(
     () =>
       dimensions.height > 0
-        ? ({ '--reader-pagination-page-height': `${dimensions.height}px` } as CSSProperties)
+        ? ({
+            '--reader-pagination-page-height': `${dimensions.height}px`,
+            '--reader-pagination-leaf-width': `${Math.max(120, pageWidth)}px`,
+            '--reader-pagination-page-gap': `${pageGap}px`,
+          } as CSSProperties)
         : undefined,
-    [dimensions.height],
+    [dimensions.height, pageGap, pageWidth],
   );
   const outgoingShowsChapterHeading =
     outgoingFragments[0]?.paragraphIndex === 0 && outgoingFragments[0]?.startOffset === 0;
   const currentShowsChapterHeading =
     (currentBoundary?.start.blockIndex ?? -1) === 0 && currentBoundary?.start.offset === 0;
+  const secondaryShowsChapterHeading =
+    (secondaryBoundary?.start.blockIndex ?? -1) === 0 && secondaryBoundary?.start.offset === 0;
 
   return (
     <section
-      className={`reader-scroll reader-viewport-layer ${isActive ? 'is-active' : 'is-inactive'} font-${settings.font} mode-${mode} reader-paginated-root`}
+      className={`reader-scroll reader-viewport-layer ${isActive ? 'is-active' : 'is-inactive'} font-${settings.font} mode-${mode} reader-paginated-root${spreadActive ? ' is-spread' : ''}`}
       ref={rootRef}
       style={paginationStyle}
       tabIndex={isActive ? 0 : -1}
@@ -750,12 +776,12 @@ export function PaginatedReaderViewport(
       <div
         ref={measureRef}
         className="reader-document reader-pagination-measure"
-        style={{ width: Math.max(120, dimensions.width), height: Math.max(160, dimensions.height) }}
+        style={{ width: Math.max(120, pageWidth), height: Math.max(160, dimensions.height) }}
         aria-hidden="true"
       />
       <div
         ref={stageRef}
-        className={`reader-pagination-stage${transitionDirection ? ` turn-${transitionDirection > 0 ? 'next' : 'previous'}` : ''}`}
+        className={`reader-pagination-stage motion-${settings.readingProfile.pageTurnMotion}${transitionDirection ? ` turn-${transitionDirection > 0 ? 'next' : 'previous'}` : ''}`}
       >
         {outgoingFragments.length > 0 && (
           <article
@@ -764,6 +790,31 @@ export function PaginatedReaderViewport(
           >
             {outgoingShowsChapterHeading && <ReaderChapterHeading chapter={chapterHeading} />}
             {outgoingFragments.map((fragment, index) => (
+              <ReaderParagraphRow
+                key={`${fragment.paragraph.id}:${fragment.startOffset}:${index}`}
+                paragraph={sliceParagraphForPage(fragment.paragraph, fragment.startOffset, fragment.endOffset)}
+                sourceOffset={fragment.startOffset}
+                virtualIndex={fragment.paragraphIndex}
+                start={0}
+                staticLayout
+                isSpeaking={ttsIndex === fragment.paragraphIndex}
+                mode={mode}
+                searchQuery={search.highlightQuery}
+                decorationStore={screenHandle.decorations}
+                measureElement={() => undefined}
+                onSelectCorrectionSegment={(segmentId) => screenHandle.getActions().selectCorrectionSegment(segmentId)}
+                assetRepository={assetRepository}
+                onDocumentLink={onDocumentLink}
+              />
+            ))}
+          </article>
+        )}
+        {outgoingSecondaryFragments.length > 0 && (
+          <article
+            key={`outgoing-secondary-${transitionSequence}`}
+            className="reader-document reader-paginated-page is-outgoing is-secondary"
+          >
+            {outgoingSecondaryFragments.map((fragment, index) => (
               <ReaderParagraphRow
                 key={`${fragment.paragraph.id}:${fragment.startOffset}:${index}`}
                 paragraph={sliceParagraphForPage(fragment.paragraph, fragment.startOffset, fragment.endOffset)}
@@ -815,6 +866,37 @@ export function PaginatedReaderViewport(
           ))}
           {!view && <div className="reader-pagination-status">첫 페이지 계산 중</div>}
         </article>
+        {secondaryBoundary && (
+          <article
+            key={`secondary-${transitionSequence}`}
+            className={`reader-document reader-paginated-page is-current is-secondary${secondaryShowsChapterHeading ? ' has-chapter-heading' : ''}`}
+            data-page-start-index={secondaryBoundary.start.blockIndex}
+            data-page-start-offset={secondaryBoundary.start.offset}
+            data-page-end-index={secondaryBoundary.end.blockIndex}
+            data-page-end-offset={secondaryBoundary.end.offset}
+            onMouseUp={() => onSelectionChanged(api.getSelection())}
+          >
+            {secondaryShowsChapterHeading && <ReaderChapterHeading chapter={chapterHeading} />}
+            {secondaryFragments.map((fragment, index) => (
+              <ReaderParagraphRow
+                key={`${fragment.paragraph.id}:${fragment.startOffset}:${index}`}
+                paragraph={sliceParagraphForPage(fragment.paragraph, fragment.startOffset, fragment.endOffset)}
+                sourceOffset={fragment.startOffset}
+                virtualIndex={fragment.paragraphIndex}
+                start={0}
+                staticLayout
+                isSpeaking={ttsIndex === fragment.paragraphIndex}
+                mode={mode}
+                searchQuery={search.highlightQuery}
+                decorationStore={screenHandle.decorations}
+                measureElement={() => undefined}
+                onSelectCorrectionSegment={(segmentId) => screenHandle.getActions().selectCorrectionSegment(segmentId)}
+                assetRepository={assetRepository}
+                onDocumentLink={onDocumentLink}
+              />
+            ))}
+          </article>
+        )}
       </div>
     </section>
   );

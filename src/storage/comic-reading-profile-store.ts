@@ -63,6 +63,10 @@ export class IndexedDbComicReadingProfileRepository {
         left: finiteRange(stored.manualCrop?.left, 0, 0, 0.3),
       },
       pageCrops: sanitizedPageCrops(stored.pageCrops),
+      pageTurnMotion:
+        stored.pageTurnMotion === 'instant' || stored.pageTurnMotion === 'page' || stored.pageTurnMotion === 'slide'
+          ? stored.pageTurnMotion
+          : 'slide',
     };
     if (!globalProfile && bookProfile) await this.save(bookId, profile);
     return profile;

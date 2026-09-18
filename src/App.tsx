@@ -80,6 +80,8 @@ import {
   resolveAppTheme,
 } from './features/reader-settings/app-theme';
 import { useListeningSession } from './features/reader/use-listening-session';
+import { flushReaderBoundary } from './features/reader/use-reader-lifecycle-flush';
+import { useReaderSession } from './features/reader/use-reader-session';
 import {
   DEFAULT_READING_PROFILE,
   hasBookReadingProfile,
@@ -316,6 +318,7 @@ const ReaderOutlinePanel = lazy(() =>
 );
 
 const BUNDLE_ANALYSIS_CHAPTER_LIMIT = 3;
+const ignoreReaderSessionPersistenceFailure = (_seconds: number): void => undefined;
 interface BundleAnalysisJobSummary {
   readonly discoveredGraph?: Record<string, unknown>;
   readonly sourceContext?: Record<string, unknown>;
@@ -601,6 +604,17 @@ export default function App() {
     view,
   } = bookWorkspaceState;
   const { replaceSelection, setNovels, setRemoteReadingPosition, setSelectedNovel } = bookWorkspace;
+  const readingSession = useReaderSession({
+    active: (view === 'reader' || view === 'document') && Boolean(selectedNovel),
+    repository: readerRepository,
+    novelId: selectedNovel?.id,
+    statsVisible: view === 'reader' && addonOpen && addonTab === 'stats',
+    onStarted: bookWorkspace.resetReaderSessionTime,
+    onCommitted: bookWorkspace.commitSessionTime,
+    onFailed: ignoreReaderSessionPersistenceFailure,
+    onDisplayChanged: bookWorkspace.setReaderSessionDisplaySeconds,
+    personalizationRepository,
+  });
   const graphKnowledgeController = useCharacterGraphKnowledgeController({
     repository: readerRepository,
     novelId: selectedNovel?.id,
@@ -1465,7 +1479,7 @@ export default function App() {
 
   useLayoutEffect(() => {
     bookWorkspaceTransitionRef.current = {
-      flushReaderSession: () => readerScreenHandle.flushSession(),
+      flushReaderSession: () => flushReaderBoundary(() => readerScreenHandle.flushSession(), readingSession.flush),
       resetAnalysis: analysisExecutionController.reset,
       stopChapterTTS: ttsExecutionController.stopAll,
       stopReaderTTS: () => {

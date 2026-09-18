@@ -1,12 +1,15 @@
 import type { ComicPageLayoutHint } from './comic-layout';
+import type { ContinuousImageDimensions } from './continuous-scroll';
 
 export interface LoadedArchivePage {
+  readonly dimensions?: ContinuousImageDimensions;
   readonly blob: Blob;
   readonly identity?: string;
   readonly hint?: ComicPageLayoutHint;
 }
 
 export interface ArchivePageImage {
+  readonly dimensions?: ContinuousImageDimensions;
   readonly url: string;
   readonly identity: string;
   readonly hint?: ComicPageLayoutHint;
@@ -25,6 +28,7 @@ export class ArchivePageLoader {
   private readonly identities = new Map<number, string>();
   private identityForPage: (index: number) => string = String;
   private wanted: number[] = [];
+  private retained = new Set<number>();
   private currentPage?: number;
   private disposed = false;
 
@@ -35,8 +39,14 @@ export class ArchivePageLoader {
     private readonly cacheSize = 20,
   ) {}
 
-  update(currentPage: number, wanted: readonly number[], identityForPage: (index: number) => string = String): void {
+  update(
+    currentPage: number,
+    wanted: readonly number[],
+    identityForPage: (index: number) => string = String,
+    retained: readonly number[] = [],
+  ): void {
     if (this.disposed) return;
+    this.retained = new Set(retained);
     this.identityForPage = identityForPage;
     for (const [index, identity] of this.identities) {
       if (identity === identityForPage(index)) continue;
@@ -51,13 +61,13 @@ export class ArchivePageLoader {
     if (this.currentPage !== currentPage) this.errors.delete(currentPage);
     this.currentPage = currentPage;
     for (const [index, controller] of this.inFlight) {
-      if (!this.wanted.includes(index)) controller.abort();
+      if (!this.wanted.includes(index) && !this.retained.has(index)) controller.abort();
     }
     // A new foreground page must not wait for three still-wanted prefetches.
     if (!this.pages.has(currentPage) && !this.inFlight.has(currentPage) && this.inFlight.size >= this.concurrency) {
       for (const index of [...this.wanted].reverse()) {
         const controller = this.inFlight.get(index);
-        if (controller && !controller.signal.aborted) {
+        if (controller && !controller.signal.aborted && !this.retained.has(index)) {
           controller.abort();
           break;
         }
@@ -81,7 +91,7 @@ export class ArchivePageLoader {
   private prune(): void {
     for (const [index, page] of this.pages) {
       if (this.pages.size <= this.cacheSize) break;
-      if (this.wanted.includes(index)) continue;
+      if (this.wanted.includes(index) || this.retained.has(index)) continue;
       URL.revokeObjectURL(page.url);
       this.pages.delete(index);
       this.identities.delete(index);
@@ -113,12 +123,14 @@ export class ArchivePageLoader {
   private async run(index: number, controller: AbortController): Promise<void> {
     try {
       const page = await this.load(index, controller.signal);
-      if (this.disposed || controller.signal.aborted || !this.wanted.includes(index)) return;
+      if (this.disposed || controller.signal.aborted || (!this.wanted.includes(index) && !this.retained.has(index)))
+        return;
       if (page.identity) this.identities.set(index, page.identity);
       this.pages.set(index, {
         url: URL.createObjectURL(page.blob),
         identity: this.identities.get(index)!,
         hint: page.hint,
+        dimensions: page.dimensions,
       });
       this.errors.delete(index);
       this.prune();

@@ -25,6 +25,7 @@ export const DEFAULT_READING_PROFILE: ReadingProfile = {
   flow: 'scroll',
   modeLock: 'auto',
   pageTurnMotion: 'smooth',
+  pageSpread: 'single',
 };
 
 export const DEFAULT_GESTURE_BINDINGS = {
@@ -56,7 +57,7 @@ export function normalizeReadingProfile(
       : 'auto';
   const flow = modeLock === 'paginated' ? 'paginated' : 'scroll';
   const pageTurnMotion =
-    value?.pageTurnMotion === 'instant' || value?.pageTurnMotion === 'smooth'
+    value?.pageTurnMotion === 'instant' || value?.pageTurnMotion === 'smooth' || value?.pageTurnMotion === 'page'
       ? value.pageTurnMotion
       : sourceFlow === 'paginated'
         ? 'instant'
@@ -82,6 +83,10 @@ export function normalizeReadingProfile(
     flow,
     modeLock,
     pageTurnMotion,
+    pageSpread:
+      value?.pageSpread === 'double' || value?.pageSpread === 'auto' || value?.pageSpread === 'single'
+        ? value.pageSpread
+        : 'single',
   };
 }
 

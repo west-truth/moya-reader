@@ -12,6 +12,12 @@ export function parseFixedDocumentPageDraft(draft: string, totalPages: number): 
   return Math.max(0, Math.min(Math.max(0, totalPages - 1), value - 1));
 }
 
+export function fixedDocumentTapStep(horizontalPosition: number, rtl: boolean): -1 | 0 | 1 {
+  if (horizontalPosition < 0.33) return rtl ? 1 : -1;
+  if (horizontalPosition > 0.67) return rtl ? -1 : 1;
+  return 0;
+}
+
 export type FixedDocumentPanAxis = 'x' | 'y' | 'both';
 
 export function fixedDocumentPanAxis(input: {

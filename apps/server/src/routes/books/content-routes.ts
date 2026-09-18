@@ -20,6 +20,7 @@ export async function registerBookContentRoutes(
                o.id as source_asset_id, o.raw_text_hash as source_content_hash,
                o.content_type as source_content_type, o.size_bytes as source_byte_length,
                ca.content_hash as cover_content_hash,
+               coalesce(reading_time.reading_seconds, 0)::bigint as reading_seconds,
                rp.chapter_id as last_read_chapter_id, rp.paragraph_id as last_read_paragraph_id,
                rc.chapter_index as last_read_chapter_index, rp.scroll_top as last_read_offset,
                case
@@ -39,6 +40,11 @@ export async function registerBookContentRoutes(
         left join book_assets ca on ca.id = b.cover_asset_id
         left join reading_positions rp on rp.book_id = b.id and rp.user_id = b.user_id
         left join chapters rc on rc.id = rp.chapter_id and rc.book_id = b.id
+        left join lateral (
+          select sum(session.active_seconds) as reading_seconds
+          from reading_session_events session
+          where session.user_id = b.user_id and session.book_id = b.id and session.mode = 'reading'
+        ) reading_time on true
         where b.id = $1 and b.user_id = $2 and b.deleted_at is null
       `,
       [request.params.bookId, config.defaultUserId],

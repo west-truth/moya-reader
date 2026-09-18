@@ -21,9 +21,8 @@ import type {
   ReaderSelection,
 } from './reader-screen-contract';
 import { useReaderChrome } from './use-reader-chrome';
-import { flushReaderBoundary, useReaderLifecycleFlush } from './use-reader-lifecycle-flush';
+import { useReaderLifecycleFlush } from './use-reader-lifecycle-flush';
 import { useReaderSearch } from './use-reader-search';
-import { useReaderSession } from './use-reader-session';
 import { isInteractiveShortcutTarget, useStableDocumentShortcuts } from './use-stable-document-shortcuts';
 import { dispatchReaderAction } from './reader-action-dispatcher';
 import { isAndroidBackKeyboardEvent, resolveReaderTransientBackAction } from '../../platform/android/app-navigation';
@@ -86,7 +85,6 @@ export interface ReaderScreenProps {
 function ReaderScreenComponent({ model, screenHandle }: ReaderScreenProps) {
   const { readerRuntime } = useAppRuntime();
   const repository = readerRuntime.readerRepository;
-  const personalizationRepository = readerRuntime.personalizationRepository;
   const viewportApiRef = useRef<ReaderViewportApi>();
   const [viewportApi, setViewportApi] = useState<ReaderViewportApi>();
   const [mode, setModeState] = useState<ReaderMode>('read');
@@ -192,33 +190,7 @@ function ReaderScreenComponent({ model, screenHandle }: ReaderScreenProps) {
   const chrome = useReaderChrome(model.settings.keepScreenChrome, notify);
   const { enterImmersive, exitImmersive, immersive } = chrome;
 
-  const onSessionCommitted = useCallback(
-    (novelId: string, seconds: number, readAt: string) =>
-      screenHandle.getActions().sessionTimeCommitted(novelId, seconds, readAt),
-    [screenHandle],
-  );
-  const onSessionFailed = useCallback(
-    (seconds: number) => screenHandle.getActions().sessionTimePersistenceFailed(seconds),
-    [screenHandle],
-  );
-  const onSessionDisplay = useCallback(
-    (seconds: number) => screenHandle.getActions().sessionDisplayChanged(seconds),
-    [screenHandle],
-  );
-  const session = useReaderSession({
-    repository,
-    novelId: model.novel.id,
-    chapterId: model.chapter.id,
-    statsVisible: model.statsVisible,
-    onCommitted: onSessionCommitted,
-    onFailed: onSessionFailed,
-    onDisplayChanged: onSessionDisplay,
-    personalizationRepository,
-  });
-  const flushReaderState = useCallback(
-    () => flushReaderBoundary(() => viewportApiRef.current?.flushPosition(), session.flush),
-    [session.flush],
-  );
+  const flushReaderState = useCallback(() => viewportApiRef.current?.flushPosition() ?? Promise.resolve(), []);
   useReaderLifecycleFlush(flushReaderState);
 
   const setMode = useCallback(

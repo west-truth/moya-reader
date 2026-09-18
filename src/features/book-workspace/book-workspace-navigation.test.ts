@@ -367,6 +367,33 @@ describe('BookWorkspaceController navigation', () => {
     expect(controller.getSnapshot().localReadingPosition).toBe(position);
   });
 
+  it('keeps the book reading session alive when moving between chapters', async () => {
+    const novel = testNovel();
+    const firstChapter = testChapter(1);
+    const secondChapter = testChapter(2);
+    const harness = createBookWorkspaceTestHarness({ novel, chapters: [firstChapter, secondChapter] });
+    const controller = new BookWorkspaceController(
+      harness.ports,
+      testWorkspaceState({
+        selectedNovel: novel,
+        novels: [novel],
+        chapters: [firstChapter, secondChapter],
+        currentChapter: firstChapter,
+        view: 'reader',
+        readerSessionDisplaySeconds: 75,
+        readerSessionCommittedSeconds: 60,
+      }),
+    );
+
+    await controller.openChapter(secondChapter, { novel });
+
+    expect(controller.getSnapshot()).toMatchObject({
+      currentChapter: secondChapter,
+      readerSessionDisplaySeconds: 75,
+      readerSessionCommittedSeconds: 60,
+    });
+  });
+
   it('flushes the last read position before returning to chapters', async () => {
     const harness = createBookWorkspaceTestHarness();
     const controller = new BookWorkspaceController(harness.ports, testWorkspaceState({ view: 'reader' }));

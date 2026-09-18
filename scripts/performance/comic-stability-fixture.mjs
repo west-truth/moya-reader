@@ -8,7 +8,10 @@ import '../../src/styles/base.css';
 
 const legacy = new URLSearchParams(location.search).has('legacy');
 const seamless = !new URLSearchParams(location.search).has('gapped');
+const pagedComic = new URLSearchParams(location.search).has('paged-comic');
+const sectionSize = new URLSearchParams(location.search).has('long-comic') ? 200 : 40;
 let delay = 0;
+let failedPage = -1;
 let assetVersion = 0;
 const requests = [];
 const repository = {
@@ -20,6 +23,7 @@ const assets = {
     await new Promise((resolve) => setTimeout(resolve, delay));
     signal?.throwIfAborted();
     const index = Number(id.split(':')[0].slice(1));
+    if (index === failedPage) throw new Error('Injected image failure');
     const height = 600 + (index % 7) * 500;
     return {
       blob: new Blob(
@@ -33,7 +37,7 @@ const assets = {
 };
 const noop = () => {};
 function Fixture() {
-  const [count, setCount] = useState(80);
+  const [count, setCount] = useState(sectionSize * 2);
   const [version, setVersion] = useState(0);
   const chapters = useMemo(
     () =>
@@ -44,14 +48,17 @@ function Fixture() {
         novelId: 'comic-review',
         paragraphCount: 1,
         textHash: `title-${index}`,
-        documentSectionId: `s${Math.floor(index / 40)}`,
-        documentSectionTitle: `section ${Math.floor(index / 40)}`,
-        ...(!legacy ? { documentSectionSourceContentHash: `hash${Math.floor(index / 40)}:${version}` } : {}),
+        documentSectionId: `s${Math.floor(index / sectionSize)}`,
+        documentSectionTitle: `section ${Math.floor(index / sectionSize)}`,
+        ...(!legacy ? { documentSectionSourceContentHash: `hash${Math.floor(index / sectionSize)}:${version}` } : {}),
       })),
     [count, version],
   );
   globalThis.comicFixture = {
     setCount,
+    failPage: (index) => {
+      failedPage = index;
+    },
     requests,
     setDelay: (value) => {
       delay = value;
@@ -74,6 +81,7 @@ function Fixture() {
     chapters,
     repository,
     assets,
+    initialChapterId: `p${Number(new URLSearchParams(location.search).get('start') ?? 0)}`,
     onBack: noop,
     onPageSettled: noop,
   });
@@ -81,9 +89,10 @@ function Fixture() {
 async function main() {
   await new IndexedDbComicReadingProfileRepository().save('comic-review', {
     ...DEFAULT_COMIC_READING_PROFILE,
-    mode: 'vertical',
-    seamlessVertical: seamless,
+    mode: pagedComic ? 'single' : 'vertical',
+    seamlessVertical: pagedComic ? false : seamless,
     fit: 'width',
+    pageTurnMotion: 'page',
   });
   createRoot(document.getElementById('root')).render(React.createElement(Fixture));
 }

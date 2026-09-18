@@ -10,15 +10,21 @@ const SESSION_IDLE_MS = 5 * 60_000;
 export interface ReaderSessionTarget {
   readonly repository: Pick<ReaderRepository, 'addNovelReadingTime' | 'capabilities'>;
   readonly novelId: string;
-  readonly chapterId: string;
-  readonly onCommitted: (novelId: string, seconds: number, readAt: string) => void;
+  /** Retained for callers that still identify the opening chapter. Session lifetime is book-scoped. */
+  readonly chapterId?: string;
+  readonly onCommitted: (novelId: string, seconds: number, readAt: string, currentSession?: boolean) => void;
   readonly onFailed: (seconds: number) => void;
   readonly onDisplayChanged: (seconds: number) => void;
   readonly personalizationRepository?: ReaderPersonalizationRepository;
 }
 
 export class ReaderSessionTracker {
-  private persistedSeconds = 0;
+  private sessionPersistedSeconds = 0;
+  private aggregatePersistedSeconds = 0;
+  private pendingSession?: {
+    readonly seconds: number;
+    readonly event: ReturnType<typeof readingSessionEvent>;
+  };
   private queue = Promise.resolve();
   private accumulatedMs = 0;
   private activeSince: number | undefined;
@@ -77,38 +83,49 @@ export class ReaderSessionTracker {
     if (!aggregatePersistent && !this.target.personalizationRepository) {
       return this.queue;
     }
-    const deltaSeconds = this.elapsedSeconds() - this.persistedSeconds;
-    if (deltaSeconds < 1) return this.queue;
-    this.persistedSeconds += deltaSeconds;
-    const readAt = new Date(this.now()).toISOString();
     const target = this.target;
-    const operationId = `reading_session_${this.operationNonce}_${this.persistedSeconds}`;
     const run = this.queue.then(async () => {
-      let sessionRecorded = false;
+      this.checkIdle();
+      const elapsedSeconds = this.elapsedSeconds();
+      let failedSeconds = 0;
       try {
         if (target.personalizationRepository) {
-          const endedAt = this.now();
-          await target.personalizationRepository.appendReadingSession(
-            readingSessionEvent({
-              bookId: target.novelId,
-              mode: 'reading',
-              startedAt: endedAt - deltaSeconds * 1000,
-              endedAt,
-              activeSeconds: deltaSeconds,
-              operationId,
-            }),
-          );
-          sessionRecorded = true;
+          while (this.pendingSession || elapsedSeconds - this.sessionPersistedSeconds > 0) {
+            if (!this.pendingSession) {
+              const seconds = elapsedSeconds - this.sessionPersistedSeconds;
+              const endedAt = this.now();
+              this.pendingSession = {
+                seconds,
+                event: readingSessionEvent({
+                  bookId: target.novelId,
+                  mode: 'reading',
+                  startedAt: endedAt - seconds * 1000,
+                  endedAt,
+                  activeSeconds: seconds,
+                  operationId: `reading_session_${this.operationNonce}_${this.sessionPersistedSeconds + seconds}`,
+                }),
+              };
+            }
+            const pendingSession = this.pendingSession;
+            failedSeconds = pendingSession.seconds;
+            await target.personalizationRepository.appendReadingSession(pendingSession.event);
+            this.sessionPersistedSeconds += pendingSession.seconds;
+            this.pendingSession = undefined;
+            if (!aggregatePersistent) {
+              target.onCommitted(target.novelId, pendingSession.seconds, pendingSession.event.endedAt);
+            }
+          }
         }
-        if (aggregatePersistent && persistReadingTime) {
-          await persistReadingTime.call(target.repository, target.novelId, deltaSeconds, readAt);
-          target.onCommitted(target.novelId, deltaSeconds, readAt);
+        const aggregateDeltaSeconds = aggregatePersistent ? elapsedSeconds - this.aggregatePersistedSeconds : 0;
+        if (aggregatePersistent && persistReadingTime && aggregateDeltaSeconds > 0) {
+          failedSeconds = aggregateDeltaSeconds;
+          const readAt = new Date(this.now()).toISOString();
+          await persistReadingTime.call(target.repository, target.novelId, aggregateDeltaSeconds, readAt);
+          this.aggregatePersistedSeconds += aggregateDeltaSeconds;
+          target.onCommitted(target.novelId, aggregateDeltaSeconds, readAt);
         }
       } catch {
-        if (!sessionRecorded) {
-          this.persistedSeconds = Math.max(0, this.persistedSeconds - deltaSeconds);
-        }
-        target.onFailed(deltaSeconds);
+        target.onFailed(failedSeconds);
       }
     });
     this.queue = run.catch(() => undefined);
@@ -116,27 +133,50 @@ export class ReaderSessionTracker {
   }
 }
 
-export interface ReaderSessionOptions extends ReaderSessionTarget {
+export interface ReaderSessionOptions extends Omit<ReaderSessionTarget, 'novelId'> {
+  readonly active: boolean;
+  readonly novelId?: string;
   readonly statsVisible: boolean;
+  readonly onStarted?: () => void;
 }
 
 export function useReaderSession(options: ReaderSessionOptions): { flush: () => Promise<void> } {
   const trackerRef = useRef<ReaderSessionTracker>();
+  const activeSessionRef = useRef<object>();
+  const {
+    active,
+    novelId,
+    onCommitted,
+    onDisplayChanged,
+    onFailed,
+    onStarted,
+    personalizationRepository,
+    repository,
+    statsVisible,
+  } = options;
 
   useEffect(() => {
+    if (!active || !novelId) {
+      trackerRef.current = undefined;
+      activeSessionRef.current = undefined;
+      return;
+    }
+    const sessionIdentity = {};
+    activeSessionRef.current = sessionIdentity;
     const tracker = new ReaderSessionTracker(
       {
-        repository: options.repository,
-        novelId: options.novelId,
-        chapterId: options.chapterId,
-        onCommitted: options.onCommitted,
-        onFailed: options.onFailed,
-        onDisplayChanged: options.onDisplayChanged,
-        personalizationRepository: options.personalizationRepository,
+        repository,
+        novelId,
+        onCommitted: (committedNovelId, seconds, readAt) =>
+          onCommitted(committedNovelId, seconds, readAt, activeSessionRef.current === sessionIdentity),
+        onFailed,
+        onDisplayChanged,
+        personalizationRepository,
       },
       Date.now(),
     );
     trackerRef.current = tracker;
+    onStarted?.();
     tracker.target.onDisplayChanged(0);
     const visible = () => document.visibilityState !== 'hidden';
     let focused = typeof document.hasFocus === 'function' ? document.hasFocus() : true;
@@ -172,20 +212,13 @@ export function useReaderSession(options: ReaderSessionOptions): { flush: () => 
         window.removeEventListener(type, interact);
       }
       if (trackerRef.current === tracker) trackerRef.current = undefined;
+      if (activeSessionRef.current === sessionIdentity) activeSessionRef.current = undefined;
       void tracker.flush();
     };
-  }, [
-    options.chapterId,
-    options.novelId,
-    options.onCommitted,
-    options.onDisplayChanged,
-    options.onFailed,
-    options.repository,
-    options.personalizationRepository,
-  ]);
+  }, [active, novelId, onCommitted, onDisplayChanged, onFailed, onStarted, repository, personalizationRepository]);
 
   useEffect(() => {
-    if (!options.statsVisible) return;
+    if (!statsVisible) return;
     const publish = () => {
       const tracker = trackerRef.current;
       if (tracker) tracker.target.onDisplayChanged(tracker.elapsedSeconds());
@@ -193,7 +226,7 @@ export function useReaderSession(options: ReaderSessionOptions): { flush: () => 
     publish();
     const displayTimer = window.setInterval(publish, SESSION_DISPLAY_INTERVAL_MS);
     return () => window.clearInterval(displayTimer);
-  }, [options.chapterId, options.novelId, options.statsVisible]);
+  }, [active, novelId, statsVisible]);
 
   const flush = useCallback(() => trackerRef.current?.flush() ?? Promise.resolve(), []);
   return { flush };

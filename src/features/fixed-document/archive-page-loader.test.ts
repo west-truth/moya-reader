@@ -131,4 +131,26 @@ describe('archive foreground image loading', () => {
     expect(URL.revokeObjectURL).not.toHaveBeenCalled();
     h.loader.dispose();
   });
+
+  it('finishes episode loads during scrolling and retains visited images beyond the small cache', async () => {
+    const h = harness({ cacheSize: 2 });
+    const episode = [0, 1, 2, 3, 4, 5];
+    h.loader.update(0, [0, 1, 2], String, episode);
+    h.loader.update(5, [4, 5], String, episode);
+    expect(h.requests.every((request) => !request.signal.aborted)).toBe(true);
+    for (const request of h.requests.slice()) request.resolve(page(request.index));
+    await settle();
+    for (const request of h.requests.slice(3)) request.resolve(page(request.index));
+    await settle();
+    expect(h.snapshot().pages.size).toBe(5);
+    const original = h.snapshot().pages.get(0)?.url;
+    h.loader.update(0, [0, 1], String, episode);
+    expect(h.snapshot().pages.get(0)?.url).toBe(original);
+    expect(h.requests.filter((request) => request.index === 0)).toHaveLength(1);
+    expect(URL.revokeObjectURL).not.toHaveBeenCalled();
+    // Crossing an episode boundary releases the old episode again.
+    h.loader.update(6, [6], String, [6, 7]);
+    expect(h.snapshot().pages.size).toBeLessThanOrEqual(2);
+    h.loader.dispose();
+  });
 });

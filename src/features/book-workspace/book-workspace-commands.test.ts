@@ -340,6 +340,28 @@ describe('BookWorkspaceController commands', () => {
     expect(harness.calls).toEqual(['adjacent.refreshAfterLocalMutation', 'adjacent.refreshAfterLocalMutation']);
   });
 
+  it('does not mix a completed background session into the newly active session counter', () => {
+    const novel = testNovel({ readingSeconds: 10 });
+    const harness = createBookWorkspaceTestHarness({ novel });
+    const controller = new BookWorkspaceController(
+      harness.ports,
+      testWorkspaceState({
+        selectedNovel: novel,
+        novels: [novel],
+        readerSessionDisplaySeconds: 4,
+        readerSessionCommittedSeconds: 0,
+      }),
+    );
+
+    controller.commitSessionTime(novel.id, 5, '2026-07-11T02:01:00.000Z', false);
+
+    expect(controller.getSnapshot()).toMatchObject({
+      readerSessionDisplaySeconds: 4,
+      readerSessionCommittedSeconds: 0,
+      selectedNovel: { readingSeconds: 15 },
+    });
+  });
+
   it('ignores a location commit emitted by a chapter that is no longer active', () => {
     const novel = testNovel();
     const currentChapter = testChapter(2);

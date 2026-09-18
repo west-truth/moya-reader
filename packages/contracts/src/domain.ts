@@ -49,7 +49,8 @@ export interface ApplicationThemeColors {
 /** @deprecated `screen_turn` is accepted only to migrate older saved settings. */
 export type ReadingProfileFlow = 'scroll' | 'screen_turn' | 'paginated';
 export type ReadingModeLock = 'auto' | 'scroll' | 'paginated';
-export type PageTurnMotion = 'instant' | 'smooth';
+export type PageTurnMotion = 'instant' | 'smooth' | 'page';
+export type PageSpread = 'single' | 'double' | 'auto';
 
 export interface ReadingProfile {
   schemaVersion: 1;
@@ -72,6 +73,7 @@ export interface ReadingProfile {
   flow: ReadingProfileFlow;
   modeLock: ReadingModeLock;
   pageTurnMotion: PageTurnMotion;
+  pageSpread: PageSpread;
 }
 
 export type ReadingProfileOverride = Partial<Omit<ReadingProfile, 'schemaVersion'>>;
@@ -722,6 +724,7 @@ export interface ComicReadingProfile {
   >;
   gap?: number;
   background?: 'black' | 'charcoal' | 'white';
+  pageTurnMotion?: 'instant' | 'slide' | 'page';
 }
 
 export interface Bookmark {

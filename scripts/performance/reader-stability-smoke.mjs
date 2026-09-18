@@ -183,6 +183,44 @@ try {
   }
   evidence.push({ emptyImageAndOversizedParagraph: true });
 
+  const spread = await newPage();
+  await spread.setViewportSize({ width: 1200, height: 844 });
+  await spread.goto('http://reader.test/text?paged=1&short=1&spread=double&motion=page');
+  await spread.waitForFunction(
+    () =>
+      document.querySelector('[data-reader-layer="paginated"]')?.dataset.paginationReady === 'true' &&
+      document.querySelectorAll('.reader-paginated-page.is-current').length === 2,
+  );
+  const firstSpread = await spread.locator('.reader-paginated-page.is-current').evaluateAll((pages) => ({
+    starts: pages.map((page) => [Number(page.dataset.pageStartIndex), Number(page.dataset.pageStartOffset)]),
+    ends: pages.map((page) => [Number(page.dataset.pageEndIndex), Number(page.dataset.pageEndOffset)]),
+    stage: document.querySelector('.reader-pagination-stage')?.className,
+  }));
+  assert.equal(firstSpread.stage?.includes('motion-page'), true);
+  await spread.evaluate(() => readerFixture.api().pageJump(1));
+  await spread.waitForFunction(
+    (start) => Number(document.querySelector('.reader-paginated-page.is-current')?.dataset.pageStartIndex) !== start,
+    firstSpread.starts[0][0],
+  );
+  const secondSpread = await spread.locator('.reader-paginated-page.is-current').evaluateAll((pages) => ({
+    starts: pages.map((page) => [Number(page.dataset.pageStartIndex), Number(page.dataset.pageStartOffset)]),
+    count: pages.length,
+  }));
+  assert.equal(secondSpread.count, 2);
+  assert.deepEqual(secondSpread.starts[0], firstSpread.ends[1]);
+  await spread.evaluate(() => readerFixture.api().pageJump(-1));
+  await spread.waitForFunction(
+    (start) => Number(document.querySelector('.reader-paginated-page.is-current')?.dataset.pageStartIndex) === start,
+    firstSpread.starts[0][0],
+  );
+  await spread.setViewportSize({ width: 600, height: 844 });
+  await spread.waitForFunction(
+    () => !document.querySelector('.reader-paginated-root')?.classList.contains('is-spread'),
+  );
+  assert.equal(await spread.locator('.reader-paginated-page.is-current').count(), 1);
+  evidence.push({ textDoublePage: true, pageTurnMotion: 'page', narrowFallback: true });
+  await spread.close();
+
   const comic = await newPage();
   await comic.goto('http://reader.test/comic');
   await comic.waitForSelector('.fixed-doc-viewport.is-continuous-seamless img');
@@ -219,6 +257,97 @@ try {
   assert.deepEqual(geometry.anomalies, [], 'Late image measurements must not move the visible source row');
   evidence.push({ comicGeometry: geometry });
   await comic.close();
+
+  const pagedComic = await newPage();
+  await pagedComic.setViewportSize({ width: 390, height: 844 });
+  await pagedComic.goto('http://reader.test/comic?paged-comic=1');
+  await pagedComic.waitForSelector('.fixed-doc-viewport.is-single img');
+  const pagedViewport = pagedComic.locator('.fixed-doc-viewport');
+  const pagedBox = await pagedViewport.boundingBox();
+  assert.ok(pagedBox);
+  await pagedComic.mouse.click(pagedBox.x + pagedBox.width * 0.86, pagedBox.y + pagedBox.height * 0.5);
+  await pagedComic.waitForFunction(
+    () => document.querySelector('.fixed-doc-pages article.is-current')?.dataset.pageIndex === '1',
+  );
+  assert.equal(await pagedViewport.evaluate((element) => element.classList.contains('motion-page')), true);
+  await pagedComic.mouse.click(pagedBox.x + pagedBox.width * 0.14, pagedBox.y + pagedBox.height * 0.5);
+  await pagedComic.waitForFunction(
+    () => document.querySelector('.fixed-doc-pages article.is-current')?.dataset.pageIndex === '0',
+  );
+  await pagedComic.locator('.fixed-doc-footer').getByRole('button', { name: '다음 회차' }).click();
+  await pagedComic.waitForFunction(
+    () => document.querySelector('.fixed-doc-pages article.is-current')?.dataset.pageIndex === '40',
+  );
+  await pagedComic.locator('.fixed-doc-footer').getByRole('button', { name: '이전 회차' }).click();
+  await pagedComic.waitForFunction(
+    () => document.querySelector('.fixed-doc-pages article.is-current')?.dataset.pageIndex === '0',
+  );
+  evidence.push({ comicTapTurns: true, comicFooterChapterSteps: true, comicPageTurnMotion: 'page' });
+  await pagedComic.close();
+
+  const flow = await newPage();
+  await flow.goto('http://reader.test/comic?long-comic=1&start=80');
+  await flow.waitForFunction(() => document.querySelector('[data-page-index="80"] img')?.naturalWidth > 0);
+  await flow.waitForTimeout(300);
+  const entry = await flow.evaluate(() => {
+    const viewport = document.querySelector('.fixed-doc-viewport');
+    const rows = [...viewport.querySelectorAll('article[data-page-index]')];
+    globalThis.flowRows = rows;
+    globalThis.flowImage = document.querySelector('[data-page-index="80"] img');
+    return {
+      count: rows.length,
+      top:
+        document.querySelector('[data-page-index="80"]').getBoundingClientRect().top -
+        viewport.getBoundingClientRect().top,
+    };
+  });
+  assert.equal(entry.count, 200, 'Keep only the active episode shells in normal document flow');
+  assert.ok(Math.abs(entry.top) < 3, `Resume must remain at page 80: ${entry.top}`);
+  for (let index = 80; index <= 110; index++) {
+    await flow.evaluate((i) => {
+      const viewport = document.querySelector('.fixed-doc-viewport');
+      const row = document.querySelector(`[data-page-index="${i}"]`);
+      viewport.scrollTop += row.getBoundingClientRect().top - viewport.getBoundingClientRect().top;
+    }, index);
+    await flow.waitForFunction((i) => document.querySelector(`[data-page-index="${i}"] img`)?.naturalWidth > 0, index);
+  }
+  const retained = await flow.evaluate(() => ({
+    sameRows: flowRows.every((row) => row.isConnected),
+    sameImage: flowImage === document.querySelector('[data-page-index="80"] img'),
+    firstPageLoads: comicFixture.requests.filter((id) => id.startsWith('p80:')).length,
+  }));
+  assert.deepEqual(retained, { sameRows: true, sameImage: true, firstPageLoads: 1 });
+  // A failed destination image must not replace the entire episode with an error screen.
+  await flow.evaluate(() => {
+    comicFixture.failPage(160);
+    const viewport = document.querySelector('.fixed-doc-viewport');
+    viewport.scrollTop +=
+      document.querySelector('[data-page-index="160"]').getBoundingClientRect().top -
+      viewport.getBoundingClientRect().top;
+  });
+  await flow.getByText('Injected image failure', { exact: true }).waitFor();
+  assert.equal(await flow.locator('.is-page-flow article').count(), 200);
+  assert.equal(await flow.evaluate(() => flowImage.isConnected), true);
+  await flow.locator('.fixed-doc-footer').getByRole('button', { name: '다음 회차', exact: true }).click();
+  await flow.waitForFunction(() => document.querySelector('.is-page-flow article')?.dataset.pageIndex === '200');
+  await flow.waitForFunction(() => document.querySelector('[data-page-index="200"] img')?.naturalWidth > 0);
+  assert.equal(await flow.locator('.is-page-flow article').count(), 200);
+  await flow.locator('.fixed-doc-footer').getByRole('button', { name: '이전 회차', exact: true }).click();
+  await flow.waitForFunction(() => document.querySelector('.is-page-flow article')?.dataset.pageIndex === '0');
+  await flow.waitForFunction(() => document.querySelector('[data-page-index="0"] img')?.naturalWidth > 0);
+  await flow.setViewportSize({ width: 430, height: 932 });
+  await flow.waitForTimeout(300);
+  const resizeGap = await flow.evaluate(() => {
+    const rows = [...document.querySelectorAll('.is-page-flow article')];
+    return Math.max(
+      ...rows
+        .slice(1)
+        .map((row, i) => Math.abs(row.getBoundingClientRect().top - rows[i].getBoundingClientRect().bottom)),
+    );
+  });
+  assert.ok(resizeGap < 1, `Page shells must remain adjacent after resize: ${resizeGap}`);
+  evidence.push({ longComicResume: entry, retainedBeyond20Pages: retained, imageFailureKeepsEpisode: true });
+  await flow.close();
 
   const legacy = await newPage();
   await legacy.goto('http://reader.test/comic?legacy=1');
