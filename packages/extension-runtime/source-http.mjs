@@ -12,6 +12,15 @@ const transientConnectionCodes = new Set([
   'ENETUNREACH',
   'EHOSTUNREACH',
 ]);
+const tlsFailureCodes = new Set([
+  'CERT_HAS_EXPIRED',
+  'CERT_NOT_YET_VALID',
+  'DEPTH_ZERO_SELF_SIGNED_CERT',
+  'ERR_TLS_CERT_ALTNAME_INVALID',
+  'SELF_SIGNED_CERT_IN_CHAIN',
+  'UNABLE_TO_GET_ISSUER_CERT_LOCALLY',
+  'UNABLE_TO_VERIFY_LEAF_SIGNATURE',
+]);
 
 const denied = new BlockList();
 for (const [address, prefix] of [
@@ -71,7 +80,7 @@ export async function approveSourceUrl(
     addresses.some(({ address, family }) => !isPublicSourceAddress(address) || isIP(address) !== family)
   )
     throw new Error('source_address_denied');
-  return { url, address: addresses[0] };
+  return { url, address: addresses[0], addresses };
 }
 
 function pinnedRequest({ url, address }, input, signal) {
@@ -154,11 +163,21 @@ export function createSourceHttp(origins, { lookup, transport = pinnedRequest, a
           if (input.authenticated && !authenticate) throw new Error('source_auth_required');
           const authentication = input.authenticated ? await authenticate(approved.url, deadline) : {};
           deadline.throwIfAborted();
-          response = await transport(
-            approved,
-            { ...request, headers: { ...request.headers, ...authentication } },
-            deadline,
-          );
+          for (let index = 0; index < approved.addresses.length; index++) {
+            try {
+              response = await transport(
+                { ...approved, address: approved.addresses[index] },
+                { ...request, headers: { ...request.headers, ...authentication } },
+                deadline,
+              );
+              break;
+            } catch (error) {
+              deadline.throwIfAborted();
+              const transient =
+                transientConnectionCodes.has(error?.code) || error?.message === 'source_connection_failed';
+              if (request.method !== 'GET' || !transient || index === approved.addresses.length - 1) throw error;
+            }
+          }
           break;
         } catch (error) {
           // eslint-disable-next-line preserve-caught-error -- Network exceptions can contain URLs; only safe public codes leave the broker.
@@ -177,6 +196,9 @@ export function createSourceHttp(origins, { lookup, transport = pinnedRequest, a
           if (transient || error?.code === 'ENOTFOUND')
             // eslint-disable-next-line preserve-caught-error -- Do not retain private transport details in public failures.
             throw new Error('source_connection_failed');
+          if (tlsFailureCodes.has(error?.code))
+            // eslint-disable-next-line preserve-caught-error -- Certificate details and hostnames stay inside the broker.
+            throw new Error('source_tls_failed');
           throw error;
         }
       }

@@ -29,8 +29,14 @@ const short = (value: unknown, max = 512): value is string =>
   value.length <= max &&
   !Array.from(value).some((char) => char.charCodeAt(0) < 32);
 export function mangaApkRepositoryUrl(value: string): string {
-  const url = new URL(value.trim());
-  if (value.length > 2048 || url.protocol !== 'https:' || url.username || url.password || url.search || url.hash)
+  if (typeof value !== 'string' || value.length > 2048) throw new Error('apk_repository_invalid');
+  let url: URL;
+  try {
+    url = new URL(value.trim());
+  } catch {
+    throw new Error('apk_repository_invalid');
+  }
+  if (url.protocol !== 'https:' || url.username || url.password || url.search || url.hash)
     throw new Error('apk_repository_invalid');
   if (!url.pathname.endsWith('/index.min.json')) url.pathname = url.pathname.replace(/\/$/, '') + '/index.min.json';
   return url.href;
@@ -42,7 +48,7 @@ export function parseMangaApkIndex(value: unknown): MangaApkIndex {
   if (!Array.isArray(value) || value.length > 10000) throw new Error('apk_repository_invalid');
   const entries: MangaApkEntry[] = [];
   const packages = new Set<string>();
-  let excludedEntries = 0;
+  const excludedEntries = 0;
   for (const row of value) {
     if (
       !object(row) ||
@@ -58,15 +64,15 @@ export function parseMangaApkIndex(value: unknown): MangaApkIndex {
       !/^[a-zA-Z0-9][a-zA-Z0-9._-]*\.apk$/.test(row.apk) ||
       row.apk.includes('..') ||
       ![0, 1].includes(row.nsfw as number) ||
-      !Array.isArray(row.sources) ||
-      row.sources.length > 1000
+      (row.sources !== undefined && row.sources !== null && !Array.isArray(row.sources)) ||
+      (Array.isArray(row.sources) && row.sources.length > 1000)
     )
       throw new Error('apk_repository_invalid');
     packages.add(row.pkg);
     const sources: MangaApkSource[] = [];
     const ids = new Set<string>();
     const excludedSources = 0;
-    for (const source of row.sources) {
+    for (const source of row.sources ?? []) {
       if (
         !object(source) ||
         !short(source.id, 19) ||
@@ -80,7 +86,12 @@ export function parseMangaApkIndex(value: unknown): MangaApkIndex {
       ids.add(source.id);
       if (source.baseUrl !== undefined) {
         if (!short(source.baseUrl, 2048)) throw new Error('apk_repository_invalid');
-        const origin = new URL(source.baseUrl);
+        let origin: URL;
+        try {
+          origin = new URL(source.baseUrl);
+        } catch {
+          throw new Error('apk_repository_invalid');
+        }
         if (!['http:', 'https:'].includes(origin.protocol) || origin.username || origin.password)
           throw new Error('apk_repository_invalid');
       }
@@ -90,10 +101,6 @@ export function parseMangaApkIndex(value: unknown): MangaApkIndex {
         lang: source.lang,
         ...(source.baseUrl ? { baseUrl: source.baseUrl as string } : {}),
       });
-    }
-    if (!sources.length) {
-      excludedEntries++;
-      continue;
     }
     entries.push({
       pkg: row.pkg,

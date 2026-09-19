@@ -27,7 +27,7 @@ it('installs a novel repository and returns cleaned UTF-8 chapters instead of im
     `
     DefaultExtension.prototype.getHtmlContent=async function(name,url){
       if(name!=='One'||url!=='/1')throw new Error('wrong chapter');
-      return '<h2>제1화</h2><p>첫 &amp; 문장<br>다음 줄</p><p>둘째 <b>문장</b></p><script>untrusted()</script>';
+      return this.cleanHtmlContent('<h2>제1화</h2><p>첫 &amp; 문장<br>다음 줄</p><p>둘째 <b>문장</b></p><script>untrusted()</script>');
     };
     DefaultExtension.prototype.cleanHtmlContent=async function(html){return html.replace('둘째','마지막');};
     DefaultExtension.prototype.getPageList=function(){throw new Error('not manga');};`;
@@ -255,9 +255,31 @@ it('preserves encrypted options across restart and imports original-script pages
     host.snapshot().repositories.find((r) => r.url === repo)!.entries[0].code,
     signal,
   );
+  const previousActivation = host.snapshot().packages.find((record) => record.pkg === pkg.pkg)!.digest;
   await host.install(update.id, update.revision, signal);
+  expect(host.snapshot().packages.find((record) => record.pkg === pkg.pkg)).toMatchObject({
+    version: '1.1.0',
+    digest: update.digest,
+    enabled: true,
+  });
+  expect(host.snapshot().packages.find((record) => record.pkg === pkg.pkg)!.digest).not.toBe(previousActivation);
   expect(host.preferences(pkg.pkg).fields.find((f) => f.key === 'access_key')?.configured).toBe(true);
   await host.change(pkg.pkg, host.snapshot().revision, 'disable');
+  expect(host.catalog.getSources()).toHaveLength(0);
+  version = '1.2.0';
+  await host.refreshRepository(repo, signal);
+  const disabledUpdate = await host.inspect(
+    repo,
+    pkg.pkg,
+    host.snapshot().repositories.find((r) => r.url === repo)!.entries[0].code,
+    signal,
+  );
+  await host.install(disabledUpdate.id, disabledUpdate.revision, signal);
+  expect(host.snapshot().packages.find((record) => record.pkg === pkg.pkg)).toMatchObject({
+    version: '1.2.0',
+    digest: disabledUpdate.digest,
+    enabled: false,
+  });
   expect(host.catalog.getSources()).toHaveLength(0);
   await host.change(pkg.pkg, host.snapshot().revision, 'enable');
   expect(host.catalog.getSources()).toHaveLength(1);
@@ -283,6 +305,13 @@ it('imports original JS files without a repository, preserves multi-source choic
     ])};` + fixtureSource,
   );
   const signal = AbortSignal.timeout(10000);
+  for (const index of [-1, 0.5, 2])
+    await expect(host.inspectFile(source, 'extension.js', index, signal)).rejects.toThrow('compatibility_file_invalid');
+  const malformed = Buffer.from(
+    `const mangayomiSources=${JSON.stringify([{ ...fixtureRow, lang: undefined, langs: ['en', 'en'] }])};` +
+      fixtureSource,
+  );
+  await expect(host.inspectFile(malformed, 'extension.js', 0, signal)).rejects.toThrow('compatibility_file_invalid');
   const review = await host.inspectFile(source, 'extension.js', 1, signal);
   expect(review.fileSources).toHaveLength(2);
   await host.install(review.id, review.revision, signal);

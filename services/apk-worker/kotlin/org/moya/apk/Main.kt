@@ -85,7 +85,17 @@ object Main {
             output.println(response.toString()); output.flush()
         }
     }
-    private fun work(manga: SManga) = JSONObject().put("url", manga.url).put("title", manga.title)
+    private inline fun initialized(fallback: String, read: () -> String) = try {
+        read()
+    } catch (_: UninitializedPropertyAccessException) {
+        fallback
+    }
+    // Some extensions return a fresh details object without copying the required listing identity.
+    // Detail calls retain the host-supplied identity; list calls still expose missing identity so
+    // the host's ordinary result validation rejects it.
+    private fun work(manga: SManga, fallbackUrl: String = "", fallbackTitle: String = "") = JSONObject()
+        .put("url", initialized(fallbackUrl) { manga.url })
+        .put("title", initialized(fallbackTitle) { manga.title })
         .put("author", manga.author).put("artist", manga.artist).put("description", manga.description)
         .put("genre", manga.genre).put("status", manga.status).put("cover", manga.thumbnail_url)
     private suspend fun invoke(sources: Map<String, HttpSource>, method: String, input: JSONObject): Any {
@@ -111,7 +121,7 @@ object Main {
                         .put("availableModes", JSONArray(if (source.supportsLatest) listOf("popular", "latest", "search") else listOf("popular", "search")))
                         .put("filters", definitions))
             }
-            "detail" -> work(source.fetchMangaDetails(manga).awaitSingle())
+            "detail" -> work(source.fetchMangaDetails(manga).awaitSingle(), manga.url, manga.title)
             "chapters" -> {
                 val result = source.fetchChapterList(manga).awaitSingle(); require(result.size <= 100000)
                 JSONArray(result.map { JSONObject().put("url", it.url).put("title", it.name).put("number", it.chapter_number.toDouble())

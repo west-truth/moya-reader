@@ -4,9 +4,9 @@ export interface CompatibilityPreference {
   key: string;
   title: string;
   summary?: string;
-  kind: 'text' | 'boolean' | 'select';
+  kind: 'text' | 'boolean' | 'select' | 'multi-select';
   secret: boolean;
-  value?: string | boolean | number;
+  value?: string | boolean | number | string[];
   configured?: boolean;
   choices?: readonly { label: string; value: string | number }[];
 }

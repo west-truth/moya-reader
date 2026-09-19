@@ -65,6 +65,8 @@ Live evidence (2026-09-13): 5 of 15 factory sources returned a catalog in this n
 One diagnosed failure originated as an IOException inside the APK's network layer. A public source's full 143-page
 chapter produced a 20,557,657-byte CBZ in 10.5 seconds and was imported/displayed by the production mobile reader.
 These results do not establish all-source, authentication, WebView, or final installer compatibility.
+The requested 1.4/1.6 install/reopen and live source matrix from 2026-09-19 is recorded in
+[the extension reliability acceptance](../../docs/operations/2026-09-19-extension-reliability.md).
 
 ## Original source options
 

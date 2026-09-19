@@ -30,13 +30,28 @@ export class ApkExtensionHost {
       if (data.length > 16 * 1024 * 1024) throw new Error('apk_repository_limit');
       const rows: unknown = JSON.parse(data.toString('utf8'));
       if (!Array.isArray(rows) || rows.length > 16) throw new Error('apk_repository_invalid');
-      host.repositories = rows.map((row) => ({
-        url: mangaApkRepositoryUrl(row.url),
-        updatedAt: Number(row.updatedAt),
-        entries: parseMangaApkIndex(
-          row.entries.map((entry: { nsfw: boolean }) => ({ ...entry, nsfw: entry.nsfw ? 1 : 0 })),
-        ).entries,
-      }));
+      host.repositories = rows.map((value) => {
+        if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('apk_repository_invalid');
+        const row = value as Record<string, unknown>;
+        if (!Array.isArray(row.entries) || !Number.isFinite(row.updatedAt) || (row.updatedAt as number) < 0)
+          throw new Error('apk_repository_invalid');
+        return {
+          url: mangaApkRepositoryUrl(String(row.url)),
+          updatedAt: Number(row.updatedAt),
+          entries: parseMangaApkIndex(
+            row.entries.map((entry) => {
+              if (
+                !entry ||
+                typeof entry !== 'object' ||
+                Array.isArray(entry) ||
+                typeof (entry as { nsfw?: unknown }).nsfw !== 'boolean'
+              )
+                throw new Error('apk_repository_invalid');
+              return { ...entry, nsfw: (entry as { nsfw: boolean }).nsfw ? 1 : 0 };
+            }),
+          ).entries,
+        };
+      });
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
     }

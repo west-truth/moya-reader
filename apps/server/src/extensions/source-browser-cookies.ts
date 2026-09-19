@@ -2,6 +2,7 @@ import { readBrowserSession, writeBrowserSession } from './source-browser-sessio
 import { CookieJar } from 'tough-cookie';
 import type { SourceWebViewScope } from './source-webview.js';
 import { compatibilityHttp, type CompatibilityHttpInput } from './mangayomi/http.js';
+import { compatibilityHttpPolicy } from './mangayomi/http-options.js';
 
 /** Bridges ordinary HTTP with the source's WebView session without launching a browser for HTTP requests. */
 export async function sourceBrowserHttp(
@@ -12,13 +13,39 @@ export async function sourceBrowserHttp(
   transport = compatibilityHttp,
   followRedirects = false,
 ): Promise<Awaited<ReturnType<typeof compatibilityHttp>>> {
+  const policy = compatibilityHttpPolicy(input?.options);
+  const deadline = AbortSignal.any([signal, AbortSignal.timeout(policy.timeoutMs)]);
+  try {
+    return await requestWithCookies(
+      input,
+      deadline,
+      scope,
+      maximum,
+      transport,
+      followRedirects && policy.followRedirects,
+    );
+  } catch (error) {
+    if (!signal.aborted && deadline.aborted) throw new Error('source_request_timeout', { cause: error });
+    throw error;
+  }
+}
+
+async function requestWithCookies(
+  input: CompatibilityHttpInput,
+  signal: AbortSignal,
+  scope: SourceWebViewScope,
+  maximum: number,
+  transport: typeof compatibilityHttp,
+  followRedirects: boolean,
+): Promise<Awaited<ReturnType<typeof compatibilityHttp>>> {
   if (followRedirects) {
+    const { maxRedirects } = compatibilityHttpPolicy(input.options);
     const next = { ...input, headers: { ...input.headers } };
     let remaining = maximum;
-    for (let hop = 0; hop <= 4; hop++) {
-      const response = await sourceBrowserHttp(next, signal, scope, remaining, transport, false);
+    for (let hop = 0; hop <= maxRedirects; hop++) {
+      const response = await requestWithCookies(next, signal, scope, remaining, transport, false);
       if (![301, 302, 303, 307, 308].includes(response.statusCode)) return response;
-      if (hop === 4 || !response.headers.location) throw new Error('source_redirect_limit');
+      if (hop === maxRedirects || !response.headers.location) throw new Error('source_redirect_limit');
       const url = new URL(response.headers.location, next.url);
       if (url.origin !== new URL(next.url).origin) {
         if (!['GET', 'HEAD'].includes(next.method ?? 'GET')) throw new Error('source_redirect_denied');

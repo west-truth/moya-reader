@@ -8,6 +8,7 @@ const messages: Readonly<Record<string, string>> = {
   source_request_timeout: '소스 사이트의 응답 시간이 초과됐습니다. 잠시 후 다시 시도해 주세요.',
   source_body_limit: '소스가 반환한 데이터가 처리 가능한 크기를 넘었습니다. 앱이 최신 버전인지 확인해 주세요.',
   source_http_failed: '소스 사이트가 요청을 처리하지 못했습니다. 잠시 후 다시 시도해 주세요.',
+  source_tls_failed: '소스 서버의 TLS 인증서를 확인할 수 없습니다. 서버 인증서가 갱신된 뒤 다시 시도해 주세요.',
   source_access_denied: '사이트에서 접근을 거부했습니다. 네트워크·프록시 설정이나 사이트의 접근 제한을 확인해 주세요.',
   execution_busy: '다른 확장 요청을 처리하고 있습니다. 잠시 후 다시 시도해 주세요.',
   execution_timeout: '확장 처리 시간이 초과됐습니다. 잠시 후 다시 시도해 주세요.',
@@ -42,6 +43,10 @@ const messages: Readonly<Record<string, string>> = {
   package_repository_integrity: '업데이트 파일이 저장소의 안내와 다릅니다. 저장소 관리자에게 확인해 주세요.',
   invalid_package_repository: '업데이트 저장소 형식을 읽지 못했습니다. 저장소 관리자에게 확인해 주세요.',
   package_install_conflict: '다른 작업으로 확장이 변경됐습니다. 목록을 새로고침한 뒤 다시 시도해 주세요.',
+  package_install_unconfirmed:
+    '서버가 설치 요청을 받았지만 새 버전을 확인하지 못했습니다. 다시 설치하지 말고 목록을 새로고침해 주세요.',
+  package_operation_timeout:
+    '확장 작업 응답이 지연되고 있습니다. 설치가 반영됐을 수 있으니 다시 설치하기 전에 목록을 새로고침해 주세요.',
 };
 export function packageOperationMessage(error: unknown): string | undefined {
   return error instanceof Error && Object.prototype.hasOwnProperty.call(messages, error.message)

@@ -67,6 +67,7 @@ export class ApkInstallations {
           metadata.version !== advertised.version))
     )
       throw new Error('apk_index_mismatch');
+    if (!compatibleExtensionVersion(metadata.version)) throw new Error('apk_android_feature_unsupported');
     signal.throwIfAborted();
     const installed = this.#state.packages.find((p) => p.pkg === metadata.pkg);
     if (installed && signerKey(installed.signers) !== signerKey(metadata.signers))
@@ -116,7 +117,7 @@ export class ApkInstallations {
       signal.throwIfAborted();
       const record = {
         ...plan.metadata,
-        enabled: true,
+        enabled: previous?.enabled ?? true,
         activation: randomUUID(),
         ...(stateId ? { stateId } : {}),
         digest: plan.digest,
@@ -185,6 +186,10 @@ export class ApkInstallations {
     this.#state = next;
   }
 }
+function compatibleExtensionVersion(version) {
+  const [major, minor] = version.split('.', 3);
+  return /^\d+$/.test(major) && /^\d+$/.test(minor) && Number(major) === 1 && Number(minor) >= 3 && Number(minor) <= 6;
+}
 function validMetadata(p) {
   return (
     p &&
@@ -192,7 +197,6 @@ function validMetadata(p) {
     /^[A-Za-z]\w*(?:\.[A-Za-z]\w*)+$/.test(p.pkg) &&
     p.pkg.length <= 256 &&
     typeof p.entry === 'string' &&
-    p.entry.startsWith(p.pkg + '.') &&
     /^[A-Za-z_$][A-Za-z0-9_$.]+$/.test(p.entry) &&
     Number.isSafeInteger(p.code) &&
     p.code > 0 &&
@@ -221,6 +225,7 @@ function validRecord(p) {
   return (
     validMetadata(p) &&
     (p.stateId === undefined || /^[a-f0-9-]{36}$/.test(p.stateId)) &&
+    (p.enabled === undefined || typeof p.enabled === 'boolean') &&
     /^[a-f0-9]{64}$/.test(p.digest) &&
     Array.isArray(p.sources) &&
     p.sources.length <= 1000 &&
