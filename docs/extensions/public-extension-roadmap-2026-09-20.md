@@ -58,7 +58,10 @@ GitHub 필수 CI는 아래 최종 PR 단계에서 별도로 확인한다.
 - [x] 1단계 기존 기반 정리 및 커밋
 - [x] 2단계 corpus·실사이트 호환 확대 및 커밋
 - [x] 3단계 개발 preview·공개 문서 및 커밋
-- [ ] 최종 PR과 GitHub 필수 CI
+- [x] 최종 PR [#51](https://github.com/west-truth/moya-reader/pull/51) 생성
+
+GitHub 필수 CI의 현재 결과는 PR checks를 단일 기준으로 삼는다. 문서의 정적 체크 표시를 갱신하려고
+검사 전체를 다시 실행시키는 후속 커밋은 만들지 않는다.
 
 ### 1단계 검증 기록
 
