@@ -224,7 +224,7 @@ export async function runProjectSource(
       });
     } catch (error) {
       if (developmentTransportFailure && error instanceof Error && error.message === 'execution_failed')
-        throw new Error(developmentTransportFailure, { cause: error });
+        throw Object.assign(new Error(developmentTransportFailure), { cause: error });
       throw error;
     }
     if (method === 'source.getContent' && validateSourceContentRequest(value)) {
