@@ -35,7 +35,7 @@ Mangayomi P0/HTTP 호환, 자체 SDK·CLI와 공개 배포 도구. 운영 서비
 | Mangayomi 문자열/DOM/기본 설정/소설 정리 | 구현·회귀 검사 완료      | 고정 revision의 원본 3개와 API 경계 검사. 전체 원본 카탈로그 무수정 호환을 검증하지 않았다.                                                                                                                                                            |
 | HTTP 옵션/중단/세션                      | 구현·관련 검사 통과      | PATCH, redirect, 실제 stalled body/DNS 취소, cookie 연결. native client 전체 옵션과 동일한 API는 아니다.                                                                                                                                               |
 | 실제 Mangayomi 소스의 목록→본문→읽기     | 부분 검증                | 후속 MangaDex 실사이트 첫 이미지 취득과 고정 HTTP 응답을 사용한 App 읽기는 각각 통과했다. 실사이트 전체 회차→App 읽기와 모든 언어/작품은 미검증이다. 기존 원본 2개의 도메인 이동/404 실패를 덮어쓰지 않는다.                                           |
-| 광범위한 Mangayomi 호환                  | 미완료                   | XPath·암호화/unpack·EPUB helper·복합 설정·호출 간 인스턴스 상태 등은 현재 지원하지 않거나 제한적이다.                                                                                                                                                  |
+| 광범위한 Mangayomi 호환                  | 원본 23개 정적 분류 완료 | 현재 corpus에서 확인한 AES helper를 구현했다. EPUB, 평문 HTTP, 로그인 전제 소스는 명시적 제한이며 사이트 selector 노후화는 host 기능 부족과 구분한다.                                                                                                  |
 | 개발 편의                                | 터미널 흐름 완료         | init/check/run/dev/pack/keygen/index와 문서 제공. dev는 watch·fixture 실행 결과 요약·빌드 파일/행/열을 제공한다. 실제 App 안의 개발 미리보기와 브라우저 디버거 연결은 없다.                                                                            |
 | npm/공개 릴리스·PR·운영 배포             | 미완료                   | package는 `private: true`, 로컬 tarball만 생성. 현재 미커밋 작업 트리이며 게시/배포 성공을 주장하지 않는다.                                                                                                                                            |
 | APK 호환                                 | 별도 제한 기능           | 과거 격리 실행 결과 파일은 존재하며 16개 설치·31개 고유 소스 결과와 실패 원인이 기록되어 있다. 이번에는 APK 사이트별 실행을 재검사하지 않았다. 이전에 거부한 orphan cleanup/async discard 변경은 현재 diff에 없다.                                     |
@@ -98,3 +98,14 @@ fixture 누락은 query 값을 제거한 HTTP method·URL 경로를 표시한다
 실제 감시 프로세스에서 정상 실행 → 소스 저장 후 재실행 → 문법 오류 후 프로세스 유지와 위치 표시를 확인했다.
 개발 도구 관련 3파일 10개와 scripts TypeScript/ESLint가 통과했고, 독립 npm 설치 CLI 검사도 통과했다.
 실제 Moya App을 자동으로 띄우는 시각적 개발 미리보기와 브라우저 debugger 연결은 이번 범위에 포함하지 않았다.
+
+## 원본 corpus와 실사이트 후속
+
+고정 revision의 manga 18개·novel 5개 JavaScript 파일을 전수 분류했다. 실제 host 전용 helper 사용은
+CopyManga의 `cryptoHandler`와 Anna's Archive의 EPUB 두 종류였고, AES-CBC helper를 추가해 결정적 검사를 통과했다.
+EPUB은 다운로드·파싱·자산 수명이 필요한 별도 콘텐츠 모델이라 현재 미지원으로 남겼다.
+
+실사이트 최소 검사에서는 MangaDex가 검색→상세→회차→페이지 목록을 통과했고, 격리한 production App에서도
+원본 설치부터 실제 3페이지 회차 다운로드·모바일 뷰어 디코딩까지 통과했다. Webtoons, MangaPill,
+Web Novel Translations, KolNovel, CopyManga의 결과는 selector/API 변경 또는 안전 응답 한도로 분류했다.
+세부 결과와 재현 명령은 [원본 corpus 보고서](mangayomi-corpus-2026-09-20.md)에 있다.

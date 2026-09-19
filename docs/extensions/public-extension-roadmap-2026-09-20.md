@@ -55,7 +55,7 @@
 ## 진행 기록
 
 - [x] 1단계 기존 기반 정리 및 커밋
-- [ ] 2단계 corpus·실사이트 호환 확대 및 커밋
+- [x] 2단계 corpus·실사이트 호환 확대 및 커밋
 - [ ] 3단계 개발 preview·공개 문서 및 커밋
 - [ ] 최종 PR과 GitHub 필수 CI
 
@@ -66,3 +66,11 @@
 - 기본 `.moyaext` App gate와 원본 MangaDex Mangayomi App gate 통과.
 - APK 변경은 v2-only 서명, 지원 API 1.3~1.6, 업데이트 시 활성화 상태 유지와
   생성형 공용 entry point처럼 실제 자료에서 확인한 호환 수정만 포함한다.
+
+### 2단계 검증 기록
+
+- 고정 revision의 manga 18개·novel 5개 파일을 전수 분류했다.
+- 실제 corpus에서 누락된 공통 기능은 CopyManga AES와 Anna's Archive EPUB였고,
+  AES만 구현·회귀 검사했다. EPUB은 콘텐츠 모델 차이로 명시적 미지원이다.
+- MangaDex는 원본 파일과 실제 API로 설치·검색·상세·회차 다운로드·모바일 App 읽기를 통과했다.
+- HTML 만화·소설과 CopyManga의 현재 실패는 selector/API 변화, 인증, 평문 HTTP와 안전 용량 한도로 구분했다.

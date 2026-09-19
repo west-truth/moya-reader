@@ -28,6 +28,7 @@ Dart, 영상 추출, APK의 Android 객체는 이 지원표에 포함하지 않�
 | 설정        | 문자열·숫자·boolean 저장. `getString(key, defaultValue)`는 누락 시 기본값을 반환·저장                                                       | 문자열 복수 선택을 저장·복원한다. 항목 최대 128개이며 선언한 선택지만 저장할 수 있다. |
 | HTTP        | GET/POST/PUT/DELETE/HEAD/PATCH, 응답 body/headers/statusCode/isRedirect와 요청 정보 일부                                                    | 아래 옵션·응답 범위를 참고한다. 전체 native HTTP client와 동일하지는 않다.            |
 | 브라우저    | `evaluateJavascriptViaWebview`, 직접 `sendMessage`의 해당 메서드, `setResponse` callback                                                    | Android 객체·임의 native bridge와 동일하지 않다.                                      |
+| 암호화      | 원본 CopyManga가 사용하는 동기 `cryptoHandler`의 AES-CBC/PKCS7/base64 계약                                                                  | Mangayomi profile 전용, 최대 입력 4 MiB. 다른 암호 helper를 포괄하지 않는다.          |
 | 실행 수명   | 호출마다 새 realm과 인스턴스, 저장한 설정과 호스트 세션은 별도 보존                                                                         | 인스턴스 필드·전역 변수의 호출 간 보존을 기대할 수 없다.                              |
 
 본문 정리는 확장의 `getHtmlContent()` 책임이다. 호스트가 `cleanHtmlContent()`를 자동으로 한 번 더 호출하지
@@ -35,8 +36,10 @@ Dart, 영상 추출, APK의 Android 객체는 이 지원표에 포함하지 않�
 반환하도록 맞춰야 한다. 자체 `.moyaext`의 `getContent()` 계약은 바뀌지 않는다.
 
 DOM의 `getSrc/getHref` 등은 비교 기준 upstream의 outer HTML 기반 추출 의미를 따른다. 일반 웹 DOM의
-`element.src/href`처럼 절대 URL 해석을 해주는 API가 아니다. XPath, 암호화/unpack helper, EPUB helper,
-동적 native handler는 아직 별도 검증과 구현이 필요하다.
+`element.src/href`처럼 절대 URL 해석을 해주는 API가 아니다. 고정 revision 23개 파일의 실제 helper 사용과
+사이트별 판정은 [원본 corpus와 실사이트 판정](mangayomi-corpus-2026-09-20.md)에 정리했다. 현재 corpus에서
+암호화 helper는 CopyManga의 `cryptoHandler` 하나만 확인해 구현했으며, XPath와 host unpack 사용은 없었다.
+EPUB helper와 동적 native handler는 지원하지 않는다.
 
 ### HTTP 옵션과 응답
 

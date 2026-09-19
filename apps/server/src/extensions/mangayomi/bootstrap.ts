@@ -15,6 +15,7 @@ Object.defineProperties(String.prototype,{
  substringBetween:{value:function(a,b){const n=this.indexOf(a);if(n<0)return '';const start=n+a.length,end=this.indexOf(b,start);return end<0?'':this.substring(start,end);},configurable:true,writable:true}
 });
 function optionalMethod(extension,name,args,fallback){try{return extension[name](...args);}catch(error){if(new RegExp('^'+name+' not implemented[.!]?$').test(error?.message))return fallback;throw error;}}
+function cryptoHandler(text,iv,secretKeyString,encrypt){return __moyaCryptoHandler(String(text),String(iv),String(secretKeyString),encrypt===true);}
 class MProvider {
   get source(){return sourceMetadata;}
   get supportsLatest(){return false;}

@@ -4,9 +4,9 @@ import { createHash } from 'node:crypto';
 import type { Page } from 'playwright-core';
 import { MangayomiExtensionHost } from '../../apps/server/src/extensions/mangayomi/host';
 import { EncryptedSourceCredentialVault } from '../../apps/server/src/extensions/source-credential-vault';
-import type { compatibilityHttp } from '../../apps/server/src/extensions/mangayomi/http';
+import { compatibilityHttp } from '../../apps/server/src/extensions/mangayomi/http';
 
-export async function prepareMangayomiAppGate(root: string, output: string) {
+export async function prepareMangayomiAppGate(root: string, output: string, options: { live?: boolean } = {}) {
   const bytes = await readFile(resolve(root, 'apps/server/src/extensions/mangayomi/fixtures/upstream/mangadex.js.txt'));
   if (
     createHash('sha256').update(bytes).digest('hex') !==
@@ -17,7 +17,7 @@ export async function prepareMangayomiAppGate(root: string, output: string) {
   await writeFile(file, bytes);
   const calls: string[] = [];
   let png = Buffer.alloc(0);
-  const transport: typeof compatibilityHttp = async ({ url }) => {
+  const fixtureTransport: typeof compatibilityHttp = async ({ url }) => {
     calls.push(url);
     const parsed = new URL(url);
     const work = {
@@ -59,6 +59,13 @@ export async function prepareMangayomiAppGate(root: string, output: string) {
       statusCode: 200,
     };
   };
+  const transport: typeof compatibilityHttp = options.live
+    ? async (input, signal, origins, maximum) => {
+        if (calls.length >= 16) throw new Error('live_probe_request_limit');
+        calls.push(input.url);
+        return compatibilityHttp(input, signal, origins, maximum);
+      }
+    : fixtureTransport;
   const host = await MangayomiExtensionHost.open(
     resolve(output, 'mangayomi'),
     new EncryptedSourceCredentialVault(resolve(output, 'vault'), Buffer.alloc(32, 11)),
@@ -77,7 +84,9 @@ export async function runMangayomiAppGate(
   page: Page,
   fixture: Awaited<ReturnType<typeof prepareMangayomiAppGate>>,
   output: string,
+  options: { live?: boolean } = {},
 ) {
+  if (options.live) return runLiveMangayomiAppGate(page, fixture, output);
   page.on('response', async (response) => {
     if (response.url().includes('/api/') && response.status() >= 400)
       console.error('Mangayomi fixture API failure', response.status(), await response.text());
@@ -186,6 +195,67 @@ export async function runMangayomiAppGate(
       target: 'hosted Mangayomi original + deterministic offline HTTP',
       coverage:
         'UI file import/language selection, multiple preferences, catalog search, chapter download, comic reader image decode, reload/reopen without redownload',
+      output,
+    }),
+  );
+}
+
+async function runLiveMangayomiAppGate(
+  page: Page,
+  fixture: Awaited<ReturnType<typeof prepareMangayomiAppGate>>,
+  output: string,
+) {
+  await page.getByRole('button', { name: '설정', exact: true }).first().click();
+  await page.getByRole('tab', { name: /^익스텐션/ }).click();
+  await page.getByRole('button', { name: 'Mangayomi JS 확장', exact: true }).click();
+  const panel = page.getByRole('region', { name: 'Mangayomi JS 확장 관리', exact: true });
+  await panel.getByLabel('Mangayomi JS 확장 파일', { exact: true }).setInputFiles(fixture.file);
+  await panel.getByLabel('파일의 소스 선택').selectOption('10');
+  const review = panel.getByRole('region', { name: 'Mangayomi JS 설치 확인', exact: true });
+  await review.getByLabel('신뢰하는 확장입니다').check();
+  await review.getByRole('button', { name: '설치', exact: true }).click();
+  await panel.getByRole('button', { name: '끄기', exact: true }).waitFor();
+  await panel.getByRole('button', { name: '설정', exact: true }).click();
+  await panel.getByLabel('Filter original languages', { exact: true }).selectOption(['originalLanguage[]=ko']);
+  await panel.getByRole('button', { name: '설정 저장', exact: true }).click();
+  await panel.getByText('저장했습니다.', { exact: true }).waitFor();
+  await page.keyboard.press('Escape');
+  await page
+    .getByRole('navigation', { name: '연결된 외부 소스' })
+    .getByRole('button', { name: /MangaDex/ })
+    .click();
+  const search = page.locator('.source-hub-catalog-search');
+  await search.locator('input').fill('The Greatest Estate Developer');
+  await search.getByRole('button', { name: '검색', exact: true }).click();
+  const work = page.getByRole('button', { name: 'The Greatest Estate Developer 작품 상세 열기', exact: true });
+  await work.waitFor({ timeout: 30_000 });
+  await work.click();
+  // The live fixture title currently exposes two unavailable regular chapters and one public
+  // April-folklore chapter. Pick the latter explicitly so the gate verifies content bytes.
+  const release = page.locator('.source-hub-release-row').filter({ hasText: 'A Laborer (April Folklore)' });
+  await release.waitFor({ timeout: 30_000 });
+  await release.getByLabel('Ch.223.9 A Laborer (April Folklore) 선택', { exact: true }).check();
+  await page.getByRole('button', { name: '선택 회차 다운로드', exact: true }).click();
+  const imported = page
+    .locator('.source-hub-release-row[data-state="imported"]')
+    .filter({ hasText: 'A Laborer (April Folklore)' });
+  await imported.waitFor({ timeout: 60_000 });
+  await imported.getByRole('button', { name: 'Ch.223.9 A Laborer (April Folklore) 보기', exact: true }).click();
+  await page.locator('.fixed-doc-screen').waitFor({ timeout: 30_000 });
+  await page.waitForFunction(() =>
+    Array.from(document.querySelectorAll<HTMLImageElement>('.fixed-doc-screen img')).some(
+      (image) => image.complete && image.naturalWidth > 0 && image.naturalHeight > 0,
+    ),
+  );
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.screenshot({ path: resolve(output, 'mangayomi-live-reader-390.png'), fullPage: true });
+  if (!fixture.calls.some((url) => url.includes('api.mangadex.org'))) throw Error('live_api_not_called');
+  console.log(
+    JSON.stringify({
+      passed: true,
+      target: 'hosted original MangaDex + live read-only API',
+      coverage: 'UI file import, live search/detail/chapter download and mobile comic reader decode',
+      requests: fixture.calls.length,
       output,
     }),
   );

@@ -1,4 +1,4 @@
-import { createHash } from 'node:crypto';
+import { createCipheriv, createHash } from 'node:crypto';
 import { readFile, mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -82,6 +82,33 @@ describe('pinned Mangayomi JS contract', () => {
         }),
       ).rejects.toThrow();
     }
+  });
+
+  it('matches the synchronous AES-CBC helper used by CopyManga page responses', async () => {
+    const iv = '0123456789abcdef';
+    const key = 'xxxmanga.woo.key';
+    const plain = JSON.stringify([{ url: 'https://img.example/1.png' }, { url: 'https://img.example/2.png' }]);
+    const cipher = createCipheriv('aes-128-cbc', Buffer.from(key), Buffer.from(iv));
+    const encrypted = Buffer.concat([cipher.update(plain, 'utf8'), cipher.final()]).toString('hex');
+    const source = `class DefaultExtension extends MProvider {
+      base64encode(str) {
+        const chars='ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';let out='',i=0;
+        while(i<str.length){const a=str.charCodeAt(i++)&255;if(i===str.length){out+=chars[a>>2]+chars[(a&3)<<4]+'==';break;}
+          const b=str.charCodeAt(i++)&255;if(i===str.length){out+=chars[a>>2]+chars[((a&3)<<4)|(b>>4)]+chars[(b&15)<<2]+'=';break;}
+          const c=str.charCodeAt(i++)&255;out+=chars[a>>2]+chars[((a&3)<<4)|(b>>4)]+chars[((b&15)<<2)|(c>>6)]+chars[c&63];}
+        return out;
+      }
+      decode(value){const iv=value.substring(0,16);const hex=value.substring(16);const bytes=[];for(let i=0;i<hex.length;i+=2)bytes.push(parseInt(hex.substr(i,2),16));return cryptoHandler(this.base64encode(String.fromCharCode.apply(null,bytes)),iv,'${key}',false);}
+      async getPageList(){const response=await new Client().get('https://www.mangacopy.com/chapter');const value=response.body.match(/contentKey="(.*)"/)[1];return JSON.parse(this.decode(value)).map(page=>page.url);}
+    }`;
+    const output = await invokeMangayomi(
+      { entry: { ...entry, baseUrl: 'https://www.mangacopy.com' }, source, action: 'pages', signal: signal() },
+      async ({ url }) => response(url, `<script contentKey="${iv}${encrypted}"></script>`),
+    );
+    expect(output.result).toEqual([
+      { url: 'https://img.example/1.png', headers: {} },
+      { url: 'https://img.example/2.png', headers: {} },
+    ]);
   });
 
   it('runs unmodified AsuraScans list and ordered page extraction against deterministic HTML', async () => {

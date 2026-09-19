@@ -86,6 +86,7 @@
     "check:extension-ui": "corepack pnpm --filter server exec tsx ../../scripts/extensions/browser-smoke.ts",
     "check:extension-app": "corepack pnpm --filter server exec tsx ../../scripts/extensions/app-browser-smoke.ts",
     "check:extension-mangayomi-app": "corepack pnpm --filter server exec tsx ../../scripts/extensions/app-browser-smoke.ts --mangayomi",
+    "check:extension-mangayomi-live": "corepack pnpm --filter server exec tsx ../../scripts/extensions/app-browser-smoke.ts --mangayomi-live",
     "extension:bundle-native": "node scripts/extensions/bundle-native.mjs",
     "check:extension-native": "corepack pnpm --filter server exec tsx ../../scripts/extensions/native-bundle-smoke.ts",
     "check:web-google:browser": "corepack pnpm --filter server exec tsx ../../apps/web/scripts/google-browser-smoke.ts",

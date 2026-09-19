@@ -1,5 +1,6 @@
 import { newQuickJSWASMModuleFromVariant } from 'quickjs-emscripten-core';
 import releaseVariant from '@jitl/quickjs-wasmfile-release-sync';
+import { createCipheriv, createDecipheriv } from 'node:crypto';
 import {
   jsonText,
   MAX_JSON_BYTES,
@@ -54,6 +55,46 @@ async function invoke(frame) {
   );
   // No module loader, Node objects, OS modules, network globals, or application storage are installed.
   context = runtime.newContext();
+  if (frame.profile === 'mangayomi-v1') {
+    const cryptoHandler = context.newFunction(
+      '__moyaCryptoHandler',
+      (textHandle, ivHandle, keyHandle, encryptHandle) => {
+        if (
+          context.typeof(textHandle) !== 'string' ||
+          context.typeof(ivHandle) !== 'string' ||
+          context.typeof(keyHandle) !== 'string'
+        )
+          return context.newString('');
+        const text = context.getString(textHandle);
+        const ivText = context.getString(ivHandle);
+        const keyText = context.getString(keyHandle);
+        const encrypt = context.dump(encryptHandle) === true;
+        try {
+          if (
+            Buffer.byteLength(text) > 4 * 1024 * 1024 ||
+            Buffer.byteLength(ivText) > 64 ||
+            Buffer.byteLength(keyText) > 64
+          )
+            return context.newString(text);
+          const iv = Buffer.from(ivText, 'utf8');
+          const key = Buffer.from(keyText, 'utf8');
+          if (iv.length !== 16 || ![16, 24, 32].includes(key.length)) return context.newString(text);
+          const algorithm = `aes-${key.length * 8}-cbc`;
+          if (encrypt) {
+            const cipher = createCipheriv(algorithm, key, iv);
+            return context.newString(Buffer.concat([cipher.update(text, 'utf8'), cipher.final()]).toString('base64'));
+          }
+          const decipher = createDecipheriv(algorithm, key, iv);
+          return context.newString(Buffer.concat([decipher.update(text, 'base64'), decipher.final()]).toString('utf8'));
+        } catch {
+          // Mangayomi returns the input unchanged when encryption or decryption fails.
+          return context.newString(text);
+        }
+      },
+    );
+    context.setProp(context.global, '__moyaCryptoHandler', cryptoHandler);
+    cryptoHandler.dispose();
+  }
   const rpc = context.newFunction('rpc', (request) => {
     if (context.typeof(request) !== 'string' || pending.size >= 4 || nextRpc >= rpcLimit)
       return { error: context.newError('rpc_limit') };

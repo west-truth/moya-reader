@@ -25,7 +25,8 @@ import type { ExtensionAppFixture } from './app-fixture';
 const require = createRequire(new URL('../../apps/server/package.json', import.meta.url));
 const Fastify = require('fastify') as typeof import('../../apps/server/node_modules/fastify').default;
 const root = fileURLToPath(new URL('../../', import.meta.url));
-const mangayomiFixture = process.argv.includes('--mangayomi');
+const mangayomiLive = process.argv.includes('--mangayomi-live');
+const mangayomiFixture = mangayomiLive || process.argv.includes('--mangayomi');
 const nativeFixture = process.argv.includes('--native');
 const contentServiceFixture = process.argv.includes('--content-service');
 if ((nativeFixture && contentServiceFixture) || (mangayomiFixture && (nativeFixture || contentServiceFixture)))
@@ -95,7 +96,7 @@ async function runAppGate(pool?: Parameters<Parameters<typeof withPostgresSchema
       await readFile(resolve(root, 'apps/server/src/db/migrations/0047_extension_source_state.sql'), 'utf8'),
     );
   }
-  const mangayomi = mangayomiFixture ? await prepareMangayomiAppGate(root, output) : undefined;
+  const mangayomi = mangayomiFixture ? await prepareMangayomiAppGate(root, output, { live: mangayomiLive }) : undefined;
   const app = Fastify();
   if (mangayomi) app.addHook('onClose', async () => mangayomi.host.close());
   app.addContentTypeParser('application/octet-stream', { parseAs: 'buffer' }, (_request, bytes, done) =>
@@ -204,7 +205,7 @@ async function runAppGate(pool?: Parameters<Parameters<typeof withPostgresSchema
     });
     console.log('extension app gate: document loaded');
     if (mangayomi) {
-      await runMangayomiAppGate(page, mangayomi, output);
+      await runMangayomiAppGate(page, mangayomi, output, { live: mangayomiLive });
       if (errors.length) throw Error(errors.join('\n'));
       return;
     }
