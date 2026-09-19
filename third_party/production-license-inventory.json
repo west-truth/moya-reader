@@ -9,7 +9,7 @@
     "libc": "glibc"
   },
   "summary": {
-    "componentCount": 207,
+    "componentCount": 209,
     "byLicense": {
       "0BSD": 1,
       "Apache-2.0": 43,
@@ -17,7 +17,7 @@
       "BSD-2-Clause": 9,
       "BSD-3-Clause": 16,
       "ISC": 8,
-      "MIT": 128,
+      "MIT": 130,
       "SEE LICENSE IN License.txt": 1
     }
   },
@@ -147,6 +147,13 @@
       "version": "0.3.0",
       "license": "Apache-2.0",
       "homepage": "https://github.com/awslabs/aws-lambda-invoke-store"
+    },
+    {
+      "ecosystem": "npm",
+      "name": "@esbuild/linux-x64",
+      "version": "0.28.1",
+      "license": "MIT",
+      "homepage": "https://github.com/evanw/esbuild#readme"
     },
     {
       "ecosystem": "npm",
@@ -637,6 +644,13 @@
       "version": "7.0.1",
       "license": "BSD-2-Clause",
       "homepage": "https://github.com/fb55/entities#readme"
+    },
+    {
+      "ecosystem": "npm",
+      "name": "esbuild",
+      "version": "0.28.1",
+      "license": "MIT",
+      "homepage": "https://github.com/evanw/esbuild#readme"
     },
     {
       "ecosystem": "npm",
