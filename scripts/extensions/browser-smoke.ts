@@ -246,8 +246,11 @@ try {
           throw new Error(`repository overflow ${width}`);
         await page.screenshot({ path: resolve(output, `repository-browse-${width}.png`), fullPage: true });
       }
-      await page.getByRole('button', { name: '설치 검토', exact: true }).click();
-      await page.getByRole('button', { name: '설치', exact: true }).click();
+      await page.locator('.extension-settings-card').getByRole('button', { name: '설치', exact: true }).click();
+      await page
+        .getByRole('region', { name: '확장 설치 확인', exact: true })
+        .getByRole('button', { name: '설치', exact: true })
+        .click();
       await page.getByText('v1.0.2', { exact: true }).waitFor();
       await page.reload();
       await page.getByRole('button', { name: '저장소', exact: true }).click();
@@ -256,13 +259,15 @@ try {
       await page.getByLabel('업데이트만 표시').check();
       await page.getByText('표시할 확장이 없습니다.', { exact: true }).waitFor();
       await page.getByRole('button', { name: '목록·업데이트 확인', exact: true }).click();
-      await page.getByRole('button', { name: '업데이트 검토', exact: true }).click();
-      await page.getByRole('button', { name: '업데이트', exact: true }).click();
+      await page.locator('.extension-settings-card').getByRole('button', { name: '업데이트', exact: true }).click();
+      await page
+        .getByRole('region', { name: '확장 설치 확인', exact: true })
+        .getByRole('button', { name: '업데이트', exact: true })
+        .click();
       await page.getByText('v1.0.3', { exact: true }).waitFor();
-      await page.getByRole('button', { name: '저장소', exact: true }).click();
-      await page.getByText('저장소 텍스트 소스', { exact: true }).waitFor();
-      await page.getByRole('button', { name: '저장소 삭제', exact: true }).click();
-      await page.getByText('저장소 텍스트 소스', { exact: true }).waitFor({ state: 'detached' });
+      const repositoryBrowser = page.getByRole('region', { name: '확장 저장소', exact: true });
+      await repositoryBrowser.getByRole('button', { name: '저장소 삭제', exact: true }).click();
+      await repositoryBrowser.getByRole('button', { name: '저장소 삭제', exact: true }).waitFor({ state: 'detached' });
       await page.getByText('v1.0.3', { exact: true }).waitFor();
       if (errors.length) throw new Error(errors.join('\n'));
       console.log(

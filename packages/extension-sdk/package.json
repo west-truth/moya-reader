@@ -20,7 +20,8 @@
   ],
   "scripts": {
     "build": "node build.mjs",
-    "prepack": "node build.mjs"
+    "prepack": "node build.mjs",
+    "test": "node --test build.test.mjs"
   },
   "devDependencies": {
     "typescript": "^5.6.3"

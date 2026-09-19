@@ -26,6 +26,7 @@ const safeCodes = new Set([
   'compatibility_feature_unsupported',
   'source_http_failed',
   'source_connection_failed',
+  'source_tls_failed',
   'source_request_timeout',
   'source_browser_unavailable',
   'source_browser_failed',

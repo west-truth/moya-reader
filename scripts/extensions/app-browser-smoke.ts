@@ -18,14 +18,18 @@ import {
 } from '../../apps/server/src/services/id-v2-migration/postgres-integration-harness';
 import { buildMoyaExtension } from '../../src/extensions/packages/package-builder';
 import { examplePackageManifest } from '../../src/test/extension-package-fixture';
+import { prepareMangayomiAppGate, runMangayomiAppGate } from './mangayomi-app-gate';
+import { registerApkExtensionRoutes } from '../../apps/server/src/routes/apk-extensions';
 import type { ExtensionAppFixture } from './app-fixture';
 
 const require = createRequire(new URL('../../apps/server/package.json', import.meta.url));
 const Fastify = require('fastify') as typeof import('../../apps/server/node_modules/fastify').default;
 const root = fileURLToPath(new URL('../../', import.meta.url));
+const mangayomiFixture = process.argv.includes('--mangayomi');
 const nativeFixture = process.argv.includes('--native');
 const contentServiceFixture = process.argv.includes('--content-service');
-if (nativeFixture && contentServiceFixture) throw new Error('Use Hosted for the configured service App gate');
+if ((nativeFixture && contentServiceFixture) || (mangayomiFixture && (nativeFixture || contentServiceFixture)))
+  throw new Error('Use Hosted for the configured service App gate');
 process.chdir(root);
 const output = resolve(root, '.tmp', `extension-app-browser-${Date.now()}`);
 await mkdir(output, { recursive: true });
@@ -91,13 +95,16 @@ async function runAppGate(pool?: Parameters<Parameters<typeof withPostgresSchema
       await readFile(resolve(root, 'apps/server/src/db/migrations/0047_extension_source_state.sql'), 'utf8'),
     );
   }
+  const mangayomi = mangayomiFixture ? await prepareMangayomiAppGate(root, output) : undefined;
   const app = Fastify();
+  if (mangayomi) app.addHook('onClose', async () => mangayomi.host.close());
   app.addContentTypeParser('application/octet-stream', { parseAs: 'buffer' }, (_request, bytes, done) =>
     done(null, bytes),
   );
   if (pool)
     await app.register(async (secured) => {
       await registerAuthHook(secured, { host: '127.0.0.1', authToken: 'fixture-token' } as ServerConfig);
+      if (mangayomi) await registerApkExtensionRoutes(secured, mangayomi.host, '/api/mangayomi-extensions');
       await registerExtensionPackageRoutes(
         secured,
         new PostgresPackageInstallStore(pool, 'fixture-owner'),
@@ -111,6 +118,8 @@ async function runAppGate(pool?: Parameters<Parameters<typeof withPostgresSchema
               }
             : undefined,
         }),
+        undefined,
+        mangayomi?.host,
       );
     });
   app.get('/', (_request, reply) => reply.type('text/html').send(html));
@@ -194,6 +203,11 @@ async function runAppGate(pool?: Parameters<Parameters<typeof withPostgresSchema
       waitUntil: 'domcontentloaded',
     });
     console.log('extension app gate: document loaded');
+    if (mangayomi) {
+      await runMangayomiAppGate(page, mangayomi, output);
+      if (errors.length) throw Error(errors.join('\n'));
+      return;
+    }
     await page.getByRole('button', { name: '설정', exact: true }).first().click();
     await page.getByRole('tab', { name: /^익스텐션/ }).click();
     await page.getByText('설치한 확장이 없습니다.', { exact: true }).waitFor();

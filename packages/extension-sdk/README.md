@@ -4,6 +4,10 @@ Write text and image source extensions in ordinary JavaScript or TypeScript. Thi
 `defineExtension`, `defineSource`, `providerText`, and source types used by Moya's existing extension builder.
 It has no runtime dependencies and does not require a Moya checkout in the consuming project.
 
+The archive includes local browse/filter declarations, so both TypeScript NodeNext and Bundler module resolution
+work without workspace aliases. `node --test packages/extension-sdk/build.test.mjs` checks a consumer outside the
+repository and executes its emitted JavaScript.
+
 The package is not published to npm yet. Maintainers build a distributable archive with:
 
 ```sh
@@ -47,6 +51,16 @@ third-party APK/JS extensions retain their own protocol. No extra Moya password 
 The installation archive remains `.moyaext` (ZIP with manifest, JS, and notices). The existing Moya `check/run/pack`
 CLI still lives in the main repository and injects its bundled SDK; a standalone authoring CLI is a separate next step.
 Use the matching SDK/tool version when packaging. Runtime permissions and result validation remain host-owned.
+
+From the Moya checkout, generate an offline starter (the target must not exist):
+
+```sh
+corepack pnpm extension:dev init /path/to/my-source --id org.example.my-source --kind text
+corepack pnpm extension:dev check /path/to/my-source
+```
+
+Use `--kind images` for an image source. The generated README includes fixture execution and packaging commands.
+Generation does not run project hooks, install dependencies, or modify an existing project.
 
 # Browser execution and source options
 

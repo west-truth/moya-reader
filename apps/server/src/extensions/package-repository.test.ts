@@ -176,7 +176,7 @@ describe('repository updates through the verified installer', () => {
     ).rejects.toThrow('source_address_denied');
   });
 
-  it('keeps repository API behind Moya authentication, checks install revision and returns only a candidate', async () => {
+  it('upgrades an installed package through the authenticated download, review and install HTTP flow', async () => {
     const f = await fixture();
     const store = new IndexedDbPackageInstallStore('repo-api', new IDBFactory());
     const execution = createNodePackageExecution('self-host-gateway', { transport: f.transport });
@@ -184,6 +184,9 @@ describe('repository updates through the verified installer', () => {
     const plan = await installer.inspect(f.initial.archive);
     await installer.install(plan, { digest: f.initial.digest });
     const app = Fastify();
+    app.addContentTypeParser('application/octet-stream', { parseAs: 'buffer' }, (_request, bytes, done) =>
+      done(null, bytes),
+    );
     await registerAuthHook(app, { host: '127.0.0.1', authToken: 'fixture-token' } as ServerConfig);
     await registerExtensionPackageRoutes(app, store, execution);
     const url = `/api/extensions/packages/${f.initial.manifest.extension.id}/update`;
@@ -195,8 +198,34 @@ describe('repository updates through the verified installer', () => {
       expect(response.statusCode).toBe(200);
       expect((await verifyMoyaExtension(new Blob([Uint8Array.from(response.rawPayload)]))).digest).toBe(f.next.digest);
       expect((await store.read(f.initial.manifest.extension.id))?.revision).toBe(1);
+      const inspected = await app.inject({
+        method: 'POST',
+        url: '/api/extensions/packages/inspect',
+        headers: { ...headers, 'content-type': 'application/octet-stream' },
+        payload: response.rawPayload,
+      });
+      expect(inspected.statusCode).toBe(200);
+      expect(inspected.json()).toMatchObject({
+        operation: 'update',
+        expectedRevision: 1,
+        package: { digest: f.next.digest, manifest: { extension: { version: '1.1.0' } } },
+      });
+      const installed = await app.inject({
+        method: 'POST',
+        url: `/api/extensions/packages/install?revision=1&digest=${f.next.digest}`,
+        headers: { ...headers, 'content-type': 'application/octet-stream' },
+        payload: response.rawPayload,
+      });
+      expect(installed.statusCode).toBe(200);
+      const inventory = await app.inject({ method: 'GET', url: '/api/extensions/packages', headers });
+      expect(inventory.statusCode).toBe(200);
+      expect(inventory.json().packages[0]).toMatchObject({
+        revision: 2,
+        active: { digest: f.next.digest, manifest: { extension: { version: '1.1.0' } } },
+        previous: { digest: f.initial.digest, manifest: { extension: { version: '1.0.0' } } },
+      });
       f.setIndex(indexOf({ ...f.entry, version: '1.0.0' }));
-      expect((await app.inject({ method: 'POST', url, headers, payload: { revision: 1 } })).statusCode).toBe(204);
+      expect((await app.inject({ method: 'POST', url, headers, payload: { revision: 2 } })).statusCode).toBe(204);
     } finally {
       await app.close();
       await store.close();

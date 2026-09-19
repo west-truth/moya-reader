@@ -142,6 +142,31 @@ test('ordinary access denial survives the guest boundary without claiming login 
   }
 });
 
+test('TLS certificate failures cross the guest boundary without exposing certificate details', async () => {
+  const broker = createSourceBroker(
+    { origins, allowDownloads: true },
+    {
+      lookup,
+      transport: async () => {
+        throw Object.assign(new Error('expired certificate for private hostname'), { code: 'CERT_HAS_EXPIRED' });
+      },
+    },
+  );
+  try {
+    await assert.rejects(
+      runExtension({
+        source: `globalThis.moyaExtension=(_,input,host)=>host.request('http.request',{url:input.url,response:'asset'});`,
+        method: 'cover',
+        input: { url: origins[0] },
+        broker: broker.methods,
+      }),
+      { code: 'source_tls_failed' },
+    );
+  } finally {
+    broker.dispose();
+  }
+});
+
 test('HTTP denials require explicit authentication context before being classified as account errors', async () => {
   for (const status of [401, 403]) {
     for (const authenticated of [false, true]) {
@@ -210,6 +235,124 @@ test('a transient GET connection failure retries once with fresh address approva
   result.body.destroy();
   assert.equal(calls, 2);
   assert.equal(lookups, 2);
+});
+
+test('a pinned request falls back from unreachable IPv6 to IPv4 without another DNS lookup', async () => {
+  let lookups = 0;
+  const attempts = [];
+  const addresses = [
+    { address: '2606:4700:4700::1111', family: 6 },
+    { address: '93.184.216.34', family: 4 },
+  ];
+  const http = createSourceHttp(origins, {
+    lookup: async () => {
+      lookups++;
+      return addresses;
+    },
+    transport: async (approved) => {
+      attempts.push(approved.address);
+      if (approved.address.family === 6) throw Object.assign(new Error('unreachable'), { code: 'ENETUNREACH' });
+      return response('ok');
+    },
+  });
+  const result = await http({ url: origins[0], response: 'text' }, signal());
+  result.body.destroy();
+  assert.equal(lookups, 1);
+  assert.deepEqual(attempts, addresses);
+});
+
+test('a POST transport failure never falls back to another resolved address', async () => {
+  let lookups = 0;
+  let attempts = 0;
+  const http = createSourceHttp(origins, {
+    lookup: async () => {
+      lookups++;
+      return [
+        { address: '2606:4700:4700::1111', family: 6 },
+        { address: '93.184.216.34', family: 4 },
+      ];
+    },
+    transport: async () => {
+      attempts++;
+      throw Object.assign(new Error('reset after request write'), { code: 'ECONNRESET' });
+    },
+  });
+  await assert.rejects(
+    http({ url: origins[0], method: 'POST', body: '{}', response: 'text' }, signal()),
+    /source_connection_failed/,
+  );
+  assert.equal(lookups, 1);
+  assert.equal(attempts, 1);
+});
+
+test('address fallback validates the complete DNS answer before connecting', async () => {
+  let requests = 0;
+  const http = createSourceHttp(origins, {
+    lookup: async () => [
+      { address: '93.184.216.34', family: 4 },
+      { address: '127.0.0.1', family: 4 },
+    ],
+    transport: async () => {
+      requests++;
+      return response('unsafe');
+    },
+  });
+  await assert.rejects(http({ url: origins[0], response: 'text' }, signal()), /source_address_denied/);
+  assert.equal(requests, 0);
+});
+
+test('redirects resolve and validate their own complete address set', async () => {
+  const redirectedOrigins = ['https://catalog.example', 'https://images.example'];
+  const lookups = [];
+  let requests = 0;
+  const http = createSourceHttp(redirectedOrigins, {
+    lookup: async (host) => {
+      lookups.push(host);
+      return host === 'catalog.example'
+        ? [{ address: '93.184.216.34', family: 4 }]
+        : [
+            { address: '93.184.216.35', family: 4 },
+            { address: '127.0.0.1', family: 4 },
+          ];
+    },
+    transport: async () => {
+      requests++;
+      return {
+        status: 302,
+        headers: { location: 'https://images.example/cover.png' },
+        body: Readable.from([]),
+      };
+    },
+  });
+  await assert.rejects(http({ url: redirectedOrigins[0], response: 'asset' }, signal()), /source_address_denied/);
+  assert.deepEqual(lookups, ['catalog.example', 'images.example']);
+  assert.equal(requests, 1);
+});
+
+test('deadline cancellation stops address fallback and TLS failures stay specific', async () => {
+  const controller = new AbortController();
+  let attempts = 0;
+  const http = createSourceHttp(origins, {
+    lookup: async () => [
+      { address: '2606:4700:4700::1111', family: 6 },
+      { address: '93.184.216.34', family: 4 },
+    ],
+    transport: async () => {
+      attempts++;
+      controller.abort();
+      throw Object.assign(new Error('unreachable'), { code: 'ENETUNREACH' });
+    },
+  });
+  await assert.rejects(http({ url: origins[0], response: 'asset' }, controller.signal), /cancelled/);
+  assert.equal(attempts, 1);
+
+  const tls = createSourceHttp(origins, {
+    lookup,
+    transport: async () => {
+      throw Object.assign(new Error('certificate detail'), { code: 'CERT_HAS_EXPIRED' });
+    },
+  });
+  await assert.rejects(tls({ url: origins[0], response: 'asset' }, signal()), /source_tls_failed/);
 });
 
 test('connection retries are bounded and never replay POST or HTTP denial', async () => {

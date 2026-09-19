@@ -124,3 +124,24 @@ test('local APK files derive verified identity without an index and retain publi
   config.value = metadata(1);
   await assert.rejects(store.inspect(Buffer.from('old version'), undefined), /version_not_newer/);
 });
+
+test('an update preserves a disabled package', async (t) => {
+  const { store, config } = await fixture(t);
+  const first = await store.inspect(Buffer.from('first extension'), config.value);
+  await store.install(first.id, first.revision);
+  await store.setEnabled(config.value.pkg, false, store.snapshot().revision);
+  config.value = metadata(2);
+  const update = await store.inspect(Buffer.from('updated extension'), config.value);
+  await store.install(update.id, update.revision);
+  assert.equal(store.snapshot().packages[0].enabled, false);
+});
+
+test('rejects unsupported extension API versions during review', async (t) => {
+  const { store, config } = await fixture(t);
+  config.value = { ...metadata(), version: '1.6.57-r1' };
+  const supported = await store.inspect(Buffer.from('version suffix'), config.value);
+  assert.equal(supported.version, '1.6.57-r1');
+  store.discard(supported.id);
+  config.value = { ...metadata(), version: '1.7.1' };
+  await assert.rejects(store.inspect(Buffer.from('future extension'), config.value), /android_feature_unsupported/);
+});

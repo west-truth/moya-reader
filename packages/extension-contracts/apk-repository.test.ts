@@ -39,4 +39,16 @@ describe('manga APK repositories', () => {
     for (const url of ['http://example.org', 'https://user:pass@example.org', 'https://example.org/?token=secret'])
       expect(() => mangaApkRepositoryUrl(url)).toThrow();
   });
+  it('keeps legacy entries whose source list is absent because install discovers the real sources', () => {
+    const { sources: _sources, ...withoutSources } = row();
+    const index = parseMangaApkIndex([withoutSources, { ...row(), pkg: 'org.example.empty', sources: null }]);
+    expect(index.entries.map((entry) => entry.sources)).toEqual([[], []]);
+    expect(index.excludedEntries).toBe(0);
+  });
+  it('normalizes malformed URLs to repository errors', () => {
+    expect(() => mangaApkRepositoryUrl('not a url')).toThrow('apk_repository_invalid');
+    expect(() =>
+      parseMangaApkIndex([{ ...row(), sources: [{ ...row().sources[0], baseUrl: 'not a url' }] }]),
+    ).toThrow('apk_repository_invalid');
+  });
 });

@@ -54,7 +54,15 @@
 
 ## 진행 기록
 
-- [ ] 1단계 기존 기반 정리 및 커밋
+- [x] 1단계 기존 기반 정리 및 커밋
 - [ ] 2단계 corpus·실사이트 호환 확대 및 커밋
 - [ ] 3단계 개발 preview·공개 문서 및 커밋
 - [ ] 최종 PR과 GitHub 필수 CI
+
+### 1단계 검증 기록
+
+- 확장 설치·업데이트 집중 검사, Web·서버·스크립트 타입 검사와 변경 범위 lint 통과.
+- 독립 SDK/CLI tarball 설치와 `init/check/run/dev/pack/keygen/index` 흐름 통과.
+- 기본 `.moyaext` App gate와 원본 MangaDex Mangayomi App gate 통과.
+- APK 변경은 v2-only 서명, 지원 API 1.3~1.6, 업데이트 시 활성화 상태 유지와
+  생성형 공용 entry point처럼 실제 자료에서 확인한 호환 수정만 포함한다.

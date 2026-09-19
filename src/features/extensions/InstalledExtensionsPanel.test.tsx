@@ -57,7 +57,7 @@ it('finishes repository installation and publisher acknowledgement inside the ch
   await act(async () => confirmation.findByProps({ type: 'checkbox' }).props.onChange({ target: { checked: true } }));
   expect(button('설치').props.disabled).toBe(false);
   await act(async () => button('설치').props.onClick());
-  expect(install).toHaveBeenCalledWith(file, plan);
+  expect(install).toHaveBeenCalledWith(file, plan, expect.any(AbortSignal));
   expect(renderer.root.findAllByProps({ 'aria-label': '확장 설치 확인' })).toHaveLength(0);
   act(() => renderer.unmount());
 });

@@ -12,7 +12,7 @@ export function CompatibilityPreferencesPanel({
   onSaved(): void;
 }) {
   const [snapshot, setSnapshot] = useState<CompatibilityPreferences>();
-  const [changes, setChanges] = useState<Record<string, string | number | boolean | null>>({});
+  const [changes, setChanges] = useState<Record<string, string | number | boolean | string[] | null>>({});
   const [origins, setOrigins] = useState('');
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState('');
@@ -115,6 +115,25 @@ export function CompatibilityPreferencesPanel({
                   checked={value === true}
                   onChange={(e) => setChanges({ ...changes, [field.key]: e.target.checked })}
                 />
+              ) : field.kind === 'multi-select' ? (
+                <select
+                  multiple
+                  aria-label={field.title}
+                  disabled={busy || field.disabled}
+                  value={Array.isArray(value) ? value : []}
+                  onChange={(e) =>
+                    setChanges({
+                      ...changes,
+                      [field.key]: Array.from(e.target.selectedOptions, (option) => option.value),
+                    })
+                  }
+                >
+                  {field.choices?.map((c) => (
+                    <option key={String(c.value)} value={String(c.value)}>
+                      {c.label}
+                    </option>
+                  ))}
+                </select>
               ) : field.kind === 'select' ? (
                 <select
                   disabled={busy || field.disabled}

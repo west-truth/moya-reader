@@ -6,6 +6,15 @@ let activeRequests=0;const requestQueue=[];
 function queuedRequest(method,input){return new Promise((resolve,reject)=>{if(requestQueue.length>=512){reject(new Error('compatibility_feature_unsupported'));return;}requestQueue.push({method,input,resolve,reject});drainRequests();});}
 function drainRequests(){while(activeRequests<4&&requestQueue.length){const task=requestQueue.shift();activeRequests++;bridge.request(task.method,task.input).then(task.resolve,task.reject).finally(()=>{activeRequests--;drainRequests();});}}
 const unsupported=()=>{const e=new Error('compatibility_feature_unsupported');e.code='compatibility_feature_unsupported';throw e;};
+// Match the string-instance helpers exposed by Mangayomi, including missing delimiters.
+Object.defineProperties(String.prototype,{
+ substringAfter:{value:function(p){const n=this.indexOf(p);return n<0?String(this):this.substring(n+p.length);},configurable:true,writable:true},
+ substringAfterLast:{value:function(p){return this.split(p).pop();},configurable:true,writable:true},
+ substringBefore:{value:function(p){const n=this.indexOf(p);return n<0?String(this):this.substring(0,n);},configurable:true,writable:true},
+ substringBeforeLast:{value:function(p){const n=this.lastIndexOf(p);return n<0?String(this):this.substring(0,n);},configurable:true,writable:true},
+ substringBetween:{value:function(a,b){const n=this.indexOf(a);if(n<0)return '';const start=n+a.length,end=this.indexOf(b,start);return end<0?'':this.substring(start,end);},configurable:true,writable:true}
+});
+function optionalMethod(extension,name,args,fallback){try{return extension[name](...args);}catch(error){if(new RegExp('^'+name+' not implemented[.!]?$').test(error?.message))return fallback;throw error;}}
 class MProvider {
   get source(){return sourceMetadata;}
   get supportsLatest(){return false;}
@@ -20,7 +29,7 @@ class MProvider {
 }
 class SharedPreferences {
   get(key){return preferenceValues[key] ?? null;}
-  getString(key){const v=this.get(key);return v==null?null:String(v);}
+  getString(key,defaultValue){const v=this.get(key);if(v!=null)return String(v);if(defaultValue===undefined)return null;this.setString(key,defaultValue);return String(defaultValue);}
   getBool(key){return this.get(key);}
   getBoolean(key){return this.get(key);}
   getInt(key){return this.get(key);}
@@ -33,24 +42,31 @@ class SharedPreferences {
 }
 class Client {
   constructor(options){this.options=options||{};}
-  request(method,url,headers,body){if(body!==undefined&&typeof body!=='string'){const json=Object.entries(headers||{}).some(([k,v])=>k.toLowerCase()==='content-type'&&String(v).includes('json'));body=json?JSON.stringify(body):Object.entries(body).map(([k,v])=>encodeURIComponent(k)+'='+encodeURIComponent(v)).join('&');headers={...(json?{}:{'Content-Type':'application/x-www-form-urlencoded'}),...headers};}return queuedRequest('compatibility.http',{method,url,headers,body});}
-  get(u,h){return this.request('GET',u,h);} post(u,h,b){return this.request('POST',u,h,b);} put(u,h,b){return this.request('PUT',u,h,b);} delete(u,h,b){return this.request('DELETE',u,h,b);} head(u,h){return this.request('HEAD',u,h);}
+  request(method,url,headers,body){if(body!==undefined&&typeof body!=='string'){const json=Object.entries(headers||{}).some(([k,v])=>k.toLowerCase()==='content-type'&&String(v).includes('json'));body=json?JSON.stringify(body):Object.entries(body).map(([k,v])=>encodeURIComponent(k)+'='+encodeURIComponent(v)).join('&');headers={...(json?{}:{'Content-Type':'application/x-www-form-urlencoded'}),...headers};}return queuedRequest('compatibility.http',{method,url,headers,body,options:this.options});}
+  get(u,h){return this.request('GET',u,h);} post(u,h,b){return this.request('POST',u,h,b);} put(u,h,b){return this.request('PUT',u,h,b);} delete(u,h,b){return this.request('DELETE',u,h,b);} head(u,h){return this.request('HEAD',u,h);} patch(u,h,b){return this.request('PATCH',u,h,b);}
 }
 class DomNode {
   constructor(node){this.node=node;}
-  select(selector){return Array.from(this.node.querySelectorAll(selector),n=>new DomNode(n));}
-  selectFirst(selector){const n=this.node.querySelector(selector);return n?new DomNode(n):null;}
+  select(selector){return Array.from(this.node?.querySelectorAll(selector)||[],n=>new DomNode(n));}
+  selectFirst(selector){return new DomNode(this.node?.querySelector(selector));}
   getElementById(id){return this.selectFirst('[id="'+String(id).replace(/["\\]/g,'\\$&')+'"]');}
   getElementsByTagName(tag){return this.select(tag);}
-  attr(name){return this.node.getAttribute(name)||'';}
-  get text(){return (this.node.textContent||'').replace(/\s+/g,' ').trim();}
-  get ownText(){return Array.from(this.node.childNodes).filter(n=>n.nodeType===3).map(n=>n.textContent).join(' ').trim();}
-  get html(){return this.node.innerHTML||'';} get outerHtml(){return this.node.outerHTML||'';}
-  get children(){return Array.from(this.node.children||[],n=>new DomNode(n));}
-  get parent(){return this.node.parentElement?new DomNode(this.node.parentElement):null;}
-  get nextElementSibling(){return this.node.nextElementSibling?new DomNode(this.node.nextElementSibling):null;}
-  get previousElementSibling(){return this.node.previousElementSibling?new DomNode(this.node.previousElementSibling):null;}
-  remove(){this.node.remove();} toString(){return this.outerHtml;}
+  getElementsByClassName(name){const names=String(name).trim().split(/\s+/).filter(Boolean);return names.length?this.select('*').filter(n=>names.every(c=>n.node.classList.contains(c))):[];}
+  attr(name){return this.node?.getAttribute?.(name)||'';}
+  hasAttr(name){return this.node?.hasAttribute?.(name)||false;}
+  get text(){return this.node?.textContent||'';}
+  get ownText(){return Array.from(this.node?.childNodes||[]).filter(n=>n.nodeType===3).map(n=>n.textContent).join(' ').trim();}
+  get html(){return this.innerHtml;} get innerHtml(){return this.node?.innerHTML||'';} get outerHtml(){return this.node?.outerHTML||'';}
+  get className(){return this.node?.className||'';} get localName(){return this.node?.localName||'';} get namespaceUri(){return this.node?.namespaceURI||'';}
+  get getSrc(){return /src="([^"]+)"/.exec(this.outerHtml)?.[1]||'';}
+  get getImg(){return /img="([^"]+)"/.exec(this.outerHtml)?.[1]||'';}
+  get getHref(){return /href="([^"]+)"/.exec(this.outerHtml)?.[1]||'';}
+  get getDataSrc(){return /data-src="([^"]+)"/.exec(this.outerHtml)?.[1]||'';}
+  get children(){return Array.from(this.node?.children||[],n=>new DomNode(n));}
+  get parent(){return this.node?.parentElement?new DomNode(this.node.parentElement):null;}
+  get nextElementSibling(){return new DomNode(this.node?.nextElementSibling);}
+  get previousElementSibling(){return new DomNode(this.node?.previousElementSibling);}
+  remove(){this.node?.remove();} toString(){return this.outerHtml;}
 }
 class Document extends DomNode {constructor(html){super(__moyaParseHTML(String(html)).document);}}
 const console={log(){},warn(){},error(){},debug(){}};
@@ -77,8 +93,13 @@ export const mangayomiDispatch =
 globalThis.moyaExtension=async function(method,input,host){
  bridge=host;preferenceValues=Object.assign(Object.create(null),input.preferences||{});preferenceChanges=Object.create(null);
  if(input.action==='metadata')return {result:typeof mangayomiSources==='undefined'?[]:mangayomiSources,changes:{}};
- const extension=new DefaultExtension();const specs=extension.getSourcePreferences()||[];
- for(const spec of specs){for(const name of ['editTextPreference','switchPreferenceCompat','listPreference','multiSelectListPreference']){if(spec[name]&&!Object.prototype.hasOwnProperty.call(preferenceValues,spec.key))preferenceValues[spec.key]=spec[name].value;}}
+ const extension=new DefaultExtension();const specs=optionalMethod(extension,'getSourcePreferences',[],[])||[];
+ if(!Array.isArray(specs))throw new Error('compatibility_preferences_invalid');
+ for(const spec of specs){if(Object.prototype.hasOwnProperty.call(preferenceValues,spec.key))continue;
+ const field=spec.editTextPreference||spec.switchPreferenceCompat||spec.listPreference||spec.multiSelectListPreference;
+ if(!field)continue;
+ preferenceValues[spec.key]=spec.multiSelectListPreference?(field.values||[]):spec.listPreference?(field.valueIndex===undefined?(field.value??field.entryValues?.[0]):field.entryValues?.[field.valueIndex]):field.value;
+ }
  let result;const p=input.params||{};
  if(input.action==='metadata')result=typeof mangayomiSources==='undefined'?[]:mangayomiSources;
  else if(input.action==='preferences')result=specs;
@@ -91,9 +112,10 @@ globalThis.moyaExtension=async function(method,input,host){
  result.browse={activeMode:mode,availableModes:latest?['popular','latest','search']:['popular','search'],filters:definitions};
  }
  else if(input.action==='detail'||input.action==='chapters')result=await extension.getDetail(p.workUrl);
- else if(input.action==='pages'){result=await extension.getPageList(p.chapterUrl);if(Array.isArray(result))result=result.map(page=>{const url=typeof page==='string'?page:page.url;return {url,headers:(typeof page==='object'&&page.headers)||extension.getHeaders(url)||{}};});}
- else if(input.action==='html'){if(sourceMetadata.itemType!==2||typeof extension.getHtmlContent!=='function')unsupported();result=await extension.getHtmlContent(p.title,p.chapterUrl);if(typeof extension.cleanHtmlContent==='function')result=await extension.cleanHtmlContent(result);}
- else if(input.action==='headers')result=extension.getHeaders(p.url)||{};
+ else if(input.action==='pages'){result=await extension.getPageList(p.chapterUrl);if(Array.isArray(result))result=result.map(page=>{const url=typeof page==='string'?page:page.url;return {url,headers:(typeof page==='object'&&page.headers)||optionalMethod(extension,'getHeaders',[url],{})||{}};});}
+ // Original novel sources own cleaning; invoking it again destroys already-extracted fragments.
+ else if(input.action==='html'){if(sourceMetadata.itemType!==2||typeof extension.getHtmlContent!=='function')unsupported();result=await extension.getHtmlContent(p.title,p.chapterUrl);}
+ else if(input.action==='headers')result=optionalMethod(extension,'getHeaders',[p.url],{})||{};
  else unsupported();
  return {result,changes:preferenceChanges};
 };

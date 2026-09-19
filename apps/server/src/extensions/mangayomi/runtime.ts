@@ -7,8 +7,9 @@ import type { MangayomiEntry } from '../../../../../packages/extension-contracts
 import { mangayomiBootstrap, mangayomiDispatch } from './bootstrap.js';
 import { compatibilityHttp, type CompatibilityHttpInput } from './http.js';
 import type { SourceWebViewRequest } from '../../../../../packages/extension-contracts/source-webview.js';
+import { compatibilityHttpPolicy } from './http-options.js';
 
-export type PreferenceValues = Record<string, string | number | boolean | null>;
+export type PreferenceValues = Record<string, string | number | boolean | string[] | null>;
 export interface MangayomiInvocation {
   entry: MangayomiEntry;
   source: string;
@@ -88,6 +89,8 @@ export async function invokeMangayomi(input: MangayomiInvocation, transport = co
       'compatibility.http': async (raw, signal) => {
         if (['preferences', 'metadata'].includes(input.action) || ++requests > 240)
           throw new Error('permission_denied');
+        const request = raw as CompatibilityHttpInput;
+        const policy = compatibilityHttpPolicy(request?.options);
         let response: Awaited<ReturnType<typeof transport>>;
         try {
           response = await transport(raw as CompatibilityHttpInput, signal, input.privateOrigins);
@@ -97,6 +100,7 @@ export async function invokeMangayomi(input: MangayomiInvocation, transport = co
             [
               'source_connection_failed',
               'source_request_timeout',
+              'source_tls_failed',
               'source_address_denied',
               'source_body_limit',
             ].includes((error as Error).message)
@@ -113,7 +117,21 @@ export async function invokeMangayomi(input: MangayomiInvocation, transport = co
         } catch {
           throw new Error('source_encoding_unsupported');
         }
-        return { statusCode: response.statusCode, headers: response.headers, body };
+        return {
+          statusCode: response.statusCode,
+          headers: response.headers,
+          body,
+          isRedirect: [301, 302, 303, 307, 308].includes(response.statusCode),
+          // Only guest-supplied metadata: never expose vault-injected session headers.
+          request: {
+            url: request.url,
+            method: request.method ?? 'GET',
+            headers: request.headers ?? {},
+            contentLength: Buffer.byteLength(request.body ?? ''),
+            followRedirects: policy.followRedirects,
+            maxRedirects: policy.maxRedirects,
+          },
+        };
       },
       'compatibility.sleep': async (raw, signal) => {
         const delay = Number((raw as { delay?: unknown })?.delay);

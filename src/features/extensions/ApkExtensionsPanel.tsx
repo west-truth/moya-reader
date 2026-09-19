@@ -22,6 +22,8 @@ const messages: Record<string, string> = {
   apk_repository_conflict: '저장소 목록이 변경됐습니다. 다시 선택해 주세요.',
   apk_worker_unavailable: '확장 실행기를 시작하지 못했습니다. 실행기 설치 상태를 확인해 주세요.',
   apk_review_expired: '설치 준비 시간이 지났습니다. 확장을 다시 선택해 주세요.',
+  apk_install_unconfirmed:
+    '서버가 설치 요청을 받았지만 새 버전을 확인하지 못했습니다. 다시 설치하지 말고 상태를 새로고침해 주세요.',
 };
 export function ApkExtensionsPanel({
   manager,
@@ -44,6 +46,7 @@ export function ApkExtensionsPanel({
   const [page, setPage] = useState(0);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string>();
+  const [message, setMessage] = useState<string>();
   const [localFile, setLocalFile] = useState<File>();
   const [review, setReview] = useState<ApkInstallReview>();
   const reviewFocus = useRef<HTMLElement>(null);
@@ -95,18 +98,25 @@ export function ApkExtensionsPanel({
       active = false;
     };
   }, [manager]);
-  const run = async (task: (signal: AbortSignal) => Promise<void>, inspect = false) => {
+  const run = async (
+    task: (signal: AbortSignal) => Promise<{ snapshot?: ApkManagerSnapshot; complete?(): void } | void>,
+    inspect = false,
+  ) => {
     if (operation.current) return;
     const abort = new AbortController();
     operation.current = abort;
     setInspecting(inspect);
     setBusy(true);
     setError(undefined);
+    setMessage(undefined);
     try {
-      await task(abort.signal);
+      const result = await task(abort.signal);
       if (!inspect && !abort.signal.aborted) {
-        const next = await manager.list();
-        if (!abort.signal.aborted) setSnapshot(next);
+        const next = result?.snapshot ?? (await manager.list(abort.signal));
+        if (!abort.signal.aborted) {
+          setSnapshot(next);
+          result?.complete?.();
+        }
       }
     } catch (error) {
       if (abort.signal.aborted) return;
@@ -133,24 +143,44 @@ export function ApkExtensionsPanel({
         version: pkg.version,
         code: pkg.code,
         installed: pkg,
+        updateAvailable: false,
         unsupported: false,
       }))
-    : (repository?.entries ?? []).map((entry) => ({
-        id: entry.pkg,
-        name: entry.name,
-        version: entry.version,
-        code: entry.code,
-        installed: snapshot?.packages.find((pkg) => pkg.pkg === entry.pkg),
-        unsupported: entry.format === 'mangayomi-dart',
-      }));
+    : (repository?.entries ?? []).map((entry) => {
+        const installed = snapshot?.packages.find((pkg) => pkg.pkg === entry.pkg);
+        return {
+          id: entry.pkg,
+          name: entry.name,
+          version: entry.version,
+          code: entry.code,
+          installed,
+          updateAvailable: Boolean(
+            installed &&
+            (format === 'apk'
+              ? installed.code < entry.code
+              : installed.code !== entry.code &&
+                entry.version.localeCompare(installed.version, 'en', { numeric: true }) >= 0),
+          ),
+          unsupported: entry.format === 'mangayomi-dart',
+        };
+      });
   const filtered = rows.filter((row) =>
     `${row.name} ${row.id}`.toLocaleLowerCase().includes(query.trim().toLocaleLowerCase()),
   );
   const lastPage = Math.max(0, Math.ceil(filtered.length / 20) - 1);
   const currentPage = Math.min(page, lastPage);
+  const reviewIsUpdate = Boolean(review && snapshot?.packages.some((pkg) => pkg.pkg === review.pkg));
   const operationStatus = (
     <>
-      {busy && <p role="status">확장 작업을 처리하고 있습니다…</p>}
+      {busy && (
+        <p role="status">
+          {inspecting
+            ? `${label} 확장 파일을 확인하고 있습니다…`
+            : review
+              ? `${label} 확장을 ${reviewIsUpdate ? '업데이트' : '설치'}하고 있습니다… 완료될 때까지 이 화면을 유지해 주세요.`
+              : `${label} 확장 작업을 처리하고 있습니다…`}
+        </p>
+      )}
       {inspecting && (
         <button
           type="button"
@@ -229,14 +259,25 @@ export function ApkExtensionsPanel({
           disabled={busy || !trusted}
           onClick={() =>
             void run(async (signal) => {
-              await manager.install(review, signal);
-              heldReview.current = undefined;
-              setReview(undefined);
-              setTrusted(false);
+              const next = await manager.install(review, signal);
+              return {
+                snapshot: next,
+                complete: () => {
+                  heldReview.current = undefined;
+                  setReview(undefined);
+                  setTrusted(false);
+                  if (localFile) {
+                    setInstalledOnly(true);
+                    setQuery('');
+                    setPage(0);
+                  }
+                  setMessage(`${label} 확장을 ${reviewIsUpdate ? '업데이트' : '설치'}했습니다.`);
+                },
+              };
             })
           }
         >
-          {busy ? '설치 중…' : '설치'}
+          {busy ? `${reviewIsUpdate ? '업데이트' : '설치'} 중…` : reviewIsUpdate ? '업데이트' : '설치'}
         </button>
         <button type="button" disabled={busy} onClick={dismissReview}>
           취소
@@ -262,6 +303,11 @@ export function ApkExtensionsPanel({
       {error && (
         <p className="field-help warning" role="alert">
           {error}
+        </p>
+      )}
+      {message && (
+        <p className="field-help" role="status">
+          {message}
         </p>
       )}
       {snapshot?.available === false && (
@@ -408,11 +454,7 @@ export function ApkExtensionsPanel({
                   {!installedOnly && !(reviewPackage === row.id && review) && (
                     <button
                       type="button"
-                      disabled={
-                        busy ||
-                        row.unsupported ||
-                        (format === 'apk' && !!row.installed && row.installed.code >= row.code)
-                      }
+                      disabled={busy || row.unsupported || (!!row.installed && !row.updateAvailable)}
                       onClick={() =>
                         void run(async (signal) => {
                           dismissReview();
@@ -428,11 +470,7 @@ export function ApkExtensionsPanel({
                         }, true)
                       }
                     >
-                      {row.installed
-                        ? format !== 'apk' || row.installed.code < row.code
-                          ? '업데이트'
-                          : '설치됨'
-                        : '설치'}
+                      {row.installed ? (row.updateAvailable ? '업데이트' : '설치됨') : '설치'}
                     </button>
                   )}
                   {row.installed && (
