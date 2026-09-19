@@ -47,12 +47,14 @@ export default defineExtension({
 The SDK supplies types and host-call wrappers. It does not grant network access, store credentials, or start an
 authentication server. Sources that need an external content service use the optional host contract; existing
 third-party APK/JS extensions retain their own protocol. No extra Moya password or key is created by this SDK.
+The complete v1 method, context, limit, and public-error reference is shipped in the Moya repository at
+`docs/extensions/sdk-v1-reference.md`.
 
-The installation archive remains `.moyaext` (ZIP with manifest, JS, and notices). The existing Moya `check/run/pack`
-CLI still lives in the main repository and injects its bundled SDK; a standalone authoring CLI is a separate next step.
-Use the matching SDK/tool version when packaging. Runtime permissions and result validation remain host-owned.
+The installation archive remains `.moyaext` (ZIP with manifest, JS, and notices). The matching
+`@moya/extension-cli` tarball provides `init/check/run/dev/preview/pack/keygen/index` without a Moya checkout.
+Use matching SDK/tool versions when packaging. Runtime permissions and result validation remain host-owned.
 
-From the Moya checkout, generate an offline starter (the target must not exist):
+From the Moya checkout, or with the standalone CLI installed, generate an offline starter (the target must not exist):
 
 ```sh
 corepack pnpm extension:dev init /path/to/my-source --id org.example.my-source --kind text

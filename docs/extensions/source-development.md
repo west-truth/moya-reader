@@ -18,6 +18,7 @@ corepack pnpm extension:dev init /path/to/my-source --id org.example.my-source -
 corepack pnpm extension:dev check /path/to/my-source
 corepack pnpm extension:dev run /path/to/my-source --method source.getContent --input /path/to/my-source/content-input.json --fixture /path/to/my-source/fixtures.json
 corepack pnpm extension:dev dev /path/to/my-source --method source.getContent --input /path/to/my-source/content-input.json --fixture /path/to/my-source/fixtures.json
+corepack pnpm extension:dev preview /path/to/my-source --method source.getContent --input /path/to/my-source/content-input.json --fixture /path/to/my-source/fixtures.json
 corepack pnpm extension:dev pack /path/to/my-source --out /path/to/my-source/extension.moyaext
 ```
 
@@ -52,6 +53,11 @@ asset은 content type과 byte 수만 터미널에 표시한다. 다운로드한 
 실행할 `--method`를 함께 지정해야 한다. fixture가 빠졌으면 HTTP method와 URL 경로를 표시하되,
 토큰이 있을 수 있는 query 값은 로그에 출력하지 않는다.
 
+`preview`는 같은 결과를 임의의 `127.0.0.1` 포트에만 표시한다. 파일을 저장하면 자동 갱신하고,
+새 빌드가 실패하면 오류 위치와 함께 마지막 정상 결과를 유지한다. 외부 CDN/script를 사용하지 않으며
+본문·이미지 바이트를 렌더링하지 않는다. 터미널과 마찬가지로 fixture가 기본이고 실제 요청은
+명시적인 `--network`에서만 가능하다.
+
 기본 실행은 offline fixture만 사용한다. 실제 요청은 개발자가 `--network`를 명시한 경우에만 허용하며,
 그때도 manifest의 HTTPS origin·DNS·redirect 검사를 유지한다. fixture의 `body`는 UTF-8 문자열,
 `bodyBase64`는 PNG 등 host가 읽는 바이너리 표현이다. 둘을 동시에 지정하지 않는다. 본문 바이트는 터미널에
@@ -63,6 +69,7 @@ asset은 content type과 byte 수만 터미널에 표시한다. 다운로드한 
 [SDK 배포 안내](../../packages/extension-sdk/README.md)의 tarball을 별도 프로젝트에 설치하면 저장소 경로 alias 없이
 IDE/타입 검사와 SDK 호출을 사용할 수 있다. 기존 `check/run/pack`은 같은 원본 SDK를 주입하므로 기존 예제는 유지한다.
 CLI도 별도 tarball로 배포할 수 있으며 Moya checkout 없이 동작하는 검사를 제공한다. SDK만 설치했다고 임의 HTTP/인증 서버 실행 권한이 생기지 않는다.
+[SDK v1 빠른 참조](sdk-v1-reference.md)에 메서드·context API·한도·오류 범위를 정리했다.
 
 ```ts
 import { defineExtension, defineSource } from '@moya/extension-sdk';
@@ -316,7 +323,8 @@ Windows binary 전송과 host 주입은 검증했지만 Tauri 기본 시작 경�
 
 이 첫 도구는 프로젝트 내부의 정적 JS/TS/JSON import와 SDK를 지원한다. Node 모듈, 동적 import, 프로젝트 밖
 파일 및 build plugin/npm script 실행은 거절한다. 외부 pure JS 라이브러리는 현재 프로젝트 내부에 라이선스와
-함께 포함해야 한다. npm dependency 해석·고지 자동화와 실제 App 화면을 띄우는 개발 미리보기는 후속이다.
+함께 포함해야 한다. npm dependency 해석·고지 자동화는 후속이다. 현재 `preview`는 안전한 결과 요약과 오류 위치를
+보이는 로컬 개발 화면이며, 실제 Moya App을 자동으로 띄우거나 브라우저 debugger를 연결하지 않는다.
 
 응답 text parsing은 256 KiB, asset은 16 MiB, invocation 전체 asset/in-flight는 32 MiB다. 이 범위를 넘는
 실사용 만화는 streaming asset 수명과 저장소 연결 작업이 필요하다. 일반 로그인 폼/세션 갱신과

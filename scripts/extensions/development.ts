@@ -1,16 +1,17 @@
 import { watch } from 'node:fs';
+import { stat } from 'node:fs/promises';
 import { relative, resolve } from 'node:path';
 import type { SourceMethod } from '@noveldesk/extension-contracts/source-protocol';
 import { boundedFile, buildProject, checkProjectPackage, runProjectSource, type DevelopmentFixture } from './project';
 
-interface DevelopmentOptions {
+export interface DevelopmentOptions {
   readonly method?: SourceMethod;
   readonly input?: string;
   readonly fixture?: string;
   readonly network?: boolean;
 }
 
-const ignored = (path: string) =>
+export const ignoredDevelopmentPath = (path: string) =>
   path.split(/[\\/]/).some((part) => part === '.git' || part === 'node_modules' || part === 'dist' || part === '.tmp');
 
 async function loadJson(path: string, maximum: number): Promise<unknown> {
@@ -62,11 +63,16 @@ export function formatDeveloperError(error: unknown): string {
 export async function runDevelopmentIteration(folder: string, options: DevelopmentOptions) {
   const pkg = await buildProject(folder);
   await checkProjectPackage(pkg);
+  const sourceEntry = await developmentSourceEntry(folder);
   if (!options.method)
     return {
       id: pkg.manifest.extension.id,
       version: pkg.manifest.extension.version,
       sources: pkg.manifest.extension.contributes!.externalSources!.length,
+      sourceLocations: pkg.manifest.extension.contributes!.externalSources!.map((source) => ({
+        sourceId: source.id,
+        entry: sourceEntry,
+      })),
     };
   const sourceId = pkg.manifest.extension.contributes!.externalSources![0].id;
   const input = options.input ? await loadJson(options.input, 1024 * 1024) : { sourceId };
@@ -80,9 +86,24 @@ export async function runDevelopmentIteration(folder: string, options: Developme
     id: pkg.manifest.extension.id,
     version: pkg.manifest.extension.version,
     method: options.method,
+    sourceLocations: pkg.manifest.extension.contributes!.externalSources!.map((source) => ({
+      sourceId: source.id,
+      entry: sourceEntry,
+    })),
     result: previewResult(value.result),
     assets: value.assets.map(({ bytes, contentType }) => ({ byteLength: bytes.length, contentType })),
   };
+}
+
+async function developmentSourceEntry(folder: string) {
+  for (const entry of ['src/index.ts', 'src/index.js']) {
+    try {
+      if ((await stat(resolve(folder, entry))).isFile()) return entry;
+    } catch {
+      // buildProject reports the actionable missing-entry error before this lookup.
+    }
+  }
+  return 'src/index';
 }
 
 export async function watchDevelopmentProject(folder: string, options: DevelopmentOptions): Promise<void> {
@@ -97,15 +118,28 @@ export async function watchDevelopmentProject(folder: string, options: Developme
     }
     active = true;
     const started = Date.now();
+    const callId = `dev-${sequence + 1}`;
     try {
       const preview = await runDevelopmentIteration(folder, options);
       console.log(
-        JSON.stringify({ event: 'ready', sequence: ++sequence, changed, durationMs: Date.now() - started, preview }),
+        JSON.stringify({
+          event: 'ready',
+          stage: options.method ? 'run' : 'check',
+          callId,
+          sequence: ++sequence,
+          changed,
+          durationMs: Date.now() - started,
+          extension: { id: preview.id, version: preview.version },
+          method: options.method,
+          preview,
+        }),
       );
     } catch (error) {
       console.error(
         JSON.stringify({
           event: 'error',
+          stage: options.method ? 'build-or-run' : 'build-or-check',
+          callId,
           sequence: ++sequence,
           changed,
           durationMs: Date.now() - started,
@@ -124,7 +158,7 @@ export async function watchDevelopmentProject(folder: string, options: Developme
   console.log(JSON.stringify({ event: 'watching', folder }));
   const watcher = watch(folder, { recursive: true }, (_event, fileName) => {
     const changed = fileName?.toString() ?? '';
-    if (!changed || ignored(changed)) return;
+    if (!changed || ignoredDevelopmentPath(changed)) return;
     if (timer) clearTimeout(timer);
     timer = setTimeout(() => void execute(relative(process.cwd(), resolve(folder, changed))), 120);
   });

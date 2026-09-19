@@ -43,7 +43,8 @@
 - quickstart, SDK v1 API/오류/제한, 인증·브라우저 예제, 원본 호환표를 현재 구현과 일치시킨다.
 - 서명된 GitHub Release용 SDK/CLI tarball과 예제 저장소 산출물을 준비한다. 실제 공개 게시와 운영 배포는 별도 단계다.
 
-완료 조건: checkout 밖에서 생성 → watch → preview → 서명 pack → index 생성, 집중 회귀 검사와 GitHub 필수 CI 통과.
+로컬 완료 조건: checkout 밖에서 생성 → watch → preview → 서명 pack → index 생성과 집중 회귀 검사 통과.
+GitHub 필수 CI는 아래 최종 PR 단계에서 별도로 확인한다.
 
 ## 명시적 제외
 
@@ -56,7 +57,7 @@
 
 - [x] 1단계 기존 기반 정리 및 커밋
 - [x] 2단계 corpus·실사이트 호환 확대 및 커밋
-- [ ] 3단계 개발 preview·공개 문서 및 커밋
+- [x] 3단계 개발 preview·공개 문서 및 커밋
 - [ ] 최종 PR과 GitHub 필수 CI
 
 ### 1단계 검증 기록
@@ -74,3 +75,15 @@
   AES만 구현·회귀 검사했다. EPUB은 콘텐츠 모델 차이로 명시적 미지원이다.
 - MangaDex는 원본 파일과 실제 API로 설치·검색·상세·회차 다운로드·모바일 App 읽기를 통과했다.
 - HTML 만화·소설과 CopyManga의 현재 실패는 selector/API 변화, 인증, 평문 HTTP와 안전 용량 한도로 구분했다.
+
+### 3단계 검증 기록
+
+- `dev` 로그에 호출 ID·단계·확장 ID/버전·메서드·원본 위치를 추가했다. 입력과 본문/이미지 바이트는
+  출력하지 않는다.
+- `preview`는 임의의 `127.0.0.1` 포트와 자체 CSP로 동작한다. fixture가 기본이고 `--network`가 있어야만
+  실제 요청을 허용하며, 빌드 실패 뒤에도 마지막 정상 결과를 유지한다.
+- SDK v1 메서드, context API, manifest 권한, 한도와 공개 오류 코드를 한 문서에서 확인할 수 있게 정리했다.
+- checkout 밖의 새 npm 프로젝트에 실제 SDK/CLI tarball을 설치해 init → check → fixture run → preview →
+  P-256 keygen → 서명 pack → repository index 생성을 통과했다.
+- 로컬 준비 산출물은 CLI 0.1.0 tarball, SDK 0.1.0 tarball, 서명된 예제 `.moyaext`와 index다.
+  npm, GitHub Release, 운영 저장소에는 게시하지 않았다.

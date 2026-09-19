@@ -13,9 +13,12 @@ npm install --save-dev /path/to/moya-extension-cli-0.1.0.tgz /path/to/moya-exten
 npx moya-extension init source --id org.example.catalog --kind text --name "Example catalog"
 npx moya-extension check source
 npx moya-extension run source --method source.getContent --input source/content-input.json --fixture source/fixtures.json
+npx moya-extension preview source --method source.getContent --input source/content-input.json --fixture source/fixtures.json
 ```
 
 `--kind images`는 만화용 예제다. 생성된 예제 데이터/도메인은 합성 데이터이므로 실제 소스 구현과 테스트로 교체한다.
+`preview`는 임의의 `127.0.0.1` 포트에서 fixture 결과를 표시하고 파일 변경을 감시한다. 실제 사이트 요청은
+명시적 `--network`에서만 가능하다.
 템플릿은 시작점이지 공개할 실제 사이트 확장이 아니다. 안정적인 소스·작품·회차 ID, 원문 순서,
 빈 목록과 오류의 구분, 중단된 요청 처리, 최소 networkOrigins를 유지한다.
 
@@ -69,6 +72,7 @@ CLI는 파일 생성만 하며 원격 업로드나 운영 Moya 설치는 수행�
 
 ```sh
 corepack pnpm exec vitest run scripts/extensions/project.test.ts scripts/extensions/scaffold.test.ts scripts/extensions/repository.test.ts
+corepack pnpm exec vitest run scripts/extensions/preview.test.ts
 corepack pnpm test:extension-sdk
 corepack pnpm test:extension-cli
 ```

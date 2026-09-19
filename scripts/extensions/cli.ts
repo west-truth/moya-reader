@@ -6,15 +6,16 @@ import { scaffoldProject } from './scaffold';
 import { buildRepositoryIndex } from './repository';
 import { generatePublisherKey, loadPublisherKey } from './signing';
 import { formatDeveloperError, watchDevelopmentProject } from './development';
+import { startDevelopmentPreview } from './preview';
 
 // Resolve user paths from the invoking project, including independently installed CLI usage.
 const projectPath = (path: string) => resolve(process.cwd(), path);
 
 async function main() {
   const [command, folder, ...args] = process.argv.slice(2);
-  if (!['init', 'check', 'pack', 'run', 'dev', 'index', 'keygen'].includes(command) || !folder)
+  if (!['init', 'check', 'pack', 'run', 'dev', 'preview', 'index', 'keygen'].includes(command) || !folder)
     throw new Error(
-      'Usage: moya-extension keygen <new-key-folder> | index <archives-folder> --url https://host/index.json --out index.json [--name Name] | init <new-folder> --id org.example.source [--kind text|images --name Name] | <check|pack|run|dev> <folder> [--out file.moyaext --key publisher.pem] [--method source.listWorks --input input.json --fixture fixtures.json | --network]',
+      'Usage: moya-extension keygen <new-key-folder> | index <archives-folder> --url https://host/index.json --out index.json [--name Name] | init <new-folder> --id org.example.source [--kind text|images --name Name] | <check|pack|run|dev|preview> <folder> [--out file.moyaext --key publisher.pem] [--method source.listWorks --input input.json --fixture fixtures.json | --network]',
     );
   const options = new Map<string, string>();
   for (let i = 0; i < args.length; i++) {
@@ -44,7 +45,7 @@ async function main() {
       ? ['--url', '--out', '--name']
       : command === 'init'
         ? ['--id', '--kind', '--name']
-        : command === 'run' || command === 'dev'
+        : command === 'run' || command === 'dev' || command === 'preview'
           ? ['--method', '--input', '--fixture', '--network']
           : command === 'pack'
             ? ['--out', '--key']
@@ -79,15 +80,25 @@ async function main() {
     );
     return;
   }
-  if (command === 'dev') {
+  if (command === 'dev' || command === 'preview') {
     if ((options.has('--input') || options.has('--fixture') || options.has('--network')) && !options.has('--method'))
       throw new Error('development_method_required');
-    await watchDevelopmentProject(projectPath(folder), {
+    const development = {
       method: options.get('--method') as SourceMethod | undefined,
       input: options.has('--input') ? projectPath(options.get('--input')!) : undefined,
       fixture: options.has('--fixture') ? projectPath(options.get('--fixture')!) : undefined,
       network: options.has('--network'),
-    });
+    };
+    if (command === 'dev') await watchDevelopmentProject(projectPath(folder), development);
+    else {
+      const preview = await startDevelopmentPreview(projectPath(folder), development);
+      console.log(JSON.stringify({ event: 'preview-listening', url: preview.url, network: development.network }));
+      await new Promise<void>((resolveDone) => {
+        const stop = () => void preview.close().then(resolveDone);
+        process.once('SIGINT', stop);
+        process.once('SIGTERM', stop);
+      });
+    }
     return;
   }
   const controller = new AbortController();

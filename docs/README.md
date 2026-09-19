@@ -29,6 +29,7 @@
 - [Cloud Vault](architecture/cloud-vault-sync.md)
 - [신뢰 익스텐션 v1 개발 가이드](architecture/trusted-extensions.md)
 - [JS/TS 소스 확장 개발과 배포](extensions/source-development.md)
+- [Source SDK v1 빠른 참조](extensions/sdk-v1-reference.md)
 - [Mangayomi JavaScript 지원 범위와 검사](extensions/mangayomi-compatibility.md)
 - [Mangayomi 원본 corpus와 실사이트 판정](extensions/mangayomi-corpus-2026-09-20.md)
 - [Mangayomi JS 호환성과 확장 플랫폼 검토](extensions/platform-review-2026-09-19.md)

@@ -17,6 +17,7 @@ npx moya-extension init my-source --id org.example.catalog --kind text
 npx moya-extension check my-source
 npx moya-extension run my-source --method source.getContent --input my-source/content-input.json --fixture my-source/fixtures.json
 npx moya-extension dev my-source --method source.getContent --input my-source/content-input.json --fixture my-source/fixtures.json
+npx moya-extension preview my-source --method source.getContent --input my-source/content-input.json --fixture my-source/fixtures.json
 npx moya-extension keygen publisher-keys
 npx moya-extension pack my-source --key publisher-keys/publisher.pem --out my-source/extension.moyaext
 npx moya-extension index my-source --url https://extensions.example/index.json --out my-source/index.json
@@ -29,6 +30,10 @@ Use `--kind images` for a comic template. Paths are relative to your current wor
 `dev` watches the project and repeats the same isolated check after edits. Add `--method`, `--input`, and `--fixture`
 for a terminal preview of a source call. It reports build errors with file, line, and column and summarizes large lists;
 it never prints downloaded text or image bytes. Stop it with `Ctrl+C`.
+
+`preview` runs the same watcher and opens no external service. It prints a random `http://127.0.0.1:<port>/` URL with
+the last successful summarized result. A later build error is shown without discarding that result. The page never
+renders downloaded text/image bytes. Like `run` and `dev`, it is fixture-only unless `--network` is explicitly present.
 
 No project npm scripts, tsconfig plugins, or arbitrary npm imports are executed during source compilation. Only local modules and the SDK are supported. This is a development tool, not a browser login UI or an installer into the running Moya service.
 

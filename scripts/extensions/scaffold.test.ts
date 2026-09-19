@@ -36,6 +36,7 @@ it.each(['text', 'images'])(
     expect(await readFile(join(folder, 'src/index.ts'), 'utf8')).not.toContain('org.example.text-catalog');
     const readme = await readFile(join(folder, 'README.md'), 'utf8');
     expect(readme).toContain('moya-extension dev');
+    expect(readme).toContain('moya-extension preview');
     expect(readme).toContain('moya-extension pack');
   },
 );

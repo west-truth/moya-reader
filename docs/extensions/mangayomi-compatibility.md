@@ -94,10 +94,10 @@ corepack pnpm test:mangayomi-compatibility
 새 Moya 확장은 [JS/TS 개발 가이드](source-development.md)의 SDK와 `check/run/pack` 경로를 사용한다.
 Mangayomi 원본을 사용하려고 `.moyaext`로 다시 작성할 필요는 없다. 두 포맷의 설정·권한·배포 절차는 구분한다.
 
-후속 우선순위는 실제 소스가 요구하는 HTTP 옵션·상태 의미, 독립 배포 가능한 SDK/CLI, 제한된 개발 로그와
-preview다. SDK tarball의 외부 프로젝트 타입 검사와 실행을 검증했고 `extension:dev init`을 추가했다.
-CLI도 tarball로 독립 설치해 텍스트·이미지 프로젝트의 생성/검사/실행/패키징/index 생성을 검증했다.
-npm 공개 게시, 앱 개발 미리보기, 아직 미지원인 호환 API는 별도 작업이다.
+후속으로 독립 배포 가능한 SDK/CLI, 제한된 개발 로그와 로컬 preview를 구현했다. SDK tarball의 외부 프로젝트
+타입 검사와 실행을 검증했고, CLI tarball을 checkout 밖에 설치해 텍스트·이미지 프로젝트의
+생성/검사/실행/watch/preview/서명 패키징/index 생성을 확인했다. npm 공개 게시, 실제 App을 자동으로 띄우는
+개발 화면, 아직 미지원인 호환 API는 별도 작업이다.
 [플랫폼 검토](platform-review-2026-09-19.md)의 미구현 항목을 이 변경으로 완료 처리하지 않는다.
 
 ## 2026-09-20 복수 선택·다국어 원본 후속
@@ -151,4 +151,5 @@ GitHub CI 실행 결과는 아니다. 앞 절의 실사이트 첫 이미지 취�
 원격 도서 저장소까지 포함한 운영 구성 전체를 완료했다고 해석하지 않는다.
 
 남은 공개 준비 작업은 실제 사용할 소스의 검증 범위 확대, 증거가 있는 미지원 API의 보완,
-개발 오류 위치·로그·미리보기/watch, 릴리스 절차 확정과 SDK/CLI 공개 배포다.
+SDK/CLI tarball과 예제 저장소의 실제 공개 게시 및 버전별 지원 운영이다. 오류 위치·안전한 로그·watch와
+로컬 preview는 구현했으며 실제 App 자동 실행·브라우저 debugger 연결과는 구분한다.

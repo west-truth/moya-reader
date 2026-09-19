@@ -36,8 +36,8 @@ Mangayomi P0/HTTP 호환, 자체 SDK·CLI와 공개 배포 도구. 운영 서비
 | HTTP 옵션/중단/세션                      | 구현·관련 검사 통과      | PATCH, redirect, 실제 stalled body/DNS 취소, cookie 연결. native client 전체 옵션과 동일한 API는 아니다.                                                                                                                                               |
 | 실제 Mangayomi 소스의 목록→본문→읽기     | 부분 검증                | 후속 MangaDex 실사이트 첫 이미지 취득과 고정 HTTP 응답을 사용한 App 읽기는 각각 통과했다. 실사이트 전체 회차→App 읽기와 모든 언어/작품은 미검증이다. 기존 원본 2개의 도메인 이동/404 실패를 덮어쓰지 않는다.                                           |
 | 광범위한 Mangayomi 호환                  | 원본 23개 정적 분류 완료 | 현재 corpus에서 확인한 AES helper를 구현했다. EPUB, 평문 HTTP, 로그인 전제 소스는 명시적 제한이며 사이트 selector 노후화는 host 기능 부족과 구분한다.                                                                                                  |
-| 개발 편의                                | 터미널 흐름 완료         | init/check/run/dev/pack/keygen/index와 문서 제공. dev는 watch·fixture 실행 결과 요약·빌드 파일/행/열을 제공한다. 실제 App 안의 개발 미리보기와 브라우저 디버거 연결은 없다.                                                                            |
-| npm/공개 릴리스·PR·운영 배포             | 미완료                   | package는 `private: true`, 로컬 tarball만 생성. 현재 미커밋 작업 트리이며 게시/배포 성공을 주장하지 않는다.                                                                                                                                            |
+| 개발 편의                                | 로컬 preview까지 완료    | init/check/run/dev/preview/pack/keygen/index와 SDK v1 참조 제공. preview는 fixture 기본, 127.0.0.1 전용이며 마지막 정상 결과와 빌드 오류 위치를 유지한다. 본문·이미지 바이트는 렌더링하지 않는다. 실제 App 자동 실행과 브라우저 debugger 연결은 없다.  |
+| npm/공개 릴리스·PR·운영 배포             | 공개 게시 전             | package는 `private: true`이고 서명 가능한 SDK/CLI tarball과 저장소 산출물을 로컬에서 준비했다. npm/GitHub Release 게시와 운영 배포 성공을 주장하지 않는다.                                                                                             |
 | APK 호환                                 | 별도 제한 기능           | 과거 격리 실행 결과 파일은 존재하며 16개 설치·31개 고유 소스 결과와 실패 원인이 기록되어 있다. 이번에는 APK 사이트별 실행을 재검사하지 않았다. 이전에 거부한 orphan cleanup/async discard 변경은 현재 diff에 없다.                                     |
 
 ## 이번 검증 결과
@@ -90,14 +90,15 @@ fixture 이미지 asset 취득을 포함한다. 실제 API에서도 목록→회
 
 ## 개발 명령 후속
 
-공개 준비의 개발 편의 단계로 `moya-extension dev`를 추가했다. 프로젝트를 최초 검증한 뒤 파일을 감시하고,
+공개 준비의 개발 편의 단계로 `moya-extension dev`와 `preview`를 추가했다. 프로젝트를 최초 검증한 뒤 파일을 감시하고,
 선택한 source method를 offline fixture 또는 명시적인 network 모드로 다시 실행한다. 결과는 목록 첫 5개와
 asset type/byte 수만 요약하고 본문·이미지 바이트는 출력하지 않는다. 빌드 오류는 파일·행·열과 해당 줄을,
 fixture 누락은 query 값을 제거한 HTTP method·URL 경로를 표시한다.
 
 실제 감시 프로세스에서 정상 실행 → 소스 저장 후 재실행 → 문법 오류 후 프로세스 유지와 위치 표시를 확인했다.
-개발 도구 관련 3파일 10개와 scripts TypeScript/ESLint가 통과했고, 독립 npm 설치 CLI 검사도 통과했다.
-실제 Moya App을 자동으로 띄우는 시각적 개발 미리보기와 브라우저 debugger 연결은 이번 범위에 포함하지 않았다.
+`preview`는 임의의 loopback 포트에서 같은 요약을 보여 주며, 실패 시 마지막 정상 결과를 유지한다. 외부
+프로젝트에 실제 tarball을 설치해 init/check/run/preview/서명 pack/index를 확인했다. 실제 Moya App을 자동으로
+띄우는 시각적 미리보기와 브라우저 debugger 연결은 이번 범위에 포함하지 않았다.
 
 ## 원본 corpus와 실사이트 후속
 
