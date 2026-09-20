@@ -159,6 +159,7 @@ export class TextServerClient {
         } else void response.body?.cancel().catch(() => undefined);
         throw new TextServerRequestError(
           textServerErrorMessage(response.status, code, Boolean(this.options.managedFetch)),
+          { status: response.status, code: typeof code === 'string' && /^[a-z_]{1,80}$/.test(code) ? code : undefined },
         );
       }
       if (
@@ -193,11 +194,12 @@ export class TextServerClient {
       cancelReader();
       if (signal.aborted) throw signal.reason ?? new DOMException('취소되었습니다.', 'AbortError');
       // Network causes can contain credential-bearing URLs; diagnostics are intentionally bounded.
-      if (timedOut) throw new TextServerRequestError(textServerErrorMessage(504));
+      if (timedOut) throw new TextServerRequestError(textServerErrorMessage(504), { status: 504 });
       if (error instanceof TextServerRequestError) throw error;
       // Do not propagate provider exception bodies or URL credentials into diagnostics.
       throw new TextServerRequestError(
         '텍스트 서버에 연결할 수 없습니다. 서버 주소와 실행 상태, 네트워크·허용 앱 주소 설정을 확인해 주세요.',
+        { code: 'connection_failed' },
       );
     } finally {
       clearTimeout(timer);

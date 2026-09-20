@@ -24,7 +24,9 @@ export function transientSourceFailure(error: unknown) {
     const message = `${value.code ?? ''} ${value.message ?? ''}`;
     if (
       [401, 403, 404, 410].includes(status) ||
-      /access_denied|auth_|generation_changed|catalog_changed|work_unavailable|HTTP (?:401|403|404|410)/i.test(message)
+      /access_(?:denied|required)|auth(?:entication)?_|verification_required|not_configured|invalid_|origin_rejected|generation_changed|catalog_changed|work_unavailable|content_unavailable|not_found|HTTP (?:401|403|404|410)/i.test(
+        message,
+      )
     )
       return false;
     transient ||=

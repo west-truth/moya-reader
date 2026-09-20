@@ -1,5 +1,13 @@
 /** Messages from this error are authored locally; remote diagnostics never reach the UI. */
-export class TextServerRequestError extends Error {}
+export class TextServerRequestError extends Error {
+  readonly status?: number;
+  readonly code?: string;
+  constructor(message: string, classification: { status?: number; code?: string } = {}) {
+    super(message);
+    this.status = classification.status;
+    this.code = classification.code;
+  }
+}
 
 export function textServerErrorMessage(status: number, code?: unknown, managed = false): string {
   switch (code) {

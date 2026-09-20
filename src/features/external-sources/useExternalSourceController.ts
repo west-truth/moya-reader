@@ -1104,10 +1104,7 @@ export function useExternalSourceController(options: UseExternalSourceController
             setStale(false);
           }
           if (notifyFailure) {
-            optionsRef.current.notify(
-              error instanceof Error ? error.message : '외부 저장소 목록을 불러오지 못했습니다.',
-              'danger',
-            );
+            optionsRef.current.notify(failureMessage, 'danger');
           }
           return false;
         }
