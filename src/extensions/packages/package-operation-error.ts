@@ -1,4 +1,8 @@
 const messages: Readonly<Record<string, string>> = {
+  apk_version_not_newer: '이미 같은 버전과 파일이 설치되어 있습니다. 업데이트 목록을 다시 확인해 주세요.',
+  apk_install_conflict: '다른 작업으로 설치 상태가 바뀌었습니다. 업데이트를 다시 확인해 주세요.',
+  apk_repository_conflict: '저장소 목록이 바뀌었습니다. 업데이트를 다시 확인해 주세요.',
+  apk_review_expired: '설치 검토가 만료됐습니다. 업데이트를 다시 선택해 주세요.',
   source_preferences_conflict: '확장 설정이 변경됐습니다. 설정을 다시 열어 주세요.',
   invalid_source_preferences: '확장 설정 값을 확인해 주세요.',
   source_browser_unavailable:
@@ -7,6 +11,8 @@ const messages: Readonly<Record<string, string>> = {
   source_connection_failed: '소스 사이트와의 연결이 끊겼습니다. 잠시 후 다시 시도해 주세요.',
   source_request_timeout: '소스 사이트의 응답 시간이 초과됐습니다. 잠시 후 다시 시도해 주세요.',
   source_body_limit: '소스가 반환한 데이터가 처리 가능한 크기를 넘었습니다. 앱이 최신 버전인지 확인해 주세요.',
+  source_storage_limit:
+    '이 소스의 저장 데이터가 허용 용량을 넘었습니다. 소스의 캐시 설정이나 업데이트를 확인해 주세요. 기존 데이터는 유지됩니다.',
   source_http_failed: '소스 사이트가 요청을 처리하지 못했습니다. 잠시 후 다시 시도해 주세요.',
   source_tls_failed: '소스 서버의 TLS 인증서를 확인할 수 없습니다. 서버 인증서가 갱신된 뒤 다시 시도해 주세요.',
   source_access_denied: '사이트에서 접근을 거부했습니다. 네트워크·프록시 설정이나 사이트의 접근 제한을 확인해 주세요.',

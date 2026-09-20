@@ -1,4 +1,5 @@
 import { ExtensionUpdatesPanel } from './ExtensionUpdatesPanel';
+import { SourceNetworkSettingsPanel } from './SourceNetworkSettingsPanel';
 import './extension-management.css';
 import { InstalledSourceContentConnection } from './InstalledSourceContentConnection';
 import { InstalledSourcePreferences } from './InstalledSourcePreferences';
@@ -312,6 +313,7 @@ export function InstalledExtensionsPanel({
           }}
         />
       </div>
+      <SourceNetworkSettingsPanel manager={manager} />
       {showUpdates && <ExtensionUpdatesPanel manager={manager} suwayomi={suwayomi} />}
       {showSuwayomi && suwayomi && <SourceExtensionManagerPanel manager={suwayomi} initialRepository={apkRepository} />}
       {showApk && manager.apk && (
@@ -455,11 +457,12 @@ export function InstalledExtensionsPanel({
                   </div>
                 </details>
                 {reviewLocation === 'installed:' + pkg.id && reviewCard}
-                {pkg.active!.manifest.preferences?.map((preferences) => (
+                {pkg.active!.manifest.extension.contributes?.externalSources?.map((source) => (
                   <InstalledSourcePreferences
-                    key={preferences.sourceId}
+                    key={source.id}
                     manager={manager}
-                    sourceId={preferences.sourceId}
+                    sourceId={source.id}
+                    title={`${source.title} · 확장 옵션`}
                     disabled={!!busy}
                   />
                 ))}

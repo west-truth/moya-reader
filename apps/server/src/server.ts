@@ -18,10 +18,11 @@ import { registerTextSourceGateway } from './routes/text-source-gateway.js';
 import { registerExtensionPackageRoutes } from './routes/extension-packages.js';
 import { PostgresPackageInstallStore } from './extensions/postgres-package-store.js';
 import { createNodePackageExecution } from './extensions/node-package-execution.js';
-import { createSourceProxyTransport } from './extensions/source-proxy-transport.js';
 import { createConfiguredContentService } from './extensions/configured-content-service.js';
 import { parseInstalledTextMigration, createInstalledTextGateway } from './extensions/installed-text-gateway.js';
 import { EncryptedSourceCredentialVault } from './extensions/source-credential-vault.js';
+import { createSourceNetworkSettings } from './extensions/source-network-settings.js';
+import { registerSourceNetworkSettingsRoutes } from './routes/source-network-settings.js';
 import { loadProviderSecretMasterKey } from './providers/server-provider-secrets.js';
 import { createHash } from 'node:crypto';
 import { access } from 'node:fs/promises';
@@ -266,6 +267,8 @@ export async function buildServer(config: ServerConfig): Promise<FastifyInstance
     path.join(config.dataDir, 'extension-credentials', createHash('sha256').update(config.defaultUserId).digest('hex')),
     loadProviderSecretMasterKey(config, process.env),
   );
+  const sourceNetwork = createSourceNetworkSettings(extensionVault, config.sourceOutboundProxy);
+  await registerSourceNetworkSettingsRoutes(app, sourceNetwork);
   let mangayomi: MangayomiExtensionHost | undefined;
   try {
     mangayomi = await MangayomiExtensionHost.open(
@@ -275,6 +278,8 @@ export async function buildServer(config: ServerConfig): Promise<FastifyInstance
         createHash('sha256').update(config.defaultUserId).digest('hex'),
       ),
       extensionVault,
+      undefined,
+      sourceNetwork,
     );
   } catch {
     app.log.warn('Mangayomi extension state unavailable; existing sources remain available');
@@ -290,7 +295,7 @@ export async function buildServer(config: ServerConfig): Promise<FastifyInstance
       contentResolver: contentService.resolve,
       contentConfigured: contentService.configured,
       vault: extensionVault,
-      transport: createSourceProxyTransport(config.sourceOutboundProxy),
+      network: sourceNetwork,
     }),
     apk,
     mangayomi,

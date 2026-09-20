@@ -12,6 +12,7 @@ interface Review {
 interface Update {
   id: string;
   title: string;
+  subtitle?: string;
   prepare(signal: AbortSignal): Promise<Review>;
 }
 
@@ -155,7 +156,8 @@ export function ExtensionUpdatesPanel({
             for (const candidate of candidates)
               found.push({
                 id: `${format}:${candidate.url}:${pkg.pkg}`,
-                title: `${format} · ${candidate.entry.name}: ${pkg.version} → ${candidate.entry.version} · ${candidate.url}`,
+                title: candidate.entry.name,
+                subtitle: `${format} · ${pkg.version} → ${candidate.entry.version} · ${new URL(candidate.url).hostname}`,
                 prepare: async (nextSignal) => {
                   const plan = await compatibility.inspectRepository(
                     candidate.url,
@@ -233,7 +235,7 @@ export function ExtensionUpdatesPanel({
     setReview(prepared);
   };
   return (
-    <section className="settings-section-card" aria-label="소스 업데이트">
+    <section className="settings-section-card source-updates-panel" aria-label="소스 업데이트">
       <h3>소스 업데이트</h3>
       <p>형식별 업데이트를 함께 확인합니다. 선택한 패키지는 하나씩 검토하며, 확인한 항목만 설치합니다.</p>
       <button type="button" disabled={busy || Boolean(review)} onClick={check}>
@@ -269,7 +271,10 @@ export function ExtensionUpdatesPanel({
                 )
               }
             />
-            <span>{update.title}</span>
+            <span>
+              <strong>{update.title}</strong>
+              {update.subtitle && <small>{update.subtitle}</small>}
+            </span>
           </label>
         ))}
       {!review && selected.length > 0 && (

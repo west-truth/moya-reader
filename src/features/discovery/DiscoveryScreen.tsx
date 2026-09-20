@@ -9,6 +9,7 @@ import type { ExternalSourceListInput } from '../../external-sources/contracts';
 import type { DiscoveryController } from './useDiscoveryController';
 import { DiscoveryEditor } from './DiscoveryEditor';
 import { DiscoverySection } from './DiscoverySection';
+import { SourceQuickJump } from './SourceQuickJump';
 import './discovery.css';
 
 export default function DiscoveryScreen({
@@ -27,6 +28,7 @@ export default function DiscoveryScreen({
   const [selected, setSelected] = useNavigationViewState(`discovery-tab:${scope}`, tabs[0]?.id ?? '');
   const tab = tabs.find((t) => t.id === selected) ?? tabs[0];
   const [editing, setEditing] = useState(false);
+  const [quickJump, setQuickJump] = useState(false);
   const [draftQuery, setDraftQuery] = useNavigationViewState(`discovery-draft:${scope}`, '');
   const [query, setQuery] = useNavigationViewState(`discovery-query:${scope}`, '');
   const [searchSource, setSearchSource] = useNavigationViewState(`discovery-search-source:${scope}`, 'all');
@@ -76,23 +78,28 @@ export default function DiscoveryScreen({
             </div>
           </header>
           <div className="discovery-body" ref={scroll}>
-            <nav className="discovery-tabs" aria-label="탐색 분류">
-              {tabs.map((t) => (
-                <button
-                  type="button"
-                  key={t.id}
-                  aria-current={t.id === tab?.id ? 'page' : undefined}
-                  onClick={() => {
-                    setSelected(t.id);
-                    setQuery('');
-                    setDraftQuery('');
-                    setSearchSource('all');
-                  }}
-                >
-                  {t.title}
-                </button>
-              ))}
-            </nav>
+            <div className="discovery-tab-row">
+              <nav className="discovery-tabs" aria-label="탐색 분류">
+                {tabs.map((t) => (
+                  <button
+                    type="button"
+                    key={t.id}
+                    aria-current={t.id === tab?.id ? 'page' : undefined}
+                    onClick={() => {
+                      setSelected(t.id);
+                      setQuery('');
+                      setDraftQuery('');
+                      setSearchSource('all');
+                    }}
+                  >
+                    {t.title}
+                  </button>
+                ))}
+              </nav>
+              <button type="button" className="ghost-btn" aria-haspopup="dialog" onClick={() => setQuickJump(true)}>
+                빠른 이동
+              </button>
+            </div>
             <form
               className="discovery-search"
               onSubmit={(e) => {
@@ -197,6 +204,7 @@ export default function DiscoveryScreen({
           close={() => setEditing(false)}
         />
       )}
+      {quickJump && <SourceQuickJump sources={sources.sources} close={() => setQuickJump(false)} open={open} />}
     </main>
   );
 }

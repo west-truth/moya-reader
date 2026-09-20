@@ -20,8 +20,18 @@ import { compatibilityHttp } from './http.js';
 import { invokeMangayomi, type PreferenceValues } from './runtime.js';
 import { sourceWebViewHost } from '../source-webview.js';
 import { sourceBrowserHttp } from '../source-browser-cookies.js';
-import { preferenceSchema, validatePreferenceChanges } from './preferences.js';
-import { OUTBOUND_PROXY_KEY, LEGACY_PROXY_DNS_KEY, parseOutboundProxy, outboundProxyField } from '../outbound-proxy.js';
+import { preferenceSchema, validatePreferenceChanges, validatePreferenceState } from './preferences.js';
+import {
+  OUTBOUND_PROXY_KEY,
+  PROXY_MODE_KEY,
+  LEGACY_PROXY_DNS_KEY,
+  parseOutboundProxy,
+  proxyMode,
+  applyProxyChanges,
+  outboundProxyFields,
+  type SourceProxyOptions,
+} from '../outbound-proxy.js';
+import { createSourceNetworkSettings } from '../source-network-settings.js';
 import type { CompatibilityPreference } from '../../../../../src/extensions/packages/compatibility-preferences.js';
 
 const hash = (value: string | Uint8Array) => createHash('sha256').update(value).digest('hex');
@@ -40,7 +50,7 @@ interface Inventory {
   packages: RecordEntry[];
   repositories: { url: string; updatedAt: number; entries: MangayomiEntry[] }[];
 }
-interface StoredOptions {
+interface StoredOptions extends SourceProxyOptions {
   browserMode?: SourceBrowserMode;
   outboundProxy?: string;
   values: PreferenceValues;
@@ -61,6 +71,7 @@ export class MangayomiExtensionHost {
     readonly root: string,
     private vault: SourceCredentialVault,
     private transport = compatibilityHttp,
+    private network = createSourceNetworkSettings(vault),
   ) {
     const store = {
       root,
@@ -108,8 +119,13 @@ export class MangayomiExtensionHost {
       },
     );
   }
-  static async open(root: string, vault: SourceCredentialVault, transport = compatibilityHttp) {
-    const host = new MangayomiExtensionHost(root, vault, transport);
+  static async open(
+    root: string,
+    vault: SourceCredentialVault,
+    transport = compatibilityHttp,
+    network = createSourceNetworkSettings(vault),
+  ) {
+    const host = new MangayomiExtensionHost(root, vault, transport, network);
     await mkdir(root, { recursive: true });
     try {
       const bytes = await readFile(join(root, 'inventory.json'));
@@ -184,7 +200,7 @@ export class MangayomiExtensionHost {
   async refreshRepository(value: string, signal: AbortSignal) {
     const url = compatibilityRepositoryUrl(value),
       revision = this.state.revision;
-    const response = await this.transport({ url }, signal, [], 4 * 1024 * 1024);
+    const response = await this.transport({ url }, signal, [], 4 * 1024 * 1024, this.network.resolve());
     if (response.statusCode !== 200) throw new Error('source_http_failed');
     const entries = parseMangayomiIndex(JSON.parse(response.bytes.toString('utf8')));
     await this.exclusive(async () => {
@@ -300,7 +316,13 @@ export class MangayomiExtensionHost {
       throw new Error('apk_version_not_newer');
     if (old && new URL(old.metadata.sourceCodeUrl).origin !== new URL(entry.sourceCodeUrl).origin)
       throw new Error('apk_publisher_changed');
-    const response = await this.transport({ url: entry.sourceCodeUrl }, signal, [], 1024 * 1024);
+    const response = await this.transport(
+      { url: entry.sourceCodeUrl },
+      signal,
+      [],
+      1024 * 1024,
+      this.network.resolve(),
+    );
     signal.throwIfAborted();
     if (response.statusCode !== 200) throw new Error('source_http_failed');
     const source = new TextDecoder('utf-8', { fatal: true }).decode(response.bytes),
@@ -308,7 +330,9 @@ export class MangayomiExtensionHost {
     if (!/class\s+DefaultExtension\s+extends\s+MProvider\b/.test(source))
       throw new Error('compatibility_feature_unsupported');
     if (revision !== this.state.revision) throw new Error('apk_repository_conflict');
-    if (old?.digest === digest) throw new Error('apk_version_not_newer');
+    // A repository release may advance its version without changing the JS bytes.
+    if (old?.digest === digest && entry.version.localeCompare(old.version, 'en', { numeric: true }) <= 0)
+      throw new Error('apk_version_not_newer');
     const id = randomUUID();
     this.plans.set(id, { revision, digest, metadata: entry, repository: url, source, expires: Date.now() + 900000 });
     return {
@@ -410,9 +434,12 @@ export class MangayomiExtensionHost {
       privateOrigins: options.privateOrigins,
       fields: [
         sourceBrowserModeField(options.browserMode),
-        outboundProxyField(options.outboundProxy),
+        ...outboundProxyFields(options),
         ...record.fields
-          .filter((field) => ![OUTBOUND_PROXY_KEY, SOURCE_BROWSER_MODE_KEY, LEGACY_PROXY_DNS_KEY].includes(field.key))
+          .filter(
+            (field) =>
+              ![PROXY_MODE_KEY, OUTBOUND_PROXY_KEY, SOURCE_BROWSER_MODE_KEY, LEGACY_PROXY_DNS_KEY].includes(field.key),
+          )
           .map((field) => {
             const value = options.values[field.key] ?? field.value;
             return field.secret ? { ...field, value: undefined, configured: !!value } : { ...field, value };
@@ -448,6 +475,10 @@ export class MangayomiExtensionHost {
             parseOutboundProxy(value);
             return false;
           }
+          if (key === PROXY_MODE_KEY) {
+            proxyMode(value);
+            return false;
+          }
           const field = record.fields.find((f) => f.key === key);
           return (
             !field ||
@@ -464,20 +495,18 @@ export class MangayomiExtensionHost {
       )
         throw new Error('compatibility_preferences_invalid');
       const options = this.options(record);
+      applyProxyChanges(options, changes);
       for (const [key, value] of Object.entries(changes)) {
         if (key === LEGACY_PROXY_DNS_KEY) continue;
         if (key === SOURCE_BROWSER_MODE_KEY) {
           options.browserMode = sourceBrowserMode(value);
           continue;
         }
-        if (key === OUTBOUND_PROXY_KEY) {
-          options.outboundProxy = parseOutboundProxy(value);
-          continue;
-        }
+        if (key === OUTBOUND_PROXY_KEY || key === PROXY_MODE_KEY) continue;
         if (value === null) delete options.values[key];
         else options.values[key] = value;
       }
-      validatePreferenceChanges(options.values);
+      validatePreferenceState(options.values);
       options.privateOrigins = privateOrigins;
       const next = { ...record, preferenceEpoch: randomUUID(), activation: randomUUID() };
       this.vault.write(scope(next), { secret: JSON.stringify(options) });
@@ -499,12 +528,13 @@ export class MangayomiExtensionHost {
     const record = this.state.packages.find((p) => p.pkg === pkg && p.enabled);
     if (!record) throw new Error('package_source_unavailable');
     const options = this.options(record);
+    const outboundProxy = this.network.resolve(options);
     const source = await readFile(join(this.root, 'archives', record.digest, 'source.js'), 'utf8');
     const browserScope = {
       key: JSON.stringify([record.pkg, 'browser', record.preferenceEpoch]),
       vault: this.vault,
       privateOrigins: options.privateOrigins,
-      outboundProxy: options.outboundProxy,
+      outboundProxy,
       browserMode: options.browserMode,
     };
     if (hash(source) !== record.digest) throw new Error('package_repository_integrity');
@@ -563,7 +593,7 @@ export class MangayomiExtensionHost {
               key: JSON.stringify([record.pkg, 'browser', record.preferenceEpoch]),
               vault: this.vault,
               privateOrigins: options.privateOrigins,
-              outboundProxy: options.outboundProxy,
+              outboundProxy,
               browserMode: options.browserMode,
             },
             requestSignal,
@@ -573,7 +603,7 @@ export class MangayomiExtensionHost {
       (input, requestSignal, _origins, maximum) =>
         sourceBrowserHttp(input, requestSignal, browserScope, maximum ?? 768 * 1024, this.transport, true),
     );
-    validatePreferenceChanges(output.changes);
+    validatePreferenceState(output.changes);
     if (Object.keys(output.changes).length)
       await this.exclusive(async () => {
         const active = this.state.packages.find((p) => p.pkg === pkg);
@@ -583,7 +613,7 @@ export class MangayomiExtensionHost {
           if (value === null) delete updated.values[key];
           else updated.values[key] = value;
         }
-        validatePreferenceChanges(updated.values);
+        validatePreferenceState(updated.values);
         this.vault.write(scope(active), { secret: JSON.stringify(updated) });
       });
     if (method === 'html') return novelHtmlText(output.result);

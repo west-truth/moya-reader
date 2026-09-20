@@ -1443,6 +1443,8 @@ export default function App() {
     notify: showToast,
   });
   const externalSourceFeature = useExternalSourceController({
+    readingActive: view === 'reader' || view === 'document',
+    settingsScope: `${remoteApiClient?.readerSettingsScope ?? 'local'}:${selfHostAuth?.account.username ?? 'local'}`,
     readingTarget:
       (view === 'reader' || view === 'document') && selectedNovel && currentChapter?.documentSectionId
         ? { novelId: selectedNovel.id, sectionId: currentChapter.documentSectionId }

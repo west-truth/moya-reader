@@ -18,11 +18,12 @@ import {DEFAULT_READING_PROFILE,DEFAULT_GESTURE_BINDINGS} from '${root}src/featu
 import {defaultSettings} from '${root}src/repositories/reader-defaults.ts';
 ${[...readFileSync(resolve(root, 'src/main.tsx'), 'utf8').matchAll(/import '\.\/styles\/([^']+)';/g)].map((match) => `import '${root}src/styles/${match[1]}';`).join('\n')}
 const noop=()=>{};
+const externalSources={sources:Array.from({length:8},(_,i)=>({id:'fixture-'+i,title:'검증용 소스 '+i,origin:'plugin',contentKind:'text',lang:'ko',description:'연결한 소스에서 작품을 탐색합니다.',connection:{state:'connected'}})),selectSource:noop,show:noop,recoverableDownloads:[],downloadRetention:{enabled:false,keep:5,busy:false,error:'',setEnabled:noop,setKeep:noop,inspect:noop,clean:noop}};
 function Fixture(){const [profile,setProfile]=useState(DEFAULT_READING_PROFILE);const [open,setOpen]=useState(true);globalThis.changes??=[];const update=p=>{changes.push(p);setProfile(x=>({...x,...p}));};
 if(new URLSearchParams(location.search).has('controls')) return React.createElement('div',{},
 React.createElement('div',{className:'fixed-doc-comic-settings',style:{width:280}},React.createElement('fieldset',{},React.createElement(SettingsSlider,{label:'만화 밝기',min:40,max:180,step:1,value:100,onChange:noop}))),
 React.createElement('div',{className:'tts-playback-setting-grid',style:{width:260}},React.createElement(SettingsSlider,{label:'듣기 속도',min:0.6,max:1.8,step:0.1,value:1,onChange:noop})));
-return new URLSearchParams(location.search).has('full')?React.createElement(ReaderSettingsPanel,{controller:{open,settings:defaultSettings,closePanel:()=>setOpen(false),saveStatus:'idle',updateSettings:noop},profile,bookOverrideEnabled:false,contrastWarning:false,gestureBindings:DEFAULT_GESTURE_BINDINGS,platformRuntime:{kind:'browser',hasTauri:false},providerExecutionRuntime:'none',extensions:[],externalSources:{sources:[]},openSync:noop,openBackup:noop,updateProfile:update,setBookOverrideEnabled:noop,resetProfile:noop,updateGestureBindings:noop,setExtensionEnabled:noop}):React.createElement(ReaderQuickViewDialog,{open,profile,readingFlow:'paginated',bookOverrideEnabled:false,onClose:()=>setOpen(false),onUpdate:update,onSetBookOverride:noop,onOpenAllSettings:noop});}
+return new URLSearchParams(location.search).has('full')?React.createElement(ReaderSettingsPanel,{controller:{open,settings:defaultSettings,closePanel:()=>setOpen(false),saveStatus:'idle',updateSettings:noop},profile,bookOverrideEnabled:false,contrastWarning:false,gestureBindings:DEFAULT_GESTURE_BINDINGS,platformRuntime:{kind:'browser',hasTauri:false},providerExecutionRuntime:'none',extensions:[],externalSources,openSync:noop,openBackup:noop,updateProfile:update,setBookOverrideEnabled:noop,resetProfile:noop,updateGestureBindings:noop,setExtensionEnabled:noop}):React.createElement(ReaderQuickViewDialog,{open,profile,readingFlow:'paginated',bookOverrideEnabled:false,onClose:()=>setOpen(false),onUpdate:update,onSetBookOverride:noop,onOpenAllSettings:noop});}
 createRoot(document.getElementById('root')).render(React.createElement(Fixture));
 `;
 const result = await build({
@@ -100,6 +101,35 @@ try {
     }
   }
   await page.setViewportSize({ width: 360, height: 640 });
+  for (const theme of ['dark', 'light']) {
+    await page.goto(base + '?full');
+    await page.evaluate((theme) => (document.documentElement.dataset.theme = theme), theme);
+    assert.equal(await page.getByRole('tab', { name: /^다운로드/ }).count(), 0);
+    await page.getByRole('tab', { name: /^콘텐츠 소스/ }).click();
+    const header = page.locator('.reader-settings-page-title');
+    assert.equal(await header.evaluate((node) => getComputedStyle(node).position), 'static');
+    const before = await header.boundingBox();
+    await page.locator('.reader-settings-content').evaluate((node) => (node.scrollTop = 400));
+    const after = await header.boundingBox();
+    assert(after.y < before.y - 350, 'Settings description did not scroll with content');
+    const favorite = page.getByRole('button', { name: '검증용 소스 0 즐겨찾기' });
+    await favorite.scrollIntoViewIfNeeded();
+    assert.equal(await favorite.evaluate((node) => getComputedStyle(node).borderRadius), '10px');
+    const nextPressed = (await favorite.getAttribute('aria-pressed')) !== 'true';
+    await favorite.click();
+    await page.waitForFunction(
+      ({ label, pressed }) =>
+        document.querySelector(`[aria-label="${label}"]`)?.getAttribute('aria-pressed') === String(pressed),
+      { label: '검증용 소스 0 즐겨찾기', pressed: nextPressed },
+    );
+    await page.screenshot({ path: `/tmp/moya-settings-sources-${theme}.png` });
+    await page.getByRole('button', { name: '다운로드 및 저장공간' }).click();
+    await page.getByRole('heading', { name: '읽은 회차 정리', exact: true }).waitFor();
+    assert.equal(await page.getByRole('checkbox', { name: /리더를 나온 뒤 자동 정리/ }).isChecked(), false);
+    await page.screenshot({ path: `/tmp/moya-settings-downloads-${theme}.png` });
+    await page.getByRole('button', { name: '콘텐츠 소스', exact: true }).click();
+    await page.getByRole('button', { name: '다운로드 및 저장공간' }).waitFor();
+  }
   await page.goto(base + '?controls');
   await page.getByRole('slider', { name: '만화 밝기' }).waitFor();
   assert.equal(await page.evaluate(() => document.body.scrollWidth <= innerWidth), true);

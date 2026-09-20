@@ -100,6 +100,28 @@ describe('maker-defined source preferences', () => {
         .fields.find((f) => f.key === '__moya_webview_mode')?.value,
     ).toBe('patchright');
   });
+  it('offers host proxy exceptions even when the package declares no maker preferences', () => {
+    const { store, pkg } = setup();
+    const plain = { ...pkg, manifest: { ...pkg.manifest, preferences: undefined } };
+    const signal = AbortSignal.timeout(1000);
+    const saved = store.manage(
+      plain,
+      sourceId,
+      'epoch',
+      {
+        action: 'save',
+        revision: 0,
+        changes: { __moya_proxy_mode: 'direct' },
+        privateOrigins: [],
+      },
+      signal,
+    );
+    expect(saved.fields.find((f) => f.key === '__moya_proxy_mode')?.value).toBe('direct');
+    expect(store.values(plain, sourceId, 'epoch')).toMatchObject({ proxyMode: 'direct', values: {} });
+    expect(() => store.manage(plain, 'unknown', 'epoch', { action: 'read' }, signal)).toThrow(
+      'invalid_source_preferences',
+    );
+  });
   it('discards previously persisted fixed DNS options while retaining the proxy and maker secrets', () => {
     const { store, pkg, records } = setup();
     const key = JSON.stringify([pkg.manifest.extension.id, `preferences:${sourceId}`, 'epoch']);

@@ -9,17 +9,56 @@ import type { CompatibilityPreference } from '../../../../src/extensions/package
 
 /** Host-owned option. Source scripts cannot select a proxy or weaken destination validation. */
 export const OUTBOUND_PROXY_KEY = '__moya_outbound_proxy';
+export const PROXY_MODE_KEY = '__moya_proxy_mode';
+export interface SourceProxyOptions {
+  proxyMode?: 'inherit' | 'direct' | 'custom';
+  outboundProxy?: string;
+}
+export function proxyMode(value: unknown): NonNullable<SourceProxyOptions['proxyMode']> {
+  if (value === 'inherit' || value === 'direct' || value === 'custom') return value;
+  throw new Error('compatibility_preferences_invalid');
+}
+export function outboundProxyFields(options: SourceProxyOptions): CompatibilityPreference[] {
+  const mode = options.proxyMode ?? (options.outboundProxy ? 'custom' : 'inherit');
+  return [
+    {
+      key: PROXY_MODE_KEY,
+      title: '소스 연결 방식',
+      kind: 'select',
+      secret: false,
+      value: mode,
+      choices: [
+        { label: '기본값 사용', value: 'inherit' },
+        { label: '직접 연결', value: 'direct' },
+        { label: '개별 프록시', value: 'custom' },
+      ],
+      summary: '기본값은 콘텐츠 소스의 기본 프록시 설정을 따릅니다. 직접 연결은 기본 프록시를 사용하지 않습니다.',
+    },
+    outboundProxyField(options.outboundProxy),
+  ];
+}
+/** Old clients only send the address; preserve their implicit custom/inherit selection. */
+export function applyProxyChanges(options: SourceProxyOptions, changes: Record<string, unknown>) {
+  if (Object.prototype.hasOwnProperty.call(changes, OUTBOUND_PROXY_KEY)) {
+    options.outboundProxy = parseOutboundProxy(changes[OUTBOUND_PROXY_KEY]);
+    if (!Object.prototype.hasOwnProperty.call(changes, PROXY_MODE_KEY))
+      options.proxyMode = options.outboundProxy ? 'custom' : 'inherit';
+  }
+  if (Object.prototype.hasOwnProperty.call(changes, PROXY_MODE_KEY))
+    options.proxyMode = proxyMode(changes[PROXY_MODE_KEY]);
+  if (options.proxyMode === 'custom' && !options.outboundProxy) throw new Error('compatibility_preferences_invalid');
+}
 /** Retired fixed-provider DNS preference. Ignore stale clients and discard persisted values. */
 export const LEGACY_PROXY_DNS_KEY = '__moya_proxy_dns';
 export function outboundProxyField(value?: string): CompatibilityPreference {
   return {
     key: OUTBOUND_PROXY_KEY,
-    title: '프록시 주소 (선택)',
+    title: '개별 프록시 주소',
     kind: 'text',
     secret: false,
     value: value ?? '',
     summary:
-      'HTTP·HTTPS·SOCKS5 주소. 비워두면 기본 연결을 사용합니다. DNS는 서버·기기의 설정을 따르며, 프록시에는 확인한 IP로 연결합니다. 주소는 서버·앱이 실행되는 환경 기준입니다.',
+      '개별 프록시를 선택했을 때 사용합니다. HTTP·HTTPS·SOCKS5 주소를 입력하세요. 주소는 휴대폰이 아닌 서버·앱 실행 환경 기준이며, DNS는 해당 환경의 설정을 따릅니다.',
   };
 }
 export function parseOutboundProxy(value: unknown): string | undefined {

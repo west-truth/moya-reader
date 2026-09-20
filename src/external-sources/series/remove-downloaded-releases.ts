@@ -13,6 +13,7 @@ import { hashBlobInChunks } from '../../services/import/chunked-file-reader';
 export async function removeDownloadedReleases(options: {
   bookId: string;
   sectionIds: readonly string[];
+  expectedContentRevisionId?: string;
   assets: BookAssetRepository;
   importService: ImportService;
   getNovel(id: string): Promise<Novel | undefined>;
@@ -20,6 +21,8 @@ export async function removeDownloadedReleases(options: {
   const novel = await options.getNovel(options.bookId);
   if (!novel || novel.deletedAt || !novel.activeContentRevisionId)
     throw new Error('작품의 현재 본문을 확인하지 못했습니다.');
+  if (options.expectedContentRevisionId && novel.activeContentRevisionId !== options.expectedContentRevisionId)
+    throw new Error('작품이 변경되어 정리를 중단했습니다. 삭제 대상을 다시 확인해 주세요.');
   const ids = new Set(options.sectionIds);
   if (!ids.size) throw new Error('삭제할 회차를 선택해 주세요.');
   if (novel.format === 'image_archive') {

@@ -18,7 +18,7 @@ function optionalMethod(extension,name,args,fallback){try{return extension[name]
 function cryptoHandler(text,iv,secretKeyString,encrypt){return __moyaCryptoHandler(String(text),String(iv),String(secretKeyString),encrypt===true);}
 class MProvider {
   get source(){return sourceMetadata;}
-  get supportsLatest(){return false;}
+  get supportsLatest(){return typeof this.getLatestUpdates==='function';}
   getHeaders(){return {};}
   getFilterList(){return [];}
   getSourcePreferences(){return [];}

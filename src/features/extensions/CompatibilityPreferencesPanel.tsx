@@ -17,6 +17,8 @@ export function CompatibilityPreferencesPanel({
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState('');
   const [group, setGroup] = useState('');
+  const modeField = snapshot?.fields.find((field) => field.key === '__moya_proxy_mode');
+  const proxyMode = changes.__moya_proxy_mode ?? modeField?.value;
   useEffect(() => {
     let active = true;
     void manager.preferences!(pkg)
@@ -45,7 +47,13 @@ export function CompatibilityPreferencesPanel({
         setMessage('');
         const enteredServiceOrigins = snapshot.fields.flatMap((field) => {
           const value = changes[field.key];
-          if (snapshot.networkPolicy === 'direct' || field.secret || field.kind !== 'text' || typeof value !== 'string')
+          if (
+            field.key.startsWith('__moya_') ||
+            snapshot.networkPolicy === 'direct' ||
+            field.secret ||
+            field.kind !== 'text' ||
+            typeof value !== 'string'
+          )
             return [];
           try {
             const url = new URL(value);
@@ -54,7 +62,8 @@ export function CompatibilityPreferencesPanel({
             return [];
           }
         });
-        void manager.savePreferences!(pkg, snapshot.revision, changes, [
+        const values = modeField ? { ...changes, __moya_proxy_mode: proxyMode! } : changes;
+        void manager.savePreferences!(pkg, snapshot.revision, values, [
           ...new Set([
             ...origins
               .split(/\r?\n/)
@@ -152,7 +161,11 @@ export function CompatibilityPreferencesPanel({
               ) : (
                 <input
                   type={field.secret ? 'password' : 'text'}
-                  disabled={busy || field.disabled}
+                  disabled={
+                    busy ||
+                    field.disabled ||
+                    (field.key === '__moya_outbound_proxy' && !!modeField && proxyMode !== 'custom')
+                  }
                   autoComplete="off"
                   autoCapitalize="none"
                   spellCheck={false}

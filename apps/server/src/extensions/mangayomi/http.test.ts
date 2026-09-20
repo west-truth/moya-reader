@@ -3,6 +3,19 @@ import { describe, it, expect } from 'vitest';
 import { compatibilityHttp } from './http.js';
 
 describe('compatibility network grant', () => {
+  it('handles an immediately unreachable pinned TLS address without crashing the host', async () => {
+    await expect(
+      compatibilityHttp(
+        { url: 'https://probe.invalid:1/' },
+        AbortSignal.timeout(700),
+        [],
+        1024,
+        undefined,
+        true,
+        async () => [{ address: '2606:4700:4700::1111', family: 6 }],
+      ),
+    ).rejects.toThrow(/source_connection_failed|source_request_timeout|cancelled/);
+  });
   it('falls back from unreachable IPv6 to IPv4 using one validated DNS answer', async () => {
     let lookups = 0;
     const server = createServer((req, res) => {

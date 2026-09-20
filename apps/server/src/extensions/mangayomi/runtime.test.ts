@@ -276,3 +276,28 @@ it('does not break existing popular browsing on a maker template latest stub', a
   });
   expect(value.result).toMatchObject({ browse: { activeMode: 'popular', availableModes: ['popular', 'search'] } });
 });
+
+it('exposes implemented latest lists when the optional getter is omitted, while honoring explicit false', async () => {
+  for (const disabled of [false, true]) {
+    const source = `class DefaultExtension extends MProvider {
+      ${disabled ? 'get supportsLatest(){return false;}' : ''}
+      async getPopular(){return {list:[],hasNextPage:false}}
+      async getLatestUpdates(page){return {list:[{name:'Latest '+page,link:'/latest'}],hasNextPage:false}}
+    }`;
+    const entry = parseMangayomiIndex([fixtureRow])[0];
+    const value = await invokeMangayomi({ entry, source, action: 'list', signal: AbortSignal.timeout(5000) });
+    expect(value.result).toMatchObject({
+      browse: { availableModes: disabled ? ['popular', 'search'] : ['popular', 'latest', 'search'] },
+    });
+    if (!disabled) {
+      const latest = await invokeMangayomi({
+        entry,
+        source,
+        action: 'list',
+        params: { mode: 'latest', page: 2 },
+        signal: AbortSignal.timeout(5000),
+      });
+      expect(latest.result).toMatchObject({ list: [{ name: 'Latest 2' }], browse: { activeMode: 'latest' } });
+    }
+  }
+});

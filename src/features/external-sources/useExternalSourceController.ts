@@ -6,6 +6,7 @@ import { createSeriesDownloadQueue } from '../../external-sources/series/series-
 import { filterAndSortReleases } from './source-release-list-model';
 import { completeSeriesCatalog } from './complete-series-catalog';
 import { useNextReleaseDownload } from './use-next-release-download';
+import { useDownloadRetention, type DownloadRetention } from './use-download-retention';
 import {
   releasePreferenceId,
   type SourceReleasePreference,
@@ -178,6 +179,7 @@ export interface ExternalSourceImportProgress {
 }
 
 export interface ExternalSourceController {
+  readonly downloadRetention?: DownloadRetention;
   renameRelease?(item: ExternalSourceItemView, title: string): Promise<void>;
   setReleasesRead?(items: readonly ExternalSourceItemView[], read: boolean): Promise<void>;
   markPreviousReleasesRead?(item: ExternalSourceItemView): Promise<void>;
@@ -296,6 +298,8 @@ export interface ExternalSourceNavigationSnapshot {
 }
 
 export interface UseExternalSourceControllerOptions {
+  readonly settingsScope?: string;
+  readonly readingActive?: boolean;
   readonly readingTarget?: { readonly novelId: string; readonly sectionId: string };
   readonly registry: ExternalSourceRegistryPort;
   readonly hostContext: TrustedExternalSourceHostContext;
@@ -3203,6 +3207,7 @@ export function useExternalSourceController(options: UseExternalSourceController
   );
 
   const automaticDownloadBlockedRef = useRef(busy || importBusy || blockingBusy);
+  const downloadRetention = useDownloadRetention({ options, busy: busy || importBusy || blockingBusy, setBusy });
   automaticDownloadBlockedRef.current = busy || importBusy || blockingBusy;
   const automaticDownload = useNextReleaseDownload({
     readingKey: options.readingTarget
@@ -4157,6 +4162,7 @@ export function useExternalSourceController(options: UseExternalSourceController
 
   return {
     openDiscovery,
+    downloadRetention,
     renameRelease: options.state.saveReleasePreferences ? renameRelease : undefined,
     setReleasesRead: options.state.saveReleasePreferences ? setReleasesRead : undefined,
     markPreviousReleasesRead: options.state.saveReleasePreferences ? markPreviousReleasesRead : undefined,

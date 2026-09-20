@@ -1,5 +1,6 @@
 import { runExtension } from '@moya/extension-runtime';
 import { createSourceProxyTransport } from './source-proxy-transport.js';
+import { createSourceNetworkSettings } from './source-network-settings.js';
 import { createSourceBroker } from '@moya/extension-runtime/source-broker';
 import {
   validateSourceInput,
@@ -26,14 +27,22 @@ export function createNodePackageExecution(
   runtime: 'self-host-gateway' | 'tauri-native' = 'self-host-gateway',
   options: {
     vault?: SourceCredentialVault;
+    network?: ReturnType<typeof createSourceNetworkSettings>;
     transport?: SourceTransport;
     contentResolver?: SourceContentResolver;
     contentConfigured?: (scope: Parameters<SourceContentResolver>[0]) => boolean;
   } = {},
 ): PackageExecutionPort {
-  const authentication = options.vault ? createSourceAuthentication(options.vault, options.transport) : undefined;
   const storedContent = options.vault ? createStoredContentService(options.vault) : undefined;
   const preferences = options.vault ? createSourcePreferences(options.vault) : undefined;
+  const network = options.network ?? createSourceNetworkSettings(options.vault);
+  const repositoryTransport = () => ({ ...options.transport, ...createSourceProxyTransport(network.resolve()) });
+  const authentication = options.vault
+    ? createSourceAuthentication(options.vault, options.transport, (pkg, source, epoch) => ({
+        ...options.transport,
+        ...createSourceProxyTransport(network.resolve(preferences?.values(pkg, source, epoch))),
+      }))
+    : undefined;
   return {
     preferences: async (pkg, source, epoch, request, signal) => {
       if (!preferences) throw new Error('invalid_source_preferences');
@@ -57,9 +66,9 @@ export function createNodePackageExecution(
       if (!storedContent) throw new Error('source_content_service_required');
       return storedContent.manage(pkg, sourceId, epoch, request, signal);
     },
-    listRepository: (url, signal) => fetchRepositoryIndex(url, signal, options.transport),
-    downloadRepository: (url, entry, signal) => fetchRepositoryArchive(url, entry, signal, options.transport),
-    checkUpdate: (pkg, signal) => downloadPackageUpdate(pkg, signal, options.transport),
+    listRepository: (url, signal) => fetchRepositoryIndex(url, signal, repositoryTransport()),
+    downloadRepository: (url, entry, signal) => fetchRepositoryArchive(url, entry, signal, repositoryTransport()),
+    checkUpdate: (pkg, signal) => downloadPackageUpdate(pkg, signal, repositoryTransport()),
     authenticate: authentication?.manage,
     retainAuthentication: authentication?.retain,
     async prepare(pkg, signal) {
@@ -112,7 +121,7 @@ export function createNodePackageExecution(
               privateOrigins: [],
               outboundProxy: undefined,
             };
-      const outboundProxy = sourceOptions.outboundProxy ?? process.env.SOURCE_OUTBOUND_PROXY;
+      const outboundProxy = network.resolve(sourceOptions);
       const broker = createSourceBroker(
         {
           origins: pkg.manifest.requestedAccess.networkOrigins,

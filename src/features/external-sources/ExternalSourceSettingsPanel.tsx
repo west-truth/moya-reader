@@ -1,4 +1,4 @@
-import { Check, Cloud, CloudOff, Link, Link2Off, LoaderCircle, PlugZap, ShieldCheck } from 'lucide-react';
+import { Check, Cloud, CloudOff, Link, Link2Off, LoaderCircle, PlugZap, ShieldCheck, Star } from 'lucide-react';
 import { useEffect, useState, type FormEvent } from 'react';
 import type { ExternalSourceConnectionForm } from '../../external-sources/contracts';
 import type { ExternalSourceConnectionStatus } from '../../external-sources/contracts';
@@ -78,9 +78,11 @@ function SourceCard({
           type="button"
           aria-pressed={favorite}
           aria-label={`${source.title} 즐겨찾기`}
+          title={favorite ? '즐겨찾기 해제' : '즐겨찾기 필터에 추가'}
           onClick={() => toggleFavorite(source.id)}
         >
-          {favorite ? '★ 즐겨찾기' : '☆ 즐겨찾기'}
+          <Star size={17} aria-hidden="true" fill={favorite ? 'currentColor' : 'none'} />
+          <span>즐겨찾기</span>
         </button>
         {connected && onBrowse && (
           <button type="button" onClick={() => onBrowse(source.id)}>

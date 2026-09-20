@@ -5,6 +5,30 @@ import { approveSourceUrl, createSourceHttp, isPublicSourceAddress } from '../so
 import { createSourceBroker } from '../source-broker.mjs';
 import { runExtension } from '../host.mjs';
 import { MAX_SOURCE_TEXT_BYTES } from '../content-limits.mjs';
+import { execFile } from 'node:child_process';
+import { promisify } from 'node:util';
+
+test('a pinned HTTPS connection failure rejects without an unhandled TLS socket error', async () => {
+  // Real TLS construction in a child: the old synchronous lookup crashed outside Promise.catch.
+  const moduleUrl = new URL('../source-http.mjs', import.meta.url).href;
+  const { stdout } = await promisify(execFile)(
+    process.execPath,
+    [
+      '--input-type=module',
+      '-e',
+      `
+    import { createSourceHttp } from ${JSON.stringify(moduleUrl)};
+    const http = createSourceHttp(['https://probe.invalid:1'], {
+      lookup: async () => [{address:'2606:4700:4700::1111',family:6}]
+    });
+    try { await http({url:'https://probe.invalid:1/',response:'text'},AbortSignal.timeout(700)); }
+    catch(error) { console.log(error.message); }
+  `,
+    ],
+    { timeout: 4000 },
+  );
+  assert.match(stdout, /source_connection_failed|source_request_timeout|cancelled/);
+});
 
 const origins = ['https://catalog.example'];
 const lookup = async () => [{ address: '93.184.216.34', family: 4 }];

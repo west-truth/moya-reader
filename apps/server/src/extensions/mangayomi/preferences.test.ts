@@ -1,5 +1,14 @@
 import { expect, it } from 'vitest';
-import { preferenceSchema, validatePreferenceChanges } from './preferences.js';
+import { preferenceSchema, validatePreferenceChanges, validatePreferenceState } from './preferences.js';
+it('bounds catalog caches separately from user-editable form changes', () => {
+  const state = { status: 'x'.repeat(91031), mapping: 'y'.repeat(54000) };
+  expect(() => validatePreferenceState(state)).not.toThrow();
+  expect(() => validatePreferenceChanges(state)).toThrow('compatibility_preferences_invalid');
+  expect(() => validatePreferenceState({ cache: 'x'.repeat(256 * 1024) })).toThrow('source_storage_limit');
+  expect(() => validatePreferenceState(JSON.parse('{"__proto__":"value"}'))).toThrow(
+    'compatibility_preferences_invalid',
+  );
+});
 it('keeps original multi selections and resolves single choice indexes', () => {
   expect(
     preferenceSchema([

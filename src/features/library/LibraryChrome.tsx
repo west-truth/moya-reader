@@ -13,6 +13,7 @@ import {
   FolderCog,
   FolderPlus,
   Grid2X2,
+  Home,
   Library,
   List,
   Menu,
@@ -232,6 +233,18 @@ function NavigationSections(props: LibraryScreenProps & { close?: () => void }) 
   const scope = model.discovery?.scope ?? 'local';
   return (
     <>
+      <nav className="library-sidebar-list library-discovery-link" aria-label="라이브러리 홈">
+        <button
+          type="button"
+          onClick={() => {
+            goLibraryHome(props);
+            close?.();
+          }}
+        >
+          <Home size={18} />
+          <span>홈</span>
+        </button>
+      </nav>
       {actions.header.openDiscovery && (
         <nav className="library-sidebar-list library-discovery-link" aria-label="탐색 홈">
           <button

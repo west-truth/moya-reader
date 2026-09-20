@@ -63,12 +63,31 @@ export function preferenceSchema(raw: unknown): CompatibilityPreference[] {
   });
 }
 export function validatePreferenceChanges(value: unknown): asserts value is PreferenceValues {
+  validatePreferences(value, 48 * 1024, 256);
+}
+
+/** SharedPreferences also contains source-managed catalog caches, not just form values. */
+export function validatePreferenceState(value: unknown): asserts value is PreferenceValues {
+  validatePreferences(value, 256 * 1024, 2048, 'source_storage_limit');
+}
+
+function validatePreferences(
+  value: unknown,
+  maximumBytes: number,
+  maximumKeys: number,
+  limitError = 'compatibility_preferences_invalid',
+): asserts value is PreferenceValues {
+  if (
+    value &&
+    typeof value === 'object' &&
+    !Array.isArray(value) &&
+    (Object.keys(value).length > maximumKeys || Buffer.byteLength(JSON.stringify(value)) > maximumBytes)
+  )
+    throw new Error(limitError);
   if (
     !value ||
     typeof value !== 'object' ||
     Array.isArray(value) ||
-    Object.keys(value).length > 256 ||
-    Buffer.byteLength(JSON.stringify(value)) > 48 * 1024 ||
     Object.entries(value).some(
       ([key, v]) =>
         key.length > 256 ||

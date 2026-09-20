@@ -17,6 +17,23 @@ function jsonResponse(body: unknown): Response {
 }
 
 describe('RemoteApiClient auth headers', () => {
+  it('replaces proxy HTML failures with a readable message and preserves the HTTP status', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(
+        async () =>
+          new Response('<html><h1>502 Bad Gateway</h1>nginx</html>', {
+            status: 502,
+            headers: { 'content-type': 'text/html' },
+          }),
+      ),
+    );
+    const client = new RemoteApiClient('/api');
+    await expect(client.listBooks()).rejects.toMatchObject({
+      status: 502,
+      message: '서버에 일시적으로 연결하지 못했습니다 (502). 잠시 후 다시 시도해 주세요.',
+    });
+  });
   it('requires a trash-inclusive response on every page before using a catalog for link cleanup', async () => {
     const fetchMock = vi
       .fn()
