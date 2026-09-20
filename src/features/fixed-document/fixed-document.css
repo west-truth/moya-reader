@@ -1559,8 +1559,8 @@
     gap: 8px;
   }
   .fixed-doc-footer.has-chapter-steps {
-    grid-template-columns: 34px 42px minmax(70px, 1fr) 36px 34px;
-    padding: 0 56px env(safe-area-inset-bottom, 0px) 6px;
+    grid-template-columns: 34px 42px minmax(70px, 1fr) 42px 34px;
+    padding: 0 6px env(safe-area-inset-bottom, 0px);
   }
   .fixed-doc-chapter-step {
     min-width: 34px;
