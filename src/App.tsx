@@ -1,3 +1,4 @@
+import { useDiscoveryController } from './features/discovery/useDiscoveryController';
 import { X } from 'lucide-react';
 import { platformCloudVaultProvider } from './platform/cloud-account-provider';
 import type { ExtensionContributionId } from '@noveldesk/extension-contracts';
@@ -1469,6 +1470,11 @@ export default function App() {
     notify: showToast,
     confirm: (message) => window.confirm(message),
   });
+  const discovery = useDiscoveryController(
+    externalSourceRegistry,
+    externalSourceHostContext,
+    remoteApiClient?.readerSettingsScope ?? 'local',
+  );
   openImportedSeriesRef.current = externalSourceFeature.showLocalSeries;
   const importBusy = importFeature.busy;
 
@@ -5669,6 +5675,7 @@ export default function App() {
     workspace: bookWorkspace,
     state: bookWorkspaceState,
     sources: externalSourceFeature,
+    discovery,
     getNovel: (id) => readerRepository.getNovel(id),
     layers: appBackLayers,
     notify: (message) => showToast(message, 'warning'),
@@ -6119,6 +6126,7 @@ export default function App() {
         openImport={importFeature.open}
         openChapterAppend={importFeature.openChapterAppend}
         openLibraryFolders={libraryFolderFeature.show}
+        discovery={discovery}
         externalSources={externalSourceFeature}
         openExternalSourceSettings={openExternalSourceSettings}
         addSample={addSample}

@@ -1,3 +1,4 @@
+import { SessionCoverCache } from './session-cover-cache';
 import type { ExternalSourceContributionDescriptorV2 } from '@noveldesk/extension-contracts';
 import type { SourceWork } from '@noveldesk/extension-contracts/source-sdk';
 import { MAX_SOURCE_CONTENT_BYTES } from '../../packages/extension-runtime/content-limits.mjs';
@@ -38,7 +39,7 @@ export class InstalledPackageSourceRegistry<
   Catalog extends InstalledSourceCatalogPort = PackageRuntimeCatalog,
 > implements ExternalSourceProviderRegistryPort {
   private readonly workCache = new Map<string, { work: SourceWork; expiresAt: number }>();
-  private readonly covers = new Map<string, string>();
+  private readonly covers = new SessionCoverCache();
   private readonly unsubscribe: () => void;
   constructor(protected readonly catalog: Catalog) {
     this.unsubscribe = catalog.subscribe(() => this.clearCache());
@@ -221,20 +222,22 @@ export class InstalledPackageSourceRegistry<
   ): Promise<string | undefined> {
     if (key.connectorId !== id || key.accountConnectionId) throw new Error('source_connection_mismatch');
     const cacheKey = JSON.stringify([id, this.catalog.getSource(id)?.generation, key.remoteId]);
-    const existing = this.covers.get(cacheKey);
-    if (existing) return existing;
-    const { result, assets } = await this.catalog.invoke(id, 'source.getCover', { workId: key.remoteId }, signal);
-    if (!result) return undefined;
-    if (!['image/png', 'image/jpeg', 'image/webp', 'image/gif'].includes(result.contentType))
-      throw new Error('unsupported_source_image');
-    const url = URL.createObjectURL(assets.get(result.handle)!);
-    if (this.covers.size >= 64) {
-      const first = this.covers.keys().next().value!;
-      URL.revokeObjectURL(this.covers.get(first)!);
-      this.covers.delete(first);
-    }
-    this.covers.set(cacheKey, url);
-    return url;
+    return this.covers.resolve(
+      cacheKey,
+      async (sharedSignal) => {
+        const { result, assets } = await this.catalog.invoke(
+          id,
+          'source.getCover',
+          { workId: key.remoteId },
+          sharedSignal,
+        );
+        if (!result) return undefined;
+        const blob = assets.get(result.handle);
+        if (!blob) throw new Error('source_cover_unavailable');
+        return blob;
+      },
+      signal,
+    );
   }
 
   private clearCache(): void {
@@ -242,7 +245,6 @@ export class InstalledPackageSourceRegistry<
     this.releaseCovers();
   }
   releaseCovers(): void {
-    for (const url of this.covers.values()) URL.revokeObjectURL(url);
     this.covers.clear();
   }
   dispose(): void {

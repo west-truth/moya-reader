@@ -1,9 +1,12 @@
+import { CollapsibleNavigation } from './CollapsibleNavigation';
+import '../discovery/discovery.css';
 import { publicAssetUrl } from '../../utils/public-asset-url';
 import {
   ArrowDownUp,
   BookOpen,
   Check,
   Cloud,
+  Compass,
   DatabaseBackup,
   FileText,
   Folder,
@@ -83,12 +86,18 @@ function FilterNavigation({ model, actions, close }: LibraryScreenProps & { clos
           <button
             key={item.value}
             type="button"
-            className={!model.externalSources.active && model.filter === item.value ? 'active' : ''}
+            className={
+              !model.discovery?.active && !model.externalSources.active && model.filter === item.value ? 'active' : ''
+            }
             onClick={() => {
               actions.controls.setFilter(item.value);
               close?.();
             }}
-            aria-current={!model.externalSources.active && model.filter === item.value ? 'page' : undefined}
+            aria-current={
+              !model.discovery?.active && !model.externalSources.active && model.filter === item.value
+                ? 'page'
+                : undefined
+            }
           >
             <Icon size={17} strokeWidth={1.7} />
             <span>{item.label}</span>
@@ -106,12 +115,18 @@ function ShelfNavigation({ model, actions, close }: LibraryScreenProps & { close
     <nav className="library-sidebar-list" aria-label="사용자 책장">
       <button
         type="button"
-        className={!model.externalSources.active && !model.management.activeShelfId ? 'active' : ''}
+        className={
+          !model.discovery?.active && !model.externalSources.active && !model.management.activeShelfId ? 'active' : ''
+        }
         onClick={() => {
           actions.controls.setShelf(undefined);
           close?.();
         }}
-        aria-current={!model.externalSources.active && !model.management.activeShelfId ? 'page' : undefined}
+        aria-current={
+          !model.discovery?.active && !model.externalSources.active && !model.management.activeShelfId
+            ? 'page'
+            : undefined
+        }
       >
         <Folder size={17} strokeWidth={1.7} />
         <span>모든 작품</span>
@@ -121,13 +136,19 @@ function ShelfNavigation({ model, actions, close }: LibraryScreenProps & { close
         <button
           key={shelf.id}
           type="button"
-          className={!model.externalSources.active && model.management.activeShelfId === shelf.id ? 'active' : ''}
+          className={
+            !model.discovery?.active && !model.externalSources.active && model.management.activeShelfId === shelf.id
+              ? 'active'
+              : ''
+          }
           onClick={() => {
             actions.controls.setShelf(shelf.id);
             close?.();
           }}
           aria-current={
-            !model.externalSources.active && model.management.activeShelfId === shelf.id ? 'page' : undefined
+            !model.discovery?.active && !model.externalSources.active && model.management.activeShelfId === shelf.id
+              ? 'page'
+              : undefined
           }
         >
           <Folder size={17} strokeWidth={1.7} />
@@ -206,8 +227,94 @@ function SourceNavigation({ model, actions, close }: LibraryScreenProps & { clos
   );
 }
 
+function NavigationSections(props: LibraryScreenProps & { close?: () => void }) {
+  const { model, actions, close } = props;
+  const scope = model.discovery?.scope ?? 'local';
+  return (
+    <>
+      {actions.header.openDiscovery && (
+        <nav className="library-sidebar-list library-discovery-link" aria-label="탐색 홈">
+          <button
+            type="button"
+            className={model.discovery?.active ? 'active' : ''}
+            aria-current={model.discovery?.active ? 'page' : undefined}
+            onClick={() => {
+              actions.header.openDiscovery?.();
+              close?.();
+            }}
+          >
+            <Compass size={18} />
+            <span>탐색</span>
+          </button>
+        </nav>
+      )}
+      <CollapsibleNavigation
+        name="라이브러리"
+        scope={scope}
+        active={
+          !model.discovery?.active && !model.externalSources.active
+            ? systemViews.find((v) => v.value === model.filter)?.label
+            : undefined
+        }
+      >
+        <FilterNavigation {...props} />
+      </CollapsibleNavigation>
+      {model.management.available && (
+        <CollapsibleNavigation
+          name="책장"
+          scope={scope}
+          active={
+            !model.discovery?.active && !model.externalSources.active
+              ? model.management.shelves.find((s) => s.id === model.management.activeShelfId)?.name
+              : undefined
+          }
+          action={
+            <button
+              type="button"
+              aria-label="책장 관리"
+              onClick={() => {
+                close?.();
+                actions.controls.openShelves();
+              }}
+            >
+              <FolderCog size={16} />
+            </button>
+          }
+        >
+          <ShelfNavigation {...props} />
+        </CollapsibleNavigation>
+      )}
+      {model.externalSources.sources.length > 0 && (
+        <CollapsibleNavigation
+          name="소스"
+          scope={scope}
+          active={
+            model.externalSources.active
+              ? model.externalSources.sources.find((s) => s.id === model.externalSources.activeSourceId)?.title
+              : undefined
+          }
+          action={
+            <button
+              type="button"
+              aria-label="소스 관리"
+              onClick={() => {
+                close?.();
+                actions.header.openExternalSourceSettings();
+              }}
+            >
+              <Settings size={16} />
+            </button>
+          }
+        >
+          <SourceNavigation {...props} />
+        </CollapsibleNavigation>
+      )}
+    </>
+  );
+}
+
 export function LibrarySidebar(props: LibraryScreenProps) {
-  const { model, actions } = props;
+  const { actions } = props;
   return (
     <aside className="library-sidebar" aria-label="라이브러리 탐색">
       <button
@@ -219,38 +326,7 @@ export function LibrarySidebar(props: LibraryScreenProps) {
         <img src={publicAssetUrl('/branding/moya-wordmark.png')} alt="MOYA" />
       </button>
       <div className="library-sidebar-scroll">
-        <section>
-          <span className="library-sidebar-label">라이브러리</span>
-          <FilterNavigation {...props} />
-        </section>
-        {model.management.available && (
-          <section className="library-shelf-section">
-            <div className="library-sidebar-section-head">
-              <span className="library-sidebar-label">책장</span>
-              <button type="button" title="책장 관리" aria-label="책장 관리" onClick={actions.controls.openShelves}>
-                <FolderCog size={16} />
-              </button>
-            </div>
-            <ShelfNavigation {...props} />
-          </section>
-        )}
-        {model.externalSources.sources.length > 0 && (
-          <section className="library-source-section">
-            <div className="library-sidebar-section-head">
-              <span className="library-sidebar-label">소스</span>
-              <button
-                type="button"
-                title="소스 관리"
-                aria-label="소스 관리"
-                disabled={model.externalSources.busy}
-                onClick={actions.header.openExternalSourceSettings}
-              >
-                <Settings size={16} />
-              </button>
-            </div>
-            <SourceNavigation {...props} />
-          </section>
-        )}
+        <NavigationSections {...props} />
       </div>
       <footer className="library-sidebar-footer">
         <button type="button" onClick={actions.header.openSettings}>
@@ -375,20 +451,7 @@ function LibraryNavigationDrawer({
       }
     >
       <div className="library-mobile-drawer-scroll">
-        <h2>라이브러리</h2>
-        <FilterNavigation model={model} actions={actions} close={close} />
-        {model.management.available && (
-          <>
-            <h2>책장</h2>
-            <ShelfNavigation model={model} actions={actions} close={close} />
-          </>
-        )}
-        {model.externalSources.sources.length > 0 && (
-          <>
-            <h2>소스</h2>
-            <SourceNavigation model={model} actions={actions} close={close} />
-          </>
-        )}
+        <NavigationSections model={model} actions={actions} close={close} />
       </div>
     </ModalDrawer>
   );

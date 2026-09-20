@@ -1,3 +1,4 @@
+import { runDiscoveryAppGate } from './discovery-app-gate';
 import { createRequire } from 'node:module';
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
 import { once } from 'node:events';
@@ -229,6 +230,7 @@ async function runAppGate(pool?: Parameters<Parameters<typeof withPostgresSchema
         .waitFor();
     }
     await page.keyboard.press('Escape');
+    if (!nativeFixture) await runDiscoveryAppGate(page, output);
     await page
       .getByRole('navigation', { name: '연결된 외부 소스' })
       .getByRole('button', { name: /앱 검증용 소스/ })

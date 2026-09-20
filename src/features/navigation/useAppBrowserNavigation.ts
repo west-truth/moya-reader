@@ -10,6 +10,7 @@ import { BrowserNavigation, installAppHistoryBack } from './browser-navigation';
 import { openLibraryBook } from '../book-workspace/book-workspace-source-navigation';
 
 type Snapshot = {
+  discovery?: boolean;
   view: BookWorkspaceState['view'];
   bookId?: string;
   detailBookId?: string;
@@ -21,6 +22,7 @@ type Snapshot = {
 
 export function useAppBrowserNavigation(options: {
   enabled: boolean;
+  discovery?: { active: boolean; setActive(value: boolean): void };
   workspace: BookWorkspaceController;
   state: BookWorkspaceState;
   sources: ExternalSourceController;
@@ -35,6 +37,7 @@ export function useAppBrowserNavigation(options: {
     const { state, sources, layers } = latest.current;
     const source = state.view === 'library' && sources.open ? sources.captureNavigation?.() : undefined;
     const snapshot: Snapshot = {
+      discovery: latest.current.discovery?.active,
       view: state.view,
       bookId: state.selectedNovel?.id,
       source,
@@ -53,6 +56,7 @@ export function useAppBrowserNavigation(options: {
     };
     const key = JSON.stringify([
       state.view,
+      snapshot.discovery,
       state.view === 'library' ? undefined : snapshot.bookId,
       source && [source.sourceId, source.localBookId, source.breadcrumbs.map((item) => item.parentRef)],
       snapshot.layers,
@@ -102,6 +106,7 @@ export function useAppBrowserNavigation(options: {
         for (const layer of latest.current.layers ?? []) {
           if (layer.id !== 'external-sources' && layer.open && !target.layers.includes(layer.id)) layer.dismiss();
         }
+        latest.current.discovery?.setActive(Boolean(target.discovery));
         const current = workspace.getSnapshot();
         const sameReader =
           (current.view === 'reader' || current.view === 'document') &&
