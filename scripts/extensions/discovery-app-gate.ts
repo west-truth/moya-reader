@@ -30,6 +30,13 @@ export async function runDiscoveryAppGate(page: Page, output: string) {
     throw new Error('Collapse all left an editor visible');
   await editor.getByRole('button', { name: '저장', exact: true }).click();
   await page.getByRole('button', { name: 'Synthetic installed novel 상세 보기', exact: true }).first().waitFor();
+  await page.getByRole('button', { name: '빠른 이동', exact: true }).click();
+  const jump = page.getByRole('dialog', { name: '소스 빠른 이동', exact: true });
+  await jump.getByRole('searchbox').fill('앱 검증용');
+  await jump.getByRole('button', { name: '앱 검증용 소스', exact: true }).click();
+  await page.locator('.source-hub-screen').waitFor();
+  await home().click();
+  await page.getByRole('button', { name: 'Synthetic installed novel 상세 보기', exact: true }).first().waitFor();
   await page.screenshot({ path: resolve(output, 'discovery-desktop.png') });
   await page.locator('.discovery-body').evaluate((node) => {
     node.scrollTop = 320;
@@ -54,6 +61,12 @@ export async function runDiscoveryAppGate(page: Page, output: string) {
     await library.click();
     if (await drawer.getByRole('navigation', { name: '작품 상태' }).isVisible())
       throw new Error('Collapsed library still visible');
+    await drawer
+      .getByRole('navigation', { name: '라이브러리 홈', exact: true })
+      .getByRole('button', { name: '홈', exact: true })
+      .click();
+    await page.locator('.discovery-screen').waitFor({ state: 'detached' });
+    await page.getByRole('button', { name: '라이브러리 메뉴', exact: true }).filter({ visible: true }).click();
     await drawer.getByRole('button', { name: /^라이브러리/, expanded: false }).click();
     await drawer
       .getByRole('navigation', { name: '탐색 홈' })

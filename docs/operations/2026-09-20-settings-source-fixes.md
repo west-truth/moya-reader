@@ -33,3 +33,17 @@
 - 관련 단위·저장소·컨트롤러 검사 91개 통과. 최종 변경 후 정리 관련 6개 재검사 통과. 웹/서버 TypeScript, 변경 범위 ESLint, CSS/포맷 검사 통과.
 - 설정 브라우저 검사 360/390/1366px 통과. 360px 다크/라이트 캡처에서 버튼 테마와 하위 메뉴 복귀, 설명 영역 여백도 확인.
 - 운영 소스 설치와 운영 다운로드 삭제는 수행하지 않음. 배포는 별도.
+
+## 후속 요청: 홈·빠른 이동·502·굿툰 최신
+
+- 접힌 라이브러리와 무관하게 보이는 `홈`을 사이드 메뉴에 추가. 기존 전체 라이브러리 복귀 동작 재사용, 모바일 서랍도 닫힘.
+- 탐색 분류 탭 오른쪽에 `빠른 이동` 추가. 현재 탭에 포함되지 않은 소스도 검색·선택 가능하며 미연결 소스는 상태 안내 후 비활성화.
+- 운영 API의 2026-09-20 05:39~05:41 UTC 로그에 `Unhandled 'error' event` / `TLSSocket` / IPv6 `ENETUNREACH` 반복. 확인 당시 재시작 횟수 19. 동일 시각 웹 Nginx는 upstream 연결 종료/거절로 502를 반환. 외부 사이트의 오류만으로 설명할 문제가 아니라 API 프로세스 종료가 확인됨.
+- 승인된 DNS 주소를 고정하는 lookup 콜백이 동기 호출되어, TLS 초기화 도중 연결이 실패하면 오류 리스너 설치 전에 예외가 발생. 소스 HTTP와 Mangayomi HTTP의 콜백을 비동기 처리해 정상적인 Promise 거부 및 기존 IPv4 fallback 경로로 전달. DNS 승인·주소 고정·인증서 검증 유지. 전역 IPv6 차단이나 무조건적인 재시도 추가 없음.
+- 수정 전 실제 HTTPS 요청을 별도 Node 프로세스로 실행해 비정상 종료 재현. 수정 후 같은 요청은 `source_connection_failed`로 처리되고 정상 종료. TLS 회귀 테스트 포함 소스 broker 18개, 네트워크/런타임/클라이언트/라이브러리 76개 통과.
+- 프록시 HTML 오류는 RemoteApiClient에서 HTTP 상태를 유지한 짧은 연결 안내로 변환. 탐색 재시도 버튼 테마도 적용.
+- 굿툰 0.1.9의 공개 코드에 `getLatestUpdates`가 있지만 `supportsLatest` 선언은 없음. Moya의 기본 false 때문에 최신 목록을 미지원으로 판정. 선언이 없으면 구현된 최신 함수로 판정하며 명시적인 false는 유지.
+- 실제 공개 굿툰 코드와 원격 사이트로 최신 1페이지를 읽기 전용 호출: 항목 64개와 `popular/latest/search` 모드 반환. 이 숫자는 확장의 안내 카드를 포함할 수 있으며 작품 수로 단정하지 않음. 굿툰 최신 기본 규칙은 확장이 정한 `완결 + 전체`임.
+- 실제 App 브라우저 검사: 홈 복귀(라이브러리 접힘), 빠른 이동 검색/소스 진입, 360/390px 화면 통과, pageerror 0. 운영 재배포는 수행하지 않음.
+
+참고: [굿툰 원본](https://dc-toki-mangayomi-manga.pages.dev/javascript/manga/src/ko/goodtoon.js), [Mangayomi JavaScript supportsLatest 기본 처리](https://github.com/kodjodevf/mangayomi/blob/aaa0aaebe70cbdc42f67fee9f29992ecd5fc4777/lib/eval/javascript/service.dart), [Node 연결·lookup 옵션](https://nodejs.org/api/net.html#socketconnectoptions-connectlistener).

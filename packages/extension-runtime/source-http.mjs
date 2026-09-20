@@ -92,8 +92,11 @@ function pinnedRequest({ url, address }, input, signal) {
         headers: input.headers,
         signal,
         agent: false,
+        // Match async DNS timing: TLS must attach its error handlers before connect can fail.
         lookup: (_hostname, options, callback) =>
-          options.all ? callback(null, [address]) : callback(null, address.address, address.family),
+          queueMicrotask(() =>
+            options.all ? callback(null, [address]) : callback(null, address.address, address.family),
+          ),
       },
       (response) => resolve({ status: response.statusCode, headers: response.headers, body: response }),
     );

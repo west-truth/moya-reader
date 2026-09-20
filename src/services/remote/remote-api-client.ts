@@ -102,6 +102,12 @@ function remoteSnapshotNotFound(error: unknown): boolean {
 
 async function remoteError(response: Response): Promise<RemoteApiError> {
   const raw = await response.text();
+  // Reverse proxies return HTML during an upstream outage; never expose their error page as UI text.
+  if (/text\/html/i.test(response.headers.get('content-type') ?? '') || /^\s*(?:<!doctype\s+html|<html\b)/i.test(raw))
+    return new RemoteApiError(
+      `서버에 일시적으로 연결하지 못했습니다 (${response.status}). 잠시 후 다시 시도해 주세요.`,
+      response.status,
+    );
   if (!raw) return new RemoteApiError(response.statusText, response.status);
   try {
     const payload = JSON.parse(raw) as unknown;

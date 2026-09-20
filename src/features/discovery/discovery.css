@@ -27,11 +27,38 @@
   overflow: auto;
   padding: 20px 28px 40px;
 }
+.discovery-tab-row {
+  display: flex;
+  align-items: start;
+  gap: 10px;
+  margin-bottom: 20px;
+}
+.discovery-tab-row > button {
+  flex-shrink: 0;
+  min-height: 44px;
+}
+.discovery-quick-jump-list {
+  display: grid;
+  gap: 8px;
+  max-height: 55dvh;
+  overflow-y: auto;
+}
+.discovery-quick-jump-list button {
+  justify-content: space-between;
+  text-align: left;
+  min-height: 48px;
+}
+.discovery-quick-jump-list small {
+  display: block;
+  color: var(--text-2);
+}
 .discovery-tabs {
+  flex: 1;
+  min-width: 0;
   display: flex;
   gap: 8px;
   overflow-x: auto;
-  margin-bottom: 20px;
+  margin-bottom: 0;
 }
 .discovery-tabs button {
   white-space: nowrap;

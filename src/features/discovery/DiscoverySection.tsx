@@ -218,7 +218,7 @@ export function DiscoverySection({
             <div className="discovery-message" role="status">
               {page ? '이전 목록을 표시하고 있습니다. ' : ''}
               {error}
-              <button type="button" disabled={loading} onClick={() => setRetry((v) => v + 1)}>
+              <button type="button" className="ghost-btn" disabled={loading} onClick={() => setRetry((v) => v + 1)}>
                 다시 시도
               </button>
             </div>

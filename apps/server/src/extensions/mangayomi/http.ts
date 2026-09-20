@@ -187,8 +187,11 @@ async function compatibilityRequest(
               headers,
               signal: deadline,
               agent: proxy ?? false,
+              // A synchronous lookup can fail inside TLS construction before listeners exist.
               lookup: (_host, options, callback) =>
-                options.all ? callback(null, [address]) : callback(null, address.address, address.family),
+                queueMicrotask(() =>
+                  options.all ? callback(null, [address]) : callback(null, address.address, address.family),
+                ),
             },
             resolve,
           );
