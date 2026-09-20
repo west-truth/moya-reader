@@ -115,6 +115,7 @@ export class RemoteInstalledExtensions implements InstalledExtensionManager {
   private snapshot: InstalledExtensionsSnapshot = EMPTY;
   private listeners = new Set<() => void>();
   private pending?: Promise<void>;
+  private inventoryAbort?: AbortController;
   private inventoryRequest = 0;
   private covers = new Map<string, string>();
   constructor(
@@ -135,7 +136,7 @@ export class RemoteInstalledExtensions implements InstalledExtensionManager {
         }),
       savePreferences: async (pkg, revision, values, privateOrigins) => {
         await action('preferences-save', { pkg, revision, values, privateOrigins });
-        await this.refresh();
+        await this.refresh(true);
       },
       list: (signal) => this.api.request('/apk-extensions', { signal }, 30000),
       discardReview: async (id) => {
@@ -163,12 +164,12 @@ export class RemoteInstalledExtensions implements InstalledExtensionManager {
         const snapshot = await this.installCompatibility('/apk-extensions', review, signal, 120_000);
         // The package-specific inventory above confirms the exact installed bytes.
         // Aggregate source publication remains best-effort and cannot hold the UI busy.
-        void this.refresh();
+        void this.refresh(true);
         return snapshot;
       },
       change: async (pkg, revision, change) => {
         await action('change', { pkg, revision, action: change });
-        await this.refresh();
+        await this.refresh(true);
       },
     };
   }
@@ -200,18 +201,18 @@ export class RemoteInstalledExtensions implements InstalledExtensionManager {
         ),
       install: async (review, signal) => {
         const snapshot = await this.installCompatibility(prefix, review, signal, 150_000);
-        void this.refresh();
+        void this.refresh(true);
         return snapshot;
       },
       change: async (pkg, revision, change) => {
         await action('change', { pkg, revision, action: change });
-        await this.refresh();
+        await this.refresh(true);
       },
       preferences: (pkg) =>
         this.api.request(prefix + '/preferences', { method: 'POST', body: JSON.stringify({ pkg }) }),
       savePreferences: async (pkg, revision, values, privateOrigins) => {
         await action('preferences-save', { pkg, revision, values, privateOrigins });
-        await this.refresh();
+        await this.refresh(true);
       },
     };
   }
@@ -341,11 +342,14 @@ export class RemoteInstalledExtensions implements InstalledExtensionManager {
       this.releaseCovers();
     for (const listener of this.listeners) listener();
   }
-  refresh = (): Promise<void> => {
-    if (this.pending) return this.pending;
+  refresh = (force = false): Promise<void> => {
+    if (this.pending && !force) return this.pending;
     const request = ++this.inventoryRequest;
+    this.inventoryAbort?.abort();
+    this.inventoryAbort = new AbortController();
+    const operation = packageOperationSignal(this.inventoryAbort.signal);
     this.pending = this.api
-      .request<Inventory>('/extensions/packages')
+      .request<Inventory>('/extensions/packages', { signal: operation.signal }, PACKAGE_MUTATION_TIMEOUT_MS)
       .then((value) => {
         if (request !== this.inventoryRequest) return;
         if (!value || !Array.isArray(value.packages) || !Array.isArray(value.sources) || !Array.isArray(value.errors))
@@ -364,7 +368,11 @@ export class RemoteInstalledExtensions implements InstalledExtensionManager {
         });
       })
       .finally(() => {
-        this.pending = undefined;
+        operation.close();
+        if (request === this.inventoryRequest) {
+          this.pending = undefined;
+          this.inventoryAbort = undefined;
+        }
       });
     return this.pending;
   };
@@ -398,6 +406,9 @@ export class RemoteInstalledExtensions implements InstalledExtensionManager {
       // may also be stalled while consuming its body. A successful install must
       // not wait on that stale request before issuing the confirming read.
       const inventoryRequest = ++this.inventoryRequest;
+      this.inventoryAbort?.abort();
+      this.inventoryAbort = undefined;
+      this.pending = undefined;
       const value = await this.api.request<Inventory>(
         '/extensions/packages',
         { signal: operation.signal },
@@ -431,8 +442,7 @@ export class RemoteInstalledExtensions implements InstalledExtensionManager {
       { method: 'POST', body: JSON.stringify({ revision, action }) },
       60000,
     );
-    await this.pending;
-    await this.refresh();
+    await this.refresh(true);
   }
   getExternalSources() {
     return this.snapshot.sources;

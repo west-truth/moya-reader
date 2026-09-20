@@ -45,6 +45,47 @@ function compatibilityInventory(
 }
 const context = { brokers: { get: () => undefined } };
 describe('remote package inventory and source client', () => {
+  it.each(['apk', 'mangayomi'] as const)(
+    'supersedes pre-install inventory for %s and ignores its late result',
+    async (kind) => {
+      let resolveOld!: (value: unknown) => void;
+      let oldSignal!: AbortSignal;
+      const review = {
+        id: 'review',
+        revision: 1,
+        pkg: 'org.example.compat',
+        version: '2',
+        digest: 'b'.repeat(64),
+        signers: [],
+      };
+      let reads = 0;
+      const request = vi.fn(async (path: string, init?: RequestInit) => {
+        if (path === '/extensions/packages') {
+          if (++reads === 1) {
+            oldSignal = init!.signal!;
+            return new Promise((resolve) => {
+              resolveOld = resolve;
+            });
+          }
+          return inventory(2);
+        }
+        if (path === `/${kind}-extensions`) return compatibilityInventory(review);
+        return {};
+      });
+      const client = new RemoteInstalledExtensions({ request, requestBlob: vi.fn() } as unknown as RemoteApiClient);
+      const old = client.refresh();
+      await client[kind].install(review);
+      await client.refresh();
+      expect(oldSignal.aborted).toBe(true);
+      expect(reads).toBe(2);
+      expect(client.getExternalSources()).toHaveLength(1);
+      resolveOld({ packages: [], sources: [], errors: [] });
+      await old;
+      expect(client.getExternalSources()).toHaveLength(1);
+      await client.refresh();
+      expect(reads).toBe(3);
+    },
+  );
   it('uses the server-owned import path only when the server advertises it', async () => {
     const request = vi.fn(async () => inventory());
     const client = new RemoteInstalledExtensions({ request, requestBlob: vi.fn() } as unknown as RemoteApiClient);
@@ -79,7 +120,11 @@ describe('remote package inventory and source client', () => {
       }),
       120000,
     );
-    expect(request).toHaveBeenCalledWith('/extensions/packages');
+    expect(request).toHaveBeenCalledWith(
+      '/extensions/packages',
+      expect.objectContaining({ signal: expect.any(AbortSignal) }),
+      60000,
+    );
   });
   it('coalesces requests, keeps unchanged snapshots quiet and preserves known sources during transient failure', async () => {
     const request = vi.fn(async () => inventory());
