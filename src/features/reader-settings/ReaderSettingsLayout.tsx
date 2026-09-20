@@ -262,9 +262,6 @@ export function ReaderSettingsLayout({
             페이지
           </button>
         </div>
-        {profile.modeLock === 'auto' && (
-          <p className="field-help">입력 방식에 맞춰 스크롤과 페이지 보기를 전환합니다.</p>
-        )}
         {profile.modeLock !== 'scroll' && (
           <div className="reader-settings-subsection">
             <h3>페이지 조판</h3>
@@ -294,9 +291,7 @@ export function ReaderSettingsLayout({
                 화면에 맞춤
               </button>
             </div>
-            <p className="field-help">
-              두 쪽 보기는 가로 760px 이상에서 적용되며, 화면에 맞춤은 넓은 화면에서 자동으로 전환됩니다.
-            </p>
+            <p className="field-help">두 쪽 보기는 넓은 화면에서 적용됩니다.</p>
             <h3>페이지 전환</h3>
             <div className="segmented full" aria-label="페이지 전환 효과">
               <button

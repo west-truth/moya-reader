@@ -85,6 +85,11 @@
   border-radius: 14px;
   margin-bottom: 28px;
 }
+.discovery-search > button {
+  flex-shrink: 0;
+  min-height: 44px;
+  white-space: nowrap;
+}
 .discovery-search input {
   flex: 1;
   min-width: 120px;
@@ -396,6 +401,10 @@
   .discovery-search select {
     grid-column: 1 / 3;
     width: 100%;
+  }
+  .discovery-search-reset {
+    grid-column: 1 / -1;
+    justify-self: end;
   }
   .discovery-search select {
     max-width: 100%;

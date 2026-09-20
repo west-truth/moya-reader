@@ -82,14 +82,8 @@ export function SourceNetworkSettingsPanel({ manager }: { manager: InstalledExte
           void save();
         }}
       >
-        <p className="field-help">
-          이 서버의 Mangayomi·Moya 소스에 적용됩니다. 개별 확장 옵션에서 기본값 사용·직접 연결·개별 프록시를 선택할 수
-          있습니다.
-        </p>
-        <p className="field-help">
-          APK 및 별도 Suwayomi 서버의 연결 설정은 포함하지 않습니다. 프록시 주소는 휴대폰이 아닌 Moya 서버에서 접근할 수
-          있어야 합니다.
-        </p>
+        <p className="field-help">소스별 연결 방식은 각 확장 옵션에서 변경할 수 있습니다.</p>
+        <p className="field-help">Moya 서버에서 연결 가능한 주소를 입력하세요. APK·Suwayomi는 별도 설정입니다.</p>
         {snapshot && (
           <>
             <label className="compatibility-preference-field">
@@ -108,10 +102,7 @@ export function SourceNetworkSettingsPanel({ manager }: { manager: InstalledExte
                 }}
               />
             </label>
-            <p className="field-help">
-              HTTP·HTTPS·SOCKS5 지원. 비워서 저장하면 직접 연결합니다. 사용자명·비밀번호가 포함된 주소는 지원하지
-              않습니다.
-            </p>
+            <p className="field-help">HTTP·HTTPS·SOCKS5 지원(인증 없음). 비우면 직접 연결합니다.</p>
             <p className="field-help">
               현재 기본값: {snapshot.defaultProxy || '직접 연결'}
               {snapshot.origin === 'environment' ? ' (서버 환경 설정)' : ''}
@@ -142,9 +133,6 @@ export function SourceNetworkSettingsPanel({ manager }: { manager: InstalledExte
             {message}
           </p>
         )}
-        <p className="field-help">
-          DNS는 서버 설정을 따릅니다. 프록시를 지정하는 것만으로 DNS 암호화가 켜지지는 않습니다.
-        </p>
       </form>
     </details>
   );

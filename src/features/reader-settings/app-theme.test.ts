@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { appThemeColor, normalizeApplicationThemeColors, resolveAppTheme } from './app-theme';
+import { accentForeground, appThemeColor, normalizeApplicationThemeColors, resolveAppTheme } from './app-theme';
 
 describe('application theme projection', () => {
   it('keeps preset and custom application themes intact', () => {
@@ -11,9 +11,9 @@ describe('application theme projection', () => {
   });
 
   it('provides matching browser chrome colors', () => {
-    expect(appThemeColor('light')).toBe('#f8f7f3');
-    expect(appThemeColor('dark')).toBe('#111416');
-    expect(appThemeColor('midnight')).toBe('#09111b');
+    expect(appThemeColor('light')).toBe('#f3f1ec');
+    expect(appThemeColor('dark')).toBe('#111315');
+    expect(appThemeColor('midnight')).toBe('#080f19');
     expect(appThemeColor('custom', { background: '#102030' })).toBe('#102030');
   });
 
@@ -25,4 +25,10 @@ describe('application theme projection', () => {
       accent: '#4c7df0',
     });
   });
+});
+
+it('keeps custom accent labels legible on light, dark and medium colors', () => {
+  expect(accentForeground('#ffffff')).toBe('#111315');
+  expect(accentForeground('#102030')).toBe('#ffffff');
+  expect(accentForeground('#4c7df0')).toBe('#111315');
 });

@@ -91,7 +91,7 @@ export function ReaderThemePresetManager({
   return (
     <section className="reader-settings-group">
       <h3>내 리더 테마</h3>
-      <p className="field-help">현재 글자색·배경색·밝기를 이 기기에 이름과 함께 저장합니다.</p>
+      <p className="field-help">현재 색상과 밝기를 저장합니다.</p>
       <div className="reader-theme-preset-save">
         <label>
           <span className="sr-only">새 리더 테마 이름</span>

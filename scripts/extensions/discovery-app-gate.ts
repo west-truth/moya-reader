@@ -72,6 +72,15 @@ export async function runDiscoveryAppGate(page: Page, output: string) {
       .getByRole('navigation', { name: '탐색 홈' })
       .getByRole('button', { name: '탐색', exact: true })
       .click();
+    const search = page.locator('.discovery-search');
+    await search.getByRole('searchbox').fill('Synthetic');
+    await search.getByRole('button', { name: '검색', exact: true }).click();
+    const reset = search.getByRole('button', { name: '초기화', exact: true });
+    const resetBox = await reset.boundingBox();
+    if (!resetBox || resetBox.width < 60 || resetBox.height < 44 || resetBox.height > 56)
+      throw new Error('Mobile search reset button is wrapped or too small');
+    await page.screenshot({ path: resolve(output, `discovery-search-${width}.png`) });
+    await reset.click();
     await page.screenshot({ path: resolve(output, `discovery-${width}.png`) });
     await page.getByRole('button', { name: '탐색 편집', exact: true }).click();
     await editor.getByRole('button', { name: /^만화 목록 3개/ }).click();

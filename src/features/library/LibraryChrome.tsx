@@ -1,6 +1,6 @@
 import { CollapsibleNavigation } from './CollapsibleNavigation';
 import '../discovery/discovery.css';
-import { publicAssetUrl } from '../../utils/public-asset-url';
+import { BrandWordmark } from '../../shared/ui/BrandWordmark';
 import {
   ArrowDownUp,
   BookOpen,
@@ -336,7 +336,7 @@ export function LibrarySidebar(props: LibraryScreenProps) {
         onClick={() => goLibraryHome(props)}
         aria-label="라이브러리 메인"
       >
-        <img src={publicAssetUrl('/branding/moya-wordmark.png')} alt="MOYA" />
+        <BrandWordmark />
       </button>
       <div className="library-sidebar-scroll">
         <NavigationSections {...props} />
@@ -345,7 +345,6 @@ export function LibrarySidebar(props: LibraryScreenProps) {
         <button type="button" onClick={actions.header.openSettings}>
           <Settings size={18} /> <span>설정</span>
         </button>
-        <p>파일과 독서 기록은 이 기기에 저장됩니다.</p>
       </footer>
     </aside>
   );
@@ -438,7 +437,12 @@ function LibraryNavigationDrawer({
   return (
     <ModalDrawer
       open={open}
-      title={<img src={publicAssetUrl('/branding/moya-wordmark.png')} alt="MOYA" />}
+      title={
+        <>
+          <BrandWordmark />
+          <span className="library-menu-title">메뉴</span>
+        </>
+      }
       onClose={close}
       restoreFocusRef={triggerRef}
       className="library-mobile-drawer"

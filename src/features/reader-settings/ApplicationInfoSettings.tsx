@@ -1,4 +1,5 @@
 import { publicAssetUrl } from '../../utils/public-asset-url';
+import { BrandWordmark } from '../../shared/ui/BrandWordmark';
 import {
   ExternalLink,
   FileArchive,
@@ -127,14 +128,11 @@ export function ApplicationInfoSettings(props: ApplicationInfoSettingsProps) {
     <div className="application-info-settings">
       {StoragePanel && <StoragePanel />}
       <section className="application-info-identity" aria-labelledby="application-info-title">
-        <div className="application-info-mark" aria-hidden="true">
-          <img src={publicAssetUrl('/icons/moya-192.png')} alt="" />
-        </div>
         <div>
           <h3 id="application-info-title" className="sr-only">
             모야
           </h3>
-          <img className="application-info-wordmark" src={publicAssetUrl('/branding/moya-wordmark.png')} alt="모야" />
+          <BrandWordmark className="application-info-wordmark" />
           <p>텍스트 및 만화 뷰어</p>
         </div>
         <span>v{packageMetadata.version}</span>

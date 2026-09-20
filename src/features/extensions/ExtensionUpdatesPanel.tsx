@@ -237,7 +237,7 @@ export function ExtensionUpdatesPanel({
   return (
     <section className="settings-section-card source-updates-panel" aria-label="소스 업데이트">
       <h3>소스 업데이트</h3>
-      <p>형식별 업데이트를 함께 확인합니다. 선택한 패키지는 하나씩 검토하며, 확인한 항목만 설치합니다.</p>
+      <p>선택한 업데이트를 확인 후 설치합니다.</p>
       <button type="button" disabled={busy || Boolean(review)} onClick={check}>
         업데이트 확인
       </button>

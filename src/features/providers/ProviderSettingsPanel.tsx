@@ -403,9 +403,7 @@ export default function ProviderSettingsPanel({
               <Trash2 size={16} /> 삭제
             </button>
           </div>
-          <p className="muted">
-            키 원문은 다시 표시하지 않고, provider 설정 JSON이나 동기화 데이터에 저장하지 않습니다.
-          </p>
+          <p className="muted">키는 다시 표시하거나 동기화하지 않습니다.</p>
         </div>
       )}
 

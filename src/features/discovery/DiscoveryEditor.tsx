@@ -60,7 +60,6 @@ export function DiscoveryEditor({
         </>
       }
     >
-      <p className="discovery-footnote">탭을 펼쳐 목록을 구성하세요. 변경 사항은 저장할 때 이 기기에 적용됩니다.</p>
       <div className="discovery-editor-toolbar">
         <strong>탭 {draft.tabs.length}개</strong>
         <button
@@ -84,9 +83,7 @@ export function DiscoveryEditor({
       </div>
       <details className="discovery-editor-template">
         <summary>처음부터 추천 구성으로 시작</summary>
-        <p className="discovery-footnote">
-          현재 구성을 연결된 소스 기반의 만화·소설·웹툰 탭으로 교체합니다. 저장 전 되돌릴 수 있습니다.
-        </p>
+        <p className="discovery-footnote">현재 구성을 기본 탭으로 바꿉니다. 저장 전에는 취소할 수 있습니다.</p>
         <button
           type="button"
           className="ghost-btn"
@@ -391,9 +388,7 @@ export function DiscoveryEditor({
                 </div>
               </div>
             ))}
-            {!tab.sections.length && (
-              <p className="discovery-footnote">아직 목록이 없습니다. 소스를 선택해 인기·최신 목록을 추가하세요.</p>
-            )}
+            {!tab.sections.length && <p className="discovery-footnote">소스를 선택해 목록을 추가하세요.</p>}
             <button
               type="button"
               className="ghost-btn"
@@ -422,7 +417,7 @@ export function DiscoveryEditor({
           </div>
         </section>
       ))}
-      <p>인기·최신·분류는 소스가 제공하는 범위에서 표시됩니다. 탭 삭제는 다운로드나 설치된 소스를 삭제하지 않습니다.</p>
+      <p>탭을 삭제해도 소스와 다운로드는 유지됩니다.</p>
     </ModalDrawer>
   );
 }

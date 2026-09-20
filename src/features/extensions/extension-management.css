@@ -293,7 +293,7 @@
   > button:first-child {
   background: var(--primary);
   border-color: var(--primary);
-  color: #fff;
+  color: var(--app-accent-contrast);
 }
 :is(section.installed-extension-panel, div.extension-management) .compatibility-preferences > button[type='submit'] {
   justify-self: start;

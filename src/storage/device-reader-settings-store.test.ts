@@ -60,14 +60,17 @@ describe('device reader settings boundary', () => {
     await a.saveSettings({
       ...settingsA,
       fontSize: 31,
+      hideAppLogo: true,
       flow: 'page',
       gestureBindings: { ...settingsA.gestureBindings, tapLeft: 'none' },
     });
     expect(clientA.saveSettings).not.toHaveBeenCalled();
     expect(clientA.getSettings).toHaveBeenCalledTimes(1);
     expect(await b.getSettings()).toMatchObject({ fontSize: defaultSettings.fontSize });
+    expect((await b.getSettings()).hideAppLogo).not.toBe(true);
     expect(await new RemoteReaderRepository(clientA as unknown as RemoteApiClient).getSettings()).toMatchObject({
       fontSize: 31,
+      hideAppLogo: true,
       flow: 'page',
       gestureBindings: { tapLeft: 'none' },
     });

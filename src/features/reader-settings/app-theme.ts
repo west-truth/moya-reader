@@ -10,10 +10,10 @@ export const DEFAULT_CUSTOM_APP_THEME_COLORS: ApplicationThemeColors = {
 };
 
 const APP_THEME_COLORS: Record<Exclude<AppTheme, 'custom'>, string> = {
-  light: '#f8f7f3',
-  sepia: '#f2e8d7',
-  dark: '#111416',
-  midnight: '#09111b',
+  light: '#f3f1ec',
+  sepia: '#eee4d3',
+  dark: '#111315',
+  midnight: '#080f19',
 };
 
 export function resolveAppTheme(theme: ReadingProfileTheme): AppTheme {
@@ -44,4 +44,18 @@ export function isDarkThemeColor(color: string): boolean {
   const green = Number.parseInt(value.slice(2, 4), 16);
   const blue = Number.parseInt(value.slice(4, 6), 16);
   return (red * 299 + green * 587 + blue * 114) / 1000 < 146;
+}
+
+/** Choose the higher-contrast label for a custom accent, including mid-tone colors. */
+export function accentForeground(color: string): '#ffffff' | '#111315' {
+  const channels = color
+    .slice(1)
+    .match(/../g)!
+    .map((channel) => {
+      const value = Number.parseInt(channel, 16) / 255;
+      return value <= 0.04045 ? value / 12.92 : ((value + 0.055) / 1.055) ** 2.4;
+    });
+  const luminance = channels[0] * 0.2126 + channels[1] * 0.7152 + channels[2] * 0.0722;
+  const darkLuminance = 0.0064; // #111315
+  return (luminance + 0.05) / (darkLuminance + 0.05) >= 1.05 / (luminance + 0.05) ? '#111315' : '#ffffff';
 }

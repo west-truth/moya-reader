@@ -72,6 +72,7 @@ try {
   for (const [width, height] of [
     [360, 640],
     [390, 844],
+    [768, 1024],
     [1366, 768],
   ]) {
     await page.setViewportSize({ width, height });
@@ -89,6 +90,11 @@ try {
     await page.getByRole('heading', { name: '리더 보기', exact: true }).waitFor();
     assert.equal(await page.evaluate(() => document.body.scrollWidth <= innerWidth), true);
     if (width < 700) {
+      const back = await page.getByRole('button', { name: '설정 목록' }).boundingBox();
+      const title = await page.getByRole('heading', { name: '리더 보기', exact: true }).boundingBox();
+      assert(title.y - back.y - back.height >= 16, 'Settings back button crowds the title');
+      await page.screenshot({ path: `/tmp/moya-settings-layout-${width}.png` });
+
       assert.equal(await page.getByRole('tab', { name: /^동기화/ }).count(), 0);
       await page.getByRole('button', { name: '설정 목록' }).click();
       await page.waitForFunction(() => document.activeElement?.id === 'reader-settings-tab-layout');
@@ -98,6 +104,15 @@ try {
       await page.getByRole('tab', { name: /^동기화/ }).waitFor();
       await page.keyboard.press('Escape');
       assert.equal(await page.getByRole('dialog').count(), 0);
+    } else {
+      await page.getByRole('tab', { name: /^콘텐츠 소스/ }).click();
+      await page.getByRole('button', { name: '다운로드 및 저장공간' }).click();
+      const back = page.getByRole('button', { name: '콘텐츠 소스', exact: true });
+      await back.scrollIntoViewIfNeeded();
+      const backBox = await back.boundingBox();
+      const title = await page.locator('.reader-settings-page-title h2').boundingBox();
+      assert(title.y - backBox.y - backBox.height >= 20, `Desktop back button crowds the title at ${width}`);
+      await page.screenshot({ path: `/tmp/moya-settings-layout-${width}.png` });
     }
   }
   await page.setViewportSize({ width: 360, height: 640 });
@@ -138,7 +153,7 @@ try {
   }
   assert.deepEqual(errors, []);
   console.log(
-    'Settings UX passed: 360/390/1366px, quick-view scroll/AX/empty input, mobile categories/back/focus/scope.',
+    'Settings UX passed: 360/390/768/1366px, desktop/mobile back spacing, quick-view scroll/AX/empty input, mobile categories/back/focus/scope.',
   );
 } finally {
   await browser?.close();

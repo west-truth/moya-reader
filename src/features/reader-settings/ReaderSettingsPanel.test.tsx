@@ -55,8 +55,7 @@ describe('ReaderSettingsPanel', () => {
     expect(markup).toContain('동기화');
     expect(markup).toContain('테마, 글꼴, 밝기');
     expect(markup).toContain('글자, 여백, 읽기 방식');
-    expect(markup).toContain('변경 사항은 자동 저장됩니다.');
-    expect(markup).toContain('이 기기에 저장됩니다.');
+    expect(markup).toContain('자동 저장');
     expect(markup).toContain('미드나이트');
     expect(markup).toContain('그래파이트');
     expect(markup).toContain('웜 페이퍼');
@@ -89,7 +88,7 @@ describe('ReaderSettingsPanel', () => {
       />,
     );
 
-    expect(markup).toContain('변경 사항을 저장하는 중입니다.');
+    expect(markup).toContain('저장 중…');
     expect(markup).not.toContain('글자와 배경의 대비가 낮아');
     expect(markup).not.toContain('책 설정 초기화');
   });
@@ -118,6 +117,6 @@ describe('ReaderSettingsPanel', () => {
     const extensionMarkup = renderToStaticMarkup(<ReaderSettingsPanel {...common} initialTab="extensions" />);
     expect(sourceMarkup).toContain('설치된 소스 패키지');
     expect(extensionMarkup).not.toContain('설치된 소스 패키지');
-    expect(extensionMarkup).toContain('작품을 제공하는 패키지는 콘텐츠 소스에서 관리합니다.');
+    expect(extensionMarkup).toContain('커뮤니티 기능 확장');
   });
 });

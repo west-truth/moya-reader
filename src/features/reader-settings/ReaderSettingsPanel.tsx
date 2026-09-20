@@ -1,4 +1,3 @@
-import { publicAssetUrl } from '../../utils/public-asset-url';
 import {
   ArrowLeft,
   BookOpenText,
@@ -45,7 +44,6 @@ interface SettingsSection {
   readonly id: SettingsTab;
   readonly label: string;
   readonly detail: string;
-  readonly description: string;
   readonly icon: LucideIcon;
 }
 
@@ -54,49 +52,42 @@ const SETTINGS_SECTIONS: readonly SettingsSection[] = [
     id: 'appearance',
     label: '모양',
     detail: '테마, 글꼴, 밝기',
-    description: '앱과 리더의 색상, 본문 글꼴을 선택합니다.',
     icon: Palette,
   },
   {
     id: 'layout',
     label: '리더 보기',
     detail: '글자, 여백, 읽기 방식',
-    description: '본문 조판과 이동 방식을 조정합니다.',
     icon: LayoutPanelTop,
   },
   {
     id: 'gesture',
     label: '리더 조작',
     detail: '탭, 스와이프, 화면 유지',
-    description: '화면 입력과 기기 동작을 설정합니다.',
     icon: Keyboard,
   },
   {
     id: 'sources',
     label: '콘텐츠 소스',
     detail: '연결, 패키지, 다운로드',
-    description: '작품 제공자와 소스 패키지, 패키지 저장소를 관리합니다.',
     icon: Cloud,
   },
   {
     id: 'extensions',
     label: '기능 확장',
     detail: '부가 기능, 권한',
-    description: '리더와 앱에 기능을 더하는 확장의 권한과 상태를 관리합니다.',
     icon: Puzzle,
   },
   {
     id: 'sync',
     label: '동기화',
     detail: '연결, 상태, 백업',
-    description: '기기 간 동기화 상태와 별도 백업·복원 기능으로 이동합니다.',
     icon: Cloud,
   },
   {
     id: 'application',
     label: '앱 정보',
     detail: '버전, 환경, 라이선스',
-    description: '앱과 실행 환경 정보를 확인합니다.',
     icon: BookOpenText,
   },
 ];
@@ -131,9 +122,9 @@ export interface ReaderSettingsPanelProps {
 
 function saveStatusLabel(controller: ReaderSettingsController): string {
   if (controller.saveError) return '저장하지 못했습니다.';
-  if (controller.saveStatus === 'saving') return '변경 사항을 저장하는 중입니다.';
-  if (controller.isDirty) return '변경 사항을 곧 자동 저장합니다.';
-  return '변경 사항은 자동 저장됩니다.';
+  if (controller.saveStatus === 'saving') return '저장 중…';
+  if (controller.isDirty) return '저장 대기 중…';
+  return '자동 저장';
 }
 
 export default function ReaderSettingsPanel(props: ReaderSettingsPanelProps) {
@@ -161,7 +152,7 @@ export default function ReaderSettingsPanel(props: ReaderSettingsPanelProps) {
   const [appearanceThemeTarget, setAppearanceThemeTarget] = useState<'application' | 'reader'>('application');
   const current =
     tab === 'downloads'
-      ? { label: '다운로드', description: '콘텐츠 소스의 미리 받기와 읽은 회차 보관을 설정합니다.' }
+      ? { label: '다운로드' }
       : (SETTINGS_SECTIONS.find((section) => section.id === tab) ?? SETTINGS_SECTIONS[0]);
   const readerThemeColors = resolveReaderThemeColors(profile);
   const readingTab = tab === 'appearance' || tab === 'layout' || tab === 'gesture';
@@ -194,7 +185,6 @@ export default function ReaderSettingsPanel(props: ReaderSettingsPanelProps) {
       title={
         <span className="reader-settings-dialog-title">
           <span className="reader-settings-brand">
-            <img src={publicAssetUrl('/icons/moya-192.png')} alt="" aria-hidden="true" />
             <span>설정</span>
           </span>
         </span>
@@ -257,18 +247,6 @@ export default function ReaderSettingsPanel(props: ReaderSettingsPanelProps) {
               <small className="reader-settings-mobile-status" role="status">
                 {saveStatusLabel(controller)}
               </small>
-              <span>{current.description}</span>
-              <span>
-                {readingTab
-                  ? tab === 'gesture'
-                    ? '이 기기의 모든 작품에 적용됩니다.'
-                    : '이 기기에 저장됩니다.'
-                  : tab === 'sources' || tab === 'extensions'
-                    ? '공통 설정은 서버 연결 시 다른 기기에도 반영됩니다.'
-                    : tab === 'downloads'
-                      ? '항목마다 서버 또는 이 기기에서 실행됩니다.'
-                      : null}
-              </span>
             </header>
             <div
               id={`reader-settings-panel-${tab === 'downloads' ? 'sources' : tab}`}

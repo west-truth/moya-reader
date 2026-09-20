@@ -128,6 +128,7 @@ export default function DiscoveryScreen({
               </button>
               {query && (
                 <button
+                  className="ghost-btn discovery-search-reset"
                   type="button"
                   onClick={() => {
                     setQuery('');
@@ -142,7 +143,7 @@ export default function DiscoveryScreen({
               <div className="discovery-empty">
                 <Compass size={44} />
                 <h2>나만의 탐색 화면을 만들어 보세요</h2>
-                <p>탭에 좋아하는 소스를 넣으면 인기 작품과 최신 업데이트를 한곳에서 볼 수 있습니다.</p>
+                <p>좋아하는 소스의 인기·최신 작품을 모아 보세요.</p>
                 <div>
                   <button type="button" className="primary-btn" onClick={() => setEditing(true)}>
                     소스와 목록 선택
@@ -190,9 +191,6 @@ export default function DiscoveryScreen({
                 })}
               </div>
             )}
-            <p className="discovery-footnote">
-              각 소스에서 제공하는 목록입니다. 최신 목록에는 최근 회차가 갱신된 작품이 포함될 수 있습니다.
-            </p>
           </div>
         </section>
       </div>

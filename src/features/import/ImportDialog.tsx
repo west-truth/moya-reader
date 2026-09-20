@@ -341,9 +341,7 @@ export function ImportDialog({ controller }: ImportDialogProps) {
             <h3>중단된 서버 업로드</h3>
             <span>{formatCount(controller.uploadSessions.length)}개</span>
           </div>
-          <p className="field-help">
-            같은 파일을 다시 선택하면 남은 chunk 업로드 또는 대기 중인 서버 가져오기를 이어서 확인합니다.
-          </p>
+          <p className="field-help">같은 파일을 다시 선택하면 중단된 가져오기를 이어서 진행합니다.</p>
           <div className="upload-session-list">
             {controller.uploadSessions.map((session) => (
               <div key={session.key} className="upload-session-row">

@@ -147,10 +147,7 @@ export function SourceExtensionManagerPanel({
   );
   return (
     <section className="extension-repository-browser source-extension-manager" aria-label="Suwayomi 확장 관리">
-      <p className="field-help">
-        연결된 Suwayomi 서버에 설치합니다. 저장소는 여러 개 추가할 수 있으며, 이미지로 제공되는 소설도 사용할 수
-        있습니다.
-      </p>
+      <p className="field-help">연결된 Suwayomi 서버의 확장을 관리합니다.</p>
       <form
         className="extension-repository-add"
         onSubmit={(event) => {

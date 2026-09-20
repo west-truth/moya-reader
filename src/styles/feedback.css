@@ -74,7 +74,7 @@
   height: 54px;
   display: grid;
   place-items: center;
-  color: white;
+  color: var(--app-accent-contrast);
   background: var(--primary-2);
   border-radius: 50%;
   box-shadow: var(--shadow);

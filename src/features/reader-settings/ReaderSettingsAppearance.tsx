@@ -173,6 +173,19 @@ export function ReaderSettingsAppearance({
           </div>
         </section>
       )}
+      {themeTarget === 'application' && (
+        <details className="reader-appearance-advanced">
+          <summary>고급 옵션</summary>
+          <label className="reader-settings-check">
+            <input
+              type="checkbox"
+              checked={controller.settings.hideAppLogo === true}
+              onChange={(event) => controller.updateSettings({ hideAppLogo: event.target.checked })}
+            />
+            MOYA 로고 숨기기
+          </label>
+        </details>
+      )}
       {themeTarget === 'reader' && (
         <>
           <section className="reader-settings-group reader-settings-brightness">
