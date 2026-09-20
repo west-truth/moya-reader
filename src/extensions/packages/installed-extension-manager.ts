@@ -27,6 +27,10 @@ export interface InstalledExtensionsSnapshot {
 }
 
 export interface InstalledExtensionManager extends ExternalSourceProviderRegistryPort {
+  networkSettings?(
+    request?: import('../../../packages/extension-contracts/source-network-settings').SourceNetworkSettingsRequest,
+    signal?: AbortSignal,
+  ): Promise<import('../../../packages/extension-contracts/source-network-settings').SourceNetworkSettings>;
   preferences?(
     sourceId: string,
     request: import('../../../packages/extension-contracts/source-preferences').SourcePreferencesRequest,

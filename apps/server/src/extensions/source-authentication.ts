@@ -51,7 +51,11 @@ function headers(auth: SourceAuthentication, credential: SourceAuthenticationInp
     : { authorization: `Bearer ${credential.secret}` };
 }
 
-export function createSourceAuthentication(vault: SourceCredentialVault, transport: SourceTransport = {}) {
+export function createSourceAuthentication(
+  vault: SourceCredentialVault,
+  transport: SourceTransport = {},
+  connection?: (pkg: VerifiedMoyaPackage, source: string, epoch: string) => SourceTransport,
+) {
   const pending = new Map<string, AbortController>();
   return {
     retain(packageId: string, epoch: string | undefined) {
@@ -100,7 +104,7 @@ export function createSourceAuthentication(vault: SourceCredentialVault, transpo
       const broker = createSourceBroker(
         { origins: [auth.origin] },
         {
-          ...transport,
+          ...(connection?.(pkg, sourceId, epoch) ?? transport),
           authenticate: async (url) => {
             if (url.origin !== auth.origin || !credential) throw new Error('source_auth_required');
             return headers(auth, credential);

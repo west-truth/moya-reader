@@ -16,8 +16,72 @@ import { fixtureRow, fixtureSource } from './test-fixture.js';
 import type { compatibilityHttp } from './http.js';
 import { dispatchApkCommand } from '../apk-command.js';
 import { OUTBOUND_PROXY_KEY } from '../outbound-proxy.js';
+import { createSourceNetworkSettings } from '../source-network-settings.js';
 const roots: string[] = [];
 const hosts: MangayomiExtensionHost[] = [];
+it('returns lists with large source caches after reopen and applies default/custom/direct proxy choices to list and covers', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'moya-cache-proxy-'));
+  roots.push(root);
+  const vault = new EncryptedSourceCredentialVault(join(root, 'vault'), Buffer.alloc(32, 7));
+  const network = createSourceNetworkSettings(vault, undefined);
+  network.save({ revision: 0, defaultProxy: 'socks5://default:1080' });
+  const observed: (string | undefined)[] = [];
+  const script = `class DefaultExtension extends MProvider {
+    async getPopular(){
+      const prefs=new SharedPreferences();
+      const saved=prefs.getString('status');
+      if(!saved){prefs.setString('status','x'.repeat(91031));prefs.setString('mapping','y'.repeat(54000));}
+      await new Client().get('https://site.example/list');
+      return {list:[{name:saved?'restored':'first',link:'/work',imageUrl:'https://site.example/cover.jpg'}],hasNextPage:false};
+    }
+  }`;
+  const transport: typeof compatibilityHttp = async (input, _signal, _origins, _max, proxy) => {
+    if (new URL(input.url).hostname === 'site.example') observed.push(proxy);
+    return {
+      bytes: input.url.endsWith('.json')
+        ? Buffer.from(JSON.stringify([fixtureRow]))
+        : input.url.endsWith('.js')
+          ? Buffer.from(script)
+          : input.url.endsWith('.jpg')
+            ? Buffer.from([255, 216, 255, 217])
+            : Buffer.from('{}'),
+      statusCode: 200,
+      headers: {},
+      contentType: 'text/plain',
+      url: input.url,
+    };
+  };
+  let host = await MangayomiExtensionHost.open(join(root, 'host'), vault, transport);
+  hosts.push(host);
+  const repo = 'https://repo.example/index.min.json',
+    signal = AbortSignal.timeout(10000);
+  await host.refreshRepository(repo, signal);
+  const entry = host.snapshot().repositories[0].entries[0];
+  const review = await host.inspect(repo, entry.pkg, entry.code, signal);
+  await host.install(review.id, review.revision, signal);
+  const source = host.catalog.getSources()[0].descriptor.id;
+  expect((await host.catalog.invoke(source, 'source.listWorks', {}, signal)).result.items[0].title).toBe('first');
+  host.close();
+  host = await MangayomiExtensionHost.open(
+    join(root, 'host'),
+    new EncryptedSourceCredentialVault(join(root, 'vault'), Buffer.alloc(32, 7)),
+    transport,
+  );
+  hosts.push(host);
+  expect((await host.catalog.invoke(source, 'source.listWorks', {}, signal)).result.items[0].title).toBe('restored');
+  expect(observed).toEqual(['socks5://default:1080', 'socks5://default:1080']);
+  for (const [values, expected] of [
+    [{ __moya_proxy_mode: 'direct' }, undefined],
+    [{ __moya_proxy_mode: 'custom', __moya_outbound_proxy: 'socks5://custom:1081' }, 'socks5://custom:1081'],
+    [{ __moya_proxy_mode: 'inherit' }, 'socks5://default:1080'],
+  ] as const) {
+    await host.savePreferences(entry.pkg, host.snapshot().revision, values, []);
+    const listing = await host.catalog.invoke(source, 'source.listWorks', {}, signal);
+    expect(observed.at(-1)).toBe(expected);
+    await host.catalog.invoke(source, 'source.getCover', { workId: listing.result.items[0].id }, signal);
+    expect(observed.at(-1)).toBe(expected);
+  }
+});
 it('updates a newer repository version with identical JS bytes and preserves disabled state after reopen', async () => {
   const root = await mkdtemp(join(tmpdir(), 'moya-version-only-update-'));
   roots.push(root);

@@ -56,6 +56,21 @@ function packageOperationSignal(signal?: AbortSignal): { signal: AbortSignal; cl
 
 /** Reuses the authenticated API client and existing source coordinator. No periodic polling. */
 export class RemoteInstalledExtensions implements InstalledExtensionManager {
+  async networkSettings(
+    request?: import('../../../packages/extension-contracts/source-network-settings').SourceNetworkSettingsRequest,
+    signal?: AbortSignal,
+  ): Promise<import('../../../packages/extension-contracts/source-network-settings').SourceNetworkSettings> {
+    const operation = packageOperationSignal(signal);
+    try {
+      return await this.api.request('/source-network-settings', {
+        method: request ? 'PUT' : 'GET',
+        ...(request ? { body: JSON.stringify(request) } : {}),
+        signal: operation.signal,
+      });
+    } finally {
+      operation.close();
+    }
+  }
   readonly apk: import('./apk-extension-manager').ApkExtensionManager;
   readonly mangayomi: import('./apk-extension-manager').ApkExtensionManager;
   readonly target = 'server' as const;

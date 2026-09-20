@@ -21,6 +21,9 @@ import { buildMoyaExtension } from '../../src/extensions/packages/package-builde
 import { examplePackageManifest } from '../../src/test/extension-package-fixture';
 import { prepareMangayomiAppGate, runMangayomiAppGate } from './mangayomi-app-gate';
 import { registerApkExtensionRoutes } from '../../apps/server/src/routes/apk-extensions';
+import { registerSourceNetworkSettingsRoutes } from '../../apps/server/src/routes/source-network-settings';
+import { createSourceNetworkSettings } from '../../apps/server/src/extensions/source-network-settings';
+import { EncryptedSourceCredentialVault } from '../../apps/server/src/extensions/source-credential-vault';
 import type { ExtensionAppFixture } from './app-fixture';
 
 const require = createRequire(new URL('../../apps/server/package.json', import.meta.url));
@@ -106,6 +109,13 @@ async function runAppGate(pool?: Parameters<Parameters<typeof withPostgresSchema
   if (pool)
     await app.register(async (secured) => {
       await registerAuthHook(secured, { host: '127.0.0.1', authToken: 'fixture-token' } as ServerConfig);
+      await registerSourceNetworkSettingsRoutes(
+        secured,
+        createSourceNetworkSettings(
+          new EncryptedSourceCredentialVault(resolve(output, 'network-vault'), Buffer.alloc(32, 19)),
+          '',
+        ),
+      );
       if (mangayomi) await registerApkExtensionRoutes(secured, mangayomi.host, '/api/mangayomi-extensions');
       await registerExtensionPackageRoutes(
         secured,
@@ -218,6 +228,26 @@ async function runAppGate(pool?: Parameters<Parameters<typeof withPostgresSchema
 
     await page.getByRole('tab', { name: /^콘텐츠 소스/ }).click();
     await page.getByText('설치한 확장이 없습니다.', { exact: true }).waitFor();
+    if (!nativeFixture) {
+      await page.setViewportSize({ width: 390, height: 844 });
+      await page.locator('.source-network-settings > summary').click();
+      const networkForm = page.getByRole('form', { name: '기본 프록시 설정' });
+      await networkForm.getByLabel('기본 프록시 주소', { exact: true }).fill('socks5://proxy.example:1080');
+      await networkForm.getByRole('button', { name: '저장', exact: true }).click();
+      await networkForm.getByText('저장했습니다. 다음 소스 요청부터 적용됩니다.', { exact: true }).waitFor();
+      await networkForm.getByLabel('기본 프록시 주소', { exact: true }).scrollIntoViewIfNeeded();
+      await page.screenshot({ path: resolve(output, 'default-proxy-mobile.png') });
+      await networkForm.getByLabel('기본 프록시 주소', { exact: true }).fill('http://user:secret@proxy:8080');
+      await networkForm.getByRole('button', { name: '저장', exact: true }).click();
+      await networkForm.getByRole('alert').waitFor();
+      if (await networkForm.getByText('저장했습니다. 다음 소스 요청부터 적용됩니다.', { exact: true }).count())
+        throw new Error('proxy validation failure retained success message');
+      await networkForm.getByLabel('기본 프록시 주소', { exact: true }).fill('');
+      await networkForm.getByRole('button', { name: '저장', exact: true }).click();
+      await networkForm.getByText('현재 기본값: 직접 연결', { exact: true }).waitFor();
+      await page.locator('.source-network-settings > summary').click();
+      await page.setViewportSize({ width: 1366, height: 1000 });
+    }
     await page.getByLabel('확장 패키지 파일').setInputFiles(archivePath);
     await page.getByRole('button', { name: '설치', exact: true }).click();
     await page.getByText('v1.0.0', { exact: true }).waitFor();

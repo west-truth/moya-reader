@@ -6,10 +6,12 @@ export function InstalledSourcePreferences({
   manager,
   sourceId,
   disabled,
+  title = '확장 옵션',
 }: {
   manager: InstalledExtensionManager;
   sourceId: string;
   disabled: boolean;
+  title?: string;
 }) {
   const adapter = useMemo(
     () => ({
@@ -33,7 +35,7 @@ export function InstalledSourcePreferences({
   if (!manager.preferences) return null;
   return (
     <details className="installed-source-preferences">
-      <summary>확장 옵션</summary>
+      <summary>{title}</summary>
       <fieldset disabled={disabled}>
         <CompatibilityPreferencesPanel manager={adapter} pkg={sourceId} onSaved={() => undefined} />
       </fieldset>

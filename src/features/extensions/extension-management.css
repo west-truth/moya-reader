@@ -1,4 +1,19 @@
 /* Extension management uses application colors, independent of reader paper themes. */
+.source-network-settings {
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--app-surface-muted);
+  padding: 14px;
+  min-width: 0;
+}
+.source-network-settings > summary {
+  cursor: pointer;
+  min-height: 32px;
+  color: var(--text);
+}
+.source-network-settings[open] > summary {
+  margin-bottom: 12px;
+}
 :is(section.installed-extension-panel, div.extension-management) {
   display: grid;
   gap: 18px;

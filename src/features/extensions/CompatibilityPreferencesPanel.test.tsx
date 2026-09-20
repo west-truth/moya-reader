@@ -5,6 +5,42 @@ import type { CompatibilityPreferences } from '../../extensions/packages/compati
 import { CompatibilityPreferencesPanel } from './CompatibilityPreferencesPanel';
 
 describe('original extension preferences', () => {
+  it('requires custom mode before editing a proxy and does not grant its origin to source code', async () => {
+    const snapshot: CompatibilityPreferences = {
+      revision: 1,
+      privateOrigins: [],
+      fields: [
+        {
+          key: '__moya_proxy_mode',
+          title: '소스 연결 방식',
+          kind: 'select',
+          secret: false,
+          value: 'inherit',
+          choices: [
+            { label: '기본값 사용', value: 'inherit' },
+            { label: '개별 프록시', value: 'custom' },
+          ],
+        },
+        { key: '__moya_outbound_proxy', title: '개별 프록시 주소', kind: 'text', secret: false, value: '' },
+      ],
+    };
+    const savePreferences = vi.fn(async () => {});
+    const manager = { preferences: async () => snapshot, savePreferences };
+    const renderer = create(<CompatibilityPreferencesPanel pkg="source" manager={manager} onSaved={() => {}} />);
+    await act(async () => {});
+    expect(renderer.root.findByProps({ type: 'text' }).props.disabled).toBe(true);
+    act(() => renderer.root.findByType('select').props.onChange({ target: { value: 'custom' } }));
+    expect(renderer.root.findByProps({ type: 'text' }).props.disabled).toBeFalsy();
+    act(() => renderer.root.findByProps({ type: 'text' }).props.onChange({ target: { value: 'http://proxy:8080' } }));
+    await act(async () => renderer.root.findByType('form').props.onSubmit({ preventDefault() {} }));
+    expect(savePreferences).toHaveBeenCalledWith(
+      'source',
+      1,
+      { __moya_proxy_mode: 'custom', __moya_outbound_proxy: 'http://proxy:8080' },
+      [],
+    );
+    act(() => renderer.unmount());
+  });
   it('groups APK sources, retains unchanged credentials and saves only edits without an extra password', async () => {
     const snapshot: CompatibilityPreferences = {
       revision: 4,

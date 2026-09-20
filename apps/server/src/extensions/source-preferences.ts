@@ -5,7 +5,14 @@ import {
   type SourceBrowserMode,
 } from './source-browser-mode.js';
 import type { VerifiedMoyaPackage } from '../../../../src/extensions/packages/package-archive.js';
-import { OUTBOUND_PROXY_KEY, LEGACY_PROXY_DNS_KEY, parseOutboundProxy, outboundProxyField } from './outbound-proxy.js';
+import {
+  OUTBOUND_PROXY_KEY,
+  PROXY_MODE_KEY,
+  LEGACY_PROXY_DNS_KEY,
+  applyProxyChanges,
+  outboundProxyFields,
+  type SourceProxyOptions,
+} from './outbound-proxy.js';
 import type { SourceCredentialVault } from './source-credential-vault.js';
 import type { CompatibilityPreferences } from '../../../../src/extensions/packages/compatibility-preferences.js';
 import {
@@ -21,7 +28,7 @@ export function createSourcePreferences(vault: SourceCredentialVault) {
     pkg: string,
     source: string,
     epoch: string,
-  ): {
+  ): SourceProxyOptions & {
     browserMode?: SourceBrowserMode;
     outboundProxy?: string;
     revision: number;
@@ -61,16 +68,15 @@ export function createSourcePreferences(vault: SourceCredentialVault) {
     ): CompatibilityPreferences {
       if (!validSourcePreferencesRequest(request) || !/^[A-Za-z0-9_-]{1,100}$/.test(epoch))
         throw new Error('invalid_source_preferences');
-      const fields = pkg.manifest.preferences?.find((row) => row.sourceId === source)?.fields;
-      if (!fields) throw new Error('invalid_source_preferences');
+      const fields = pkg.manifest.preferences?.find((row) => row.sourceId === source)?.fields ?? [];
+      if (!pkg.manifest.extension.contributes?.externalSources?.some((row) => row.id === source))
+        throw new Error('invalid_source_preferences');
       const saved = read(pkg.manifest.extension.id, source, epoch);
       if (request.action === 'save') {
         if (saved.revision !== request.revision) throw new Error('source_preferences_conflict');
+        applyProxyChanges(saved, request.changes);
         for (const [name, value] of Object.entries(request.changes)) {
-          if (name === OUTBOUND_PROXY_KEY) {
-            saved.outboundProxy = parseOutboundProxy(value);
-            continue;
-          }
+          if (name === OUTBOUND_PROXY_KEY || name === PROXY_MODE_KEY) continue;
           if (name === LEGACY_PROXY_DNS_KEY) continue;
           if (name === SOURCE_BROWSER_MODE_KEY && pkg.manifest.requestedAccess.webview) {
             saved.browserMode = sourceBrowserMode(value);
@@ -100,10 +106,15 @@ export function createSourcePreferences(vault: SourceCredentialVault) {
         privateOrigins: saved.privateOrigins,
         networkPolicy: 'restricted',
         fields: [
-          outboundProxyField(saved.outboundProxy),
+          ...outboundProxyFields(saved),
           ...(pkg.manifest.requestedAccess.webview ? [sourceBrowserModeField(saved.browserMode)] : []),
           ...fields
-            .filter((field) => ![SOURCE_BROWSER_MODE_KEY, OUTBOUND_PROXY_KEY, LEGACY_PROXY_DNS_KEY].includes(field.key))
+            .filter(
+              (field) =>
+                ![PROXY_MODE_KEY, SOURCE_BROWSER_MODE_KEY, OUTBOUND_PROXY_KEY, LEGACY_PROXY_DNS_KEY].includes(
+                  field.key,
+                ),
+            )
             .map(({ defaultValue, ...field }) => ({
               ...field,
               ...(field.secret

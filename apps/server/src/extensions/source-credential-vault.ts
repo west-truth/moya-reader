@@ -5,6 +5,8 @@ import type { SourceAuthenticationInput } from '@noveldesk/extension-contracts/p
 const hash = (value: string) => createHash('sha256').update(value).digest('hex');
 const maximumVaultBytes = (scope: string) => {
   const kind = (JSON.parse(scope) as string[])[1];
+  // The nested JSON includes bounded SharedPreferences caches and escaping overhead.
+  if (kind === 'mangayomi-options') return 1024 * 1024;
   return kind === 'browser' || kind?.startsWith('browser:') ? 2 * 1024 * 1024 : 64 * 1024;
 };
 
@@ -58,10 +60,12 @@ export class EncryptedSourceCredentialVault implements SourceCredentialVault {
       rmSync(file, { force: true });
       return;
     }
+    const plaintext = JSON.stringify(value);
+    if (Buffer.byteLength(plaintext) + 29 > maximumVaultBytes(scope)) throw new Error('source_vault_size_limit');
     const iv = randomBytes(12);
     const cipher = createCipheriv('aes-256-gcm', this.key, iv);
     cipher.setAAD(Buffer.from(scope));
-    const ciphertext = Buffer.concat([cipher.update(JSON.stringify(value), 'utf8'), cipher.final()]);
+    const ciphertext = Buffer.concat([cipher.update(plaintext, 'utf8'), cipher.final()]);
     const temporary = `${file}.${randomUUID()}.tmp`;
     try {
       writeFileSync(temporary, Buffer.concat([Buffer.from([1]), iv, cipher.getAuthTag(), ciphertext]), {
