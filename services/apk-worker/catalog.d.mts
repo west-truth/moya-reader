@@ -20,6 +20,7 @@ export class ApkSourceCatalog implements InstalledSourceCatalogPort {
   disable: InstalledSourceCatalogPort['disable'];
   refresh(): Promise<void>;
   close(): void;
+  setCacheOwner(owner: symbol): void;
   preferences(
     pkg: string,
     values?: Record<string, unknown>,

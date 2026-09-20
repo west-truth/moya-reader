@@ -1,5 +1,5 @@
 import { useRef, useState } from 'react';
-import { ArrowRight, Search } from 'lucide-react';
+import { ArrowRight, Search, Pin } from 'lucide-react';
 import { Dialog } from '../../shared/ui/Dialog';
 import type { ExternalSourceView } from '../external-sources/useExternalSourceController';
 import type { ExternalSourceListInput } from '../../external-sources/contracts';
@@ -8,10 +8,18 @@ export function SourceQuickJump({
   sources,
   close,
   open,
+  error,
+  pinned,
+  togglePin,
+  saving,
 }: {
   sources: readonly ExternalSourceView[];
+  error?: string;
+  saving?: boolean;
+  pinned: readonly string[];
+  togglePin(source: ExternalSourceView): void;
   close(): void;
-  open(source: string, input: ExternalSourceListInput): void;
+  open(source: string, input: ExternalSourceListInput): void | boolean | Promise<void | boolean>;
 }) {
   const [query, setQuery] = useState('');
   const search = useRef<HTMLInputElement>(null);
@@ -38,24 +46,38 @@ export function SourceQuickJump({
           onChange={(e) => setQuery(e.target.value)}
         />
       </label>
+      {error && <p role="status">{error}</p>}
       <div className="discovery-quick-jump-list">
         {matches.map((source) => (
-          <button
-            type="button"
-            className="ghost-btn"
-            key={source.id}
-            disabled={source.connection.state !== 'connected'}
-            onClick={() => {
-              close();
-              open(source.id, source.kind === 'cloud_file' ? {} : { browseMode: 'popular' });
-            }}
-          >
-            <span>
-              {source.title}
-              {source.connection.state !== 'connected' && <small>소스 설정에서 연결해 주세요</small>}
-            </span>
-            <ArrowRight size={18} aria-hidden="true" />
-          </button>
+          <div className="discovery-quick-jump-row" key={source.id}>
+            <button
+              type="button"
+              className="ghost-btn"
+              disabled={saving || source.connection.state !== 'connected'}
+              onClick={async () => {
+                if ((await open(source.id, source.kind === 'cloud_file' ? {} : { browseMode: 'popular' })) !== false)
+                  close();
+              }}
+            >
+              <span>
+                {source.title}
+                {source.connection.state !== 'connected' && <small>소스 설정에서 연결해 주세요</small>}
+              </span>
+              <ArrowRight size={18} aria-hidden="true" />
+            </button>
+            {source.kind === 'catalog' && (
+              <button
+                type="button"
+                className="ghost-btn discovery-pin"
+                disabled={saving}
+                aria-label={`${source.title} ${pinned.includes(source.id) ? '고정 해제' : '탭에 고정'}`}
+                aria-pressed={pinned.includes(source.id)}
+                onClick={() => togglePin(source)}
+              >
+                <Pin size={18} aria-hidden="true" />
+              </button>
+            )}
+          </div>
         ))}
         {!matches.length && (
           <p>{sources.length ? '일치하는 소스가 없습니다.' : '콘텐츠 소스 설정에서 소스를 추가해 주세요.'}</p>

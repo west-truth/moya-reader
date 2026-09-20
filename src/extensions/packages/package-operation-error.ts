@@ -18,6 +18,7 @@ const messages: Readonly<Record<string, string>> = {
   source_access_denied: '사이트에서 접근을 거부했습니다. 네트워크·프록시 설정이나 사이트의 접근 제한을 확인해 주세요.',
   execution_busy: '다른 확장 요청을 처리하고 있습니다. 잠시 후 다시 시도해 주세요.',
   execution_timeout: '확장 처리 시간이 초과됐습니다. 잠시 후 다시 시도해 주세요.',
+  source_catalog_changed: '목록이 갱신되었습니다. 새로고침해 주세요.',
   source_work_unavailable: '소스에서 작품 정보를 찾지 못했습니다. 작품 목록을 새로고침해 주세요.',
   source_release_unavailable: '소스의 회차 목록이 변경됐습니다. 회차 목록을 새로고침해 주세요.',
   invalid_source_assets: '소스가 올바른 이미지 파일을 반환하지 않았습니다.',

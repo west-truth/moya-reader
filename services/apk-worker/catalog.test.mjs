@@ -212,7 +212,7 @@ test('list refresh preserves detail cache and covers never require detail when t
   await invoke('getCover', { workId });
   assert.equal(calls.filter((c) => c.method === 'detail').length, 1);
   assert.equal(calls.filter((c) => c.method === 'cover').at(-1).input.url, cover);
-  now += 600001;
+  now += 6 * 60 * 60 * 1000 + 1;
   await assert.rejects(invoke('getWork', { workId }), /upstream_offline/);
 });
 
@@ -330,4 +330,114 @@ test('filter and browse-mode changes reach the worker and cannot reuse another c
     (await invoke('listWorks', { cursor: first.nextCursor, filters, browseMode: 'search' })).result.items.length,
     1,
   );
+});
+
+test('server cover reuse gives each reader its own asset handle and invalidates on activation', async (t) => {
+  const { invoke, calls, store, catalog } = await fixture(t);
+  const workId = (await invoke('listWorks')).result.items[0].id;
+  const a = await invoke('getCover', { workId });
+  const b = await invoke('getCover', { workId });
+  assert.equal(calls.filter((call) => call.method === 'cover').length, 1);
+  assert.notEqual(a.result.handle, b.result.handle);
+  assert.equal(a.result.sha256, b.result.sha256);
+  assert.ok(b.assets.has(b.result.handle));
+  store.snapshot().packages[0].activation = 'changed-settings';
+  await catalog.refresh();
+  await invoke('listWorks');
+  await invoke('getCover', { workId });
+  assert.equal(calls.filter((call) => call.method === 'cover').length, 2);
+});
+
+test('concurrent lists share upstream work while later refresh and different filters stay independent', async (t) => {
+  const { invoke, tools } = await fixture(t);
+  const base = tools.worker;
+  const releases = [];
+  let requests = 0;
+  tools.worker = (...args) => {
+    const worker = base(...args),
+      original = worker.request;
+    worker.request = async (method, input) => {
+      if (method === 'list') {
+        requests++;
+        await new Promise((resolve) => releases.push(resolve));
+      }
+      return original(method, input);
+    };
+    return worker;
+  };
+  const a = invoke('listWorks'),
+    b = invoke('listWorks');
+  while (releases.length < 1) await new Promise(setImmediate);
+  // Both readers have passed asynchronous reference-directory setup before releasing the upstream reply.
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  assert.equal(requests, 1);
+  releases.shift()();
+  await Promise.all([a, b]);
+  const refresh = invoke('listWorks'),
+    different = invoke('listWorks', { query: 'other' });
+  while (releases.length < 2) await new Promise(setImmediate);
+  assert.equal(requests, 3);
+  releases.splice(0).forEach((resolve) => resolve());
+  await Promise.all([refresh, different]);
+});
+
+test('invalid cover replies are rejected and a later successful fetch can recover', async (t) => {
+  const { invoke, tools } = await fixture(t);
+  const base = tools.worker;
+  let attempts = 0;
+  tools.worker = (...args) => {
+    const worker = base(...args),
+      original = worker.request;
+    worker.request = async (method, input) => {
+      if (method === 'cover' && attempts++ === 0) return { contentType: 'text/html', base64: 'ZXJyb3I=' };
+      return original(method, input);
+    };
+    return worker;
+  };
+  const workId = (await invoke('listWorks')).result.items[0].id;
+  await assert.rejects(invoke('getCover', { workId }), /image_invalid/);
+  assert.ok((await invoke('getCover', { workId })).result);
+  assert.equal(attempts, 2);
+});
+
+test('chapter cursors stay on one snapshot; explicit refresh reaches origin without ordinary expiry evicting covers', async (t) => {
+  const { catalog, source, invoke, tools, calls } = await fixture(t);
+  const base = tools.worker;
+  let chapterCalls = 0;
+  tools.worker = (...args) => {
+    const worker = base(...args),
+      original = worker.request;
+    worker.request = async (method, input) => {
+      if (method === 'chapters') {
+        chapterCalls++;
+        return Array.from({ length: 501 }, (_, n) => ({ url: `/chapter/${n}`, title: `Chapter ${n}` }));
+      }
+      return original(method, input);
+    };
+    return worker;
+  };
+  const workId = (await invoke('listWorks')).result.items[0].id;
+  await invoke('getCover', { workId });
+  const first = (await invoke('listReleases', { workId })).result;
+  let now = Date.now();
+  t.mock.method(Date, 'now', () => now);
+  now += 120001;
+  assert.equal((await invoke('listReleases', { workId, cursor: first.nextCursor })).result.items.length, 1);
+  assert.equal(chapterCalls, 1);
+  const updated = (
+    await catalog.invoke(source, 'source.listReleases', { workId }, new AbortController().signal, {
+      cacheMode: 'reload',
+    })
+  ).result;
+  assert.equal(chapterCalls, 2);
+  await assert.rejects(invoke('listReleases', { workId, cursor: first.nextCursor }), /source_catalog_changed/);
+  assert.equal((await invoke('listReleases', { workId, cursor: updated.nextCursor })).result.items.length, 1);
+  await invoke('getCover', { workId });
+  assert.equal(calls.filter((c) => c.method === 'cover').length, 1);
+  await catalog.invoke(source, 'source.listReleases', { workId }, new AbortController().signal, {
+    cacheMode: 'reload',
+    refreshCovers: true,
+  });
+  await invoke('getCover', { workId });
+  assert.equal(calls.filter((c) => c.method === 'cover').length, 2);
 });

@@ -1,76 +1,13 @@
-import { useEffect, useRef, useState, type RefObject } from 'react';
-import { ArrowLeft, ArrowRight, BookOpen } from 'lucide-react';
+import { DiscoveryCard, useNear } from './DiscoveryCard';
+import { DiscoverySourceView } from './DiscoverySourceView';
+import { useNavigationViewState } from '../navigation/navigation-view-state';
+import { useEffect, useRef, useState } from 'react';
+import { ArrowLeft, ArrowRight } from 'lucide-react';
 import type { ExternalItemPage, ExternalItemSummary, ExternalSourceListInput } from '../../external-sources/contracts';
 import type { ExternalSourceView } from '../external-sources/useExternalSourceController';
 import type { DiscoverySession } from './discovery-session';
 import type { DiscoverySection as Section } from './discovery-config';
 
-function useNear(ref: RefObject<HTMLElement>, once = true) {
-  const [near, setNear] = useState(false);
-  useEffect(() => {
-    if (!ref.current) return;
-    const observer = new IntersectionObserver(
-      (entries) => {
-        if (entries.some((e) => e.isIntersecting)) {
-          setNear(true);
-          if (once) observer.disconnect();
-        } else if (!once) setNear(false);
-      },
-      { rootMargin: '300px' },
-    );
-    observer.observe(ref.current);
-    return () => observer.disconnect();
-  }, [ref, once]);
-  return near;
-}
-export function DiscoveryCard({
-  item,
-  session,
-  open,
-  inLibrary,
-}: {
-  item: ExternalItemSummary;
-  session: DiscoverySession;
-  open(): void;
-  inLibrary: boolean;
-}) {
-  const ref = useRef<HTMLButtonElement>(null);
-  const near = useNear(ref, false);
-  const [url, setUrl] = useState(item.thumbnailUrl);
-  const [failed, setFailed] = useState(false);
-  useEffect(() => {
-    if (!near) {
-      if (item.coverRef) setUrl(undefined);
-      return;
-    }
-    if (!item.coverRef) return;
-    const abort = new AbortController();
-    void session
-      .cover(item.coverRef, abort.signal)
-      .then((value) => {
-        if (!abort.signal.aborted && value) {
-          setUrl(value);
-          setFailed(false);
-        }
-      })
-      .catch(() => undefined);
-    return () => abort.abort();
-  }, [item.coverRef, near, session]);
-  return (
-    <button type="button" className="discovery-card" ref={ref} onClick={open} aria-label={`${item.title} 상세 보기`}>
-      <span className="discovery-cover">
-        {near && url && !failed ? (
-          <img src={url} alt="" loading="lazy" decoding="async" onError={() => setFailed(true)} />
-        ) : (
-          <BookOpen size={30} aria-hidden="true" />
-        )}
-        {inLibrary && <span className="discovery-owned">보관 중</span>}
-      </span>
-      <strong>{item.title}</strong>
-      <span>{item.author ?? item.subtitle ?? (item.kind === 'folder' ? '소스 열기' : '')}</span>
-    </button>
-  );
-}
 export function DiscoverySection({
   section,
   source,
@@ -93,6 +30,11 @@ export function DiscoverySection({
   const ref = useRef<HTMLElement>(null);
   const rail = useRef<HTMLDivElement>(null);
   const near = useNear(ref);
+  const [expanded, setExpanded] = useNavigationViewState(`expanded:${session.scope}:${section.id}:${query}`, false);
+  const collapse = () => {
+    setExpanded(false);
+    requestAnimationFrame(() => ref.current?.scrollIntoView({ block: 'start' }));
+  };
   const input: ExternalSourceListInput = {
     parentRef: section.parentRef,
     browseMode: query ? 'search' : section.mode,
@@ -116,25 +58,39 @@ export function DiscoverySection({
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
   const [retry, setRetry] = useState(0);
+  const previous = useRef({ refresh, retry });
   const latest = useRef({ input, page });
   latest.current = { input, page };
   useEffect(() => {
-    if (!near || unsupported || source?.connection.state !== 'connected') return;
+    if (expanded || !near || unsupported || source?.connection.state !== 'connected') return;
     let active = true;
+    const force = previous.current.refresh !== refresh || previous.current.retry !== retry;
+    previous.current = { refresh, retry };
     setLoading(true);
     setError('');
     const fetchPage = async () => {
+      const saved = await session.restore(section.sourceId, latest.current.input);
+      if (active && saved && !latest.current.page) {
+        setPage(saved);
+        latest.current.page = saved;
+      }
+      if (!active) return undefined;
       if (section.filterSignature) {
-        const schema = await session.list(section.sourceId, { parentRef: section.parentRef, browseMode: section.mode });
+        const schema = await session.schema(
+          section.sourceId,
+          { parentRef: section.parentRef, browseMode: section.mode },
+          force,
+        );
         if (JSON.stringify(schema.browse?.filters ?? []) !== section.filterSignature)
           throw new Error('소스의 분류가 변경되었습니다. 전체 보기에서 분류를 다시 저장해 주세요.');
       }
-      return session.list(section.sourceId, latest.current.input, refresh > 0 || retry > 0);
+      return session.list(section.sourceId, latest.current.input, force);
     };
     void fetchPage()
       .then((result) => {
-        if (!active) return;
-        if (result.browse && !result.browse.availableModes.includes(query ? 'search' : section.mode)) {
+        if (!active || !result) return;
+        if (result.cache?.stale) setError('연결을 확인하지 못했습니다.');
+        if (result.browse && !result.browse.availableModes.includes(latest.current.input.browseMode ?? section.mode)) {
           setError('이 소스가 해당 목록을 지원하지 않습니다. 다른 목록을 선택해 주세요.');
           setPage(undefined);
           return;
@@ -144,12 +100,7 @@ export function DiscoverySection({
           setPage(undefined);
           return;
         }
-        if (
-          latest.current.page &&
-          !refresh &&
-          !retry &&
-          JSON.stringify(result.items) !== JSON.stringify(latest.current.page.items)
-        )
+        if (latest.current.page && !force && JSON.stringify(result.items) !== JSON.stringify(latest.current.page.items))
           setCandidate(result);
         else {
           setPage(result);
@@ -167,6 +118,7 @@ export function DiscoverySection({
     };
   }, [
     near,
+    expanded,
     unsupported,
     session,
     section.sourceId,
@@ -202,13 +154,32 @@ export function DiscoverySection({
           <button
             type="button"
             className="ghost-btn"
-            onClick={() => open(section.sourceId, source?.kind === 'cloud_file' ? {} : input)}
+            onClick={() =>
+              source.kind === 'cloud_file' ? open(section.sourceId, {}) : expanded ? collapse() : setExpanded(true)
+            }
+            aria-expanded={source.kind === 'cloud_file' ? undefined : expanded}
           >
-            {source?.kind === 'cloud_file' ? '폴더 보기' : '전체 보기'} <ArrowRight size={16} />
+            {source?.kind === 'cloud_file' ? '폴더 보기' : expanded ? '접기' : '펼쳐 보기'} <ArrowRight size={16} />
           </button>
         )}
       </div>
-      {unsupported ? (
+      {expanded && !unsupported ? (
+        <>
+          <DiscoverySourceView
+            section={section}
+            source={source}
+            session={session}
+            refresh={refresh}
+            open={open}
+            owned={owned}
+            controls={false}
+            query={query}
+          />
+          <button type="button" className="ghost-btn" onClick={collapse}>
+            접기
+          </button>
+        </>
+      ) : unsupported ? (
         <p className="discovery-message">{unsupported}</p>
       ) : !source || source.connection.state !== 'connected' ? (
         <p className="discovery-message">소스를 사용할 수 없습니다. 소스 관리에서 연결을 확인해 주세요.</p>

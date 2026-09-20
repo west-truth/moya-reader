@@ -1074,9 +1074,11 @@ describe('useExternalSourceController remote updates', () => {
     const harness = await createHarness({ downloadedContent: '본문' });
     const cached = vi.mocked(harness.state.saveCachePage).mock.calls.at(-1)![0];
     vi.mocked(harness.state.getCachePage).mockResolvedValue(cached);
-    const message = textServerErrorMessage(403, 'source_access_required');
+    const message = textServerErrorMessage(502, 'source_request_failed');
     vi.mocked(harness.registry.listExternalSource).mockRejectedValueOnce(
-      kind === 'safe' ? new TextServerRequestError(message) : new Error('untrusted secret upstream body'),
+      kind === 'safe'
+        ? new TextServerRequestError(message, { status: 502, code: 'source_request_failed' })
+        : Object.assign(new Error('untrusted secret upstream body'), { status: 502 }),
     );
     try {
       await act(async () => harness.controller.refresh());
@@ -1100,6 +1102,31 @@ describe('useExternalSourceController remote updates', () => {
     }
   });
 
+  it.each(['access', 'unknown'])(
+    'does not serve cached results or expose upstream diagnostics after a %s failure',
+    async (kind) => {
+      const harness = await createHarness({ downloadedContent: '본문' });
+      const cached = vi.mocked(harness.state.saveCachePage).mock.calls.at(-1)![0];
+      vi.mocked(harness.state.getCachePage).mockResolvedValue(cached);
+      const message = textServerErrorMessage(403, 'source_access_required');
+      vi.mocked(harness.registry.listExternalSource).mockRejectedValueOnce(
+        kind === 'access'
+          ? new TextServerRequestError(message, { status: 403, code: 'source_access_required' })
+          : new Error('untrusted secret upstream body'),
+      );
+      try {
+        await act(async () => harness.controller.refresh());
+        expect(harness.controller.stale).toBe(false);
+        expect(harness.controller.items).toEqual([]);
+        expect(harness.controller.listError?.message).not.toContain('secret');
+        if (kind === 'access') expect(harness.controller.listError?.message).toBe(message);
+        expect(harness.notify).toHaveBeenLastCalledWith(harness.controller.listError?.message, 'danger');
+      } finally {
+        await act(async () => harness.renderer.unmount());
+      }
+    },
+  );
+
   it('keeps a failed first page visible and retries its original browse request', async () => {
     const harness = await createHarness({ downloadedContent: '본문' });
     const message = textServerErrorMessage(502, 'source_request_failed');
@@ -1120,7 +1147,7 @@ describe('useExternalSourceController remote updates', () => {
       expect(harness.registry.listExternalSource).toHaveBeenLastCalledWith(
         SOURCE_ID,
         expect.anything(),
-        failedInput,
+        { ...failedInput, cacheMode: 'reload' },
         expect.any(AbortSignal),
       );
       expect(harness.controller.listError).toBeUndefined();
@@ -1130,14 +1157,17 @@ describe('useExternalSourceController remote updates', () => {
     }
   });
 
-  it.each(['request', 'cache', 'closed'] as const)(
+  it.each(['request', 'cache', 'fallback-cache', 'closed'] as const)(
     'ignores an older browse failure while waiting for %s',
     async (phase) => {
       const harness = await createHarness({ downloadedContent: '본문' });
       const error = new TextServerRequestError(textServerErrorMessage(502, 'source_request_failed'));
       let finishOld!: () => void;
-      if (phase === 'cache') {
-        vi.mocked(harness.registry.listExternalSource).mockRejectedValueOnce(error);
+      if (phase === 'cache' || phase === 'fallback-cache') {
+        if (phase === 'fallback-cache') {
+          vi.mocked(harness.registry.listExternalSource).mockRejectedValueOnce(error);
+          vi.mocked(harness.state.getCachePage).mockResolvedValueOnce(undefined);
+        }
         vi.mocked(harness.state.getCachePage).mockImplementationOnce(
           () =>
             new Promise((resolve) => {
@@ -1165,6 +1195,8 @@ describe('useExternalSourceController remote updates', () => {
         }
         harness.notify.mockClear();
         const items = harness.controller.items;
+        const cacheReads = vi.mocked(harness.state.getCachePage).mock.calls.length;
+        const requests = vi.mocked(harness.registry.listExternalSource).mock.calls.length;
         await act(async () => {
           finishOld();
           await oldRequest;
@@ -1172,7 +1204,8 @@ describe('useExternalSourceController remote updates', () => {
         expect(harness.controller.listError).toBeUndefined();
         expect(harness.controller.items).toEqual(items);
         expect(harness.notify).not.toHaveBeenCalled();
-        if (phase !== 'cache') expect(harness.state.getCachePage).not.toHaveBeenCalled();
+        expect(harness.state.getCachePage).toHaveBeenCalledTimes(cacheReads);
+        expect(harness.registry.listExternalSource).toHaveBeenCalledTimes(requests);
       } finally {
         await act(async () => harness.renderer.unmount());
       }
@@ -1909,7 +1942,8 @@ describe('useExternalSourceController remote updates', () => {
     expect(harness.controller.filterValues).toEqual(previousFilters);
     expect(harness.controller.loading).toBe(false);
     expect(harness.controller.listError?.message).toContain('목록을 불러오지 못했습니다');
-    expect(harness.notify).toHaveBeenLastCalledWith('temporary page failure', 'danger');
+    expect(harness.notify).toHaveBeenLastCalledWith(harness.controller.listError?.message, 'danger');
+    expect(harness.notify.mock.calls.at(-1)?.[0]).not.toContain('temporary page failure');
     vi.mocked(harness.registry.listExternalSource).mockResolvedValueOnce({
       items: [{ ...page.items[0]!, key: { ...ITEM_KEY, remoteId: 'chapter:12' }, title: '2화' }],
     });

@@ -1,3 +1,6 @@
+import { SourcePageCursors } from './source-page-cursors';
+import { SourceReadCache } from './source-read-cache';
+import { DETAIL_FRESH_MS, sourceCachePolicy, sourceListIdentity } from './cache-policy';
 import { SessionCoverCache } from './session-cover-cache';
 import type { ExternalSourceContributionDescriptorV2 } from '@noveldesk/extension-contracts';
 import type { SourceWork } from '@noveldesk/extension-contracts/source-sdk';
@@ -38,11 +41,25 @@ export type InstalledSourceCatalogPort = Pick<
 export class InstalledPackageSourceRegistry<
   Catalog extends InstalledSourceCatalogPort = PackageRuntimeCatalog,
 > implements ExternalSourceProviderRegistryPort {
-  private readonly workCache = new Map<string, { work: SourceWork; expiresAt: number }>();
+  private readonly cursors = new SourcePageCursors();
+  private readonly reads: SourceReadCache;
+  private catalogSignature = '';
   private readonly covers = new SessionCoverCache();
   private readonly unsubscribe: () => void;
-  constructor(protected readonly catalog: Catalog) {
-    this.unsubscribe = catalog.subscribe(() => this.clearCache());
+  constructor(
+    protected readonly catalog: Catalog,
+    cacheOwner?: symbol,
+  ) {
+    this.reads = new SourceReadCache(cacheOwner);
+    const changed = () => {
+      const signature = JSON.stringify(catalog.getSources().map((source) => [source.descriptor.id, source.generation]));
+      if (signature !== this.catalogSignature) {
+        this.catalogSignature = signature;
+        this.clearCache();
+      }
+    };
+    changed();
+    this.unsubscribe = catalog.subscribe(changed);
   }
 
   getExternalSources() {
@@ -66,17 +83,48 @@ export class InstalledPackageSourceRegistry<
     if (!source) throw new Error('package_source_unavailable');
     return source.descriptor;
   }
-  private async work(id: string, workId: string, signal: AbortSignal): Promise<SourceWork> {
-    const key = JSON.stringify([id, this.catalog.getSource(id)?.generation, workId]);
-    const cached = this.workCache.get(key);
-    if (cached && cached.expiresAt > Date.now()) return cached.work;
-    const { result } = await this.catalog.invoke(id, 'source.getWork', { workId }, signal);
-    if (this.workCache.size >= 64) this.workCache.delete(this.workCache.keys().next().value!);
-    this.workCache.set(key, { work: result, expiresAt: Date.now() + 10 * 60 * 1000 });
-    return result;
+  private async work(id: string, workId: string, signal: AbortSignal, reload: boolean): Promise<SourceWork> {
+    const generation = this.catalog.getSource(id)?.generation;
+    const key = JSON.stringify(['detail', id, generation, workId]);
+    const cached = await this.reads.read(key, DETAIL_FRESH_MS, 7 * 86400_000, signal, reload, async (shared) => {
+      const { result } = await this.catalog.invoke(id, 'source.getWork', { workId }, shared, { cacheMode: 'reload' });
+      if (this.catalog.getSource(id)?.generation !== generation) throw new Error('package_generation_changed');
+      return result;
+    });
+    // Let the outer page retain its original age instead of stamping stale detail as a new success.
+    if (cached.stale) throw new Error('source_connection_failed');
+    return cached.value;
   }
 
   async listExternalSource(
+    id: string,
+    context: TrustedExternalSourceHostContext,
+    input: ExternalSourceListInput,
+    signal: AbortSignal,
+  ): Promise<ExternalItemPage> {
+    const generation = this.catalog.getSource(id)?.generation;
+    this.descriptor(id);
+    if (input.cacheMode === 'reload' && !input.cursor) this.covers.invalidateSource(id);
+    const cursor = this.cursors.open(id, generation, input);
+    const policy = sourceCachePolicy(input);
+    const key = JSON.stringify(['page', id, generation, sourceListIdentity(input)]);
+    const cached = await this.reads.read(
+      key,
+      policy.fresh,
+      policy.keep,
+      signal,
+      input.cacheMode === 'reload',
+      async (shared) => {
+        const page = await this.loadPage(id, context, { ...input, cursor: cursor.cursor }, shared);
+        if (this.catalog.getSource(id)?.generation !== generation) throw new Error('package_generation_changed');
+        return this.cursors.page(page, cursor.query, cursor.token, !input.cursor, policy.keep);
+      },
+    );
+    if (cursor.token) this.cursors.assert(cursor.token, cursor.query);
+    return { ...cached.value, cache: { fetchedAt: cached.fetchedAt, stale: cached.stale } };
+  }
+
+  private async loadPage(
     id: string,
     _context: TrustedExternalSourceHostContext,
     input: ExternalSourceListInput,
@@ -90,6 +138,7 @@ export class InstalledPackageSourceRegistry<
         'source.listWorks',
         { query: input.query, cursor: input.cursor, browseMode: input.browseMode, filters: input.filters },
         signal,
+        input.cacheMode === 'reload' ? { cacheMode: 'reload', refreshCovers: !input.cursor } : undefined,
       );
       return {
         items: result.items.map((work) => ({
@@ -110,8 +159,14 @@ export class InstalledPackageSourceRegistry<
       };
     }
     const [work, response] = await Promise.all([
-      this.work(id, input.parentRef, signal),
-      this.catalog.invoke(id, 'source.listReleases', { workId: input.parentRef, cursor: input.cursor }, signal),
+      this.work(id, input.parentRef, signal, input.cacheMode === 'reload'),
+      this.catalog.invoke(
+        id,
+        'source.listReleases',
+        { workId: input.parentRef, cursor: input.cursor },
+        signal,
+        input.cursor ? undefined : { cacheMode: 'reload', refreshCovers: input.cacheMode === 'reload' },
+      ),
     ]);
     signal.throwIfAborted();
     const extension = descriptor.seriesProfile?.kind === 'document_series' ? 'txt' : 'cbz';
@@ -241,7 +296,8 @@ export class InstalledPackageSourceRegistry<
   }
 
   private clearCache(): void {
-    this.workCache.clear();
+    this.reads.clear();
+    this.cursors.clear();
     this.releaseCovers();
   }
   releaseCovers(): void {

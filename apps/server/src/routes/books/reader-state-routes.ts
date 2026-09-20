@@ -1,3 +1,4 @@
+import { registerDiscoverySettingsRoutes } from './discovery-settings-routes.js';
 import type { FastifyInstance } from 'fastify';
 import { sharedReaderSettings } from '../../../../../src/repositories/reader-settings-scope.js';
 import pg from 'pg';
@@ -191,10 +192,17 @@ export async function registerReaderStateRoutes(
     },
   );
 
+  registerDiscoverySettingsRoutes(app, pool, config);
+
   app.get('/api/settings', async () => {
     const result = await pool.query('select settings from reader_settings where user_id = $1', [config.defaultUserId]);
-    const { _moyaIntegrations: _reservedIntegrations, ...stored } = result.rows[0]?.settings ?? {};
+    const {
+      _moyaIntegrations: _reservedIntegrations,
+      _moyaDiscovery: _reservedDiscovery,
+      ...stored
+    } = result.rows[0]?.settings ?? {};
     void _reservedIntegrations;
+    void _reservedDiscovery;
     return {
       settings: {
         ...defaultSettings,

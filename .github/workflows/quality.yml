@@ -27,12 +27,19 @@ jobs:
         env:
           WEB_BASE_PATH: /moya-reader/
       - run: pnpm exec vitest run src/features/fixed-document/ComicPageFlow.test.ts src/features/fixed-document/archive-page-loader.test.ts src/features/fixed-document/use-archive-page-images.test.tsx
+      - name: Verify source cache reuse and refresh
+        run: |
+          node --test services/apk-worker/catalog.test.mjs services/apk-worker/source-cover-cache.test.mjs services/apk-worker/shared-task.test.mjs
+          pnpm exec vitest run src/external-sources/source-cache-policy.test.ts src/external-sources/session-cover-cache.test.ts src/external-sources/local-state.test.ts src/features/discovery src/features/external-sources/useExternalSourceController.pagination.test.tsx --maxWorkers=2
       - run: pnpm exec playwright-core install --with-deps chromium
       - run: pnpm check:web-pages:browser
         env:
           READER_UI_BROWSER_CHANNEL: chromium
       - run: pnpm test:settings-ux
       - run: pnpm check:settings-ux
+      - run: pnpm check:discovery-ux
+        env:
+          READER_UI_BROWSER_CHANNEL: chromium
       - run: pnpm check:reader-stability
         env:
           READER_UI_BROWSER_CHANNEL: chromium
@@ -53,6 +60,8 @@ jobs:
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       - run: pnpm check:web-server
+      - name: Verify account discovery configuration
+        run: pnpm exec vitest run apps/server/src/routes/books/discovery-settings-routes.integration.test.ts apps/server/src/routes/books/route-registration.test.ts --maxWorkers=2
       - name: Install and test text-source companion
         working-directory: services/text-source-server
         run: |

@@ -3,6 +3,7 @@ import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { joinTask } from './shared-task.mjs';
+import { SourceCoverCache } from './source-cover-cache.mjs';
 import { downloadPagesOrdered } from './ordered-page-downloads.mjs';
 import { apkStateDirectory } from './installations.mjs';
 import {
@@ -18,7 +19,7 @@ const string = (value, max = 20000) => typeof value === 'string' && value.length
 const validUrl = (value) => string(value, 8192) && !Array.from(value).some((char) => char.charCodeAt(0) < 32);
 const id = (value) => typeof value === 'string' && /^[a-f0-9]{64}$/.test(value);
 const sourceId = (pkg, remote, namespace = 'moya.apk') => `${namespace}.${hash(pkg).slice(0, 24)}.${remote}`;
-const TTL = 10 * 60 * 1000;
+const TTL = 6 * 60 * 60 * 1000;
 const generation = (record) => `${record.digest}:${record.activation ?? 'legacy'}`;
 
 /** Converts APK output to the shared Moya source contract; all remote URLs stay in host-owned reference files. */
@@ -27,6 +28,7 @@ export class ApkSourceCatalog {
   #workers = new Map();
   #sources = [];
   #pending = new Map();
+  #covers = new SourceCoverCache();
   constructor(
     store,
     tools,
@@ -45,6 +47,9 @@ export class ApkSourceCatalog {
     this.sourceFile = sourceFile;
     this.description = description;
     this.pageConcurrency = pageConcurrency;
+  }
+  setCacheOwner(owner) {
+    this.#covers.setOwner(owner);
   }
   subscribe = (listener) => {
     this.#listeners.add(listener);
@@ -154,8 +159,9 @@ export class ApkSourceCatalog {
     await writeFile(temp, bytes, { mode: 0o600 });
     await rename(temp, path);
   }
-  async invoke(contributionId, method, input, signal) {
+  async invoke(contributionId, method, input, signal, options = {}) {
     signal.throwIfAborted();
+    if (options.refreshCovers) this.#covers.invalidatePrefix(`${contributionId}:`);
     const source = this.getSource(contributionId);
     const record =
       source && this.store.snapshot().packages.find((p) => p.pkg === source.packageId && p.enabled !== false);
@@ -196,7 +202,7 @@ export class ApkSourceCatalog {
       };
     };
     const assets = new Map();
-    const asset = (raw) => {
+    const imageAsset = (raw) => {
       if (
         !object(raw) ||
         !['image/jpeg', 'image/png', 'image/webp', 'image/gif'].includes(raw.contentType) ||
@@ -206,11 +212,12 @@ export class ApkSourceCatalog {
         throw new Error('apk_image_invalid');
       const bytes = Buffer.from(raw.base64, 'base64');
       if (!bytes.length || bytes.length > MAX_SOURCE_ASSET_BYTES) throw new Error('source_body_limit');
-      const digest = hash(bytes);
+      return { blob: new Blob([bytes], { type: raw.contentType }), sha256: hash(bytes) };
+    };
+    const asset = ({ blob, sha256 }) => {
       const handle = randomUUID();
-      const blob = new Blob([bytes], { type: raw.contentType });
       assets.set(handle, blob);
-      return { handle, byteLength: bytes.length, sha256: digest, contentType: raw.contentType };
+      return { handle, byteLength: blob.size, sha256, contentType: blob.type };
     };
     let result;
     if (method === 'source.listWorks') {
@@ -255,20 +262,38 @@ export class ApkSourceCatalog {
         (input.query !== undefined && typeof input.query !== 'string')
       )
         throw new Error('invalid_source_invocation');
-      const response = await request('list', {
-        page,
-        query: input.query ?? '',
-        mode: input.browseMode ?? (input.query || input.filters?.length ? 'search' : 'popular'),
-        filters: input.filters ?? [],
-      });
+      // Coalesce simultaneous readers, but a later explicit refresh still reaches the source.
+      const response = await joinTask(
+        this.#pending,
+        `list:${contributionId}:${generation(record)}:${hash(browsing)}:${page}`,
+        signal,
+        (sharedSignal) =>
+          request(
+            'list',
+            {
+              page,
+              query: input.query ?? '',
+              mode: input.browseMode ?? (input.query || input.filters?.length ? 'search' : 'popular'),
+              filters: input.filters ?? [],
+            },
+            sharedSignal,
+          ),
+      );
       if (!object(response) || !Array.isArray(response.items) || response.items.length > 5000)
         throw new Error('apk_page_invalid');
-      const items = [];
-      for (const raw of response.items) {
-        const work = toWork(raw);
+      const items = response.items.map(toWork);
+      // Keep the last reference for duplicate IDs, as the former serial writes did.
+      const references = [...new Map(items.map((work, index) => [work.id, response.items[index]]))];
+      // Bound disk work without serializing hundreds of independent reference writes.
+      for (let offset = 0; offset < references.length; offset += 8) {
         current();
-        await this.#save(workPath(work.id), { raw, listedAt: Date.now(), generation: generation(record) });
-        items.push(work);
+        await Promise.all(
+          references
+            .slice(offset, offset + 8)
+            .map(([workId, raw]) =>
+              this.#save(workPath(workId), { raw, listedAt: Date.now(), generation: generation(record) }),
+            ),
+        );
       }
       // Source API limits pages to 500. Keep large legacy results available through a host snapshot cursor.
       if (items.length > 500) {
@@ -294,14 +319,14 @@ export class ApkSourceCatalog {
         // Separate files avoid list/detail read-modify-write races. Old combined records remain readable.
         let detail = (await this.#read(detailPath)) ?? (saved.fetchedAt > 0 ? saved : undefined);
         const listedCover = fresh(saved, saved.listedAt) && validUrl(saved.raw.cover);
-        if (!(method === 'source.getCover' && listedCover) && !fresh(detail)) {
+        if (!(method === 'source.getCover' && listedCover) && (options.cacheMode === 'reload' || !fresh(detail))) {
           detail = await joinTask(
             this.#pending,
-            `detail:${contributionId}:${generation(record)}:${input.workId}`,
+            `detail:${contributionId}:${generation(record)}:${input.workId}:${options.cacheMode ?? ''}`,
             signal,
             async (sharedSignal) => {
               const cached = await this.#read(detailPath);
-              if (fresh(cached)) return cached;
+              if (options.cacheMode !== 'reload' && fresh(cached)) return cached;
               const raw = await request('detail', { workUrl: saved.raw.url, title: saved.raw.title }, sharedSignal);
               if (!object(raw)) throw new Error('apk_work_invalid');
               const value = {
@@ -330,12 +355,22 @@ export class ApkSourceCatalog {
           method === 'source.getWork'
             ? toWork(raw)
             : validUrl(raw.cover)
-              ? asset(await request('cover', { url: raw.cover }))
+              ? asset(
+                  await this.#covers.resolve(
+                    `${contributionId}:${generation(record)}:${hash(raw.cover)}`,
+                    signal,
+                    async (sharedSignal) => imageAsset(await request('cover', { url: raw.cover }, sharedSignal)),
+                  ),
+                )
               : null;
       } else if (method === 'source.listReleases' || method === 'source.getContent') {
         const cachePath = join(directory, `${input.workId}-chapters.json`);
         let cache = await this.#read(cachePath);
-        if (!cache || cache.generation !== generation(record) || cache.fetchedAt + TTL <= Date.now()) {
+        if (
+          !cache ||
+          cache.generation !== generation(record) ||
+          (!input.cursor && (options.cacheMode === 'reload' || cache.fetchedAt + 2 * 60 * 1000 <= Date.now()))
+        ) {
           const key = `${contributionId}:${generation(record)}:${input.workId}`;
           cache = await joinTask(this.#pending, key, signal, async (sharedSignal) => {
             const rows = await request('chapters', { workUrl: saved.raw.url, title: saved.raw.title }, sharedSignal);
@@ -345,14 +380,22 @@ export class ApkSourceCatalog {
               rows.some((r) => !object(r) || !validUrl(r.url) || !string(r.title, 4096))
             )
               throw new Error('apk_chapters_invalid');
-            const value = { rows: [...rows].reverse(), fetchedAt: Date.now(), generation: generation(record) };
+            const value = {
+              rows: [...rows].reverse(),
+              fetchedAt: Date.now(),
+              snapshot: randomUUID(),
+              generation: generation(record),
+            };
             await this.#save(cachePath, value);
             return value;
           });
           current();
         }
         if (method === 'source.listReleases') {
-          const offset = input.cursor === undefined ? 0 : Number(input.cursor);
+          const versioned = typeof input.cursor === 'string' && /^chapters:([a-z0-9-]+):(\d+)$/.exec(input.cursor);
+          if (versioned && versioned[1] !== String(cache.snapshot ?? cache.fetchedAt))
+            throw new Error('source_catalog_changed');
+          const offset = input.cursor === undefined ? 0 : Number(versioned ? versioned[2] : input.cursor);
           if (!Number.isSafeInteger(offset) || offset < 0) throw new Error('invalid_source_cursor');
           result = {
             items: cache.rows.slice(offset, offset + 500).map((row, index) => ({
@@ -361,7 +404,9 @@ export class ApkSourceCatalog {
               order: offset + index,
               ...(Number.isFinite(row.number) && row.number >= 0 ? { number: row.number } : {}),
             })),
-            ...(offset + 500 < cache.rows.length ? { nextCursor: String(offset + 500) } : {}),
+            ...(offset + 500 < cache.rows.length
+              ? { nextCursor: `chapters:${cache.snapshot ?? cache.fetchedAt}:${offset + 500}` }
+              : {}),
           };
         } else {
           const chapter = cache.rows.find((row) => hash(row.url) === input.releaseId);
@@ -382,7 +427,7 @@ export class ApkSourceCatalog {
               throw new Error('apk_page_limit');
             let total = 0;
             const refs = await downloadPagesOrdered(pages, this.pageConcurrency, signal, async (page, pageSignal) => {
-              const ref = asset(await request('image', page, pageSignal));
+              const ref = asset(imageAsset(await request('image', page, pageSignal)));
               total += ref.byteLength;
               if (total > MAX_SOURCE_CONTENT_BYTES) throw new Error('source_body_limit');
               return ref;
@@ -396,6 +441,7 @@ export class ApkSourceCatalog {
     return { result, assets };
   }
   close() {
+    this.#covers.clear();
     for (const worker of this.#workers.values()) worker.process.close();
     this.#workers.clear();
     this.#listeners.clear();

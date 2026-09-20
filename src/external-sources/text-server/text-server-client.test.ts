@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { normalizeTextServerEndpoint, TextServerClient, textServerNamespace } from './text-server-client';
+import { transientSourceFailure } from '../cache-policy';
 import { TextServerRequestError } from './text-server-errors';
 
 afterEach(() => vi.useRealTimers());
@@ -37,6 +38,7 @@ describe('TextServerClient', () => {
     [503, 'content_provider_not_configured', '제공자 설정'],
     [503, 'text_source_server_not_configured', '서버 관리자'],
     [504, 'content_provider_request_timeout', '시간이 초과'],
+    [502, 'source_request_failed', '요청을 완료'],
     [503, 'content_provider_busy', '잠시 기다린'],
     [502, 'content_provider_invalid_manifest', '올바른 회차 원문'],
     [404, 'not_found', '목록을 새로고침'],
@@ -50,6 +52,10 @@ describe('TextServerClient', () => {
     expect(error).toBeInstanceOf(TextServerRequestError);
     expect((error as Error).message).toContain(action);
     expect((error as Error).message).not.toContain('secret');
+    expect(error).toMatchObject({ status, code });
+    expect(transientSourceFailure(error)).toBe(
+      ['content_provider_busy', 'content_provider_request_timeout', 'source_request_failed'].includes(String(code)),
+    );
   });
 
   it('distinguishes a managed app session failure from a downstream provider authentication failure', async () => {

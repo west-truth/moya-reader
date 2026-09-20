@@ -1,3 +1,4 @@
+import type { DiscoveryConfig, DiscoverySettings } from '../../integration-settings/discovery-settings';
 import {
   Bookmark,
   ChapterSplitMode,
@@ -1045,6 +1046,22 @@ export class RemoteApiClient {
 
   saveSettings(settings: Partial<ReaderSettings>): Promise<{ ok: true }> {
     return this.request('/settings', { method: 'PUT', body: JSON.stringify({ ...defaultSettings, ...settings }) });
+  }
+
+  getDiscoverySettings(signal?: AbortSignal): Promise<{ settings?: DiscoverySettings }> {
+    return this.request('/discovery-settings', { signal }, 15000);
+  }
+
+  saveDiscoverySettings(
+    config: DiscoveryConfig,
+    expectedRevision: number,
+    signal?: AbortSignal,
+  ): Promise<{ settings: DiscoverySettings }> {
+    return this.request(
+      '/discovery-settings',
+      { method: 'PUT', body: JSON.stringify({ config, expectedRevision }), signal },
+      15000,
+    );
   }
 
   getIntegrationSettings(revision?: number): Promise<{ settings?: SelfHostIntegrationSettingsV1 }> {

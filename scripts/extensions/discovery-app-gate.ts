@@ -34,8 +34,8 @@ export async function runDiscoveryAppGate(page: Page, output: string) {
   const jump = page.getByRole('dialog', { name: '소스 빠른 이동', exact: true });
   await jump.getByRole('searchbox').fill('앱 검증용');
   await jump.getByRole('button', { name: '앱 검증용 소스', exact: true }).click();
-  await page.locator('.source-hub-screen').waitFor();
-  await home().click();
+  await page.locator('.discovery-source-view').waitFor();
+  await page.getByRole('navigation', { name: '탐색 분류' }).getByRole('button', { name: '만화', exact: true }).click();
   await page.getByRole('button', { name: 'Synthetic installed novel 상세 보기', exact: true }).first().waitFor();
   await page.screenshot({ path: resolve(output, 'discovery-desktop.png') });
   await page.locator('.discovery-body').evaluate((node) => {

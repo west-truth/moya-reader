@@ -1,3 +1,4 @@
+import { clearSourceMetadataCache } from '../../external-sources/local-state';
 import {
   createContext,
   useCallback,
@@ -121,6 +122,7 @@ export function SelfHostAccountGate({ runtime, children }: SelfHostAccountGatePr
     setAccount(undefined);
     setPassword('');
     setMode('login');
+    await clearSourceMetadataCache().catch(() => undefined);
   }, [client]);
 
   if (!client) return children;
