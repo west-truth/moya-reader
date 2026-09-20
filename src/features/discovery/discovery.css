@@ -257,6 +257,16 @@
 .discovery-editor-tab-body > .discovery-editor-heading {
   margin-bottom: 14px;
 }
+.discovery-editor-tab-body > .discovery-editor-heading:first-child {
+  display: grid;
+  grid-template-columns: 44px 44px 44px minmax(0, 1fr);
+  gap: 8px;
+}
+.discovery-editor-tab-body > .discovery-editor-heading:first-child > label {
+  grid-column: 1 / -1;
+  grid-row: 1;
+  min-width: 0;
+}
 .discovery-editor-row-body {
   display: grid;
   gap: 12px;
