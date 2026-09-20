@@ -1,3 +1,4 @@
+import { SessionCoverCache } from '../../external-sources/session-cover-cache';
 import { compatibilityFileUpload } from './compatibility-file';
 import type {
   ContentConnectionRequest,
@@ -117,7 +118,7 @@ export class RemoteInstalledExtensions implements InstalledExtensionManager {
   private pending?: Promise<void>;
   private inventoryAbort?: AbortController;
   private inventoryRequest = 0;
-  private covers = new Map<string, string>();
+  private covers = new SessionCoverCache();
   constructor(
     private readonly api: Pick<RemoteApiClient, 'request' | 'requestBlob'>,
     private readonly compatibilityTimeouts: CompatibilityTimeouts = {
@@ -253,7 +254,6 @@ export class RemoteInstalledExtensions implements InstalledExtensionManager {
     }
   }
   releaseCovers() {
-    for (const url of this.covers.values()) URL.revokeObjectURL(url);
     this.covers.clear();
   }
   getSnapshot = () => this.snapshot;
@@ -554,26 +554,20 @@ export class RemoteInstalledExtensions implements InstalledExtensionManager {
   ) {
     const generation = this.getExternalSourceStatus(id).connectionGeneration;
     const cacheKey = JSON.stringify([id, generation, key.remoteId]);
-    const cached = this.covers.get(cacheKey);
-    if (cached) return cached;
-    const { blob } = await this.api.requestBlob(`/extensions/sources/${encodeURIComponent(id)}/cover`, {
-      method: 'POST',
-      body: JSON.stringify({ workId: key.remoteId }),
-      headers: { 'Content-Type': 'application/json' },
+    return this.covers.resolve(
+      cacheKey,
+      async (sharedSignal) => {
+        const { blob } = await this.api.requestBlob(`/extensions/sources/${encodeURIComponent(id)}/cover`, {
+          method: 'POST',
+          body: JSON.stringify({ workId: key.remoteId }),
+          headers: { 'Content-Type': 'application/json' },
+          signal: sharedSignal,
+        });
+        if (generation !== this.getExternalSourceStatus(id).connectionGeneration)
+          throw new Error('package_generation_changed');
+        return blob;
+      },
       signal,
-    });
-    signal.throwIfAborted();
-    if (generation !== this.getExternalSourceStatus(id).connectionGeneration)
-      throw new Error('package_generation_changed');
-    if (!['image/png', 'image/jpeg', 'image/webp', 'image/gif'].includes(blob.type) || blob.size > 16 * 1024 * 1024)
-      throw new Error('invalid_source_cover');
-    const url = URL.createObjectURL(blob);
-    if (this.covers.size >= 64) {
-      const first = this.covers.keys().next().value!;
-      URL.revokeObjectURL(this.covers.get(first)!);
-      this.covers.delete(first);
-    }
-    this.covers.set(cacheKey, url);
-    return url;
+    );
   }
 }
