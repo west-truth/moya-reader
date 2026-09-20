@@ -1,3 +1,4 @@
+import { RepositoryAddress } from './RepositoryAddress';
 import { useEffect, useRef, useState } from 'react';
 import type {
   SourceExtensionEntry,
@@ -228,7 +229,7 @@ export function SourceExtensionManagerPanel({
       </label>
       {selected && (
         <div>
-          <p className="field-help installed-extension-origin">{selected}</p>
+          <RepositoryAddress key={selected} url={selected} />
           <button
             type="button"
             disabled={busy}

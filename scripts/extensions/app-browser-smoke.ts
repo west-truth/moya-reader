@@ -209,8 +209,13 @@ async function runAppGate(pool?: Parameters<Parameters<typeof withPostgresSchema
       if (errors.length) throw Error(errors.join('\n'));
       return;
     }
+    await page.setViewportSize({ width: 390, height: 844 });
+    await page.getByRole('button', { name: '더보기', exact: true }).click();
     await page.getByRole('button', { name: '설정', exact: true }).first().click();
-    await page.getByRole('tab', { name: /^익스텐션/ }).click();
+    await page.getByRole('tab', { name: /^동기화/ }).waitFor();
+    await page.setViewportSize({ width: 1366, height: 1000 });
+
+    await page.getByRole('tab', { name: /^콘텐츠 소스/ }).click();
     await page.getByText('설치한 확장이 없습니다.', { exact: true }).waitFor();
     await page.getByLabel('확장 패키지 파일').setInputFiles(archivePath);
     await page.getByRole('button', { name: '설치', exact: true }).click();
@@ -272,12 +277,17 @@ async function runAppGate(pool?: Parameters<Parameters<typeof withPostgresSchema
     await page.getByText('Original one chapter.', { exact: true }).waitFor();
     const readerElement = await page.locator('.reader-screen').elementHandle();
     await page.mouse.click(683, 500);
-    await page.getByRole('button', { name: '읽기 설정 열기', exact: true }).first().click();
-    await page.getByRole('tab', { name: /^익스텐션/ }).click();
+    await page.getByRole('button', { name: '빠른 보기 열기', exact: true }).first().click();
+    await page.getByRole('button', { name: '빠른 보기 닫기', exact: true }).focus();
+    await page.keyboard.press('PageDown');
+    if (await page.locator('.reader-paginated-root.is-active').count())
+      throw new Error('Quick view leaked page navigation');
+    await page.getByRole('button', { name: '글꼴·색상·조판 전체 설정', exact: true }).click();
+    await page.getByRole('tab', { name: /^콘텐츠 소스/ }).click();
     await page.getByLabel('확장 패키지 파일').setInputFiles(updatePath);
     await page.getByRole('button', { name: '업데이트', exact: true }).click();
     await page.getByText('v1.0.1', { exact: true }).waitFor();
-    const panel = page.getByRole('region', { name: '설치형 확장', exact: true });
+    const panel = page.getByRole('region', { name: '콘텐츠 소스 패키지', exact: true });
     await panel.getByText('관리', { exact: true }).click();
     await panel.getByRole('button', { name: '확장 제거', exact: true }).click();
     await page.getByText('설치한 확장이 없습니다.', { exact: true }).waitFor();

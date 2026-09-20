@@ -1,3 +1,4 @@
+import { RepositoryAddress } from './RepositoryAddress';
 import { useEffect, useState, type ReactNode } from 'react';
 import type {
   InstalledExtensionManager,
@@ -189,7 +190,7 @@ export function ExtensionRepositoryBrowser({
           </label>
           {record && (
             <>
-              <p className="field-help installed-extension-origin">{record.url}</p>
+              <RepositoryAddress key={record.url} url={record.url} checkedAt={record.checkedAt} />
               <div className="installed-extension-actions">
                 <button
                   type="button"

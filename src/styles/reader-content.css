@@ -6,6 +6,9 @@
   font-weight: var(--reading-font-weight, 400);
   line-height: var(--reading-line-height);
   letter-spacing: var(--reading-letter-spacing, 0);
+  word-spacing: var(--reading-word-spacing, 0);
+  font-style: var(--reading-font-style, normal);
+  text-decoration: var(--reading-text-decoration, none);
   color: var(--reading-foreground, var(--text));
 }
 
@@ -65,8 +68,8 @@
   margin: 0;
   text-align: var(--reading-text-align, start);
   text-indent: var(--reading-first-line-indent, 0);
-  word-break: keep-all;
-  overflow-wrap: anywhere;
+  word-break: var(--reading-word-break, keep-all);
+  overflow-wrap: var(--reading-overflow-wrap, anywhere);
 }
 
 .reader-paragraph.is-continuation p {

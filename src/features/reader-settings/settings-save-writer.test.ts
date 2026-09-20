@@ -105,7 +105,7 @@ describe('SerializedSettingsSaveWriter', () => {
 });
 
 describe('SettingsSlider accessibility', () => {
-  it('links the visible label and current value to the range control', () => {
+  it('links the visible label and current value to a thumb-only slider with precise controls', () => {
     const markup = renderToStaticMarkup(
       createElement(SettingsSlider, {
         label: '글자 크기',
@@ -121,6 +121,10 @@ describe('SettingsSlider accessibility', () => {
     expect(markup).toContain('18px');
     expect(markup).toContain('aria-labelledby=');
     expect(markup).toContain('aria-valuetext="18px"');
-    expect(markup).toContain('type="range"');
+    expect(markup).toContain('role="slider"');
+    expect(markup).toContain('aria-label="글자 크기 줄이기"');
+    expect(markup).toContain('aria-label="글자 크기 늘리기"');
+    expect(markup).toContain('aria-label="글자 크기 직접 입력"');
+    expect(markup).not.toContain('type="range"');
   });
 });

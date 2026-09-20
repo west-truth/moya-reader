@@ -663,7 +663,7 @@ export default function App() {
   const [correctionSpeakerDraft, setCorrectionSpeakerDraft] = useState('unknown');
   const [correctionEmotionDraft, setCorrectionEmotionDraft] = useState('neutral');
   const [correctionScope, setCorrectionScope] = useState<UserCorrection['applyScope']>('segment');
-  const [settingsInitialTab, setSettingsInitialTab] = useState<SettingsTab>('appearance');
+  const [settingsInitialTab, setSettingsInitialTab] = useState<SettingsTab>();
 
   const voiceProfilesRef = useRef<VoiceProfile[]>([]);
   const voiceProfileSaveQueueRef = useRef(Promise.resolve());
@@ -711,7 +711,7 @@ export default function App() {
     open: settingsOpen,
   } = readerSettingsController;
   const openReaderSettings = useCallback(() => {
-    setSettingsInitialTab('appearance');
+    setSettingsInitialTab(undefined);
     readerSettingsController.openPanel();
   }, [readerSettingsController]);
   const openExternalSourceSettings = useCallback(() => {
@@ -1160,9 +1160,19 @@ export default function App() {
     '--reading-font-weight': String(readingProfile.fontWeight),
     '--reading-line-height': String(readingProfile.lineHeight),
     '--reading-letter-spacing': `${readingProfile.letterSpacing}em`,
+    '--reading-word-spacing': `${readingProfile.wordSpacing}em`,
     '--reading-paragraph-spacing': `${readingProfile.paragraphSpacing}em`,
     '--reading-first-line-indent': `${readingProfile.firstLineIndent}em`,
     '--reading-text-align': readingProfile.textAlign,
+    '--reading-word-break':
+      readingProfile.lineBreak === 'anywhere'
+        ? 'break-all'
+        : readingProfile.lineBreak === 'keep_words'
+          ? 'keep-all'
+          : 'keep-all',
+    '--reading-overflow-wrap': readingProfile.lineBreak === 'keep_words' ? 'break-word' : 'anywhere',
+    '--reading-font-style': readingProfile.fontStyle,
+    '--reading-text-decoration': readingProfile.textDecoration,
     '--reading-margin-x': `${readingProfile.marginX}vw`,
     '--reading-margin-y': `${readingProfile.marginY}vh`,
     '--reading-width': `${readingProfile.contentWidth}px`,
@@ -5716,7 +5726,10 @@ export default function App() {
   readerScreenHandle.setActions({
     openChapter: (chapter, options = {}) => bookWorkspace.openChapter(chapter, { ...options, novel: selectedNovel }),
     returnToChapters: () => navigateAppBack(() => returnToSourceSeriesDetails(bookWorkspace, externalSourceFeature)),
-    openSettings: openReaderSettings,
+    openSettings: () => {
+      setSettingsInitialTab('layout');
+      readerSettingsController.openPanel();
+    },
     openSync: () => setSyncPanelOpen(true),
     toggleAddon: () => setAddonOpen((open) => !open),
     openAddon: (tab: AddonTab) => {
@@ -5739,6 +5752,12 @@ export default function App() {
       changeReadingProfile({
         theme: readingProfile.theme === 'dark' || readingProfile.theme === 'midnight' ? 'light' : 'dark',
       }),
+    flushReadingSettings: () => {
+      void readerSettingsController.flush();
+    },
+    retryReadingSettings: readerSettingsController.retrySave,
+    updateReadingProfile: changeReadingProfile,
+    setReadingBookOverride: setReadingBookOverrideEnabled,
     toggleBookmark: (location: ReaderLocationSnapshot) => toggleBookmark(location),
     addHighlight: (location: ReaderLocationSnapshot, selection?: ReaderSelection) =>
       void addHighlight('yellow', location, selection),
@@ -6454,6 +6473,8 @@ export default function App() {
             bookEnrichmentAutomation={bookEnrichmentAutomation}
             libraryCount={novels.length}
             initialTab={settingsInitialTab}
+            openSync={() => setSyncPanelOpen(true)}
+            openBackup={backupFeature.openPanel}
             updateProfile={changeReadingProfile}
             setBookOverrideEnabled={setReadingBookOverrideEnabled}
             resetProfile={() =>

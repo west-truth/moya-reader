@@ -1,3 +1,4 @@
+import { RepositoryAddress } from './RepositoryAddress';
 import { useEffect, useRef, useState } from 'react';
 import { CompatibilityPreferencesPanel } from './CompatibilityPreferencesPanel';
 import { packageOperationMessage } from '../../extensions/packages/package-operation-error';
@@ -396,6 +397,9 @@ export function ApkExtensionsPanel({
               설치됨 {snapshot.packages.length}
             </button>
           </div>
+          {!installedOnly && repository && (
+            <RepositoryAddress key={repository.url} url={repository.url} checkedAt={repository.updatedAt} />
+          )}
           {!installedOnly && (
             <div className="extension-repository-add">
               <select

@@ -83,4 +83,22 @@ describe('reading profile', () => {
       ),
     ).toMatchObject({ pageSpread: 'double', pageTurnMotion: 'page' });
   });
+
+  it('normalizes advanced text layout options used by display and pagination', () => {
+    expect(
+      resolveReadingProfile(
+        updateGlobalReadingProfile(defaultSettings, {
+          wordSpacing: 0.8,
+          lineBreak: 'anywhere',
+          fontStyle: 'italic',
+          textDecoration: 'underline',
+        }),
+      ),
+    ).toMatchObject({
+      wordSpacing: 0.5,
+      lineBreak: 'anywhere',
+      fontStyle: 'italic',
+      textDecoration: 'underline',
+    });
+  });
 });

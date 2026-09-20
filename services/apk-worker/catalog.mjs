@@ -74,6 +74,7 @@ export class ApkSourceCatalog {
             schemaVersion: 2,
             id: sourceId(record.pkg, source.id, this.namespace),
             title: source.name,
+            lang: source.lang,
             description: this.description,
             kind: 'catalog',
             capabilities: [

@@ -5,6 +5,7 @@ import {
   READER_FONT_SIZE_MAX,
   READER_FONT_SIZE_MIN,
 } from './reader-settings-model';
+import { READING_PROFILE_LIMITS } from './reading-profile';
 import { SettingsSlider } from './SettingsSlider';
 import { resolveReaderThemeColors } from './reader-theme-colors';
 import type { ReaderSettingsController } from './useReaderSettingsDraft';
@@ -37,19 +38,28 @@ export function ReaderSettingsLayout({
           <SettingsSlider
             label="굵기"
             value={profile.fontWeight}
-            min={300}
-            max={800}
+            min={READING_PROFILE_LIMITS.fontWeight.min}
+            max={READING_PROFILE_LIMITS.fontWeight.max}
             step={100}
             onChange={(fontWeight) => updateProfile({ fontWeight })}
           />
           <SettingsSlider
             label="자간"
             value={profile.letterSpacing}
-            min={0}
-            max={0.2}
+            min={READING_PROFILE_LIMITS.letterSpacing.min}
+            max={READING_PROFILE_LIMITS.letterSpacing.max}
             step={0.01}
             suffix="em"
             onChange={(letterSpacing) => updateProfile({ letterSpacing })}
+          />
+          <SettingsSlider
+            label="단어 간격"
+            value={profile.wordSpacing}
+            min={READING_PROFILE_LIMITS.wordSpacing.min}
+            max={READING_PROFILE_LIMITS.wordSpacing.max}
+            step={0.02}
+            suffix="em"
+            onChange={(wordSpacing) => updateProfile({ wordSpacing })}
           />
         </div>
         <div className="reader-settings-inline-choice">
@@ -73,6 +83,51 @@ export function ReaderSettingsLayout({
             </button>
           </div>
         </div>
+        <div className="reader-settings-inline-choice">
+          <span>줄바꿈</span>
+          <div className="segmented" aria-label="본문 줄바꿈">
+            {(
+              [
+                ['default', '기본'],
+                ['keep_words', '단어 우선'],
+                ['anywhere', '글자 단위'],
+              ] as const
+            ).map(([value, label]) => (
+              <button
+                key={value}
+                type="button"
+                className={profile.lineBreak === value ? 'active' : ''}
+                onClick={() => updateProfile({ lineBreak: value })}
+                aria-pressed={profile.lineBreak === value}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+        </div>
+        <div className="reader-settings-inline-choice">
+          <span>글자 모양</span>
+          <div className="segmented" aria-label="본문 글자 모양">
+            <button
+              type="button"
+              className={profile.fontStyle === 'italic' ? 'active' : ''}
+              onClick={() => updateProfile({ fontStyle: profile.fontStyle === 'italic' ? 'normal' : 'italic' })}
+              aria-pressed={profile.fontStyle === 'italic'}
+            >
+              기울임
+            </button>
+            <button
+              type="button"
+              className={profile.textDecoration === 'underline' ? 'active' : ''}
+              onClick={() =>
+                updateProfile({ textDecoration: profile.textDecoration === 'underline' ? 'none' : 'underline' })
+              }
+              aria-pressed={profile.textDecoration === 'underline'}
+            >
+              밑줄
+            </button>
+          </div>
+        </div>
       </section>
 
       <section className="reader-settings-group reader-settings-layout-section">
@@ -81,16 +136,16 @@ export function ReaderSettingsLayout({
           <SettingsSlider
             label="줄 간격"
             value={profile.lineHeight}
-            min={1.35}
-            max={2.6}
+            min={READING_PROFILE_LIMITS.lineHeight.min}
+            max={READING_PROFILE_LIMITS.lineHeight.max}
             step={0.05}
             onChange={(lineHeight) => updateProfile({ lineHeight })}
           />
           <SettingsSlider
             label="문단 간격"
             value={profile.paragraphSpacing}
-            min={0.6}
-            max={2.4}
+            min={READING_PROFILE_LIMITS.paragraphSpacing.min}
+            max={READING_PROFILE_LIMITS.paragraphSpacing.max}
             step={0.05}
             suffix="em"
             onChange={(paragraphSpacing) => updateProfile({ paragraphSpacing })}
@@ -98,8 +153,8 @@ export function ReaderSettingsLayout({
           <SettingsSlider
             label="첫 줄 들여쓰기"
             value={profile.firstLineIndent}
-            min={0}
-            max={4}
+            min={READING_PROFILE_LIMITS.firstLineIndent.min}
+            max={READING_PROFILE_LIMITS.firstLineIndent.max}
             step={0.25}
             suffix="em"
             onChange={(firstLineIndent) => updateProfile({ firstLineIndent })}
@@ -113,8 +168,8 @@ export function ReaderSettingsLayout({
           <SettingsSlider
             label="가로 여백"
             value={profile.marginX}
-            min={3}
-            max={20}
+            min={READING_PROFILE_LIMITS.marginX.min}
+            max={READING_PROFILE_LIMITS.marginX.max}
             step={1}
             suffix="vw"
             onChange={(marginX) => updateProfile({ marginX })}
@@ -122,8 +177,8 @@ export function ReaderSettingsLayout({
           <SettingsSlider
             label="세로 여백"
             value={profile.marginY}
-            min={0}
-            max={12}
+            min={READING_PROFILE_LIMITS.marginY.min}
+            max={READING_PROFILE_LIMITS.marginY.max}
             step={1}
             suffix="vh"
             onChange={(marginY) => updateProfile({ marginY })}
@@ -163,6 +218,11 @@ export function ReaderSettingsLayout({
               fontWeight: profile.fontWeight,
               lineHeight: profile.lineHeight,
               letterSpacing: `${profile.letterSpacing}em`,
+              wordSpacing: `${profile.wordSpacing}em`,
+              fontStyle: profile.fontStyle,
+              textDecoration: profile.textDecoration,
+              wordBreak: profile.lineBreak === 'anywhere' ? 'break-all' : 'keep-all',
+              overflowWrap: profile.lineBreak === 'keep_words' ? 'break-word' : 'anywhere',
               gap: `${profile.paragraphSpacing}em`,
               textAlign: profile.textAlign,
             }}

@@ -47,6 +47,11 @@ export function useReaderBasicsScreenModel(options: ReaderBasicsScreenModelOptio
       chapter: options.chapter,
       chapters: options.chapters,
       settings,
+      settingsSaveState: {
+        saving: options.settingsController.saveStatus === 'saving',
+        dirty: options.settingsController.isDirty,
+        error: options.settingsController.saveError,
+      },
       bookmarks,
       highlights,
       localReadingPosition: options.localReadingPosition,
@@ -76,6 +81,9 @@ export function useReaderBasicsScreenModel(options: ReaderBasicsScreenModelOptio
     options.openRequestVersion,
     options.ttsIndex,
     settings,
+    options.settingsController.saveStatus,
+    options.settingsController.isDirty,
+    options.settingsController.saveError,
     settingsOpen,
     syncPanelOpen,
   ]);

@@ -22,7 +22,19 @@ function initialFormValues(form: ExternalSourceConnectionForm | undefined): Reco
   return Object.fromEntries(form?.fields.map((field) => [field.id, field.defaultValue ?? '']) ?? []);
 }
 
-function SourceCard({ source, controller }: { source: ExternalSourceView; controller: ExternalSourceController }) {
+function SourceCard({
+  source,
+  controller,
+  favorite,
+  toggleFavorite,
+  onBrowse,
+}: {
+  source: ExternalSourceView;
+  controller: ExternalSourceController;
+  favorite: boolean;
+  toggleFavorite: (id: string) => void;
+  onBrowse?: (id: ExternalSourceView['id']) => void;
+}) {
   const active = source.id === controller.activeSourceId;
   const connection = source.connection;
   const unavailable = connection.state === 'unavailable';
@@ -61,6 +73,21 @@ function SourceCard({ source, controller }: { source: ExternalSourceView; contro
         </span>
       </button>
 
+      <div className="installed-extension-actions">
+        <button
+          type="button"
+          aria-pressed={favorite}
+          aria-label={`${source.title} 즐겨찾기`}
+          onClick={() => toggleFavorite(source.id)}
+        >
+          {favorite ? '★ 즐겨찾기' : '☆ 즐겨찾기'}
+        </button>
+        {connected && onBrowse && (
+          <button type="button" onClick={() => onBrowse(source.id)}>
+            작품 탐색
+          </button>
+        )}
+      </div>
       {active && (
         <div className="external-source-settings-controls">
           {unavailable ? (
@@ -168,12 +195,18 @@ function SourceGroup({
   sources,
   controller,
   plugin,
+  favorites,
+  toggleFavorite,
+  onBrowse,
 }: {
   title: string;
   description: string;
   sources: readonly ExternalSourceView[];
   controller: ExternalSourceController;
   plugin?: boolean;
+  favorites: readonly string[];
+  toggleFavorite: (id: string) => void;
+  onBrowse?: (id: ExternalSourceView['id']) => void;
 }) {
   const Icon = plugin ? PlugZap : ShieldCheck;
   return (
@@ -188,7 +221,14 @@ function SourceGroup({
       {sources.length > 0 ? (
         <div className="external-source-settings-list">
           {sources.map((source) => (
-            <SourceCard key={source.id} source={source} controller={controller} />
+            <SourceCard
+              key={source.id}
+              source={source}
+              controller={controller}
+              favorite={favorites.includes(source.id)}
+              toggleFavorite={toggleFavorite}
+              onBrowse={onBrowse}
+            />
           ))}
         </div>
       ) : (
@@ -200,22 +240,116 @@ function SourceGroup({
   );
 }
 
-export function ExternalSourceSettingsPanel({ controller }: { controller: ExternalSourceController }) {
-  const builtIns = controller.sources.filter((source) => source.origin === 'built_in');
-  const plugins = controller.sources.filter((source) => source.origin === 'plugin');
+const FAVORITES_KEY = 'moya.source-favorites.v1';
+function loadFavorites(): string[] {
+  try {
+    const value: unknown = JSON.parse(localStorage.getItem(FAVORITES_KEY) ?? '[]');
+    return Array.isArray(value) ? value.filter((id): id is string => typeof id === 'string') : [];
+  } catch {
+    return [];
+  }
+}
+
+export function ExternalSourceSettingsPanel({
+  controller,
+  onBrowse,
+}: {
+  controller: ExternalSourceController;
+  onBrowse?: (id: ExternalSourceView['id']) => void;
+}) {
+  const [query, setQuery] = useState('');
+  const [kind, setKind] = useState('all');
+  const [language, setLanguage] = useState('*');
+  const [state, setState] = useState('all');
+  const [favorites, setFavorites] = useState(loadFavorites);
+  const [error, setError] = useState(false);
+  const toggleFavorite = (id: string) => {
+    const next = favorites.includes(id) ? favorites.filter((value) => value !== id) : [...favorites, id];
+    try {
+      localStorage.setItem(FAVORITES_KEY, JSON.stringify(next));
+      setFavorites(next);
+      setError(false);
+    } catch {
+      setError(true);
+    }
+  };
+  const filtered = controller.sources.filter(
+    (source) =>
+      `${source.title} ${source.description ?? ''}`.toLocaleLowerCase().includes(query.trim().toLocaleLowerCase()) &&
+      (kind === 'all' || (source.contentKind ?? 'unknown') === kind) &&
+      (language === '*' || (source.lang ?? 'unknown') === language) &&
+      (state === 'all' || (state === 'favorite' ? favorites.includes(source.id) : source.connection.state === state)),
+  );
+  const languages = [
+    ...new Set(controller.sources.map((source) => source.lang).filter((lang): lang is string => Boolean(lang))),
+  ].sort();
   return (
     <div className="external-source-settings-sections">
+      <div className="source-settings-filters">
+        <label>
+          소스 검색
+          <input
+            type="search"
+            value={query}
+            onChange={(event) => setQuery(event.target.value)}
+            placeholder="이름 또는 설명"
+          />
+        </label>
+        <label>
+          콘텐츠
+          <select value={kind} onChange={(event) => setKind(event.target.value)}>
+            <option value="all">전체</option>
+            <option value="text">소설·텍스트</option>
+            <option value="image">만화·이미지</option>
+            <option value="unknown">종류 정보 없음</option>
+          </select>
+        </label>
+        <label>
+          언어
+          <select value={language} onChange={(event) => setLanguage(event.target.value)}>
+            <option value="*">전체</option>
+            {languages.map((lang) => (
+              <option key={lang} value={lang}>
+                {lang === 'all' ? '다국어' : lang}
+              </option>
+            ))}
+            <option value="unknown">언어 정보 없음</option>
+          </select>
+        </label>
+        <label>
+          상태
+          <select value={state} onChange={(event) => setState(event.target.value)}>
+            <option value="all">전체</option>
+            <option value="favorite">즐겨찾기</option>
+            <option value="connected">연결됨</option>
+            <option value="disconnected">연결 안 됨</option>
+            <option value="reauthorization_required">다시 연결 필요</option>
+            <option value="unavailable">사용할 수 없음</option>
+          </select>
+        </label>
+      </div>
+      <p role="status">
+        {filtered.length} / {controller.sources.length}개 소스 · 즐겨찾기는 이 기기에 저장됩니다.
+      </p>
+      {error && <p role="alert">즐겨찾기를 저장하지 못했습니다. 브라우저 저장공간을 확인해 주세요.</p>}
+      {filtered.length === 0 && <p>조건에 맞는 소스가 없습니다. 검색어나 필터를 바꿔 주세요.</p>}
       <SourceGroup
         title="기본 외부 소스"
-        description="앱이 제공하는 저장소 연결입니다. 인증 정보는 이 기기의 자동 생성 키로 보호합니다."
-        sources={builtIns}
+        description="앱이 제공하는 저장소 연결입니다."
+        sources={filtered.filter((source) => source.origin === 'built_in')}
         controller={controller}
+        favorites={favorites}
+        toggleFavorite={toggleFavorite}
+        onBrowse={onBrowse}
       />
       <SourceGroup
-        title="플러그인 제공 소스"
-        description="향후 커뮤니티 플러그인이 제공하는 작품 사이트와 카탈로그를 여기에서 따로 관리합니다."
-        sources={plugins}
+        title="설치한 소스"
+        description="설치한 패키지가 제공하는 작품 사이트와 카탈로그입니다."
+        sources={filtered.filter((source) => source.origin === 'plugin')}
         controller={controller}
+        favorites={favorites}
+        toggleFavorite={toggleFavorite}
+        onBrowse={onBrowse}
         plugin
       />
     </div>

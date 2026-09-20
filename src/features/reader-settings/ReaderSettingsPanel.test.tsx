@@ -35,6 +35,8 @@ describe('ReaderSettingsPanel', () => {
         providerExecutionRuntime="none"
         extensions={[]}
         externalSources={externalSources}
+        openSync={vi.fn()}
+        openBackup={vi.fn()}
         updateProfile={vi.fn()}
         setBookOverrideEnabled={vi.fn()}
         resetProfile={vi.fn()}
@@ -45,8 +47,11 @@ describe('ReaderSettingsPanel', () => {
 
     expect(markup).toContain('reader-settings-dialog');
     expect(markup).toContain('reader-settings-backdrop');
-    expect(markup.match(/role="tab"/g)).toHaveLength(6);
-    expect(markup).toContain('Dropbox, 작품 저장소');
+    expect(markup.match(/role="tab"/g)).toHaveLength(8);
+    expect(markup).toContain('콘텐츠 소스');
+    expect(markup).toContain('기능 확장');
+    expect(markup).toContain('다운로드');
+    expect(markup).toContain('동기화');
     expect(markup).toContain('테마, 글꼴, 밝기');
     expect(markup).toContain('글자, 여백, 읽기 방식');
     expect(markup).toContain('변경 사항은 자동 저장됩니다.');
@@ -73,6 +78,8 @@ describe('ReaderSettingsPanel', () => {
         providerExecutionRuntime="server"
         extensions={[]}
         externalSources={externalSources}
+        openSync={vi.fn()}
+        openBackup={vi.fn()}
         updateProfile={vi.fn()}
         setBookOverrideEnabled={vi.fn()}
         resetProfile={vi.fn()}
@@ -84,5 +91,32 @@ describe('ReaderSettingsPanel', () => {
     expect(markup).toContain('변경 사항을 저장하는 중입니다.');
     expect(markup).not.toContain('글자와 배경의 대비가 낮아');
     expect(markup).not.toContain('책 설정 초기화');
+  });
+
+  it('keeps source packages with content sources and separates feature extensions', () => {
+    const common = {
+      controller: controller(),
+      profile: DEFAULT_READING_PROFILE,
+      bookOverrideEnabled: false,
+      contrastWarning: false,
+      gestureBindings: DEFAULT_GESTURE_BINDINGS,
+      platformRuntime: { kind: 'browser', hasTauri: false, isMobileWebView: false, userAgent: 'Test browser' } as const,
+      providerExecutionRuntime: 'none' as const,
+      extensions: [],
+      externalSources,
+      installedPackages: <div>설치된 소스 패키지</div>,
+      openSync: vi.fn(),
+      openBackup: vi.fn(),
+      updateProfile: vi.fn(),
+      setBookOverrideEnabled: vi.fn(),
+      resetProfile: vi.fn(),
+      updateGestureBindings: vi.fn(),
+      setExtensionEnabled: vi.fn(),
+    };
+    const sourceMarkup = renderToStaticMarkup(<ReaderSettingsPanel {...common} initialTab="sources" />);
+    const extensionMarkup = renderToStaticMarkup(<ReaderSettingsPanel {...common} initialTab="extensions" />);
+    expect(sourceMarkup).toContain('설치된 소스 패키지');
+    expect(extensionMarkup).not.toContain('설치된 소스 패키지');
+    expect(extensionMarkup).toContain('작품을 제공하는 패키지는 콘텐츠 소스에서 관리합니다.');
   });
 });

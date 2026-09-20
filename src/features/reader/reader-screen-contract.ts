@@ -7,6 +7,7 @@ import type {
   ReaderAnchor,
   ReaderHighlight,
   ReaderSettings,
+  ReadingProfileOverride,
 } from '../../domain/types';
 import type { ActiveTTSPlayback } from '../../providers/tts-playback-session';
 import type { ReadingPosition } from '../../sync/types';
@@ -64,6 +65,7 @@ export interface ReaderScreenModel {
   readonly chapter: Chapter;
   readonly chapters: readonly Chapter[];
   readonly settings: ReaderSettings;
+  readonly settingsSaveState?: { readonly saving: boolean; readonly dirty: boolean; readonly error: boolean };
   readonly bookmarks: readonly Bookmark[];
   readonly highlights: readonly ReaderHighlight[];
   readonly localReadingPosition?: ReadingPosition;
@@ -82,12 +84,16 @@ export interface ReaderScreenActions {
   readonly returnToChapters: () => void;
   readonly openSettings: () => void;
   readonly openSync: () => void;
+  readonly flushReadingSettings: () => void;
+  readonly retryReadingSettings: () => void;
   readonly toggleAddon: () => void;
   readonly openAddon: (tab: ReaderAddonTab) => void;
   readonly closeActiveLayer: () => boolean;
   readonly adjustFontSize: (delta: number) => void;
   readonly adjustContentWidth: (delta: number) => void;
   readonly toggleNightTheme: () => void;
+  readonly updateReadingProfile: (patch: ReadingProfileOverride) => void;
+  readonly setReadingBookOverride: (enabled: boolean) => void;
   readonly toggleBookmark: (location: ReaderLocationSnapshot) => Promise<void>;
   readonly addHighlight: (location: ReaderLocationSnapshot, selection?: ReaderSelection) => void;
   readonly highlightSelection: (
@@ -136,12 +142,16 @@ const NO_ACTIONS: ReaderScreenActions = {
   returnToChapters: () => undefined,
   openSettings: () => undefined,
   openSync: () => undefined,
+  flushReadingSettings: () => undefined,
+  retryReadingSettings: () => undefined,
   toggleAddon: () => undefined,
   openAddon: () => undefined,
   closeActiveLayer: () => false,
   adjustFontSize: () => undefined,
   adjustContentWidth: () => undefined,
   toggleNightTheme: () => undefined,
+  updateReadingProfile: () => undefined,
+  setReadingBookOverride: () => undefined,
   toggleBookmark: async () => undefined,
   addHighlight: () => undefined,
   highlightSelection: () => undefined,

@@ -1,3 +1,4 @@
+import { SettingsSlider } from '../reader-settings/SettingsSlider';
 import {
   Check,
   Pause,
@@ -409,7 +410,6 @@ function VoicePoolEditor({
 
 export default function TTSAddonPanel(props: TTSAddonPanelProps) {
   const localStatic = useOptionalAppRuntime()?.product?.kind === 'local-static';
-  const speedId = useId();
   const chapterEndId = useId();
   const sleepTimerId = useId();
   const systemVoiceId = useId();
@@ -624,77 +624,56 @@ export default function TTSAddonPanel(props: TTSAddonPanelProps) {
           )}
         </div>
 
-        <label className="field-label" htmlFor={speedId}>
-          재생 속도 {props.speed.toFixed(1)}x
-        </label>
-        <input
-          id={speedId}
-          type="range"
-          min="0.6"
-          max="1.8"
-          step="0.1"
+        <SettingsSlider
+          label="재생 속도"
+          min={0.6}
+          max={1.8}
+          step={0.1}
+          suffix="x"
           value={props.speed}
           disabled={props.unavailable}
-          onChange={(event) => props.changeSpeed(Number(event.target.value))}
+          onChange={props.changeSpeed}
         />
         <div className="tts-playback-setting-grid">
-          <label>
-            <span>피치 {props.playbackSettings.pitch.toFixed(1)}</span>
-            <input
-              type="range"
-              min="0.5"
-              max="2"
-              step="0.1"
+          <div>
+            <SettingsSlider
+              label="피치"
+              min={0.5}
+              max={2}
+              step={0.1}
               value={props.playbackSettings.pitch}
               disabled={!props.pitchSupported}
-              onChange={(event) => props.changePlaybackSettings({ pitch: Number(event.target.value) })}
+              onChange={(pitch) => props.changePlaybackSettings({ pitch })}
             />
             {!props.pitchSupported && <small>이 음성에서는 지원하지 않음</small>}
-          </label>
-          <label>
-            <span>볼륨 {Math.round(props.playbackSettings.volume * 100)}%</span>
-            <input
-              type="range"
-              min="0"
-              max="1"
-              step="0.05"
-              value={props.playbackSettings.volume}
-              onChange={(event) => props.changePlaybackSettings({ volume: Number(event.target.value) })}
+          </div>
+          <SettingsSlider
+            label="볼륨"
+            min={0}
+            max={100}
+            step={5}
+            suffix="%"
+            value={Math.round(props.playbackSettings.volume * 100)}
+            onChange={(volume) => props.changePlaybackSettings({ volume: volume / 100 })}
+          />
+          {(
+            [
+              ['sentencePauseMs', '문장 간격', 1200, 10],
+              ['paragraphPauseMs', '문단 간격', 2500, 20],
+              ['chapterPauseMs', '화 간격', 5000, 100],
+            ] as const
+          ).map(([key, label, max, step]) => (
+            <SettingsSlider
+              key={key}
+              label={label}
+              min={0}
+              max={max}
+              step={step}
+              suffix="ms"
+              value={props.playbackSettings[key]}
+              onChange={(value) => props.changePlaybackSettings({ [key]: value })}
             />
-          </label>
-          <label>
-            <span>문장 간격 {props.playbackSettings.sentencePauseMs}ms</span>
-            <input
-              type="range"
-              min="0"
-              max="1200"
-              step="10"
-              value={props.playbackSettings.sentencePauseMs}
-              onChange={(event) => props.changePlaybackSettings({ sentencePauseMs: Number(event.target.value) })}
-            />
-          </label>
-          <label>
-            <span>문단 간격 {props.playbackSettings.paragraphPauseMs}ms</span>
-            <input
-              type="range"
-              min="0"
-              max="2500"
-              step="20"
-              value={props.playbackSettings.paragraphPauseMs}
-              onChange={(event) => props.changePlaybackSettings({ paragraphPauseMs: Number(event.target.value) })}
-            />
-          </label>
-          <label>
-            <span>화 간격 {props.playbackSettings.chapterPauseMs}ms</span>
-            <input
-              type="range"
-              min="0"
-              max="5000"
-              step="100"
-              value={props.playbackSettings.chapterPauseMs}
-              onChange={(event) => props.changePlaybackSettings({ chapterPauseMs: Number(event.target.value) })}
-            />
-          </label>
+          ))}
         </div>
         <label className="field-label" htmlFor={chapterEndId}>
           화가 끝나면

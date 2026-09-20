@@ -797,10 +797,12 @@ async function runReaderSmoke() {
       );
     }
 
-    await page.getByRole('button', { name: '읽기 설정 열기' }).click();
+    await page.getByRole('button', { name: '빠른 보기 열기' }).click();
+    await page.getByRole('button', { name: '글꼴·색상·조판 전체 설정' }).click();
     await page.getByRole('heading', { name: '설정', exact: true }).waitFor({ state: 'visible', timeout: timeoutMs });
     await assertNoHorizontalOverflow(page, 'desktop settings panel');
-    await page.getByRole('tab', { name: /^본문/u }).click();
+    if (await page.getByRole('tab', { name: /^리더 보기/u }).isVisible())
+      await page.getByRole('tab', { name: /^리더 보기/u }).click();
     const modeLock = page.locator('[aria-label="읽기 방식"]');
     if ((await modeLock.getByRole('button').count()) !== 3) {
       throw new Error('Reader settings must expose auto, scroll, and page locks');
@@ -987,8 +989,10 @@ async function runReaderSmoke() {
       return;
     }
 
-    await page.getByRole('button', { name: '읽기 설정 열기' }).click();
-    await page.getByRole('tab', { name: /^본문/u }).click();
+    await page.getByRole('button', { name: '빠른 보기 열기' }).click();
+    await page.getByRole('button', { name: '글꼴·색상·조판 전체 설정' }).click();
+    if (await page.getByRole('tab', { name: /^리더 보기/u }).isVisible())
+      await page.getByRole('tab', { name: /^리더 보기/u }).click();
     await page.locator('[aria-label="읽기 방식"]').getByRole('button', { name: '스크롤', exact: true }).click();
     await page.waitForTimeout(150);
     await page.getByRole('button', { name: '설정 닫기' }).click();
@@ -999,8 +1003,10 @@ async function runReaderSmoke() {
       throw new Error('Scroll lock allowed PageDown to switch into pagination');
     }
 
-    await page.getByRole('button', { name: '읽기 설정 열기' }).click();
-    await page.getByRole('tab', { name: /^본문/u }).click();
+    await page.getByRole('button', { name: '빠른 보기 열기' }).click();
+    await page.getByRole('button', { name: '글꼴·색상·조판 전체 설정' }).click();
+    if (await page.getByRole('tab', { name: /^리더 보기/u }).isVisible())
+      await page.getByRole('tab', { name: /^리더 보기/u }).click();
     await page.locator('[aria-label="읽기 방식"]').getByRole('button', { name: '페이지', exact: true }).click();
     await page.waitForTimeout(150);
     await page.getByRole('button', { name: '설정 닫기' }).click();
@@ -1012,8 +1018,10 @@ async function runReaderSmoke() {
       throw new Error('Page lock allowed wheel input to switch into continuous scroll');
     }
 
-    await page.getByRole('button', { name: '읽기 설정 열기' }).click();
-    await page.getByRole('tab', { name: /^본문/u }).click();
+    await page.getByRole('button', { name: '빠른 보기 열기' }).click();
+    await page.getByRole('button', { name: '글꼴·색상·조판 전체 설정' }).click();
+    if (await page.getByRole('tab', { name: /^리더 보기/u }).isVisible())
+      await page.getByRole('tab', { name: /^리더 보기/u }).click();
     await page.locator('[aria-label="읽기 방식"]').getByRole('button', { name: '자동 전환', exact: true }).click();
     await page.waitForTimeout(150);
     await page.getByRole('button', { name: '설정 닫기' }).click();

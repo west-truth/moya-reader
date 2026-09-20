@@ -121,6 +121,11 @@
   --app-cover-shadow: 0 10px 24px rgb(26 29 34 / 18%);
   --reading-font-size: 18px;
   --reading-line-height: 1.85;
+  --reading-word-spacing: 0;
+  --reading-word-break: keep-all;
+  --reading-overflow-wrap: anywhere;
+  --reading-font-style: normal;
+  --reading-text-decoration: none;
   --reading-paragraph-spacing: 1.15em;
   --reading-margin-x: 12vw;
   --reading-width: 760px;

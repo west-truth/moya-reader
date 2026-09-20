@@ -964,7 +964,7 @@
   padding: 14px;
 }
 .fixed-doc-comic-settings > label,
-.fixed-doc-comic-settings fieldset label {
+.fixed-doc-comic-settings fieldset > label {
   display: grid;
   min-height: 34px;
   grid-template-columns: minmax(82px, 1fr) minmax(120px, 1.5fr) auto;
@@ -974,7 +974,7 @@
   font-size: 11px;
 }
 .fixed-doc-comic-settings select,
-.fixed-doc-comic-settings button {
+.fixed-doc-comic-settings button:not(.reader-settings-slider-thumb, .reader-settings-slider-step) {
   min-height: 31px;
   padding: 0 9px;
   border: 1px solid rgba(255, 255, 255, 0.14);
@@ -1559,8 +1559,8 @@
     gap: 8px;
   }
   .fixed-doc-footer.has-chapter-steps {
-    grid-template-columns: 34px 42px minmax(70px, 1fr) 36px 34px;
-    padding: 0 56px env(safe-area-inset-bottom, 0px) 6px;
+    grid-template-columns: 34px 42px minmax(70px, 1fr) 42px 34px;
+    padding: 0 6px env(safe-area-inset-bottom, 0px);
   }
   .fixed-doc-chapter-step {
     min-width: 34px;
