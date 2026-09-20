@@ -193,7 +193,6 @@ function SourceCard({
 
 function SourceGroup({
   title,
-  description,
   sources,
   controller,
   plugin,
@@ -202,7 +201,6 @@ function SourceGroup({
   onBrowse,
 }: {
   title: string;
-  description: string;
   sources: readonly ExternalSourceView[];
   controller: ExternalSourceController;
   plugin?: boolean;
@@ -217,7 +215,6 @@ function SourceGroup({
         <Icon size={18} aria-hidden="true" />
         <div>
           <h3>{title}</h3>
-          <p>{description}</p>
         </div>
       </div>
       {sources.length > 0 ? (
@@ -331,13 +328,12 @@ export function ExternalSourceSettingsPanel({
         </label>
       </div>
       <p role="status">
-        {filtered.length} / {controller.sources.length}개 소스 · 즐겨찾기는 이 기기에 저장됩니다.
+        {filtered.length} / {controller.sources.length}개 소스
       </p>
       {error && <p role="alert">즐겨찾기를 저장하지 못했습니다. 브라우저 저장공간을 확인해 주세요.</p>}
       {filtered.length === 0 && <p>조건에 맞는 소스가 없습니다. 검색어나 필터를 바꿔 주세요.</p>}
       <SourceGroup
         title="기본 외부 소스"
-        description="앱이 제공하는 저장소 연결입니다."
         sources={filtered.filter((source) => source.origin === 'built_in')}
         controller={controller}
         favorites={favorites}
@@ -346,7 +342,6 @@ export function ExternalSourceSettingsPanel({
       />
       <SourceGroup
         title="설치한 소스"
-        description="설치한 패키지가 제공하는 작품 사이트와 카탈로그입니다."
         sources={filtered.filter((source) => source.origin === 'plugin')}
         controller={controller}
         favorites={favorites}

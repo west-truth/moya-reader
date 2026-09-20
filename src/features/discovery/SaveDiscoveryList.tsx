@@ -68,7 +68,7 @@ export function SaveDiscoveryList({
         </button>
       }
     >
-      <p>현재 소스와 선택한 분류를 저장합니다. 검색어는 저장하지 않습니다.</p>
+      <p>소스와 분류를 저장합니다. 검색어는 제외됩니다.</p>
       <label>
         탭
         <select value={target} onChange={(e) => setTarget(e.target.value)}>

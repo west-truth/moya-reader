@@ -88,9 +88,7 @@ export function ExtensionRepositoryBrowser({
   const locked = busy || disabled;
   return (
     <section className="extension-repository-browser" aria-label="확장 저장소">
-      <p className="field-help">
-        확장 저장소의 JSON 주소를 추가하세요. APK·Mangayomi 저장소는 파일 형식에 맞는 확장 관리로 안내합니다.
-      </p>
+      <p className="field-help">확장 저장소 주소를 추가하세요.</p>
       <form
         className="extension-repository-add"
         onSubmit={(event) => {

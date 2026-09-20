@@ -29,7 +29,6 @@ describe('ReaderSettingsLayout', () => {
     expect(markup).toContain('aria-label="읽기 방식"');
     expect(markup).toContain('>스크롤<');
     expect(markup).not.toContain('연속 스크롤');
-    expect(markup).toContain('입력 방식에 맞춰');
     expect(markup).toContain('aria-label="페이지 전환 효과"');
     expect(markup).toContain('aria-label="페이지 조판"');
     expect(markup).toContain('>두 쪽<');

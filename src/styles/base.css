@@ -37,6 +37,7 @@ textarea {
 }
 
 button {
+  background: transparent;
   border: 0;
   color: inherit;
 }
@@ -45,6 +46,7 @@ input,
 select,
 textarea {
   color: var(--text);
+  accent-color: var(--app-accent);
 }
 
 input::placeholder,
@@ -90,4 +92,25 @@ textarea::placeholder {
     animation-duration: 0.01ms !important;
     animation-iteration-count: 1 !important;
   }
+}
+
+.app-wordmark {
+  display: inline-block;
+  flex-shrink: 0;
+  width: 112px;
+  height: 37px;
+  background: var(--app-text-strong);
+  mask-size: contain;
+  mask-position: left center;
+  mask-repeat: no-repeat;
+}
+.library-menu-title {
+  display: none;
+}
+[data-hide-app-logo] .app-wordmark,
+[data-hide-app-logo] .library-brand-lockup {
+  display: none;
+}
+[data-hide-app-logo] .library-menu-title {
+  display: inline;
 }

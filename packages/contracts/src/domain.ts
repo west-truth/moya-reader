@@ -597,6 +597,8 @@ export interface ReaderSettings {
   cloudVaultUpdatedAt?: string;
   /** Global application chrome theme. Falls back to the Reader theme for older settings. */
   applicationTheme?: ReadingProfileTheme;
+  /** Hide decorative branding on this device. */
+  hideAppLogo?: boolean;
   /** Custom application colors. Kept separate from book-specific Reader colors. */
   applicationThemeColors?: Partial<ApplicationThemeColors>;
   theme: ReaderTheme;

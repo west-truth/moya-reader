@@ -87,7 +87,7 @@ export function DownloadSettingsPanel({ controller }: { readonly controller: Ext
           <Download size={18} aria-hidden="true" />
           <div>
             <h3>다음 회차 미리 받기</h3>
-            <p>읽고 있는 작품과 연결된 콘텐츠 소스에서 다음 회차를 책장으로 가져옵니다.</p>
+            <p>다음 회차를 미리 다운로드합니다.</p>
           </div>
         </div>
         <label className="reader-settings-control-toggle">
@@ -127,7 +127,7 @@ export function DownloadSettingsPanel({ controller }: { readonly controller: Ext
             <HardDrive size={18} aria-hidden="true" />
             <div>
               <h3>읽은 회차 정리</h3>
-              <p>읽음 표시된 회차 중 뒤의 회차를 충분히 읽은 다운로드만 정리합니다.</p>
+              <p>설정한 회차 수만큼 더 읽으면 이전 다운로드를 정리합니다.</p>
             </div>
           </div>
           <label className="reader-settings-control-toggle">
@@ -161,8 +161,8 @@ export function DownloadSettingsPanel({ controller }: { readonly controller: Ext
             </select>
           </label>
           <p className="field-help">
-            현재 이어볼 회차, 안 읽은 회차, 즐겨찾기 작품, 직접 가져온 파일은 보존합니다. 리더나 다운로드 작업 중에는
-            정리하지 않습니다. 삭제한 회차는 다시 다운로드해야 하며, 소스 사정에 따라 다시 받지 못할 수 있습니다.
+            이어볼 회차·미독 회차·즐겨찾기·가져온 파일은 보존합니다. 독서·다운로드 중에는 정리하지 않습니다. 삭제 후
+            다시 받지 못할 수 있습니다.
           </p>
           <div className="installed-extension-actions">
             <button type="button" disabled={retention.busy || controller.busy} onClick={() => void retention.inspect()}>
@@ -211,13 +211,9 @@ export function DownloadSettingsPanel({ controller }: { readonly controller: Ext
           <Server size={18} aria-hidden="true" />
           <div>
             <h3>회차 다운로드 대기열</h3>
-            <p>self-host 소스가 원문이나 이미지를 받아 Moya 책장에 저장합니다.</p>
           </div>
         </div>
-        <p className="reader-settings-fact">
-          소스별 요청 제한과 현재 다운로드 대기열을 따릅니다. Wi-Fi 여부는 서버가 휴대폰 연결 상태를 알 수 없어 강제하지
-          않습니다.
-        </p>
+        <p className="reader-settings-fact">서버에서 다운로드하므로 휴대폰의 Wi-Fi 설정은 적용되지 않습니다.</p>
         <dl className="download-policy-facts">
           <div>
             <dt>동시에 받기</dt>
@@ -232,9 +228,7 @@ export function DownloadSettingsPanel({ controller }: { readonly controller: Ext
             <dd>저장된 대기열은 다음 접속에서 복구 가능. 서버에서 진행 중인 요청은 즉시 취소되지 않을 수 있음</dd>
           </div>
         </dl>
-        <p className="field-help">
-          이 정책은 회차 대기열에 적용됩니다. 자동 미리 받기와 개별 파일 가져오기는 별도 작업입니다.
-        </p>
+        <p className="field-help">회차 대기열에 적용됩니다. 미리 받기·파일 가져오기는 제외됩니다.</p>
       </section>
 
       <section className="settings-section-card">
@@ -242,13 +236,9 @@ export function DownloadSettingsPanel({ controller }: { readonly controller: Ext
           <HardDrive size={18} aria-hidden="true" />
           <div>
             <h3>이 기기와 파일 저장</h3>
-            <p>브라우저 오프라인 저장과 파일 내보내기는 서버 책장 저장과 별개입니다.</p>
+            <p>서버와 별도로 이 기기에 저장한 데이터입니다.</p>
           </div>
         </div>
-        <p className="reader-settings-fact">
-          현재 플랫폼이 제공하는 저장 위치만 사용할 수 있습니다. 서버의 임의 경로나 지원하지 않는 CBZ 저장 옵션은
-          노출하지 않습니다.
-        </p>
         <DeviceStorageEstimate />
       </section>
     </div>

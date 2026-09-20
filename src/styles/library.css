@@ -201,7 +201,7 @@
   cursor: pointer;
 }
 
-.library-brand-lockup img {
+.library-brand-lockup .app-wordmark {
   width: 112px;
   height: 37px;
   object-fit: contain;

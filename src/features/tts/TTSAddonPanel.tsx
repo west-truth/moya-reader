@@ -744,7 +744,7 @@ export default function TTSAddonPanel(props: TTSAddonPanelProps) {
             />
             준비된 음성만 사용
           </label>
-          <small>저장된 provider 음성이 없으면 네트워크 요청 없이 시스템 음성으로 이어서 읽습니다.</small>
+          <small>저장된 음성이 없으면 시스템 음성으로 계속 읽습니다.</small>
         </fieldset>
         <fieldset className="tts-skip-types">
           <legend>읽지 않을 내용</legend>
@@ -1253,9 +1253,7 @@ export default function TTSAddonPanel(props: TTSAddonPanelProps) {
                     />
                     충전 중에만 재개
                   </label>
-                  <small>
-                    앱이 종료된 뒤 남은 음성을 복구할 때만 적용됩니다. 현재 화면의 준비 작업은 바로 시작합니다.
-                  </small>
+                  <small>앱을 다시 열 때의 음성 복구에 적용됩니다.</small>
                 </fieldset>
               )}
               <button

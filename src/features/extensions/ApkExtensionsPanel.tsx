@@ -297,10 +297,7 @@ export function ApkExtensionsPanel({
           ? 'Mihon·Tachiyomi·Aniyomi의 만화 확장을 설치합니다. 이미지 페이지를 제공하는 소설도 사용할 수 있습니다.'
           : 'Mangayomi JavaScript 확장을 실행합니다. Dart 확장은 지원하지 않습니다. 인증 서버 등 원본 확장의 옵션은 설치 후 설정할 수 있습니다.'}
       </p>
-      <p className="field-help">
-        파일 형식은 자동으로 확인합니다. 설치되어도 사이트 인증이나 지원하지 않는 기능 때문에 일부 동작이 제한될 수
-        있습니다.
-      </p>
+      <p className="field-help">일부 확장은 로그인이나 추가 설정이 필요합니다.</p>
       {error && (
         <p className="field-help warning" role="alert">
           {error}

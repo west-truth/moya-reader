@@ -75,6 +75,7 @@ import { useReaderBasicsScreenModel } from './features/reader-settings/useReader
 import { useActiveReaderFont } from './features/reader-settings/useActiveReaderFont';
 import { resolveReaderThemeColors } from './features/reader-settings/reader-theme-colors';
 import {
+  accentForeground,
   appThemeColor,
   isDarkThemeColor,
   normalizeApplicationThemeColors,
@@ -2066,18 +2067,16 @@ export default function App() {
     const appTheme = resolveAppTheme(settings.applicationTheme ?? readingProfile.theme);
     const customColors = normalizeApplicationThemeColors(settings.applicationThemeColors);
     root.dataset.theme = appTheme;
+    root.toggleAttribute('data-hide-app-logo', settings.hideAppLogo === true);
     root.style.setProperty('--app-custom-background', customColors.background);
     root.style.setProperty('--app-custom-surface', customColors.surface);
     root.style.setProperty('--app-custom-text', customColors.text);
     root.style.setProperty('--app-custom-accent', customColors.accent);
-    root.style.setProperty(
-      '--app-custom-accent-contrast',
-      isDarkThemeColor(customColors.accent) ? '#ffffff' : '#111315',
-    );
+    root.style.setProperty('--app-custom-accent-contrast', accentForeground(customColors.accent));
     root.style.colorScheme = appTheme === 'custom' && !isDarkThemeColor(customColors.background) ? 'light' : 'dark';
     if (appTheme === 'light' || appTheme === 'sepia') root.style.colorScheme = 'light';
     document.querySelector('meta[name="theme-color"]')?.setAttribute('content', appThemeColor(appTheme, customColors));
-  }, [readingProfile.theme, settings.applicationTheme, settings.applicationThemeColors]);
+  }, [readingProfile.theme, settings.applicationTheme, settings.applicationThemeColors, settings.hideAppLogo]);
 
   useEffect(() => {
     activeNovelIdRef.current = selectedNovel?.id;

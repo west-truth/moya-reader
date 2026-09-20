@@ -182,8 +182,7 @@ export function CompatibilityPreferencesPanel({
         <details>
           <summary>로컬 서버 접근 허용</summary>
           <p className="field-help">
-            확장이 사용하는 인증 서버가 로컬·사설 주소라면 허용할 주소를 한 줄에 하나씩 입력하세요. 경로 없이
-            프로토콜·호스트·포트만 입력합니다. 서버에서 실행할 때 localhost는 서버 자신을 가리킵니다.
+            인증 서버 주소를 한 줄에 하나씩 입력하세요(예: http://192.168.1.10:8080). localhost는 Moya 서버를 뜻합니다.
           </p>
           <textarea
             aria-label="허용할 로컬 서버 주소"
@@ -204,10 +203,7 @@ export function CompatibilityPreferencesPanel({
         )}
       <details className="extension-settings-note">
         <summary>설정 저장 및 연결 안내</summary>
-        <p className="field-help">
-          옵션과 인증 정보는 실행하는 서버 또는 기기에 암호화해 보관합니다. 저장 후 작품의 회차를 열어 연결 상태를
-          확인할 수 있습니다.
-        </p>
+        <p className="field-help">인증 정보는 암호화해 저장합니다.</p>
       </details>
       {message && (
         <p role="status" className="field-help">

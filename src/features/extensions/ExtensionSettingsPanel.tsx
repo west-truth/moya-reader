@@ -118,7 +118,6 @@ export function ExtensionSettingsPanel({
           <Boxes size={18} aria-hidden="true" />
           <div>
             <h3>내장 기능 확장</h3>
-            <p>앱과 함께 검토·배포되며 언제든 이 기기에서 끌 수 있습니다.</p>
           </div>
         </div>
         <div className="extension-settings-list">
@@ -137,7 +136,6 @@ export function ExtensionSettingsPanel({
           <ShieldCheck size={18} aria-hidden="true" />
           <div>
             <h3>커뮤니티 기능 확장</h3>
-            <p>앱 기능을 추가하는 패키지입니다. 작품을 제공하는 패키지는 콘텐츠 소스에서 관리합니다.</p>
           </div>
         </div>
         {community.length === 0 ? (

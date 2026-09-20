@@ -3,6 +3,7 @@ import type { ReaderSettings } from '../domain/types';
 /** Presentation and input preferences belong to this browser, including per-book overrides. */
 export const DEVICE_READER_SETTING_KEYS = [
   'applicationTheme',
+  'hideAppLogo',
   'applicationThemeColors',
   'theme',
   'font',

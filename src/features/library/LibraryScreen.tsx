@@ -77,7 +77,7 @@ function LibraryEmptyState({ model, actions }: LibraryScreenProps) {
     >
       <FileText size={40} />
       <h2>읽을 파일을 책장에 추가하세요</h2>
-      <p>TXT·Markdown·EPUB 묶음 ZIP과 PDF, ZIP/CBZ·RAR/CBR·7z/CB7 이미지 archive를 지원합니다.</p>
+      <p>TXT·Markdown·EPUB·PDF와 만화 압축 파일을 열 수 있습니다.</p>
       <div className="empty-actions">
         <button className="primary-btn" onClick={actions.header.openImport}>
           <Upload size={18} /> 파일 가져오기

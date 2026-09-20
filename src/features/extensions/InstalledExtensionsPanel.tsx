@@ -174,15 +174,11 @@ export function InstalledExtensionsPanel({
           <h3>콘텐츠 소스 패키지</h3>
           <p>
             {manager.target === 'server'
-              ? '서버에 설치한 패키지가 작품 소스를 제공하며 연결된 기기에서 함께 사용할 수 있습니다.'
-              : '이 기기에 설치한 패키지가 작품 소스를 제공합니다. 별도 소스 서버가 필요하지 않습니다.'}
+              ? '연결된 기기에서 함께 사용할 소스를 관리합니다.'
+              : '이 기기에 설치한 소스를 관리합니다.'}
           </p>
         </div>
       </div>
-      <p className="field-help">
-        패키지는 설치 단위이고, 하나의 패키지가 여러 작품 소스를 제공할 수 있습니다. 저장소는 설치 가능한 패키지 목록
-        주소입니다.
-      </p>
       <div className="installed-extension-summary" aria-label="콘텐츠 소스 패키지 상태">
         <span>Moya 패키지 {installedCount}</span>
         <span>소스 {snapshot.sources.length}</span>

@@ -928,7 +928,6 @@ export default function SourceHubScreen({
                 <div className="source-hub-hero-copy">
                   <span className="eyebrow">외부 소스</span>
                   <h1>{activeSource?.title ?? '외부 소스'}</h1>
-                  <p>목록을 확인하고 원하는 파일이나 작품의 회차를 라이브러리로 가져옵니다.</p>
                 </div>
                 {controller.canPickItems && (
                   <div className="source-hub-hero-actions">
