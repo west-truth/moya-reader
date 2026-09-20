@@ -526,3 +526,19 @@
 .discovery-tabs button {
   flex-shrink: 0;
 }
+
+.discovery-sync-status {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  padding: 0.75rem 1rem;
+  color: var(--text-2);
+}
+
+.discovery-edit-fields {
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}

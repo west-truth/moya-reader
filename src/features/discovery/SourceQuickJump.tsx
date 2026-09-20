@@ -11,13 +11,15 @@ export function SourceQuickJump({
   error,
   pinned,
   togglePin,
+  saving,
 }: {
   sources: readonly ExternalSourceView[];
   error?: string;
+  saving?: boolean;
   pinned: readonly string[];
   togglePin(source: ExternalSourceView): void;
   close(): void;
-  open(source: string, input: ExternalSourceListInput): void;
+  open(source: string, input: ExternalSourceListInput): void | boolean | Promise<void | boolean>;
 }) {
   const [query, setQuery] = useState('');
   const search = useRef<HTMLInputElement>(null);
@@ -51,10 +53,10 @@ export function SourceQuickJump({
             <button
               type="button"
               className="ghost-btn"
-              disabled={source.connection.state !== 'connected'}
-              onClick={() => {
-                close();
-                open(source.id, source.kind === 'cloud_file' ? {} : { browseMode: 'popular' });
+              disabled={saving || source.connection.state !== 'connected'}
+              onClick={async () => {
+                if ((await open(source.id, source.kind === 'cloud_file' ? {} : { browseMode: 'popular' })) !== false)
+                  close();
               }}
             >
               <span>
@@ -67,6 +69,7 @@ export function SourceQuickJump({
               <button
                 type="button"
                 className="ghost-btn discovery-pin"
+                disabled={saving}
                 aria-label={`${source.title} ${pinned.includes(source.id) ? '고정 해제' : '탭에 고정'}`}
                 aria-pressed={pinned.includes(source.id)}
                 onClick={() => togglePin(source)}

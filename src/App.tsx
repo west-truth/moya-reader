@@ -1477,6 +1477,7 @@ export default function App() {
     externalSourceRegistry,
     externalSourceHostContext,
     remoteApiClient?.readerSettingsScope ?? 'local',
+    readerRuntime.mode === 'remote' ? remoteApiClient : undefined,
   );
   openImportedSeriesRef.current = externalSourceFeature.showLocalSeries;
   const importBusy = importFeature.busy;

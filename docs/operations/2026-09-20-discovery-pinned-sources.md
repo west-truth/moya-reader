@@ -35,3 +35,5 @@ PR #55의 UI 정리 위에서 구현한다. 초기 탐색 UI 구현은 서버/�
 - 실행: `READER_UI_BROWSER_EXECUTABLE=<chromium> pnpm check:discovery-ux`.
 
 웹 타입 검사·변경 파일 lint/포맷·CSS·의존성 순환 검사 통과. 테스트 데이터의 필수 importability 필드 누락을 보완하고 해당 테스트 3개와 웹 타입 검사를 다시 통과했다. 고정 탭 설정은 새로고침 후 유지되고, 검색 조건·페이지 깊이·위치는 같은 앱 세션에서 복원한다.
+
+탐색 탭·소스 고정·저장한 필터의 계정별 공유는 [후속 구현 기록](2026-09-20-discovery-account-sharing.md)을 따른다. 임시 검색·선택 탭·스크롤·캐시는 기기별로 유지한다.

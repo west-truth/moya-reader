@@ -60,6 +60,8 @@ jobs:
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       - run: pnpm check:web-server
+      - name: Verify account discovery configuration
+        run: pnpm exec vitest run apps/server/src/routes/books/discovery-settings-routes.integration.test.ts apps/server/src/routes/books/route-registration.test.ts --maxWorkers=2
       - name: Install and test text-source companion
         working-directory: services/text-source-server
         run: |

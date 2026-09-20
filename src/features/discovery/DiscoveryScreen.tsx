@@ -58,7 +58,7 @@ export default function DiscoveryScreen({
     : tab?.sections.length === 1 && sources.sources.find((s) => s.id === tab.sections[0]?.sourceId)?.kind === 'catalog'
       ? tab.sections[0]
       : undefined;
-  const openQuick = (sourceId: string, input: ExternalSourceListInput) => {
+  const openQuick = async (sourceId: string, input: ExternalSourceListInput) => {
     if (sources.sources.find((s) => s.id === sourceId)?.kind !== 'catalog') {
       open(sourceId, input);
       return;
@@ -67,13 +67,16 @@ export default function DiscoveryScreen({
     if (pinned) {
       if (pinned.hidden) {
         try {
-          discovery.save({
-            ...config,
-            tabs: config.tabs.map((t) => (t.id === pinned.id ? { ...t, hidden: false } : t)),
-          });
+          await discovery.save(
+            {
+              ...config,
+              tabs: config.tabs.map((t) => (t.id === pinned.id ? { ...t, hidden: false } : t)),
+            },
+            config,
+          );
         } catch {
-          setPinError('탭을 저장하지 못했습니다.');
-          return;
+          setPinError('탭을 저장하지 못했습니다. 다시 시도해 주세요.');
+          return false;
         }
       }
       setSelected(pinned.id);
@@ -129,6 +132,14 @@ export default function DiscoveryScreen({
             </div>
           </header>
           <div className="discovery-body" ref={scroll}>
+            {discovery.error && (
+              <div className="discovery-sync-status" role="status">
+                <span>{discovery.error}</span>
+                <button type="button" className="ghost-btn" onClick={() => void discovery.refresh()}>
+                  다시 시도
+                </button>
+              </div>
+            )}
             <div className="discovery-tab-row">
               <nav ref={tabStrip} className="discovery-tabs" aria-label="탐색 분류">
                 {tabs.map((t) => (
@@ -275,11 +286,12 @@ export default function DiscoveryScreen({
           close={() => setQuickJump(false)}
           open={openQuick}
           error={pinError}
+          saving={discovery.saving}
           pinned={config.tabs.flatMap((t) => (pinnedSource(t) ? [pinnedSource(t)!] : []))}
-          togglePin={(source) => {
+          togglePin={async (source) => {
             try {
               const next = togglePinnedSource(config, source.id, source.title);
-              discovery.save(next);
+              await discovery.save(next, config);
               setPinError('');
               const pinned = next.tabs.find((t) => pinnedSource(t) === source.id);
               if (pinned) {

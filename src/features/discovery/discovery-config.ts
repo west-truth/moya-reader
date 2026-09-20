@@ -1,26 +1,10 @@
-import type { ExternalSourceFilterChange } from '../../external-sources/contracts';
+import {
+  normalizeDiscoveryConfig,
+  type DiscoveryConfig,
+  type DiscoveryTab,
+} from '../../integration-settings/discovery-settings';
+export type { DiscoveryConfig, DiscoveryTab, DiscoverySection } from '../../integration-settings/discovery-settings';
 
-export interface DiscoverySection {
-  id: string;
-  sourceId: string;
-  title: string;
-  mode: 'popular' | 'latest';
-  parentRef?: string;
-  filters?: readonly ExternalSourceFilterChange[];
-  filterSignature?: string;
-}
-export interface DiscoveryTab {
-  pinnedSourceId?: string;
-  id: string;
-  title: string;
-  hidden: boolean;
-  density: 'comfortable' | 'compact';
-  sections: DiscoverySection[];
-}
-export interface DiscoveryConfig {
-  version: 1;
-  tabs: DiscoveryTab[];
-}
 export const newTab = (title = '새 탭'): DiscoveryTab => ({
   id: crypto.randomUUID(),
   title,
@@ -35,36 +19,15 @@ export const emptyConfig = (): DiscoveryConfig => ({
 export function configKey(scope: string) {
   return `moya.discovery.v1:${scope}`;
 }
-export function readConfig(scope: string): DiscoveryConfig {
+export function readStoredConfig(scope: string): DiscoveryConfig | undefined {
   try {
-    const v = JSON.parse(localStorage.getItem(configKey(scope)) ?? 'null') as DiscoveryConfig;
-    if (
-      v?.version === 1 &&
-      Array.isArray(v.tabs) &&
-      v.tabs.length <= 30 &&
-      v.tabs.every(
-        (t) =>
-          (t.pinnedSourceId === undefined || typeof t.pinnedSourceId === 'string') &&
-          typeof t.id === 'string' &&
-          typeof t.title === 'string' &&
-          typeof t.hidden === 'boolean' &&
-          ['comfortable', 'compact'].includes(t.density) &&
-          Array.isArray(t.sections) &&
-          t.sections.length <= 60 &&
-          t.sections.every(
-            (s) =>
-              typeof s.id === 'string' &&
-              typeof s.sourceId === 'string' &&
-              typeof s.title === 'string' &&
-              ['popular', 'latest'].includes(s.mode),
-          ),
-      )
-    )
-      return v;
+    return normalizeDiscoveryConfig(JSON.parse(localStorage.getItem(configKey(scope)) ?? 'null'));
   } catch {
-    /* Storage unavailable or old invalid configuration. */
+    return;
   }
-  return emptyConfig();
+}
+export function readConfig(scope: string): DiscoveryConfig {
+  return readStoredConfig(scope) ?? emptyConfig();
 }
 export function writeConfig(scope: string, config: DiscoveryConfig) {
   localStorage.setItem(configKey(scope), JSON.stringify(config));
