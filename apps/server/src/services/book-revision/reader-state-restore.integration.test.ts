@@ -84,6 +84,7 @@ describeWithPostgres('exact reader-state restoration after fixed-document replac
     await harness?.stop();
   });
 
+  // Includes real schema migration/cleanup, like the other 30-second integration case below.
   test('restores a surviving remote TXT paragraph at its new index and leaves ambiguous notes quarantined', async () => {
     await withPostgresSchema(harness!, 'remote_text_reader_restore', async (pool) => {
       await migrateDatabase(pool);
@@ -183,7 +184,7 @@ describeWithPostgres('exact reader-state restoration after fixed-document replac
           .rows[0].remap_status,
       ).toBe('quarantined');
     });
-  });
+  }, 30_000);
 
   test('restores only same-run, same-book rows whose chapter ids survived and marks them remapped', async () => {
     await withPostgresSchema(harness!, 'reader_state_restore', async (pool) => {

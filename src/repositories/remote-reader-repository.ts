@@ -173,6 +173,30 @@ export class RemoteReaderRepository implements ReaderRepository {
     }
   }
 
+  async renameChapter(
+    novelId: string,
+    chapterId: string,
+    title: string,
+    expectedContentRevisionId?: string,
+  ): Promise<void> {
+    await this.client.request(`/books/${encodeURIComponent(novelId)}/chapters/${encodeURIComponent(chapterId)}`, {
+      method: 'PATCH',
+      body: JSON.stringify({ title, expectedContentRevisionId }),
+    });
+  }
+
+  async markChaptersRead(
+    novelId: string,
+    chapterId: string,
+    previous: boolean,
+    expectedContentRevisionId?: string,
+  ): Promise<void> {
+    await this.client.request(`/books/${encodeURIComponent(novelId)}/chapters/read`, {
+      method: 'POST',
+      body: JSON.stringify({ chapterId, previous, expectedContentRevisionId }),
+    });
+  }
+
   async patchNovelMetadata(novelId: string, patch: NovelMetadataPatch): Promise<void> {
     await this.client.patchBook(novelId, patch);
   }

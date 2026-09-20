@@ -32,7 +32,8 @@ export function useAutoScroll(
   const [mode, setModeState] = useState<AutoReadingMode>(savedMode);
   const [continueChapter, setContinueChapter] = useState(false);
   const [started, setStarted] = useState(false);
-  const running = allowed && started;
+  const modeAllowed = viewport.current?.flow !== 'paginated' || mode.startsWith('blind-');
+  const running = allowed && modeAllowed && started;
   const owner = useRef(scope);
   const pending = useRef<{ scope: string; deadline: number }>();
   const latest = useRef({ ready, nextChapter, scope, continueChapter });
@@ -175,6 +176,7 @@ export function useAutoScroll(
 
   return {
     running,
+    modeAllowed,
     speed,
     mode,
     setMode,
@@ -183,7 +185,7 @@ export function useAutoScroll(
     setSpeed,
     stop,
     start: () => {
-      if (allowed && ready && !document.hidden) {
+      if (allowed && modeAllowed && ready && !document.hidden) {
         owner.current = scope;
         setStarted(true);
       }

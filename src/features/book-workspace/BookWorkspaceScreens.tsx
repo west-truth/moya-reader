@@ -493,6 +493,8 @@ export function BookWorkspaceScreens({
                       reconstructSource,
                     },
                     chapterList: {
+                      markRead: controller.markChapterListRead,
+                      rename: controller.renameChapter,
                       setQuery: controller.setChapterQuery,
                       setReadFilter: controller.setChapterReadFilter,
                       setSort: controller.setChapterSort,

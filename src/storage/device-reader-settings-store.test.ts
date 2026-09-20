@@ -74,11 +74,12 @@ describe('device reader settings boundary', () => {
       flow: 'page',
       gestureBindings: { tapLeft: 'none' },
     });
-    await a.saveSettings({ ...(await a.getSettings()), ttsSpeed: 1.5 });
+    const downloadPolicy = { autoNext: true, nextCount: 3, retentionEnabled: true, keepRead: 10 } as const;
+    await a.saveSettings({ ...(await a.getSettings()), ttsSpeed: 1.5, downloadPolicy });
     expect(clientA.saveSettings).toHaveBeenCalledOnce();
     expect(clientA.saveSettings.mock.calls[0][0]).not.toHaveProperty('fontSize');
     expect(clientA.saveSettings.mock.calls[0][0]).not.toHaveProperty('readingProfile');
-    expect(await b.getSettings()).toMatchObject({ ttsSpeed: 1.5, fontSize: defaultSettings.fontSize });
+    expect(await b.getSettings()).toMatchObject({ ttsSpeed: 1.5, fontSize: defaultSettings.fontSize, downloadPolicy });
   });
 
   it('exports common settings only and ignores presentation in legacy Cloud Vault snapshots', async () => {

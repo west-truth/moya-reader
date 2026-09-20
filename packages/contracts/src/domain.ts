@@ -591,7 +591,15 @@ export interface AIWorkflowPreferencesV1 {
   bookOverrides?: Record<string, string>;
 }
 
+export interface DownloadPolicy {
+  autoNext: boolean;
+  nextCount: 1 | 2 | 3;
+  retentionEnabled: boolean;
+  keepRead: 5 | 10 | 20;
+}
+
 export interface ReaderSettings {
+  downloadPolicy?: DownloadPolicy;
   id: 'reader-settings';
   /** Internal sync clock; ignored by reader presentation code. */
   cloudVaultUpdatedAt?: string;

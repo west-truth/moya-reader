@@ -698,7 +698,6 @@ function ReaderScreenComponent({ model, screenHandle }: ReaderScreenProps) {
   const activeBookmark = activeBookmarkAt(model.bookmarks, model.chapter.id, location);
   const [autoScrollOpen, setAutoScrollOpen] = useState(false);
   const autoScrollAllowed =
-    readingFlow === 'scroll' &&
     mode === 'read' &&
     !model.activeTTSPlayback &&
     !model.overlays.settingsOpen &&
@@ -707,7 +706,7 @@ function ReaderScreenComponent({ model, screenHandle }: ReaderScreenProps) {
     !model.addonOpen &&
     !selection &&
     !footnote;
-  const autoScrollReady = viewportApi?.flow === 'scroll' && !openRequest && !pageToScrollSettling;
+  const autoScrollReady = viewportApi?.flow === readingFlow && !openRequest && !pageToScrollSettling;
   const nextAutoChapter = model.chapters.find((chapter) => chapter.index === model.chapter.index + 1);
   const autoScroll = useAutoScroll(
     viewportApiRef,
@@ -772,7 +771,7 @@ function ReaderScreenComponent({ model, screenHandle }: ReaderScreenProps) {
       <AutoScrollControls
         controller={autoScroll}
         open={autoScrollOpen}
-        allowed={autoScrollAllowed && autoScrollReady}
+        allowed={autoScrollAllowed && autoScrollReady && autoScroll.modeAllowed}
         onClose={() => setAutoScrollOpen(false)}
       />
       {search.query.trim() && (

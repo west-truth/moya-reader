@@ -115,6 +115,26 @@ export class IndexedDbReaderRepository
     return getNovel(id);
   }
 
+  async renameChapter(
+    novelId: string,
+    chapterId: string,
+    title: string,
+    expectedContentRevisionId?: string,
+  ): Promise<void> {
+    const { renameChapter } = await import('../storage/chapter-actions-store');
+    await renameChapter(novelId, chapterId, title, expectedContentRevisionId);
+  }
+
+  async markChaptersRead(
+    novelId: string,
+    chapterId: string,
+    previous: boolean,
+    expectedContentRevisionId?: string,
+  ): Promise<void> {
+    const { markChaptersRead } = await import('../storage/reader-state-store');
+    return markChaptersRead(novelId, chapterId, previous, expectedContentRevisionId);
+  }
+
   patchNovelMetadata(novelId: string, patch: NovelMetadataPatch): Promise<void> {
     return patchNovelMetadata(novelId, patch);
   }

@@ -1,3 +1,6 @@
+import { markChaptersRead } from './reader-state-store';
+import { renameChapter } from './chapter-actions-store';
+import { getChapters } from './reader-query-store';
 import 'fake-indexeddb/auto';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Chapter, Novel } from '../domain/types';
@@ -98,6 +101,47 @@ async function storedRows(db: IDBDatabase, book: Novel) {
 describe('exact fixed-document section read state', () => {
   beforeEach(async () => {
     await resetReaderDbForTests();
+  });
+
+  it('marks earlier text chapters and edits a title without replacing text or resume position', async () => {
+    const db = await openReaderDb();
+    const book = { ...novel(), lastReadProgress: 0.4, lastReadOffset: 99 };
+    const seed = db.transaction(
+      ['novels', 'chapters', CONTENT_REVISION_STORES.chapters, CONTENT_REVISION_STORES.revisions],
+      'readwrite',
+    );
+    seed.objectStore('novels').put(book);
+    seed.objectStore(CONTENT_REVISION_STORES.revisions).put(activeRevision(book.id));
+    for (let index = 1; index <= 3; index++) {
+      const value = {
+        ...chapter(book.id, index, ''),
+        documentSectionId: undefined,
+        normalizedText: 'Keep original text',
+      };
+      seed.objectStore('chapters').put(value);
+      seed.objectStore(CONTENT_REVISION_STORES.chapters).put(revisionChapter('revision-active', value));
+    }
+    await transactionDone(seed);
+    const target = `${book.id}:chapter:3`;
+    await expect(markChaptersRead(book.id, target, true, 'stale')).rejects.toThrow('회차가 변경');
+    await markChaptersRead(book.id, target, true, 'revision-active');
+    expect((await getChapters(book.id)).map((value) => Boolean(value.documentSectionReadAt))).toEqual([
+      true,
+      true,
+      false,
+    ]);
+    await markChaptersRead(book.id, target, false, 'revision-active');
+    await renameChapter(book.id, target, ' New title ', 'revision-active');
+    const chapters = await getChapters(book.id);
+    expect(chapters[2]).toMatchObject({ id: target, title: 'New title', normalizedText: 'Keep original text' });
+    expect(chapters.every((value) => value.documentSectionReadAt)).toBe(true);
+    const tx = db.transaction('novels', 'readonly');
+    expect(await requestToPromise(tx.objectStore('novels').get(book.id))).toMatchObject({
+      lastReadProgress: 0.4,
+      lastReadOffset: 99,
+      activeContentRevisionId: 'revision-active',
+    });
+    await transactionDone(tx);
   });
 
   it('uses section/read-marker indexes instead of loading every chapter on each save or reset', async () => {

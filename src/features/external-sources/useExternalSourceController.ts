@@ -299,6 +299,8 @@ export interface ExternalSourceNavigationSnapshot {
 }
 
 export interface UseExternalSourceControllerOptions {
+  readonly downloadPolicy?: import('../../domain/types').DownloadPolicy;
+  readonly updateDownloadPolicy?: (patch: Partial<import('../../domain/types').DownloadPolicy>) => void;
   readonly settingsScope?: string;
   readonly readingActive?: boolean;
   readonly readingTarget?: { readonly novelId: string; readonly sectionId: string };
@@ -3246,6 +3248,8 @@ export function useExternalSourceController(options: UseExternalSourceController
   const downloadRetention = useDownloadRetention({ options, busy: busy || importBusy || blockingBusy, setBusy });
   automaticDownloadBlockedRef.current = busy || importBusy || blockingBusy;
   const automaticDownload = useNextReleaseDownload({
+    policy: options.downloadPolicy,
+    updatePolicy: options.updateDownloadPolicy,
     readingKey: options.readingTarget
       ? JSON.stringify([options.readingTarget.novelId, options.readingTarget.sectionId])
       : undefined,

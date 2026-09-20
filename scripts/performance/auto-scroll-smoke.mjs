@@ -27,12 +27,67 @@ const baseUrl = `http://127.0.0.1:${server.address().port}/reader`;
 const engine = process.argv.includes('--webkit') ? 'webkit' : 'chromium';
 const browser = await (engine === 'webkit'
   ? webkit.launch({ headless: true })
-  : chromium.launch({ channel: 'msedge', headless: true }));
+  : chromium.launch({
+      ...(process.env.READER_UI_BROWSER_EXECUTABLE
+        ? { executablePath: process.env.READER_UI_BROWSER_EXECUTABLE }
+        : { channel: process.env.READER_UI_BROWSER_CHANNEL ?? 'msedge' }),
+      headless: true,
+    }));
 try {
   for (const width of [320, 834]) {
     const page = await browser.newPage({ viewport: { width, height: 900 }, hasTouch: true });
     const errors = [];
     page.on('pageerror', (error) => errors.push(error.message));
+    if (process.argv.includes('--paginated')) {
+      await page.goto(baseUrl + '?paged&variable');
+      await page.waitForFunction(() => globalThis.readerFixture?.api()?.getAnchor());
+      for (const mode of ['blind-pixel', 'blind-line']) {
+        await page.evaluate((mode) => {
+          globalThis.autoFixture.setOpen(false);
+          globalThis.autoFixture.controller.setMode(mode);
+          globalThis.autoFixture.controller.setSpeed(12);
+        }, mode);
+        await page.evaluate(() => globalThis.autoFixture.controller.start());
+        await page.waitForFunction(() => globalThis.autoFixture.controller.running);
+        const overlay = page.locator('.reader-auto-reading-overlay:not([hidden])');
+        await overlay.waitFor();
+        const first = await overlay.boundingBox();
+        await page.waitForFunction(
+          (y) => {
+            const overlay = document.querySelector('.reader-auto-reading-overlay:not([hidden])');
+            return overlay && overlay.getBoundingClientRect().y > y;
+          },
+          first.y,
+          { timeout: 5000 },
+        );
+        const second = await overlay.boundingBox();
+        assert.ok(second.y > first.y, mode + ' must reveal page text');
+        const anchor = await page.evaluate(() => JSON.stringify(globalThis.readerFixture.api().getAnchor()));
+        await page.evaluate(async (mode) => {
+          for (let i = 0; i < 80; i++) globalThis.readerFixture.api().advanceAutoReading(mode, 1000);
+        }, mode);
+        await page.waitForFunction(
+          (previous) => JSON.stringify(globalThis.readerFixture.api().getAnchor()) !== previous,
+          anchor,
+          { timeout: 8000 },
+        );
+        assert.equal(await page.evaluate(() => globalThis.readerFixture.flow), 'paginated');
+        await page.evaluate(() => globalThis.autoFixture.controller.stop());
+        assert.equal(await page.locator('.reader-auto-reading-overlay:not([hidden])').count(), 0);
+      }
+      await page.evaluate(() => globalThis.readerFixture.api().scrubTo(1));
+      await page.evaluate(() => globalThis.autoFixture.controller.start());
+      await page.waitForFunction(() => globalThis.autoFixture.controller.running);
+      await page.locator('.reader-auto-reading-overlay:not([hidden])').waitFor();
+      await page.evaluate(() => {
+        for (let i = 0; i < 100; i++) globalThis.readerFixture.api().advanceAutoReading('blind-line', 1);
+      });
+      await page.waitForFunction(() => !globalThis.autoFixture.controller.running, undefined, { timeout: 8000 });
+      assert.deepEqual(errors, []);
+      console.log(engine, width, 'paginated blind pixel/line, page turn, stop and chapter end passed');
+      await page.close();
+      continue;
+    }
     await page.goto(baseUrl + '?long&variable');
     await page.waitForFunction(
       () => globalThis.autoFixture && document.querySelector('.reader-virtual-row [data-paragraph-id]'),

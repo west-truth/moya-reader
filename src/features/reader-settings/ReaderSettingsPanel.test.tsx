@@ -53,16 +53,15 @@ describe('ReaderSettingsPanel', () => {
     expect(markup).toContain('다운로드');
     expect(markup).not.toContain('id="reader-settings-tab-downloads"');
     expect(markup).toContain('동기화');
-    expect(markup).toContain('테마, 글꼴, 밝기');
+    expect(markup).toContain('앱 테마');
     expect(markup).toContain('글자, 여백, 읽기 방식');
     expect(markup).toContain('자동 저장');
     expect(markup).toContain('미드나이트');
     expect(markup).toContain('그래파이트');
     expect(markup).toContain('웜 페이퍼');
     expect(markup).toContain('사용자 설정');
-    expect(markup).toContain('aria-label="테마 적용 대상"');
-    expect(markup).toContain('앱 UI');
-    expect(markup).toContain('책장과 설정 등 앱 화면에 적용됩니다.');
+    expect(markup).not.toContain('aria-label="테마 적용 대상"');
+    expect(markup).not.toContain('aria-label="본문 글꼴"');
     expect(markup).not.toContain('이 책에만 적용');
   });
 
@@ -113,6 +112,9 @@ describe('ReaderSettingsPanel', () => {
       updateGestureBindings: vi.fn(),
       setExtensionEnabled: vi.fn(),
     };
+    const readerMarkup = renderToStaticMarkup(<ReaderSettingsPanel {...common} initialTab="layout" />);
+    expect(readerMarkup).toContain('aria-label="본문 글꼴"');
+    expect(readerMarkup).toContain('리더 밝기');
     const sourceMarkup = renderToStaticMarkup(<ReaderSettingsPanel {...common} initialTab="sources" />);
     const extensionMarkup = renderToStaticMarkup(<ReaderSettingsPanel {...common} initialTab="extensions" />);
     expect(sourceMarkup).toContain('설치된 소스 패키지');

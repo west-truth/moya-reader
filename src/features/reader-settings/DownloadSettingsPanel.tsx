@@ -133,9 +133,7 @@ export function DownloadSettingsPanel({ controller }: { readonly controller: Ext
           <label className="reader-settings-control-toggle">
             <span>
               <strong>리더를 나온 뒤 자동 정리</strong>
-              <small>
-                기본 꺼짐 · 이 기기에서 읽고 나온 작품에 적용됩니다. 서버 다운로드를 지우면 다른 기기에도 반영됩니다.
-              </small>
+              <small>즐겨찾기는 유지합니다. 서버의 다운로드를 정리하면 모든 기기에 반영됩니다.</small>
             </span>
             <input
               type="checkbox"

@@ -17,7 +17,7 @@ import {
   transactionDone,
 } from './indexeddb-transaction';
 import { openReaderDb } from './reader-database';
-import { getChapter } from './reader-query-store';
+import { getChapter, getChapters } from './reader-query-store';
 import { clearExactDocumentSectionReadState, markExactChapterReadState } from './exact-section-read-state';
 import { jsonValue, LOCAL_DEVICE_ID, nowIso, queueSyncEventInTransaction, tombstoneEntity } from './sync-event-store';
 import type { ReadingPosition } from '../sync/types';
@@ -223,4 +223,32 @@ export async function saveSettings(settings: ReaderSettings): Promise<void> {
   tx.objectStore('settings').put(shared);
   await queueSyncEventInTransaction(tx, 'settings_updated', jsonValue({ settings: shared }), { entityId: settings.id });
   await transactionDone(tx);
+}
+
+/** Mark explicit chapters without moving the reader's resume position. */
+export async function markChaptersRead(
+  novelId: string,
+  chapterId: string,
+  previous: boolean,
+  expectedContentRevisionId?: string,
+): Promise<void> {
+  const chapters = await getChapters(novelId);
+  const target = chapters.find((chapter) => chapter.id === chapterId);
+  if (!target) throw new RepositoryEntityNotFoundError('chapter', chapterId);
+  const db = await openReaderDb();
+  const tx = db.transaction(['novels', 'chapters', 'book_content_chapters', 'book_content_revisions'], 'readwrite');
+  const done = transactionDone(tx);
+  const novel = await requestToPromise<Novel | undefined>(tx.objectStore('novels').get(novelId));
+  if (!novel || novel.activeContentRevisionId !== expectedContentRevisionId) {
+    tx.abort();
+    await done.catch(() => undefined);
+    throw new ContentRevisionConflictError('회차가 변경되었습니다. 다시 열어 주세요.');
+  }
+  const readAt = nowIso();
+  for (const chapter of chapters.filter((chapter) =>
+    previous ? chapter.index < target.index : chapter.id === chapterId,
+  )) {
+    await markExactChapterReadState(tx, novel, chapter, readAt);
+  }
+  await done;
 }

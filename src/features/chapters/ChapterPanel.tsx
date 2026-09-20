@@ -1,3 +1,4 @@
+import { ChapterActions } from './ChapterActions';
 import { Clock3, Play, Search } from 'lucide-react';
 import { useEffect, useRef } from 'react';
 import { useReadingChapterPage } from './use-reading-chapter-page';
@@ -42,45 +43,48 @@ function chapterRowAccessibleName(row: ChapterListRowModel, currentProgress: num
 function ChapterRow({ row, model, actions }: { row: ChapterListRowModel } & ChaptersScreenProps) {
   const annotations = annotationLabel(row);
   return (
-    <button
-      type="button"
-      className={classNames(
-        'chapter-row',
-        row.isCurrent && 'is-current',
-        row.isRead && 'is-read',
-        !row.isRead && 'is-unread',
-      )}
-      onClick={() => void actions.chapterList.openChapter(row.chapter, row.isCurrent)}
-      aria-current={row.isCurrent ? 'location' : undefined}
-      aria-label={chapterRowAccessibleName(row, model.summary.readChapterProgress)}
-    >
-      <span className="chapter-marker" aria-hidden="true">
-        {row.isCurrent ? <Play size={13} fill="currentColor" /> : <i />}
-      </span>
-      <span className="chapter-index">{row.chapter.index}화</span>
-      <span className="chapter-title-cell">
-        <strong>{row.chapter.title}</strong>
-        <small>
-          {row.paragraphCountLabel}
-          {annotations && ` · ${annotations}`}
-        </small>
-      </span>
-      <span className="chapter-character-count">{row.characterCountLabel}</span>
-      <span className="chapter-tts-duration">
-        <Clock3 size={13} /> {row.ttsDuration.label}
-      </span>
-      <em>{row.isCurrent ? '읽는 중' : row.isRead ? '읽음' : '안 읽음'}</em>
-      <span className="chapter-row-action" aria-hidden="true">
-        {row.isCurrent ? (
-          <>
-            <Play size={13} fill="currentColor" />
-            <span>이어 읽기</span>
-          </>
-        ) : (
-          '›'
+    <div className="chapter-row-with-menu">
+      <button
+        type="button"
+        className={classNames(
+          'chapter-row',
+          row.isCurrent && 'is-current',
+          row.isRead && 'is-read',
+          !row.isRead && 'is-unread',
         )}
-      </span>
-    </button>
+        onClick={() => void actions.chapterList.openChapter(row.chapter, row.isCurrent)}
+        aria-current={row.isCurrent ? 'location' : undefined}
+        aria-label={chapterRowAccessibleName(row, model.summary.readChapterProgress)}
+      >
+        <span className="chapter-marker" aria-hidden="true">
+          {row.isCurrent ? <Play size={13} fill="currentColor" /> : <i />}
+        </span>
+        <span className="chapter-index">{row.chapter.index}화</span>
+        <span className="chapter-title-cell">
+          <strong>{row.chapter.title}</strong>
+          <small>
+            {row.paragraphCountLabel}
+            {annotations && ` · ${annotations}`}
+          </small>
+        </span>
+        <span className="chapter-character-count">{row.characterCountLabel}</span>
+        <span className="chapter-tts-duration">
+          <Clock3 size={13} /> {row.ttsDuration.label}
+        </span>
+        <em>{row.isCurrent ? '읽는 중' : row.isRead ? '읽음' : '안 읽음'}</em>
+        <span className="chapter-row-action" aria-hidden="true">
+          {row.isCurrent ? (
+            <>
+              <Play size={13} fill="currentColor" />
+              <span>이어 읽기</span>
+            </>
+          ) : (
+            '›'
+          )}
+        </span>
+      </button>
+      <ChapterActions chapter={row.chapter} read={row.isRead} actions={actions.chapterList} />
+    </div>
   );
 }
 

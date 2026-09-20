@@ -51,6 +51,13 @@ export interface ReaderQueries {
 }
 
 export interface ReaderCommands {
+  renameChapter?(novelId: string, chapterId: string, title: string, expectedContentRevisionId?: string): Promise<void>;
+  markChaptersRead?(
+    novelId: string,
+    chapterId: string,
+    previous: boolean,
+    expectedContentRevisionId?: string,
+  ): Promise<void>;
   patchNovelMetadata(novelId: string, patch: NovelMetadataPatch): Promise<void>;
   deleteNovel(novelId: string, expectedRevision?: number): Promise<void>;
   saveImportedNovel(parsed: ParsedNovel): Promise<void>;

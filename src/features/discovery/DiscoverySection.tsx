@@ -2,7 +2,6 @@ import { DiscoveryCard, useNear } from './DiscoveryCard';
 import { DiscoverySourceView } from './DiscoverySourceView';
 import { useNavigationViewState } from '../navigation/navigation-view-state';
 import { useEffect, useRef, useState } from 'react';
-import { ArrowLeft, ArrowRight } from 'lucide-react';
 import type { ExternalItemPage, ExternalItemSummary, ExternalSourceListInput } from '../../external-sources/contracts';
 import type { ExternalSourceView } from '../external-sources/useExternalSourceController';
 import type { DiscoverySession } from './discovery-session';
@@ -150,18 +149,6 @@ export function DiscoverySection({
           <small>{section.title ? source?.title : '작품 탐색'}</small>
           <h2>{title}</h2>
         </div>
-        {source && (
-          <button
-            type="button"
-            className="ghost-btn"
-            onClick={() =>
-              source.kind === 'cloud_file' ? open(section.sourceId, {}) : expanded ? collapse() : setExpanded(true)
-            }
-            aria-expanded={source.kind === 'cloud_file' ? undefined : expanded}
-          >
-            {source?.kind === 'cloud_file' ? '폴더 보기' : expanded ? '접기' : '펼쳐 보기'} <ArrowRight size={16} />
-          </button>
-        )}
       </div>
       {expanded && !unsupported ? (
         <>
@@ -175,9 +162,6 @@ export function DiscoverySection({
             controls={false}
             query={query}
           />
-          <button type="button" className="ghost-btn" onClick={collapse}>
-            접기
-          </button>
         </>
       ) : unsupported ? (
         <p className="discovery-message">{unsupported}</p>
@@ -233,30 +217,24 @@ export function DiscoverySection({
                 ))}
               </div>
               {!page.items.length && <p className="discovery-message">조건에 맞는 작품이 없습니다.</p>}
-              {page.items.length > 3 && (
-                <div className="discovery-rail-controls">
-                  <button
-                    type="button"
-                    aria-label={`${title} 이전 작품`}
-                    onClick={() =>
-                      rail.current?.scrollBy({ left: -rail.current.clientWidth * 0.8, behavior: 'smooth' })
-                    }
-                  >
-                    <ArrowLeft size={18} />
-                  </button>
-                  <button
-                    type="button"
-                    aria-label={`${title} 다음 작품`}
-                    onClick={() => rail.current?.scrollBy({ left: rail.current.clientWidth * 0.8, behavior: 'smooth' })}
-                  >
-                    <ArrowRight size={18} />
-                  </button>
-                </div>
-              )}
             </>
           )}
         </>
       )}
+      <div className="discovery-section-footer">
+        {source && (
+          <button
+            type="button"
+            className="ghost-btn"
+            onClick={() =>
+              source.kind === 'cloud_file' ? open(section.sourceId, {}) : expanded ? collapse() : setExpanded(true)
+            }
+            aria-expanded={source.kind === 'cloud_file' ? undefined : expanded}
+          >
+            {source?.kind === 'cloud_file' ? '폴더 보기' : expanded ? '접기' : '펼쳐 보기'}
+          </button>
+        )}
+      </div>
     </section>
   );
 }

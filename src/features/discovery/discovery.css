@@ -190,12 +190,6 @@
   background: var(--app-surface-strong);
   font-size: 11px;
 }
-.discovery-rail-controls {
-  display: flex;
-  justify-content: flex-end;
-  gap: 8px;
-}
-.discovery-rail-controls button,
 .discovery-editor button {
   min-width: 44px;
   min-height: 44px;
@@ -448,7 +442,7 @@
 }
 .discovery-load-more {
   display: flex;
-  margin: 24px auto;
+  margin: 24px 0;
   min-height: 44px;
 }
 .discovery-source-modes,
@@ -541,4 +535,10 @@
   margin: 0;
   padding: 0;
   border: 0;
+}
+
+.discovery-section-footer {
+  display: flex;
+  justify-content: flex-start;
+  margin-top: 12px;
 }
