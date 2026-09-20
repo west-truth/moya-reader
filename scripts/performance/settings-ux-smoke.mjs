@@ -11,12 +11,17 @@ const source = `
 import React,{useState} from 'react';
 import {createRoot} from 'react-dom/client';
 import {ReaderQuickViewDialog} from '${root}src/features/reader/ReaderQuickViewDialog.tsx';
+import {SettingsSlider} from '${root}src/features/reader-settings/SettingsSlider.tsx';
+import '${root}src/features/fixed-document/fixed-document.css';
 import ReaderSettingsPanel from '${root}src/features/reader-settings/ReaderSettingsPanel.tsx';
 import {DEFAULT_READING_PROFILE,DEFAULT_GESTURE_BINDINGS} from '${root}src/features/reader-settings/reading-profile.ts';
 import {defaultSettings} from '${root}src/repositories/reader-defaults.ts';
 ${[...readFileSync(resolve(root, 'src/main.tsx'), 'utf8').matchAll(/import '\.\/styles\/([^']+)';/g)].map((match) => `import '${root}src/styles/${match[1]}';`).join('\n')}
 const noop=()=>{};
 function Fixture(){const [profile,setProfile]=useState(DEFAULT_READING_PROFILE);const [open,setOpen]=useState(true);globalThis.changes??=[];const update=p=>{changes.push(p);setProfile(x=>({...x,...p}));};
+if(new URLSearchParams(location.search).has('controls')) return React.createElement('div',{},
+React.createElement('div',{className:'fixed-doc-comic-settings',style:{width:280}},React.createElement('fieldset',{},React.createElement(SettingsSlider,{label:'만화 밝기',min:40,max:180,step:1,value:100,onChange:noop}))),
+React.createElement('div',{className:'tts-playback-setting-grid',style:{width:260}},React.createElement(SettingsSlider,{label:'듣기 속도',min:0.6,max:1.8,step:0.1,value:1,onChange:noop})));
 return new URLSearchParams(location.search).has('full')?React.createElement(ReaderSettingsPanel,{controller:{open,settings:defaultSettings,closePanel:()=>setOpen(false),saveStatus:'idle',updateSettings:noop},profile,bookOverrideEnabled:false,contrastWarning:false,gestureBindings:DEFAULT_GESTURE_BINDINGS,platformRuntime:{kind:'browser',hasTauri:false},providerExecutionRuntime:'none',extensions:[],externalSources:{sources:[]},openSync:noop,openBackup:noop,updateProfile:update,setBookOverrideEnabled:noop,resetProfile:noop,updateGestureBindings:noop,setExtensionEnabled:noop}):React.createElement(ReaderQuickViewDialog,{open,profile,readingFlow:'paginated',bookOverrideEnabled:false,onClose:()=>setOpen(false),onUpdate:update,onSetBookOverride:noop,onOpenAllSettings:noop});}
 createRoot(document.getElementById('root')).render(React.createElement(Fixture));
 `;
@@ -93,6 +98,13 @@ try {
       await page.keyboard.press('Escape');
       assert.equal(await page.getByRole('dialog').count(), 0);
     }
+  }
+  await page.setViewportSize({ width: 360, height: 640 });
+  await page.goto(base + '?controls');
+  await page.getByRole('slider', { name: '만화 밝기' }).waitFor();
+  assert.equal(await page.evaluate(() => document.body.scrollWidth <= innerWidth), true);
+  for (const control of await page.locator('.reader-settings-slider-controls').all()) {
+    assert.equal(await control.evaluate((node) => node.scrollWidth <= node.clientWidth), true);
   }
   assert.deepEqual(errors, []);
   console.log(

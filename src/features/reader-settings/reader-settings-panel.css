@@ -1804,6 +1804,8 @@
 }
 
 .reader-settings-slider {
+  container-type: inline-size;
+  min-width: 0;
   display: grid;
   gap: 8px;
   padding: 16px 0;
@@ -2512,4 +2514,14 @@
 .reader-settings-slider button:disabled {
   opacity: 0.45;
   cursor: not-allowed;
+}
+
+@container (max-width: 280px) {
+  .reader-settings-slider-controls {
+    grid-template-columns: 36px minmax(44px, 1fr) 36px;
+  }
+  .reader-settings-slider-number {
+    grid-column: 1 / -1;
+    justify-self: end;
+  }
 }
