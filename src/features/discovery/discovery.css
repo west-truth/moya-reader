@@ -419,3 +419,110 @@
     scroll-behavior: auto;
   }
 }
+
+.discovery-quick-jump-row {
+  display: flex;
+  gap: 8px;
+}
+.discovery-quick-jump-row > button:first-child {
+  flex: 1;
+  min-width: 0;
+}
+.discovery-pin {
+  flex: 0 0 44px;
+}
+.discovery-pin[aria-pressed='true'],
+.discovery-source-modes button[aria-pressed='true'],
+.discovery-filter-choices button[aria-pressed='true'] {
+  color: var(--app-accent);
+  border-color: var(--app-accent);
+  background: var(--app-accent-soft);
+}
+.discovery-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+  gap: 24px 16px;
+}
+.discovery-grid .discovery-card {
+  width: 100%;
+}
+.discovery-load-more {
+  display: flex;
+  margin: 24px auto;
+  min-height: 44px;
+}
+.discovery-source-modes,
+.discovery-filter-actions {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin-block: 16px;
+}
+.discovery-source-modes > button,
+.discovery-filter-actions > button {
+  min-height: 44px;
+}
+.discovery-filters {
+  border: 1px solid var(--border);
+  background: var(--app-surface);
+  border-radius: 14px;
+  padding: 16px;
+  margin-bottom: 24px;
+}
+.discovery-filters summary {
+  cursor: pointer;
+  min-height: 32px;
+  font-weight: 600;
+}
+.discovery-filter-fields {
+  display: grid;
+  gap: 16px;
+  margin-top: 16px;
+}
+.discovery-filter-choices {
+  border: 0;
+  padding: 0;
+  margin: 0;
+  min-width: 0;
+}
+.discovery-filter-choices legend {
+  margin-bottom: 10px;
+  font-weight: 600;
+}
+.discovery-filter-choices > div {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.discovery-filter-choices button {
+  border-radius: 24px;
+  min-height: 44px;
+  white-space: normal;
+}
+.discovery-filters .source-hub-filter-field {
+  display: grid;
+  gap: 8px;
+}
+.discovery-filters select,
+.discovery-filters input[type='text'] {
+  min-height: 44px;
+  max-width: 100%;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--app-field);
+  color: var(--text);
+  padding: 8px;
+}
+@media (max-width: 480px) {
+  .discovery-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 20px 12px;
+  }
+}
+
+.discovery-source-view .discovery-search {
+  display: flex;
+}
+.discovery-tabs button {
+  flex-shrink: 0;
+}

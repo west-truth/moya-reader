@@ -35,6 +35,7 @@ export function useDiscoveryScroll(ref: RefObject<HTMLElement>, key: string, ses
     const save = () => {
       if (!restoring) capture();
     };
+    if (!target) root.scrollTop = 0;
     restore();
     const frame = requestAnimationFrame(restore);
     const observer = new ResizeObserver(restore);

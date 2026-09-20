@@ -10,6 +10,7 @@ export interface DiscoverySection {
   filterSignature?: string;
 }
 export interface DiscoveryTab {
+  pinnedSourceId?: string;
   id: string;
   title: string;
   hidden: boolean;
@@ -43,6 +44,7 @@ export function readConfig(scope: string): DiscoveryConfig {
       v.tabs.length <= 30 &&
       v.tabs.every(
         (t) =>
+          (t.pinnedSourceId === undefined || typeof t.pinnedSourceId === 'string') &&
           typeof t.id === 'string' &&
           typeof t.title === 'string' &&
           typeof t.hidden === 'boolean' &&
@@ -74,4 +76,25 @@ export function move<T>(items: readonly T[], index: number, offset: number): T[]
   const [entry] = next.splice(index, 1);
   next.splice(to, 0, entry!);
   return next;
+}
+
+export function pinnedSource(tab: DiscoveryTab): string | undefined {
+  return tab.sections.length === 1 && tab.sections[0]?.sourceId === tab.pinnedSourceId ? tab.pinnedSourceId : undefined;
+}
+export function togglePinnedSource(config: DiscoveryConfig, sourceId: string, title: string): DiscoveryConfig {
+  if (config.tabs.some((tab) => pinnedSource(tab) === sourceId)) {
+    return { ...config, tabs: config.tabs.filter((tab) => pinnedSource(tab) !== sourceId) };
+  }
+  if (config.tabs.length >= 30) throw new Error('탭은 최대 30개까지 추가할 수 있습니다.');
+  return {
+    ...config,
+    tabs: [
+      ...config.tabs,
+      {
+        ...newTab(title),
+        pinnedSourceId: sourceId,
+        sections: [{ id: crypto.randomUUID(), sourceId, title: '', mode: 'popular' }],
+      },
+    ],
+  };
 }
