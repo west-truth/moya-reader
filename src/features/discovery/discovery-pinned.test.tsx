@@ -44,7 +44,12 @@ afterEach(() => {
 
 it('appends unique works, retains results on next-page failure, and restores depth without refetching', async () => {
   vi.stubGlobal('window', {});
-  const item = (id: string) => ({ key: { connectorId: 'one', remoteId: id }, kind: 'work' as const, title: id });
+  const item = (id: string) => ({
+    key: { connectorId: 'one', remoteId: id },
+    kind: 'work' as const,
+    importability: 'supported' as const,
+    title: id,
+  });
   let fail = true;
   const list = vi.fn(
     async (_source: unknown, _context: unknown, input: ExternalSourceListInput): Promise<ExternalItemPage> => {
