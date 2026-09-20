@@ -75,7 +75,7 @@ export class SessionCoverCache {
   }
   private trim(incoming: number) {
     let bytes = [...this.entries.values()].reduce((n, e) => n + e.bytes, 0);
-    const visible = new Set(typeof document === 'undefined' ? [] : [...document.images].map((img) => img.src));
+    const visible = new Set(typeof document === 'undefined' ? [] : Array.from(document.images).map((img) => img.src));
     for (const [key, entry] of this.entries) {
       if (this.entries.size < 200 && bytes + incoming <= 32 * 1024 * 1024) break;
       if (visible.has(entry.url)) continue;

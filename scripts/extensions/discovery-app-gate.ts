@@ -13,6 +13,21 @@ export async function runDiscoveryAppGate(page: Page, output: string) {
   await tab.getByRole('combobox', { name: '목록 소스', exact: true }).selectOption({ label: '앱 검증용 소스' });
   await tab.getByRole('button', { name: '목록 추가', exact: true }).click();
   await tab.getByRole('button', { name: '목록 추가', exact: true }).click();
+  // A single expanded tab/list keeps a large configuration manageable.
+  await tab.getByRole('textbox', { name: '목록 이름', exact: true }).fill('세 번째 목록');
+  await editor.getByRole('button', { name: /^소설 목록 0개/ }).click();
+  if (await tab.getByRole('button', { name: '목록 추가', exact: true }).isVisible())
+    throw new Error('Inactive tab editor remained expanded');
+  await editor.getByRole('button', { name: /^만화 목록 3개/ }).click();
+  await tab.getByRole('textbox', { name: '목록 이름', exact: true }).waitFor();
+  if ((await tab.getByRole('textbox', { name: '목록 이름', exact: true }).inputValue()) !== '세 번째 목록')
+    throw new Error('Collapsing a tab lost the draft');
+  await editor.getByRole('button', { name: '탭 추가', exact: true }).click();
+  const newName = editor.getByRole('textbox', { name: '탭 이름', exact: true });
+  await newName.fill('내 추천');
+  await editor.getByRole('button', { name: '모두 접기', exact: true }).click();
+  if (await editor.getByRole('textbox', { name: '탭 이름', exact: true }).isVisible())
+    throw new Error('Collapse all left an editor visible');
   await editor.getByRole('button', { name: '저장', exact: true }).click();
   await page.getByRole('button', { name: 'Synthetic installed novel 상세 보기', exact: true }).first().waitFor();
   await page.screenshot({ path: resolve(output, 'discovery-desktop.png') });
@@ -45,6 +60,15 @@ export async function runDiscoveryAppGate(page: Page, output: string) {
       .getByRole('button', { name: '탐색', exact: true })
       .click();
     await page.screenshot({ path: resolve(output, `discovery-${width}.png`) });
+    await page.getByRole('button', { name: '탐색 편집', exact: true }).click();
+    await editor.getByRole('button', { name: /^만화 목록 3개/ }).click();
+    await page.screenshot({ path: resolve(output, `discovery-editor-${width}.png`) });
+    await editor.getByRole('button', { name: /^만화 목록 3개/ }).click();
+    await tab.locator('.discovery-editor-section').first().getByRole('button', { expanded: false }).click();
+    await page.screenshot({ path: resolve(output, `discovery-editor-expanded-${width}.png`) });
+    const overflow = await editor.evaluate((node) => node.scrollWidth > node.clientWidth + 1);
+    if (overflow) throw new Error('Mobile discovery editor overflow');
+    await editor.getByRole('button', { name: '취소', exact: true }).click();
     const heading = await page.locator('.discovery-topbar').boundingBox();
     if (!heading || heading.height > 80) throw new Error('Mobile discovery heading consumed excessive vertical space');
     if (await page.evaluate(() => document.documentElement.scrollWidth > innerWidth + 1))
