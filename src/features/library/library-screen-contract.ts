@@ -23,6 +23,7 @@ export interface LibraryExternalWorkView {
 }
 
 export interface LibraryScreenModel {
+  discovery?: { active: boolean; scope: string };
   bootstrap: {
     status: 'loading' | 'ready' | 'failed';
     message?: string;
@@ -83,6 +84,8 @@ export interface LibraryScreenActions {
     dropOnEmptyState: DragEventHandler<HTMLDivElement>;
   };
   header: {
+    openDiscovery?(): void;
+    saveDiscoveryList?(): void;
     setQuery(value: string): void;
     retryBootstrap(): void;
     openSync(): void;

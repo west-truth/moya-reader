@@ -1089,6 +1089,16 @@ export default function SourceHubScreen({
                     <span>{controller.query.trim() ? '검색 결과' : '필터 결과'}</span>
                   )}
                 </div>
+                {library?.actions.header.saveDiscoveryList && (
+                  <button
+                    type="button"
+                    className="ghost-btn"
+                    disabled={controller.loading || controller.blockingBusy}
+                    onClick={library.actions.header.saveDiscoveryList}
+                  >
+                    탐색에 목록 추가
+                  </button>
+                )}
                 {Boolean(controller.browse.filters?.length) && (
                   <details className="source-hub-filter-panel">
                     <summary>

@@ -236,6 +236,7 @@ export interface ExternalSourceController {
   addWorkToLibrary(item: ExternalSourceItemView): Promise<void>;
   addCurrentWorkToLibrary(): Promise<void>;
   removeLibraryWork(subscription: ExternalSourceSubscriptionRecord): Promise<void>;
+  openDiscovery?(sourceId: ExtensionContributionId, input: ExternalSourceListInput, title?: string): Promise<void>;
   show(sourceId?: ExtensionContributionId): void;
   showLocalSeries(novel: Novel): Promise<void>;
   close(): void;
@@ -955,7 +956,20 @@ export function useExternalSourceController(options: UseExternalSourceController
           }
           if (page.browse?.filters) {
             setFilterValues((current) =>
-              Object.keys(current).length > 0 ? current : defaultFilterValues(page.browse?.filters),
+              normalizedInput.filters?.length
+                ? Object.fromEntries(
+                    (page.browse?.filters ?? []).flatMap((definition) => {
+                      if (!('defaultValue' in definition)) return [];
+                      const change = normalizedInput.filters?.find(
+                        (value) =>
+                          value.position === definition.position && value.groupPosition === definition.groupPosition,
+                      );
+                      return [[definition.id, change?.value ?? definition.defaultValue]];
+                    }),
+                  )
+                : Object.keys(current).length > 0
+                  ? current
+                  : defaultFilterValues(page.browse?.filters),
             );
           }
         }
@@ -4035,6 +4049,28 @@ export function useExternalSourceController(options: UseExternalSourceController
     ? (novels.find((novel) => novel.id === localSeriesBookId) ?? localSeriesSeedNovel)
     : undefined;
 
+  const openDiscovery = async (sourceId: ExtensionContributionId, input: ExternalSourceListInput, title?: string) => {
+    if (blockingBusy || (importBusy && sourceId !== activeSourceId)) return;
+    setLocalSeriesBookId(undefined);
+    setLocalSeriesSeedNovel(undefined);
+    setLocalSeriesSourceId(undefined);
+    setLocalSeriesReadingStates(new Map());
+    setLocalSeriesChapters([]);
+    localSeriesPageSeedRef.current = undefined;
+    setActiveSourceId(sourceId);
+    setOpen(true);
+    setQuery(input.query ?? '');
+    setSelectedKeys(new Set());
+    setFilterValues({});
+    setDetail(undefined);
+    setDefaultFolder(undefined);
+    setBreadcrumbs([
+      { label: '최상위 폴더' },
+      ...(input.parentRef ? [{ label: title ?? '작품 목록', parentRef: input.parentRef }] : []),
+    ]);
+    await loadPage(input, false, sourceId);
+  };
+
   const captureNavigation = (): ExternalSourceNavigationSnapshot => {
     const connection = activeSourceId
       ? optionsRef.current.registry.getExternalSourceStatus(activeSourceId, optionsRef.current.hostContext)
@@ -4120,6 +4156,7 @@ export function useExternalSourceController(options: UseExternalSourceController
   };
 
   return {
+    openDiscovery,
     renameRelease: options.state.saveReleasePreferences ? renameRelease : undefined,
     setReleasesRead: options.state.saveReleasePreferences ? setReleasesRead : undefined,
     markPreviousReleasesRead: options.state.saveReleasePreferences ? markPreviousReleasesRead : undefined,

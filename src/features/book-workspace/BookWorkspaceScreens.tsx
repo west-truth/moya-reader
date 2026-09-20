@@ -1,3 +1,7 @@
+import { SaveDiscoveryList } from '../discovery/SaveDiscoveryList';
+import type { DiscoveryController } from '../discovery/useDiscoveryController';
+import type { ExtensionContributionId } from '@noveldesk/extension-contracts';
+import type { ExternalSourceListInput } from '../../external-sources/contracts';
 import { lazy, Suspense, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import type { LibraryScreenActions, LibraryScreenModel } from '../library/library-screen-contract';
 import { LibraryHeader, LibraryMobileHeader, LibrarySidebar } from '../library/LibraryChrome';
@@ -17,9 +21,11 @@ const ChaptersScreen = lazy(() =>
   import('../chapters/ChaptersScreen').then((module) => ({ default: module.ChaptersScreen })),
 );
 const LibraryManagementPanel = lazy(() => import('../library/LibraryManagementPanel'));
+const DiscoveryScreen = lazy(() => import('../discovery/DiscoveryScreen'));
 const SourceHubScreen = lazy(() => import('../external-sources/SourceHubScreen'));
 
 export interface BookWorkspaceScreensProps {
+  readonly discovery?: DiscoveryController;
   readonly libraryNotice?: ReactNode;
   readonly controller: BookWorkspaceController;
   readonly state: BookWorkspaceState;
@@ -60,6 +66,7 @@ export interface BookWorkspaceScreensProps {
 }
 
 export function BookWorkspaceScreens({
+  discovery,
   libraryNotice,
   controller,
   state,
@@ -87,6 +94,7 @@ export function BookWorkspaceScreens({
   bookEnrichment,
 }: BookWorkspaceScreensProps) {
   const layoutMode = useResponsiveLayoutMode();
+  const [saveListOpen, setSaveListOpen] = useState(false);
   const [focusedBookId, setFocusedBookId] = useState<string>();
   const [inspectorOpen, setInspectorOpen] = useState(false);
   const inspectorCloseTimer = useRef<ReturnType<typeof globalThis.setTimeout> | undefined>(undefined);
@@ -200,6 +208,7 @@ export function BookWorkspaceScreens({
   };
 
   const goLibraryHome = () => {
+    discovery?.setActive(false);
     externalSources.close();
     controller.setLibraryQuery('');
     controller.setLibraryFilter('all');
@@ -215,6 +224,7 @@ export function BookWorkspaceScreens({
   };
 
   const libraryModel: LibraryScreenModel = {
+    discovery: discovery ? { active: discovery.active && !externalSources.open, scope: discovery.scope } : undefined,
     bootstrap: { status: bootstrap.status, message: bootstrap.message },
     drop: libraryDrop,
     query: state.libraryQuery,
@@ -272,6 +282,14 @@ export function BookWorkspaceScreens({
   const libraryActions: LibraryScreenActions = {
     drag: libraryDrop.actions,
     header: {
+      saveDiscoveryList: discovery ? () => setSaveListOpen(true) : undefined,
+      openDiscovery: discovery
+        ? () => {
+            externalSources.close();
+            discovery.setActive(true);
+            controller.setView('library');
+          }
+        : undefined,
       setQuery: controller.setLibraryQuery,
       retryBootstrap: bootstrap.retry,
       openSync,
@@ -280,6 +298,7 @@ export function BookWorkspaceScreens({
       openImport,
       openLibraryFolders,
       openExternalSource: (sourceId) => {
+        discovery?.setActive(false);
         controller.setView('library');
         externalSources.show(sourceId);
       },
@@ -300,6 +319,7 @@ export function BookWorkspaceScreens({
     },
     controls: {
       setFilter: (filter) => {
+        discovery?.setActive(false);
         externalSources.close();
         controller.setView('library');
         controller.setLibraryFilter(filter);
@@ -308,6 +328,7 @@ export function BookWorkspaceScreens({
       setViewMode: controller.setLibraryViewMode,
       emptyTrash: controller.emptyTrash,
       setShelf: (shelfId) => {
+        discovery?.setActive(false);
         externalSources.close();
         controller.setView('library');
         libraryManagement.setActiveShelf(shelfId);
@@ -365,8 +386,24 @@ export function BookWorkspaceScreens({
 
   return (
     <>
-      {state.view === 'library' && !externalSources.open && (
+      {saveListOpen && discovery && (
+        <SaveDiscoveryList discovery={discovery} source={externalSources} close={() => setSaveListOpen(false)} />
+      )}
+      {state.view === 'library' && !externalSources.open && !discovery?.active && (
         <LibraryScreen model={libraryModel} actions={libraryActions} notice={libraryNotice} />
+      )}
+
+      {state.view === 'library' && !externalSources.open && discovery?.active && (
+        <Suspense fallback={null}>
+          <DiscoveryScreen
+            library={{ model: libraryModel, actions: libraryActions }}
+            discovery={discovery}
+            sources={externalSources}
+            open={(id: string, input: ExternalSourceListInput, title?: string) => {
+              void externalSources.openDiscovery?.(id as ExtensionContributionId, input, title);
+            }}
+          />
+        </Suspense>
       )}
 
       {state.view === 'library' && externalSources.open && (
