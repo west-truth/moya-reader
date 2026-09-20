@@ -23,6 +23,9 @@ describe('ReaderSettingsLayout', () => {
     expect(markup).toContain('본문 최대 폭');
     expect(markup).toContain('aria-label="본문 조판 미리보기"');
     expect(markup).toContain('aria-label="문단 맞춤"');
+    expect(markup).toContain('aria-label="본문 줄바꿈"');
+    expect(markup).toContain('aria-label="본문 글자 모양"');
+    expect(markup).toContain('단어 간격');
     expect(markup).toContain('aria-label="읽기 방식"');
     expect(markup).toContain('>스크롤<');
     expect(markup).not.toContain('연속 스크롤');

@@ -8,6 +8,7 @@ import { SettingsSlider } from './SettingsSlider';
 import { READING_PROFILE_LIMITS } from './reading-profile';
 import { resolveReaderThemeColors } from './reader-theme-colors';
 import type { ReaderSettingsController } from './useReaderSettingsDraft';
+import { ReaderThemePresetManager } from './ReaderThemePresetManager';
 
 const THEMES: Array<{ id: ReadingProfile['theme']; label: string; description: string }> = [
   { id: 'midnight', label: '미드나이트', description: '차분한 네이비' },
@@ -184,6 +185,12 @@ export function ReaderSettingsAppearance({
               onChange={(brightness) => updateProfile({ brightness })}
             />
           </section>
+          <ReaderThemePresetManager
+            profile={profile}
+            foreground={readerColors.foreground}
+            background={readerColors.background}
+            updateProfile={updateProfile}
+          />
           <section className="reader-settings-group">
             <h3>리더 글꼴</h3>
             <div className="segmented full" aria-label="본문 글꼴">

@@ -60,9 +60,13 @@ export interface ReadingProfile {
   fontWeight: number;
   lineHeight: number;
   letterSpacing: number;
+  wordSpacing: number;
   paragraphSpacing: number;
   firstLineIndent: number;
   textAlign: 'start' | 'justify';
+  lineBreak: 'default' | 'keep_words' | 'anywhere';
+  fontStyle: 'normal' | 'italic';
+  textDecoration: 'none' | 'underline';
   marginX: number;
   marginY: number;
   contentWidth: number;

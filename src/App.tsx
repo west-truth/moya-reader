@@ -1160,9 +1160,19 @@ export default function App() {
     '--reading-font-weight': String(readingProfile.fontWeight),
     '--reading-line-height': String(readingProfile.lineHeight),
     '--reading-letter-spacing': `${readingProfile.letterSpacing}em`,
+    '--reading-word-spacing': `${readingProfile.wordSpacing}em`,
     '--reading-paragraph-spacing': `${readingProfile.paragraphSpacing}em`,
     '--reading-first-line-indent': `${readingProfile.firstLineIndent}em`,
     '--reading-text-align': readingProfile.textAlign,
+    '--reading-word-break':
+      readingProfile.lineBreak === 'anywhere'
+        ? 'break-all'
+        : readingProfile.lineBreak === 'keep_words'
+          ? 'keep-all'
+          : 'keep-all',
+    '--reading-overflow-wrap': readingProfile.lineBreak === 'keep_words' ? 'break-word' : 'anywhere',
+    '--reading-font-style': readingProfile.fontStyle,
+    '--reading-text-decoration': readingProfile.textDecoration,
     '--reading-margin-x': `${readingProfile.marginX}vw`,
     '--reading-margin-y': `${readingProfile.marginY}vh`,
     '--reading-width': `${readingProfile.contentWidth}px`,
