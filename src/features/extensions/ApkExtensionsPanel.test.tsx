@@ -45,6 +45,58 @@ function fixture() {
   };
   return manager;
 }
+function updateFixture() {
+  let installed = {
+    ...review(),
+    id: undefined,
+    enabled: true,
+    code: 1,
+    sources: [{ id: '1', name: 'Fixture', lang: 'en' }],
+  };
+  const snapshot = () => ({
+    available: true,
+    revision: installed.code,
+    packages: [
+      {
+        pkg: installed.pkg,
+        version: installed.version,
+        code: installed.code,
+        digest: installed.digest,
+        enabled: installed.enabled,
+        sources: installed.sources,
+      },
+    ],
+    repositories: [
+      {
+        url: 'https://repo.example/index.json',
+        updatedAt: 0,
+        entries: [
+          {
+            pkg: 'org.fixture',
+            name: 'Fixture',
+            version: '2',
+            code: 2,
+            apk: 'fixture.js',
+            lang: 'en',
+            nsfw: false,
+            sources: [],
+            excludedSources: 0,
+            format: 'mangayomi-js' as const,
+          },
+        ],
+      },
+    ],
+  });
+  const manager = fixture();
+  manager.list = vi.fn(async () => snapshot());
+  manager.inspectRepository = vi.fn(async () => ({ ...review(), version: '2', revision: installed.code }));
+  return {
+    manager,
+    markUpdated() {
+      installed = { ...installed, version: '2', code: 2, digest: 'updated' };
+    },
+  };
+}
 const button = (r: ReturnType<typeof create>, label: string) =>
   r.root.findAllByType('button').find((b) => b.props.children === label)!;
 it('keeps trust and installation inside the selected catalog card', async () => {
@@ -63,6 +115,82 @@ it('keeps trust and installation inside the selected catalog card', async () => 
   await act(async () => install().props.onClick());
   expect(manager.install).toHaveBeenCalledWith(review(), expect.any(AbortSignal));
   expect(r.root.findAllByProps({ 'aria-label': 'Mangayomi JS 설치 확인' })).toHaveLength(0);
+  act(() => r.unmount());
+});
+it('stops offering a Mangayomi update after the installed repository generation matches', async () => {
+  const { manager, markUpdated } = updateFixture();
+  markUpdated();
+  const r = create(<ApkExtensionsPanel manager={manager} format="mangayomi-js" />);
+  await act(async () => {});
+  expect(button(r, '설치됨').props.disabled).toBe(true);
+  expect(manager.inspectRepository).not.toHaveBeenCalled();
+  act(() => r.unmount());
+});
+it('shows update progress and replaces the displayed Mangayomi version after a confirmed install', async () => {
+  const { manager, markUpdated } = updateFixture();
+  let finish!: () => void;
+  manager.install = vi.fn(
+    () =>
+      new Promise<Awaited<ReturnType<ApkExtensionManager['list']>>>((resolve) => {
+        finish = () => {
+          markUpdated();
+          void manager.list().then(resolve);
+        };
+      }),
+  );
+  const r = create(<ApkExtensionsPanel manager={manager} format="mangayomi-js" />);
+  await act(async () => {});
+  await act(async () => button(r, '업데이트').props.onClick());
+  const confirmation = r.root.findByProps({ 'aria-label': 'Mangayomi JS 설치 확인' });
+  await act(async () => confirmation.findByProps({ type: 'checkbox' }).props.onChange({ target: { checked: true } }));
+  act(() => button(r, '업데이트').props.onClick());
+  expect(button(r, '업데이트 중…').props.disabled).toBe(true);
+  expect(
+    r.root.findAllByProps({ role: 'status' }).some((node) => String(node.props.children).includes('업데이트')),
+  ).toBe(true);
+  await act(async () => finish());
+  expect(manager.install).toHaveBeenCalledWith(expect.objectContaining({ version: '2' }), expect.any(AbortSignal));
+  expect(button(r, '설치됨').props.disabled).toBe(true);
+  expect(
+    r.root.findAllByProps({ role: 'status' }).some((node) => String(node.props.children).includes('업데이트했습니다')),
+  ).toBe(true);
+  act(() => r.unmount());
+});
+it('releases the busy state and keeps the reviewed update available after install failure', async () => {
+  const { manager } = updateFixture();
+  manager.install = vi.fn(async () => {
+    throw new Error('apk_install_conflict');
+  });
+  const r = create(<ApkExtensionsPanel manager={manager} format="mangayomi-js" />);
+  await act(async () => {});
+  await act(async () => button(r, '업데이트').props.onClick());
+  const confirmation = r.root.findByProps({ 'aria-label': 'Mangayomi JS 설치 확인' });
+  await act(async () => confirmation.findByProps({ type: 'checkbox' }).props.onChange({ target: { checked: true } }));
+  await act(async () => button(r, '업데이트').props.onClick());
+  expect(r.root.findByProps({ role: 'alert' }).props.children).toContain('설치 상태가 변경됐습니다');
+  expect(button(r, '업데이트').props.disabled).toBe(false);
+  act(() => r.unmount());
+});
+it('does not publish success or clear the review when compatibility confirmation rejects', async () => {
+  const { manager } = updateFixture();
+  let installSignal!: AbortSignal;
+  manager.install = vi.fn(async (_review, signal) => {
+    installSignal = signal!;
+    throw new Error('apk_install_unconfirmed');
+  });
+  const r = create(<ApkExtensionsPanel manager={manager} format="mangayomi-js" />);
+  await act(async () => {});
+  await act(async () => button(r, '업데이트').props.onClick());
+  const confirmation = r.root.findByProps({ 'aria-label': 'Mangayomi JS 설치 확인' });
+  await act(async () => confirmation.findByProps({ type: 'checkbox' }).props.onChange({ target: { checked: true } }));
+  await act(async () => button(r, '업데이트').props.onClick());
+  expect(installSignal).toBeInstanceOf(AbortSignal);
+  expect(r.root.findByProps({ role: 'alert' }).props.children).toContain('새 버전을 확인하지 못했습니다');
+  expect(r.root.findAllByProps({ 'aria-label': 'Mangayomi JS 설치 확인' })).toHaveLength(1);
+  expect(
+    r.root.findAllByProps({ role: 'status' }).some((node) => String(node.props.children).includes('업데이트했습니다')),
+  ).toBe(false);
+  expect(button(r, '업데이트').props.disabled).toBe(false);
   act(() => r.unmount());
 });
 it('discards repeated cancelled reviews and releases the last review when leaving the panel', async () => {
@@ -132,4 +260,44 @@ it('reviews direct files with source selection and discards abandoned plans', as
   expect(button(r, '설치').props.disabled).toBe(true);
   act(() => r.unmount());
   expect(manager.discardReview).toHaveBeenCalledWith('file-1');
+});
+
+it('shows the installed file immediately even without a repository', async () => {
+  const manager = fixture();
+  manager.list = vi.fn(async () => ({ available: true, revision: 1, packages: [], repositories: [] }));
+  manager.inspectFile = vi.fn(async () => review('file'));
+  manager.install = vi.fn(async () => ({
+    available: true,
+    revision: 2,
+    repositories: [],
+    packages: [
+      {
+        pkg: 'org.fixture',
+        version: '1',
+        code: 1,
+        digest: 'digest',
+        enabled: true,
+        sources: [{ id: '1', name: 'From file', lang: 'en' }],
+      },
+    ],
+  }));
+  const r = create(<ApkExtensionsPanel manager={manager} format="mangayomi-js" />);
+  await act(async () => {});
+  await act(async () =>
+    r.root
+      .findByProps({ type: 'file' })
+      .props.onChange({ currentTarget: { files: [new File(['code'], 'source.js')], value: 'source.js' } }),
+  );
+  act(() => r.root.findByProps({ type: 'checkbox' }).props.onChange({ target: { checked: true } }));
+  await act(async () => button(r, '설치').props.onClick());
+  expect(
+    r.root
+      .findAllByType('button')
+      .find((node) => Array.isArray(node.props.children) && node.props.children.join('') === '설치됨 1')?.props[
+      'aria-pressed'
+    ],
+  ).toBe(true);
+  expect(button(r, '끄기').props.disabled).toBe(false);
+  expect(JSON.stringify(r.toJSON())).not.toContain('표시할 확장이 없습니다');
+  act(() => r.unmount());
 });

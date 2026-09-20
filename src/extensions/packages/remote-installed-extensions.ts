@@ -21,11 +21,37 @@ import type {
   InstalledExtensionsSnapshot,
   PackageReview,
 } from './installed-extension-manager';
+import {
+  boundedCompatibilitySignal,
+  confirmedCompatibilityInstall,
+  throwCompatibilityTimeout,
+  type ApkInstallReview,
+  type ApkManagerSnapshot,
+} from './apk-extension-manager';
 type Inventory = Pick<InstalledExtensionsSnapshot, 'packages' | 'sources' | 'errors'> & {
   preparedImageImports?: boolean;
   preparedDocumentImports?: boolean;
 };
 const EMPTY: InstalledExtensionsSnapshot = { revision: 0, available: false, packages: [], sources: [], errors: [] };
+const PACKAGE_MUTATION_TIMEOUT_MS = 60_000;
+const COMPATIBILITY_OPERATION_TIMEOUT_MS = 150_000;
+const COMPATIBILITY_CONFIRMATION_TIMEOUT_MS = 30_000;
+interface CompatibilityTimeouts {
+  readonly operationMs: number;
+  readonly confirmationMs: number;
+}
+
+function packageOperationSignal(signal?: AbortSignal): { signal: AbortSignal; close(): void } {
+  const timeout = new AbortController();
+  const timer = globalThis.setTimeout(
+    () => timeout.abort(new Error('package_operation_timeout')),
+    PACKAGE_MUTATION_TIMEOUT_MS,
+  );
+  return {
+    signal: signal ? AbortSignal.any([signal, timeout.signal]) : timeout.signal,
+    close: () => globalThis.clearTimeout(timer),
+  };
+}
 
 /** Reuses the authenticated API client and existing source coordinator. No periodic polling. */
 export class RemoteInstalledExtensions implements InstalledExtensionManager {
@@ -89,8 +115,16 @@ export class RemoteInstalledExtensions implements InstalledExtensionManager {
   private snapshot: InstalledExtensionsSnapshot = EMPTY;
   private listeners = new Set<() => void>();
   private pending?: Promise<void>;
+  private inventoryAbort?: AbortController;
+  private inventoryRequest = 0;
   private covers = new Map<string, string>();
-  constructor(private readonly api: Pick<RemoteApiClient, 'request' | 'requestBlob'>) {
+  constructor(
+    private readonly api: Pick<RemoteApiClient, 'request' | 'requestBlob'>,
+    private readonly compatibilityTimeouts: CompatibilityTimeouts = {
+      operationMs: COMPATIBILITY_OPERATION_TIMEOUT_MS,
+      confirmationMs: COMPATIBILITY_CONFIRMATION_TIMEOUT_MS,
+    },
+  ) {
     this.mangayomi = this.compatibilityManager('/mangayomi-extensions');
     const action = async (name: string, body: unknown, signal?: AbortSignal) =>
       this.api.request(`/apk-extensions/${name}`, { method: 'POST', body: JSON.stringify(body), signal }, 120000);
@@ -102,9 +136,9 @@ export class RemoteInstalledExtensions implements InstalledExtensionManager {
         }),
       savePreferences: async (pkg, revision, values, privateOrigins) => {
         await action('preferences-save', { pkg, revision, values, privateOrigins });
-        await this.refresh();
+        await this.refresh(true);
       },
-      list: () => this.api.request('/apk-extensions'),
+      list: (signal) => this.api.request('/apk-extensions', { signal }, 30000),
       discardReview: async (id) => {
         await action('discard', { id });
       },
@@ -127,12 +161,15 @@ export class RemoteInstalledExtensions implements InstalledExtensionManager {
           120000,
         ),
       install: async (review, signal) => {
-        await action('install', { id: review.id, revision: review.revision, trusted: true }, signal);
-        await this.refresh();
+        const snapshot = await this.installCompatibility('/apk-extensions', review, signal, 120_000);
+        // The package-specific inventory above confirms the exact installed bytes.
+        // Aggregate source publication remains best-effort and cannot hold the UI busy.
+        void this.refresh(true);
+        return snapshot;
       },
       change: async (pkg, revision, change) => {
         await action('change', { pkg, revision, action: change });
-        await this.refresh();
+        await this.refresh(true);
       },
     };
   }
@@ -140,7 +177,7 @@ export class RemoteInstalledExtensions implements InstalledExtensionManager {
     const action = async (name: string, body: unknown, signal?: AbortSignal) =>
       this.api.request(prefix + '/' + name, { method: 'POST', body: JSON.stringify(body), signal }, 150000);
     return {
-      list: () => this.api.request(prefix),
+      list: (signal) => this.api.request(prefix, { signal }, 30000),
       discardReview: async (id) => {
         await action('discard', { id });
       },
@@ -163,20 +200,57 @@ export class RemoteInstalledExtensions implements InstalledExtensionManager {
           30000,
         ),
       install: async (review, signal) => {
-        await action('install', { id: review.id, revision: review.revision, trusted: true }, signal);
-        await this.refresh();
+        const snapshot = await this.installCompatibility(prefix, review, signal, 150_000);
+        void this.refresh(true);
+        return snapshot;
       },
       change: async (pkg, revision, change) => {
         await action('change', { pkg, revision, action: change });
-        await this.refresh();
+        await this.refresh(true);
       },
       preferences: (pkg) =>
         this.api.request(prefix + '/preferences', { method: 'POST', body: JSON.stringify({ pkg }) }),
       savePreferences: async (pkg, revision, values, privateOrigins) => {
         await action('preferences-save', { pkg, revision, values, privateOrigins });
-        await this.refresh();
+        await this.refresh(true);
       },
     };
+  }
+  private async installCompatibility(
+    prefix: string,
+    review: ApkInstallReview,
+    signal: AbortSignal | undefined,
+    requestTimeoutMs: number,
+  ): Promise<ApkManagerSnapshot> {
+    const operation = boundedCompatibilitySignal(signal, this.compatibilityTimeouts.operationMs);
+    try {
+      await this.api.request(
+        prefix + '/install',
+        {
+          method: 'POST',
+          body: JSON.stringify({ id: review.id, revision: review.revision, trusted: true }),
+          signal: operation.signal,
+        },
+        requestTimeoutMs,
+      );
+      const confirmation = boundedCompatibilitySignal(operation.signal, this.compatibilityTimeouts.confirmationMs);
+      try {
+        return confirmedCompatibilityInstall(
+          review,
+          await this.api.request(prefix, { signal: confirmation.signal }, this.compatibilityTimeouts.confirmationMs),
+        );
+      } catch (error) {
+        throwCompatibilityTimeout(confirmation.signal);
+        throw error;
+      } finally {
+        confirmation.close();
+      }
+    } catch (error) {
+      throwCompatibilityTimeout(operation.signal);
+      throw error;
+    } finally {
+      operation.close();
+    }
   }
   releaseCovers() {
     for (const url of this.covers.values()) URL.revokeObjectURL(url);
@@ -268,11 +342,16 @@ export class RemoteInstalledExtensions implements InstalledExtensionManager {
       this.releaseCovers();
     for (const listener of this.listeners) listener();
   }
-  refresh = (): Promise<void> => {
-    if (this.pending) return this.pending;
+  refresh = (force = false): Promise<void> => {
+    if (this.pending && !force) return this.pending;
+    const request = ++this.inventoryRequest;
+    this.inventoryAbort?.abort();
+    this.inventoryAbort = new AbortController();
+    const operation = packageOperationSignal(this.inventoryAbort.signal);
     this.pending = this.api
-      .request<Inventory>('/extensions/packages')
+      .request<Inventory>('/extensions/packages', { signal: operation.signal }, PACKAGE_MUTATION_TIMEOUT_MS)
       .then((value) => {
+        if (request !== this.inventoryRequest) return;
         if (!value || !Array.isArray(value.packages) || !Array.isArray(value.sources) || !Array.isArray(value.errors))
           throw new Error('invalid_inventory');
         this.preparedImageImports = value.preparedImageImports === true;
@@ -280,6 +359,7 @@ export class RemoteInstalledExtensions implements InstalledExtensionManager {
         this.publish({ ...value, available: true });
       })
       .catch(() => {
+        if (request !== this.inventoryRequest) return;
         // An older/unreachable server must not break built-in sources or log the user out for a source failure.
         const { revision: _revision, ...previous } = this.snapshot;
         this.publish({
@@ -288,7 +368,11 @@ export class RemoteInstalledExtensions implements InstalledExtensionManager {
         });
       })
       .finally(() => {
-        this.pending = undefined;
+        operation.close();
+        if (request === this.inventoryRequest) {
+          this.pending = undefined;
+          this.inventoryAbort = undefined;
+        }
       });
     return this.pending;
   };
@@ -302,17 +386,55 @@ export class RemoteInstalledExtensions implements InstalledExtensionManager {
       signal,
     });
   }
-  async install(file: File, review: PackageReview): Promise<void> {
+  async install(file: File, review: PackageReview, signal?: AbortSignal): Promise<void> {
     const query = new URLSearchParams({ digest: review.package.digest, revision: String(review.expectedRevision) });
     if (review.publisherChanged) query.set('publisherChange', '1');
     if (review.downgrade) query.set('downgrade', '1');
-    await this.api.request(
-      `/extensions/packages/install?${query}`,
-      { method: 'POST', body: file, headers: { 'Content-Type': 'application/octet-stream' } },
-      60000,
-    );
-    await this.pending;
-    await this.refresh();
+    const operation = packageOperationSignal(signal);
+    try {
+      await this.api.request(
+        `/extensions/packages/install?${query}`,
+        {
+          method: 'POST',
+          body: file,
+          headers: { 'Content-Type': 'application/octet-stream' },
+          signal: operation.signal,
+        },
+        PACKAGE_MUTATION_TIMEOUT_MS,
+      );
+      // A pre-existing inventory read may have started before this mutation and
+      // may also be stalled while consuming its body. A successful install must
+      // not wait on that stale request before issuing the confirming read.
+      const inventoryRequest = ++this.inventoryRequest;
+      this.inventoryAbort?.abort();
+      this.inventoryAbort = undefined;
+      this.pending = undefined;
+      const value = await this.api.request<Inventory>(
+        '/extensions/packages',
+        { signal: operation.signal },
+        PACKAGE_MUTATION_TIMEOUT_MS,
+      );
+      if (inventoryRequest !== this.inventoryRequest) throw new Error('package_install_unconfirmed');
+      if (!value || !Array.isArray(value.packages) || !Array.isArray(value.sources) || !Array.isArray(value.errors))
+        throw new Error('invalid_inventory');
+      const installed = value.packages.find((pkg) => pkg.id === review.package.manifest.extension.id);
+      const expectedRevision = review.operation === 'unchanged' ? review.expectedRevision : review.expectedRevision + 1;
+      if (
+        installed?.revision !== expectedRevision ||
+        installed.active?.digest !== review.package.digest ||
+        installed.active.manifest.extension.version !== review.package.manifest.extension.version
+      )
+        throw new Error('package_install_unconfirmed');
+      this.preparedImageImports = value.preparedImageImports === true;
+      this.preparedDocumentImports = value.preparedDocumentImports === true;
+      this.publish({ ...value, available: true });
+    } catch (error) {
+      if (operation.signal.reason instanceof Error && operation.signal.reason.message === 'package_operation_timeout')
+        throw operation.signal.reason;
+      throw error;
+    } finally {
+      operation.close();
+    }
   }
   async change(id: string, revision: number, action: 'enable' | 'disable' | 'rollback' | 'remove'): Promise<void> {
     await this.api.request(
@@ -320,8 +442,7 @@ export class RemoteInstalledExtensions implements InstalledExtensionManager {
       { method: 'POST', body: JSON.stringify({ revision, action }) },
       60000,
     );
-    await this.pending;
-    await this.refresh();
+    await this.refresh(true);
   }
   getExternalSources() {
     return this.snapshot.sources;

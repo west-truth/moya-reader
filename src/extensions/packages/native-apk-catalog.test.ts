@@ -3,6 +3,32 @@ import { NativeApkCatalog } from './native-apk-catalog';
 import { packageSha256 } from './package-archive';
 
 describe('native APK transport', () => {
+  it('confirms installation before an unresolved aggregate refresh', async () => {
+    const review = {
+      id: 'review',
+      revision: 1,
+      pkg: 'org.example.apk',
+      version: '2.0.0',
+      digest: 'a'.repeat(64),
+      signers: [],
+    };
+    const request = vi.fn(async (input: Record<string, unknown>) =>
+      input.action === 'list'
+        ? {
+            available: true,
+            revision: 2,
+            packages: [{ ...review, code: 2, sources: [] }],
+            repositories: [],
+          }
+        : { installed: true },
+    );
+    const changed = vi.fn(() => new Promise<void>(() => {}));
+    const catalog = new NativeApkCatalog({ request, invoke: vi.fn() as never }, changed);
+    await expect(catalog.manager.install(review)).resolves.toMatchObject({ revision: 2 });
+    expect(changed).toHaveBeenCalledOnce();
+    catalog.dispose();
+  });
+
   it('validates image bytes and rejects a result from a replaced installation', async () => {
     const blob = new Blob([new Uint8Array([255, 216, 255, 217])], { type: 'image/jpeg' });
     const asset = {

@@ -62,6 +62,7 @@ coverage/
 # Generated verification captures
 screenshots/
 fixtures/generated/
+.tmp/
 
 # Private corpora, generated evidence and internal review material
 AGENTS.md

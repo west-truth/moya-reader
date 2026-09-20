@@ -227,4 +227,45 @@ describe('APK source integration', () => {
       await app.close();
     }
   });
+  it('returns bounded review failures and discards a review synchronously', async () => {
+    const app = Fastify();
+    const discard = vi.fn(() => {});
+    await registerApkExtensionRoutes(app, {
+      close() {},
+      discard,
+      inspectFile: async () => {
+        throw new Error('apk_android_feature_unsupported');
+      },
+    } as unknown as ApkExtensionHost);
+    try {
+      const rejected = await app.inject({
+        method: 'POST',
+        url: '/api/apk-extensions/inspect-file',
+        payload: { name: 'source.apk', base64: 'YXBrIGZpeHR1cmU=' },
+      });
+      expect(rejected.statusCode).toBe(422);
+      expect(rejected.json()).toEqual({ error: 'apk_android_feature_unsupported' });
+
+      const response = await app.inject({
+        method: 'POST',
+        url: '/api/apk-extensions/discard',
+        payload: { id: 'review' },
+      });
+      expect(discard).toHaveBeenCalledWith('review');
+      expect(response.json()).toEqual({ discarded: true });
+    } finally {
+      await app.close();
+    }
+  });
+  it('keeps native and HTTP change commands semantically aligned', async () => {
+    const change = vi.fn(async () => {});
+    const host = { change } as unknown as ApkExtensionHost;
+    const signal = new AbortController().signal;
+    await dispatchApkCommand(
+      host,
+      { action: 'change', pkg: 'org.example.source', revision: 4, change: 'disable' },
+      signal,
+    );
+    expect(change).toHaveBeenCalledWith('org.example.source', 4, 'disable');
+  });
 });

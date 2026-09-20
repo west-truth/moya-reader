@@ -63,7 +63,7 @@ export interface InstalledExtensionManager extends ExternalSourceProviderRegistr
   subscribe(listener: () => void): () => void;
   refresh(): Promise<void>;
   inspect(file: File, signal?: AbortSignal): Promise<PackageReview>;
-  install(file: File, review: PackageReview): Promise<void>;
+  install(file: File, review: PackageReview, signal?: AbortSignal): Promise<void>;
   change(id: string, revision: number, action: 'enable' | 'disable' | 'rollback' | 'remove'): Promise<void>;
   releaseCovers(): void;
 }

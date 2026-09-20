@@ -1,7 +1,14 @@
 import { compatibilityFileUpload } from './compatibility-file';
 import type { InstalledSourceCatalogPort } from '../../external-sources/installed-package-source-registry';
 import type { InstalledSource } from './package-runtime-catalog';
-import type { ApkExtensionManager, ApkManagerSnapshot, ApkInstallReview } from './apk-extension-manager';
+import {
+  boundedCompatibilitySignal,
+  confirmedCompatibilityInstall,
+  throwCompatibilityTimeout,
+  type ApkExtensionManager,
+  type ApkManagerSnapshot,
+  type ApkInstallReview,
+} from './apk-extension-manager';
 import {
   validateSourceResult,
   type SourceMethod,
@@ -38,7 +45,7 @@ export class NativeApkCatalog implements InstalledSourceCatalogPort {
         >,
       savePreferences: (pkg, revision, values, privateOrigins) =>
         action({ action: 'preferences-save', pkg, revision, values, privateOrigins }),
-      list: () => transport.request({ action: 'list' }) as Promise<ApkManagerSnapshot>,
+      list: (signal) => transport.request({ action: 'list' }, signal) as Promise<ApkManagerSnapshot>,
       refreshRepository: async (url, signal) => {
         await transport.request({ action: 'repository-refresh', url }, signal);
       },
@@ -55,8 +62,34 @@ export class NativeApkCatalog implements InstalledSourceCatalogPort {
       discardReview: async (id) => {
         await transport.request({ action: 'discard', id });
       },
-      install: (review, signal) =>
-        action({ action: 'install', id: review.id, revision: review.revision, trusted: true }, signal),
+      install: async (review, signal) => {
+        const operation = boundedCompatibilitySignal(signal, 150_000);
+        try {
+          await transport.request(
+            { action: 'install', id: review.id, revision: review.revision, trusted: true },
+            operation.signal,
+          );
+          const confirmation = boundedCompatibilitySignal(operation.signal, 30_000);
+          try {
+            const snapshot = confirmedCompatibilityInstall(
+              review,
+              (await transport.request({ action: 'list' }, confirmation.signal)) as ApkManagerSnapshot,
+            );
+            void changed().catch(() => {});
+            return snapshot;
+          } catch (error) {
+            throwCompatibilityTimeout(confirmation.signal);
+            throw error;
+          } finally {
+            confirmation.close();
+          }
+        } catch (error) {
+          throwCompatibilityTimeout(operation.signal);
+          throw error;
+        } finally {
+          operation.close();
+        }
+      },
       change: (pkg, revision, change) => action({ action: 'change', pkg, revision, change }),
     };
   }

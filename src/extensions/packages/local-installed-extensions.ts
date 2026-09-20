@@ -132,11 +132,12 @@ export class LocalInstalledExtensions extends InstalledPackageSourceRegistry imp
       package: { digest: pkg.digest, manifest: pkg.manifest, publisherFingerprint: pkg.publisherFingerprint },
     };
   }
-  async install(file: File, review: PackageReview) {
-    const plan = await this.catalog.installer.inspect(file);
+  async install(file: File, review: PackageReview, signal?: AbortSignal) {
+    const plan = await this.catalog.installer.inspect(file, signal);
     await this.catalog.installer.install(
       { ...plan, expectedRevision: review.expectedRevision },
       { digest: review.package.digest, publisherChange: review.publisherChanged, downgrade: review.downgrade },
+      signal,
     );
     await this.pending;
     await this.refresh();

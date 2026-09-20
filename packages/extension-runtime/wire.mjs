@@ -23,6 +23,7 @@ export const PUBLIC_FAILURE_CODES = new Set([
   'source_http_failed',
   'source_access_denied',
   'source_connection_failed',
+  'source_tls_failed',
   'source_request_timeout',
   'source_body_limit',
   'source_browser_unavailable',

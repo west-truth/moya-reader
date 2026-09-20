@@ -228,10 +228,30 @@ export class MangayomiExtensionHost {
       hasCloudflare: false,
     };
     const { result } = await invokeMangayomi({ entry: placeholder, source, action: 'metadata', signal });
-    if (!Array.isArray(result) || !result.length || result.length > 256 || sourceIndex >= result.length)
+    if (
+      !Array.isArray(result) ||
+      !result.length ||
+      result.length > 256 ||
+      !Number.isInteger(sourceIndex) ||
+      sourceIndex < 0
+    )
       throw new Error('compatibility_file_invalid');
+    const expanded = result.flatMap((row) => {
+      if (!row || typeof row !== 'object') throw new Error('compatibility_file_invalid');
+      if (row.lang !== undefined) return [row];
+      if (
+        !Array.isArray(row.langs) ||
+        !row.langs.length ||
+        row.langs.length > 128 ||
+        row.langs.some((lang: unknown) => typeof lang !== 'string' || !lang || lang.length > 32) ||
+        new Set(row.langs).size !== row.langs.length
+      )
+        throw new Error('compatibility_file_invalid');
+      return row.langs.map((lang: string) => ({ ...row, lang }));
+    });
+    if (expanded.length > 256 || sourceIndex >= expanded.length) throw new Error('compatibility_file_invalid');
     const entries = parseMangayomiIndex(
-      result.map((row) => ({
+      expanded.map((row) => ({
         ...row,
         id: String(BigInt('0x' + hash(JSON.stringify([row.baseUrl, row.name, row.lang])).slice(0, 15))),
         sourceCodeUrl: 'https://local-file.invalid/' + encodeURIComponent(String(row.pkgPath ?? name)),
@@ -303,6 +323,7 @@ export class MangayomiExtensionHost {
     };
   }
   async install(id: string, revision: number, signal: AbortSignal) {
+    signal.throwIfAborted();
     await this.exclusive(async () => {
       const plan = this.plans.get(id);
       if (!plan || plan.expires < Date.now()) throw new Error('apk_review_expired');
@@ -328,7 +349,7 @@ export class MangayomiExtensionHost {
         version: plan.metadata.version,
         signers: [],
         digest: plan.digest,
-        enabled: true,
+        enabled: previous?.enabled ?? true,
         activation: randomUUID(),
         sources: [
           {
@@ -431,11 +452,13 @@ export class MangayomiExtensionHost {
           return (
             !field ||
             (value !== null &&
-              (field.kind === 'boolean'
-                ? typeof value !== 'boolean'
-                : field.kind === 'select'
-                  ? !field.choices?.some((c) => c.value === value)
-                  : typeof value !== 'string'))
+              (field.kind === 'multi-select'
+                ? !Array.isArray(value) || value.some((v) => !field.choices?.some((c) => c.value === v))
+                : field.kind === 'boolean'
+                  ? typeof value !== 'boolean'
+                  : field.kind === 'select'
+                    ? !field.choices?.some((c) => c.value === value)
+                    : typeof value !== 'string'))
           );
         })
       )
@@ -577,7 +600,9 @@ export class MangayomiExtensionHost {
       if (!result || !Array.isArray(result.list)) throw new Error('invalid_source_result');
       return { items: result.list.map(work), hasNextPage: result.hasNextPage === true, browse: result.browse };
     }
-    if (method === 'detail') return work({ ...result, link: params.workUrl });
+    // Mangayomi details may omit the name already supplied by the catalog listing.
+    if (method === 'detail')
+      return work({ ...result, name: result.name ?? result.title ?? params.title, link: params.workUrl });
     if (method === 'chapters') {
       const rows = result.chapters ?? result.episodes;
       if (!Array.isArray(rows)) throw new Error('invalid_source_result');

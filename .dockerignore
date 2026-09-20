@@ -16,6 +16,7 @@ scripts/*
 !scripts/extensions/
 scripts/extensions/*
 !scripts/extensions/project.ts
+!scripts/extensions/development-context.ts
 speaker-review-studio/
 
 # Local credentials and runtime data

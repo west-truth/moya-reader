@@ -17,7 +17,10 @@ public final class Inspect {
     public static void main(String[] args) throws Exception {
         File file = new File(args[0]);
         if (!file.isFile() || file.length() > 32 * 1024 * 1024) throw new IllegalArgumentException("apk_size_limit");
-        var verified = new ApkVerifier.Builder(file).setMinCheckedPlatformVersion(21).build().verify();
+        // APK Signature Scheme v2 starts at API 24. Requiring verification all the way back to API 21
+        // incorrectly rejects valid v2-only extension APKs because they intentionally have no v1 JAR
+        // signature. The worker executes converted bytecode on the JVM; API 21 installability is irrelevant.
+        var verified = new ApkVerifier.Builder(file).setMinCheckedPlatformVersion(24).build().verify();
         if (!verified.isVerified() || verified.getSignerCertificates().isEmpty()) throw new IllegalArgumentException("apk_signature_invalid");
         TreeSet<String> certificates = new TreeSet<>();
         for (var certificate : verified.getSignerCertificates())
@@ -52,7 +55,9 @@ public final class Inspect {
             }
             if (entry.startsWith(".")) entry = pkg + entry;
             else if (!entry.contains(".")) entry = pkg + "." + entry;
-            if (!entry.startsWith(pkg + ".") || !entry.matches("[A-Za-z_$][A-Za-z0-9_$.]+"))
+            // Extension API 1.6 repositories use the shared generated entry point
+            // keiyoushi.source.Generated, which intentionally lives outside the application package.
+            if (!entry.matches("[A-Za-z_$][A-Za-z0-9_$.]+"))
                 throw new IllegalArgumentException("apk_entry_invalid");
             long code = Long.parseLong(manifest.getAttributeNS(ns, "versionCode"));
             if (code < 1 || code > Integer.MAX_VALUE) throw new IllegalArgumentException("apk_version_invalid");

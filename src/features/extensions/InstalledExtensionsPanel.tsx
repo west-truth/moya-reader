@@ -34,15 +34,28 @@ export function InstalledExtensionsPanel({
   const [reviewLocation, setReviewLocation] = useState<string>();
   const [acceptedChange, setAcceptedChange] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [operationLabel, setOperationLabel] = useState<string>();
+  const operation = useRef<AbortController>();
   const [error, setError] = useState<string>();
   const [message, setMessage] = useState<string>();
-  const run = async (task: () => Promise<void>) => {
+  useEffect(
+    () => () => {
+      operation.current?.abort();
+    },
+    [],
+  );
+  const run = async (task: (signal: AbortSignal) => Promise<void>, label = '확장 작업') => {
+    if (operation.current) return;
+    const controller = new AbortController();
+    operation.current = controller;
     setBusy(true);
+    setOperationLabel(label);
     setError(undefined);
     setMessage(undefined);
     try {
-      await task();
+      await task(controller.signal);
     } catch (error) {
+      if (controller.signal.aborted) return;
       setError(
         packageOperationMessage(error) ??
           (error instanceof Error && /[가-힣]/.test(error.message)
@@ -50,7 +63,11 @@ export function InstalledExtensionsPanel({
             : '작업을 완료하지 못했습니다. 파일과 연결 상태를 확인한 뒤 다시 시도해 주세요.'),
       );
     } finally {
-      setBusy(false);
+      if (operation.current === controller) {
+        operation.current = undefined;
+        setBusy(false);
+        setOperationLabel(undefined);
+      }
     }
   };
   const needsAcknowledgement = review?.plan.publisherChanged || review?.plan.downgrade;
@@ -122,11 +139,18 @@ export function InstalledExtensionsPanel({
           type="button"
           disabled={busy || (!!needsAcknowledgement && !acceptedChange)}
           onClick={() =>
-            void run(async () => {
-              await manager.install(review.file, review.plan);
-              setReview(undefined);
-              setMessage('확장을 설치했습니다. 소스 목록에서 사용할 수 있습니다.');
-            })
+            void run(
+              async (signal) => {
+                await manager.install(review.file, review.plan, signal);
+                setReview(undefined);
+                setMessage(
+                  review.plan.operation === 'update'
+                    ? `확장을 v${review.plan.package.manifest.extension.version}(으)로 업데이트했습니다.`
+                    : '확장을 설치했습니다. 소스 목록에서 사용할 수 있습니다.',
+                );
+              },
+              review.plan.operation === 'update' ? '확장 업데이트' : '확장 설치',
+            )
           }
         >
           {review.plan.operation === 'update' ? '업데이트' : '설치'}
@@ -215,7 +239,7 @@ export function InstalledExtensionsPanel({
           type="button"
           disabled={busy}
           aria-label="설치된 확장 새로고침"
-          onClick={() => void run(manager.refresh)}
+          onClick={() => void run(() => manager.refresh(), '설치 목록 새로고침')}
         >
           <RefreshCw size={16} aria-hidden="true" />
         </button>
@@ -236,9 +260,9 @@ export function InstalledExtensionsPanel({
             setReview(undefined);
             setReviewLocation(undefined);
             setAcceptedChange(false);
-            void run(async () => {
-              setReview({ file, plan: await manager.inspect(file) });
-            });
+            void run(async (signal) => {
+              setReview({ file, plan: await manager.inspect(file, signal) });
+            }, '확장 파일 확인');
           }}
         />
       </div>
@@ -271,7 +295,7 @@ export function InstalledExtensionsPanel({
       )}
       {busy && (
         <p className="field-help" role="status">
-          확장 작업을 처리하고 있습니다…
+          {operationLabel}을 처리하고 있습니다…
         </p>
       )}
       {!reviewLocation && reviewCard}
@@ -347,14 +371,14 @@ export function InstalledExtensionsPanel({
                       type="button"
                       disabled={busy}
                       onClick={() =>
-                        void run(async () => {
+                        void run(async (signal) => {
                           setReview(undefined);
                           setReviewLocation('installed:' + pkg.id);
                           setAcceptedChange(false);
-                          const update = await manager.checkUpdate!(pkg.id, pkg.revision);
+                          const update = await manager.checkUpdate!(pkg.id, pkg.revision, signal);
                           if (update) setReview(update);
                           else setMessage('새 버전이 없습니다.');
-                        })
+                        }, '확장 업데이트 확인')
                       }
                     >
                       업데이트 확인

@@ -1,3 +1,4 @@
+import { developmentContext } from './development-context';
 import { readFile, realpath, stat } from 'node:fs/promises';
 import { createRequire } from 'node:module';
 import { dirname, isAbsolute, relative, resolve } from 'node:path';
@@ -35,7 +36,7 @@ export async function boundedFile(path: string, maximum: number): Promise<Buffer
   return bytes;
 }
 
-export async function buildProject(folder: string): Promise<VerifiedMoyaPackage> {
+export async function buildProject(folder: string, signingKey?: CryptoKeyPair): Promise<VerifiedMoyaPackage> {
   const root = await realpath(folder);
   const localFile = async (path: string) => {
     const canonical = await realpath(path);
@@ -107,7 +108,13 @@ export async function buildProject(folder: string): Promise<VerifiedMoyaPackage>
   });
   const license = (await boundedFile(await localFile(resolve(root, 'LICENSE')), 256 * 1024)).toString('utf8');
   const notices = `Bundled Moya source SDK — Apache-2.0\n\n${await readFile(new URL('../../LICENSE', import.meta.url), 'utf8')}`;
-  const archive = await buildMoyaExtension({ manifest, source: output.outputFiles[0].text, license, notices });
+  const archive = await buildMoyaExtension({
+    manifest,
+    source: output.outputFiles[0].text,
+    license,
+    notices,
+    signingKey,
+  });
   return verifyMoyaExtension(archive);
 }
 
@@ -144,7 +151,8 @@ export async function checkProjectPackage(pkg: VerifiedMoyaPackage, signal?: Abo
 
 export interface DevelopmentFixture {
   readonly url: string;
-  readonly method?: 'GET' | 'POST';
+  readonly method?: string;
+  readonly headers?: Record<string, string>;
   readonly status?: number;
   readonly body?: string;
   readonly bodyBase64?: string;
@@ -160,6 +168,7 @@ export async function runProjectSource(
     fixtures?: readonly DevelopmentFixture[];
     signal?: AbortSignal;
     state?: SourceStateValues;
+    preferences?: unknown;
     /** Explicit test/development injection. CLI never reads production provider settings. */
     contentResolver?: SourceContentResolver;
   } = {},
@@ -171,6 +180,7 @@ export async function runProjectSource(
   )
     throw new Error('invalid_source_invocation');
   const { Readable } = await import('node:stream');
+  let developmentTransportFailure: string | undefined;
   const transport = options.network
     ? undefined
     : {
@@ -179,7 +189,12 @@ export async function runProjectSource(
           const fixture = options.fixtures?.find(
             (item) => item.url === url.href && (item.method ?? 'GET') === request.method,
           );
-          if (!fixture) throw new Error('fixture_missing');
+          if (!fixture) {
+            const queryKeys = [...new Set(url.searchParams.keys())];
+            const requestTarget = `${url.origin}${url.pathname}${queryKeys.length ? `?${queryKeys.join('&')}` : ''}`;
+            developmentTransportFailure = `fixture_missing:${request.method}:${requestTarget}`;
+            throw new Error(developmentTransportFailure);
+          }
           return {
             status: fixture.status ?? 200,
             headers: { 'content-type': fixture.contentType ?? 'text/plain' },
@@ -200,14 +215,27 @@ export async function runProjectSource(
   );
   try {
     const storage = createSourceStateSession(options.state, pkg.manifest.requestedAccess.storageKiB);
-    const value: unknown = await runExtension({
-      source: pkg.source,
-      method,
-      input,
-      broker: { ...broker.methods, ...storage.methods },
-      signal: options.signal,
-      timeoutMs: 30000,
-    });
+    let value: unknown;
+    try {
+      value = await runExtension({
+        source: pkg.source,
+        method,
+        input,
+        broker: {
+          ...broker.methods,
+          ...storage.methods,
+          ...developmentContext(pkg, String(input.sourceId), options, () => {
+            developmentTransportFailure = 'fixture_missing';
+          }),
+        },
+        signal: options.signal,
+        timeoutMs: 30000,
+      });
+    } catch (error) {
+      if (developmentTransportFailure && error instanceof Error && error.message === 'execution_failed')
+        throw Object.assign(new Error(developmentTransportFailure), { cause: error });
+      throw error;
+    }
     if (method === 'source.getContent' && validateSourceContentRequest(value)) {
       broker.dispose();
       const response = await materializeSourceContent(

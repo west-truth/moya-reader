@@ -28,8 +28,15 @@
 - [대용량 파일과 동기화](architecture/large-file-and-sync-architecture.md)
 - [Cloud Vault](architecture/cloud-vault-sync.md)
 - [신뢰 익스텐션 v1 개발 가이드](architecture/trusted-extensions.md)
+- [JS/TS 소스 확장 개발과 배포](extensions/source-development.md)
+- [Source SDK v1 빠른 참조](extensions/sdk-v1-reference.md)
+- [Mangayomi JavaScript 지원 범위와 검사](extensions/mangayomi-compatibility.md)
+- [Mangayomi 원본 corpus와 실사이트 판정](extensions/mangayomi-corpus-2026-09-20.md)
+- [Mangayomi JS 호환성과 확장 플랫폼 검토](extensions/platform-review-2026-09-19.md)
 - [외부 작품 소스와 Source Hub](architecture/external-library-sources.md)
 - [AI/TTS provider 경계](architecture/provider-boundaries.md)
 - [AI/TTS job·cache·보안](architecture/ai-tts-provider-job-cache-security.md)
 
 구현 사실과 문서가 다르면 현재 소스와 테스트를 우선하고, 같은 변경에서 해당 공개 문서도 함께 고칩니다.
+
+- [공개 확장 릴리스 절차](extensions/publishing.md): 독립 CLI·게시자 서명·저장소 목록 생성과 검증

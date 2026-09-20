@@ -85,3 +85,47 @@ describe('original extension preferences', () => {
     act(() => renderer.unmount());
   });
 });
+
+it('saves and clears multiple original language choices without joining them into text', async () => {
+  let snapshot: CompatibilityPreferences = {
+    revision: 1,
+    privateOrigins: [],
+    fields: [
+      {
+        key: 'languages',
+        title: 'Languages',
+        kind: 'multi-select',
+        secret: false,
+        value: ['ko'],
+        choices: [
+          { label: 'Korean', value: 'ko' },
+          { label: 'English', value: 'en' },
+        ],
+      },
+    ],
+  };
+  const savePreferences = vi.fn(async (_pkg, _revision, changes) => {
+    snapshot = {
+      ...snapshot,
+      revision: snapshot.revision + 1,
+      fields: [{ ...snapshot.fields[0], value: changes.languages }],
+    };
+  });
+  const manager = { preferences: async () => snapshot, savePreferences };
+  const view = create(<CompatibilityPreferencesPanel pkg="test" manager={manager} onSaved={() => {}} />);
+  await act(async () => {});
+  expect(view.root.findByType('select').props.value).toEqual(['ko']);
+  for (const values of [['ko', 'en'], []]) {
+    act(() =>
+      view.root
+        .findByType('select')
+        .props.onChange({ target: { selectedOptions: values.map((value) => ({ value })) } }),
+    );
+    await act(async () => {
+      view.root.findByType('form').props.onSubmit({ preventDefault() {} });
+    });
+    expect(savePreferences.mock.calls.at(-1)?.[2]).toEqual({ languages: values });
+    expect(view.root.findByType('select').props.value).toEqual(values);
+  }
+  act(() => view.unmount());
+});

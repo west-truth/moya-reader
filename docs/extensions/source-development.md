@@ -1,6 +1,8 @@
 # JS/TS 소스 개발과 `.moyaext` 배포
 
-상태: JS/TS 개발 도구·source SDK·Hosted 설치/소스 연결 구현 / 2026-09-12. Native 단독 실행은 후속이다.
+상태: JS/TS 개발 도구·source SDK·Hosted 설치/소스 연결과 Windows 기기 실행 경로 구현.
+SDK·CLI tarball과 프로젝트 생성·저장소 index 생성 명령을 제공한다. npm 공개 게시와 Windows 설치 파일의 최종 실사용 검증은 후속이다.
+Mangayomi 원본 JS는 [별도 호환 지원표](mangayomi-compatibility.md)를 참고한다.
 
 소스는 일반 JS/TS로 작성한다. `.moyaext`는 실행 언어가 아니라 JS bundle, manifest, 라이선스, 무결성 정보를
 담는 ZIP 설치 파일이다. 초기 문서의 `.moyapatch`는 이전 작업명이다. wire format의
@@ -8,7 +10,24 @@
 
 ## 폴더와 명령
 
-복사해 시작할 예제는 `packages/extension-runtime/examples/text-catalog`와 `image-catalog`다.
+새 프로젝트는 아래처럼 만든다. 생성은 네트워크 요청이나 의존성 설치를 하지 않으며 기존 경로를 덮어쓰지 않는다.
+대상 폴더의 부모 폴더는 미리 존재해야 한다. 상대 경로는 명령을 실행한 현재 디렉터리 기준이며 절대 경로도 가능하다.
+
+```sh
+corepack pnpm extension:dev init /path/to/my-source --id org.example.my-source --kind text --name "My source"
+corepack pnpm extension:dev check /path/to/my-source
+corepack pnpm extension:dev run /path/to/my-source --method source.getContent --input /path/to/my-source/content-input.json --fixture /path/to/my-source/fixtures.json
+corepack pnpm extension:dev dev /path/to/my-source --method source.getContent --input /path/to/my-source/content-input.json --fixture /path/to/my-source/fixtures.json
+corepack pnpm extension:dev preview /path/to/my-source --method source.getContent --input /path/to/my-source/content-input.json --fixture /path/to/my-source/fixtures.json
+corepack pnpm extension:dev pack /path/to/my-source --out /path/to/my-source/extension.moyaext
+```
+
+`--kind images`는 이미지 소스 템플릿이다. `--kind` 생략 시 text이며 `--id`는 필수다.
+manifest·소스 코드·fixture 입력의 소스 ID를 함께 생성한다. 템플릿의 합성 데이터를 실제 사이트 구현으로
+교체하고 라이선스·접근 도메인을 검토한 후 배포한다. 아래 명령은 Moya checkout용이며, 외부 개발자는
+[독립 CLI tarball](../../packages/extension-cli/README.md)을 설치하고 `moya-extension`으로 같은 명령을 실행한다.
+
+직접 복사할 예제는 `packages/extension-runtime/examples/text-catalog`와 `image-catalog`다.
 `manifest.json`, `LICENSE`, `src/index.ts` 또는 `src/index.js`가 필요하다. 경로는 저장소 루트를 기준으로 한다.
 개발에는 저장소 의존성을 설치한 Node/Corepack 환경을 사용한다. 앱 사용자에게 이 도구를 요구하는 설계는 아니다.
 
@@ -23,7 +42,21 @@ corepack pnpm extension:dev pack packages/extension-runtime/examples/text-catalo
 `check`는 bundle/manifest/ZIP 검증 후 네트워크 없는 실제 격리 실행기에서 descriptor를 대조한다.
 `run`은 현재 폴더를 다시 읽고 같은 실행기·권한·응답 검증을 사용한다. 앱에 재설치하거나 배포 파일을 수동으로
 만들 필요가 없다. `pack`만 디스크에 설치 파일을 쓴다. 기존 출력은 덮어쓰지 않는다. 동일한 unsigned 입력은
-같은 패키지 digest를 만들도록 ZIP timestamp를 고정했다. 서명은 builder API에서 지원하며 CLI key 관리 UI는 후속이다.
+같은 패키지 digest를 만들도록 ZIP timestamp를 고정했다. 공개 배포는 `keygen`과 `pack --key`로 기존 게시자 서명을 사용할 수 있다. 키 관리와 저장소 index 생성은
+[릴리스 절차](publishing.md)를 참고한다.
+
+`dev`는 최초 검사 후 프로젝트 파일을 감시해 변경할 때마다 다시 bundle·검증한다. `--method`를 주면
+`run`과 같은 fixture 또는 명시적인 `--network` 요청까지 실행하고, 목록은 개수와 첫 5개 항목,
+asset은 content type과 byte 수만 터미널에 표시한다. 다운로드한 본문과 이미지 바이트는 출력하지 않는다.
+빌드 오류는 `src/index.ts:행:열`과 해당 소스 줄을 보여 준다. 여러 파일이 한 번에 바뀌면 묶어서 한 번 실행하고,
+실행 중 생긴 변경은 끝난 직후 한 번 더 처리한다. `Ctrl+C`로 종료한다. 입력·fixture를 사용할 때는
+실행할 `--method`를 함께 지정해야 한다. fixture가 빠졌으면 HTTP method와 URL 경로를 표시하되,
+토큰이 있을 수 있는 query 값은 로그에 출력하지 않는다.
+
+`preview`는 같은 결과를 임의의 `127.0.0.1` 포트에만 표시한다. 파일을 저장하면 자동 갱신하고,
+새 빌드가 실패하면 오류 위치와 함께 마지막 정상 결과를 유지한다. 외부 CDN/script를 사용하지 않으며
+본문·이미지 바이트를 렌더링하지 않는다. 터미널과 마찬가지로 fixture가 기본이고 실제 요청은
+명시적인 `--network`에서만 가능하다.
 
 기본 실행은 offline fixture만 사용한다. 실제 요청은 개발자가 `--network`를 명시한 경우에만 허용하며,
 그때도 manifest의 HTTPS origin·DNS·redirect 검사를 유지한다. fixture의 `body`는 UTF-8 문자열,
@@ -35,7 +68,8 @@ corepack pnpm extension:dev pack packages/extension-runtime/examples/text-catalo
 `@moya/extension-sdk`는 독립 ESM/TypeScript 선언 패키지로 빌드할 수 있다. npm에 게시하지는 않았으며,
 [SDK 배포 안내](../../packages/extension-sdk/README.md)의 tarball을 별도 프로젝트에 설치하면 저장소 경로 alias 없이
 IDE/타입 검사와 SDK 호출을 사용할 수 있다. 기존 `check/run/pack`은 같은 원본 SDK를 주입하므로 기존 예제는 유지한다.
-이 CLI의 독립 배포와 프로젝트 생성 명령은 후속 단계다. SDK만 설치했다고 임의 HTTP/인증 서버 실행 권한이 생기지 않는다.
+CLI도 별도 tarball로 배포할 수 있으며 Moya checkout 없이 동작하는 검사를 제공한다. SDK만 설치했다고 임의 HTTP/인증 서버 실행 권한이 생기지 않는다.
+[SDK v1 빠른 참조](sdk-v1-reference.md)에 메서드·context API·한도·오류 범위를 정리했다.
 
 ```ts
 import { defineExtension, defineSource } from '@moya/extension-sdk';
@@ -76,7 +110,8 @@ export default defineExtension({
 
 현재 실행 가능한 패키지는 v2 catalog 형식의 텍스트·이미지 소스이며 아래의 일반 저장 API도 지원한다.
 메타데이터 contribution이 필요한 패키지는 아직 설치 준비 단계에서 거절한다. 순수 정적 Web에는 서버 설치 화면이 없으며,
-Windows 기기 설치는 아래 경로로 연결했다. 로그인 필요한 소스 SDK는 아직 남아 있다.
+Windows 기기 설치는 아래 경로로 연결했다. 선언형 인증 연결은 아래에서 설명하며,
+임의 사이트의 로그인 폼·추가 인증까지 자동 지원한다는 의미는 아니다.
 
 검증 명령 `corepack pnpm check:extension-ui`는 격리한 PostgreSQL과 실제 실행기로 설치/업데이트/되돌리기,
 파일 다운로드와 390/768/1024px UI를 확인한다. `corepack pnpm check:extension-app`은 실제 App 빌드에서
@@ -173,6 +208,8 @@ API는 없다. `context.http.text/asset({url, authenticated: true})`를 사용�
 
 ## 저장소 등록·설치·업데이트
 
+[공개 확장 릴리스 절차](publishing.md)에 패키지 생성부터 index 생성·업데이트 검증까지 정리되어 있다.
+
 확장 설정의 **저장소**에서 Moya 저장소 JSON 주소를 추가하면 아직 설치하지 않은 확장도 검색하고 설치할 수
 있다. 설치 여부와 새 버전을 표시하며 **업데이트만 표시**로 좁힐 수 있다. 파일은 먼저 다운로드·검증한 뒤
 기존 권한/게시자 검토 화면으로 넘긴다. 확인 없이 설치하거나 실행하지 않는다.
@@ -224,7 +261,8 @@ manifest에 `"updates": {"repository": "https://catalog.example/extensions/index
 
 **호환 범위:** 이 저장소는 Moya SDK로 작성한 `.moyaext` 배포용이다. Suwayomi APK/index나 기존 텍스트 서버
 adapter `.mjs`를 그대로 설치하는 기능은 아니다. 기존 소스는 기존 서버 연결로 계속 사용할 수 있다.
-텍스트 adapter의 SDK 이식과 Suwayomi 호환 엔진 관리·기존 작품 식별자 이관은 별도 후속 작업이다.
+APK·Mangayomi의 별도 호환 경로와 이 `.moyaext` 저장소를 혼용하지 않는다.
+기존 텍스트 adapter의 SDK 이식과 기존 작품 식별자 자동 이관은 별도 작업이다.
 
 ## 선택형 외부 본문 서비스
 
@@ -278,14 +316,15 @@ Windows binary 전송과 host 주입은 검증했지만 Tauri 기본 시작 경�
 ## 현재 제약과 다음 단계
 
 별도 인증/본문 서버는 모든 텍스트 확장의 필수 조건이 아니다. 직접 HTTP 취득은 현재 SDK로 가능하며,
-긴 본문 취득 작업이 필요한 소스의 선택형 host 서비스 연결과 후속 UI/이식은
+긴 본문 취득 작업이 필요한 소스는 선택형 host 서비스로 연결할 수 있다.
 본문 공급자는 선택형 연결이며, 패키지가 선언한 경우에만 사용자가 해당 연결을 설정한다.
 기존 서버의 소스별 공급자 분리와 설치형 SDK/host 실행은 구현했다. 사용자용 연결 선택 UI와 Windows 기본
 실행 경로의 운영 연결 설정은 후속 단계다.
 
 이 첫 도구는 프로젝트 내부의 정적 JS/TS/JSON import와 SDK를 지원한다. Node 모듈, 동적 import, 프로젝트 밖
 파일 및 build plugin/npm script 실행은 거절한다. 외부 pure JS 라이브러리는 현재 프로젝트 내부에 라이선스와
-함께 포함해야 한다. npm dependency 해석·고지 자동화, watch/앱 개발 연결, init 템플릿과 더 나은 오류 위치 표시는 후속이다.
+함께 포함해야 한다. npm dependency 해석·고지 자동화는 후속이다. 현재 `preview`는 안전한 결과 요약과 오류 위치를
+보이는 로컬 개발 화면이며, 실제 Moya App을 자동으로 띄우거나 브라우저 debugger를 연결하지 않는다.
 
 응답 text parsing은 256 KiB, asset은 16 MiB, invocation 전체 asset/in-flight는 32 MiB다. 이 범위를 넘는
 실사용 만화는 streaming asset 수명과 저장소 연결 작업이 필요하다. 일반 로그인 폼/세션 갱신과
