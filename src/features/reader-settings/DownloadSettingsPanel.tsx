@@ -1,6 +1,80 @@
-import { Download, HardDrive, Server } from 'lucide-react';
+import { useCallback, useEffect, useState } from 'react';
+import { Download, HardDrive, RefreshCw, Server } from 'lucide-react';
 import { SourceDownloadRecovery } from '../external-sources/SourceDownloadRecovery';
 import type { ExternalSourceController } from '../external-sources/useExternalSourceController';
+
+interface StorageEstimateView {
+  readonly usage?: number;
+  readonly quota?: number;
+  readonly loading: boolean;
+  readonly unavailable: boolean;
+}
+
+function formatStorageBytes(value?: number): string {
+  if (!value || value < 1) return '0 MB';
+  const units = ['B', 'KB', 'MB', 'GB', 'TB'];
+  const index = Math.min(Math.floor(Math.log(value) / Math.log(1024)), units.length - 1);
+  const amount = value / 1024 ** index;
+  return `${amount >= 10 || index === 0 ? amount.toFixed(0) : amount.toFixed(1)} ${units[index]}`;
+}
+
+function DeviceStorageEstimate() {
+  const [estimate, setEstimate] = useState<StorageEstimateView>({ loading: true, unavailable: false });
+  const refresh = useCallback(async () => {
+    const read = globalThis.navigator?.storage?.estimate;
+    if (!read) {
+      setEstimate({ loading: false, unavailable: true });
+      return;
+    }
+    setEstimate((current) => ({ ...current, loading: true }));
+    try {
+      const next = await read.call(globalThis.navigator.storage);
+      setEstimate({ usage: next.usage, quota: next.quota, loading: false, unavailable: false });
+    } catch {
+      setEstimate({ loading: false, unavailable: true });
+    }
+  }, []);
+  useEffect(() => {
+    void refresh();
+  }, [refresh]);
+  const ratio =
+    estimate.usage !== undefined && estimate.quota
+      ? Math.min(100, Math.max(0, (estimate.usage / estimate.quota) * 100))
+      : undefined;
+  return (
+    <div className="download-storage-estimate" aria-live="polite">
+      <div>
+        <strong>이 브라우저의 사이트 저장공간</strong>
+        <span>
+          {estimate.loading
+            ? '확인 중…'
+            : estimate.unavailable
+              ? '이 브라우저에서는 사용량을 확인할 수 없습니다.'
+              : `${formatStorageBytes(estimate.usage)} / ${formatStorageBytes(estimate.quota)}`}
+        </span>
+      </div>
+      {ratio !== undefined && (
+        <div
+          className="download-storage-meter"
+          role="meter"
+          aria-label="브라우저 저장공간 사용률"
+          aria-valuenow={ratio}
+          aria-valuemin={0}
+          aria-valuemax={100}
+        >
+          <span style={{ width: `${ratio}%` }} />
+        </div>
+      )}
+      <button type="button" onClick={() => void refresh()} disabled={estimate.loading}>
+        <RefreshCw size={15} aria-hidden="true" />
+        다시 확인
+      </button>
+      <small>
+        Moya의 기기 설정·오프라인 데이터와 브라우저 캐시를 합친 추정치입니다. 서버 책장 용량은 포함하지 않습니다.
+      </small>
+    </div>
+  );
+}
 
 export function DownloadSettingsPanel({ controller }: { readonly controller: ExternalSourceController }) {
   const autoDownload = controller.autoDownloadNext ?? false;
@@ -58,6 +132,20 @@ export function DownloadSettingsPanel({ controller }: { readonly controller: Ext
           소스별 요청 제한과 현재 다운로드 대기열을 따릅니다. Wi-Fi 여부는 서버가 휴대폰 연결 상태를 알 수 없어 강제하지
           않습니다.
         </p>
+        <dl className="download-policy-facts">
+          <div>
+            <dt>동시에 받기</dt>
+            <dd>소스가 허용한 범위에서 최대 2회</dd>
+          </div>
+          <div>
+            <dt>작업 순서</dt>
+            <dd>회차 순서를 보존하고 실패한 항목에서 멈춤</dd>
+          </div>
+          <div>
+            <dt>브라우저 종료</dt>
+            <dd>작업은 중단되며 다음 접속에서 이어받을 수 있음</dd>
+          </div>
+        </dl>
       </section>
 
       <section className="settings-section-card">
@@ -72,6 +160,7 @@ export function DownloadSettingsPanel({ controller }: { readonly controller: Ext
           현재 플랫폼이 제공하는 저장 위치만 사용할 수 있습니다. 서버의 임의 경로나 지원하지 않는 CBZ 저장 옵션은
           노출하지 않습니다.
         </p>
+        <DeviceStorageEstimate />
       </section>
     </div>
   );

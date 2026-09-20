@@ -293,6 +293,74 @@
   margin: 0;
 }
 
+.download-policy-facts {
+  display: grid;
+  gap: 0.55rem;
+  margin: 0;
+}
+
+.download-policy-facts > div {
+  display: grid;
+  grid-template-columns: minmax(6.4rem, auto) 1fr;
+  gap: 0.75rem;
+  align-items: baseline;
+}
+
+.download-policy-facts dt {
+  color: var(--text-2);
+  font-size: 0.71rem;
+}
+
+.download-policy-facts dd {
+  margin: 0;
+  font-size: 0.76rem;
+  line-height: 1.45;
+}
+
+.download-storage-estimate {
+  display: grid;
+  gap: 0.6rem;
+  padding: 0.85rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-control);
+  background: var(--app-surface-muted);
+}
+
+.download-storage-estimate > div:first-child {
+  display: flex;
+  justify-content: space-between;
+  gap: 0.75rem;
+  align-items: baseline;
+}
+
+.download-storage-estimate span,
+.download-storage-estimate small {
+  color: var(--text-2);
+  font-size: 0.71rem;
+  line-height: 1.45;
+}
+
+.download-storage-estimate button {
+  justify-self: start;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+}
+
+.download-storage-meter {
+  height: 0.42rem;
+  overflow: hidden;
+  border-radius: 999px;
+  background: var(--border);
+}
+
+.download-storage-meter > span {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: var(--primary);
+}
+
 .reader-settings-scope-note {
   padding: 12px 14px;
   background: var(--app-surface-muted);
