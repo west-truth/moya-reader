@@ -16,6 +16,7 @@ import {
   RefreshCw,
   Search,
   Settings,
+  SlidersHorizontal,
   SkipBack,
   SkipForward,
   StickyNote,
@@ -36,6 +37,8 @@ import type {
 } from './reader-screen-contract';
 import type { ReaderRuntimeFlow, ReaderViewportApi } from './ReaderViewport';
 import { showChapterSequence } from './ReaderChapterHeading';
+import { ReaderQuickViewDialog } from './ReaderQuickViewDialog';
+import { normalizeReadingProfile } from '../reader-settings/reading-profile';
 
 function classNames(...values: Array<string | false | undefined>): string {
   return values.filter(Boolean).join(' ');
@@ -98,10 +101,13 @@ export function ReaderChrome({
   onOpenAutoScroll,
 }: ReaderChromeProps) {
   const [bookmarkPending, setBookmarkPending] = useState(false);
+  const [quickViewOpen, setQuickViewOpen] = useState(false);
   const overflowMenu = useMenuPopover(overflowOpen, onOverflowOpenChanged);
   const actions = screenHandle.getActions();
   const progress = location?.progress ?? 0;
   const nightThemeActive = model.settings.theme === 'dark' || model.settings.theme === 'midnight';
+  const readingProfile = normalizeReadingProfile(model.settings.readingProfile, model.settings);
+  const bookOverrideEnabled = Boolean(model.settings.readingBookOverrides?.[model.novel.id]);
   const toggleBookmark = async () => {
     if (bookmarkPending) return;
     const currentLocation = location ?? viewport?.getLocation();
@@ -180,11 +186,11 @@ export function ReaderChrome({
           </button>
           <button
             className="icon-btn reader-topbar-secondary"
-            onClick={actions.openSettings}
-            title="읽기 설정"
-            aria-label="읽기 설정 열기"
+            onClick={() => setQuickViewOpen(true)}
+            title="빠른 보기"
+            aria-label="빠른 보기 열기"
           >
-            <Settings size={18} />
+            <SlidersHorizontal size={18} />
           </button>
           <button
             className="icon-btn reader-desktop-action"
@@ -314,11 +320,11 @@ export function ReaderChrome({
           <button
             className="reader-mobile-tool"
             type="button"
-            onClick={actions.openSettings}
-            title="읽기 설정"
-            aria-label="읽기 설정 열기"
+            onClick={() => setQuickViewOpen(true)}
+            title="빠른 보기"
+            aria-label="빠른 보기 열기"
           >
-            <Settings size={19} />
+            <SlidersHorizontal size={19} />
           </button>
           <div className="reader-mode-switch" role="group" aria-label="읽기 및 듣기">
             <button
@@ -406,8 +412,11 @@ export function ReaderChrome({
                 <button type="button" role="menuitem" onClick={() => runOverflowAction(actions.openSync)}>
                   <RefreshCw size={15} /> 동기화
                 </button>
+                <button type="button" role="menuitem" onClick={() => runOverflowAction(() => setQuickViewOpen(true))}>
+                  <SlidersHorizontal size={15} /> 빠른 보기
+                </button>
                 <button type="button" role="menuitem" onClick={() => runOverflowAction(actions.openSettings)}>
-                  <Settings size={15} /> 읽기 설정
+                  <Settings size={15} /> 전체 읽기 설정
                 </button>
                 {onOpenAutoScroll && (
                   <button type="button" role="menuitem" onClick={() => runOverflowAction(onOpenAutoScroll)}>
@@ -432,6 +441,16 @@ export function ReaderChrome({
           </div>
         </div>
       </footer>
+      <ReaderQuickViewDialog
+        open={quickViewOpen}
+        profile={readingProfile}
+        readingFlow={readingFlow}
+        bookOverrideEnabled={bookOverrideEnabled}
+        onClose={() => setQuickViewOpen(false)}
+        onUpdate={actions.updateReadingProfile}
+        onSetBookOverride={actions.setReadingBookOverride}
+        onOpenAllSettings={actions.openSettings}
+      />
     </>
   );
 }

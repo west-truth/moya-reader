@@ -117,6 +117,9 @@ describe('ReaderChrome bookmark action', () => {
       expect(renderer.root.findByProps({ 'aria-label': '읽기 조작' }).type).toBe('footer');
       expect(renderer.root.findByProps({ 'aria-label': '읽기 모드' }).props['aria-pressed']).toBe(true);
       expect(renderer.root.findByProps({ 'aria-label': '듣기 모드' }).props['aria-pressed']).toBe(false);
+      act(() => renderer.root.findAllByProps({ 'aria-label': '빠른 보기 열기' })[0].props.onClick());
+      expect(renderer.root.findByProps({ 'aria-label': '빠른 읽기 방식' })).toBeTruthy();
+      expect(renderer.root.findByProps({ 'aria-label': '빠른 보기 닫기' })).toBeTruthy();
       expect(renderer.root.findByProps({ 'aria-label': '읽기 진행률' }).props['aria-valuetext']).toBe(
         '현재 화 진행률 0%',
       );

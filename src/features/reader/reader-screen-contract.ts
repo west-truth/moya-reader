@@ -7,6 +7,7 @@ import type {
   ReaderAnchor,
   ReaderHighlight,
   ReaderSettings,
+  ReadingProfileOverride,
 } from '../../domain/types';
 import type { ActiveTTSPlayback } from '../../providers/tts-playback-session';
 import type { ReadingPosition } from '../../sync/types';
@@ -88,6 +89,8 @@ export interface ReaderScreenActions {
   readonly adjustFontSize: (delta: number) => void;
   readonly adjustContentWidth: (delta: number) => void;
   readonly toggleNightTheme: () => void;
+  readonly updateReadingProfile: (patch: ReadingProfileOverride) => void;
+  readonly setReadingBookOverride: (enabled: boolean) => void;
   readonly toggleBookmark: (location: ReaderLocationSnapshot) => Promise<void>;
   readonly addHighlight: (location: ReaderLocationSnapshot, selection?: ReaderSelection) => void;
   readonly highlightSelection: (
@@ -142,6 +145,8 @@ const NO_ACTIONS: ReaderScreenActions = {
   adjustFontSize: () => undefined,
   adjustContentWidth: () => undefined,
   toggleNightTheme: () => undefined,
+  updateReadingProfile: () => undefined,
+  setReadingBookOverride: () => undefined,
   toggleBookmark: async () => undefined,
   addHighlight: () => undefined,
   highlightSelection: () => undefined,

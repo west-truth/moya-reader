@@ -478,6 +478,140 @@
   background: var(--surface-2);
 }
 
+.reader-quick-view-backdrop {
+  place-items: end center;
+  padding-bottom: 0;
+}
+
+.modal.reader-quick-view-dialog {
+  width: min(560px, calc(100vw - 24px));
+  max-height: min(720px, calc(100dvh - 48px));
+  margin-bottom: 12px;
+  padding: 0;
+  overflow: hidden;
+}
+
+.reader-quick-view-dialog > header {
+  min-height: 54px;
+  margin: 0;
+  padding: 11px 14px 11px 18px;
+}
+
+.reader-quick-view-content {
+  display: grid;
+  gap: 18px;
+  padding: 18px;
+  overflow-y: auto;
+}
+
+.reader-quick-view-scope {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  padding: 11px 12px;
+  background: var(--app-accent-soft);
+  border: 1px solid color-mix(in srgb, var(--primary) 24%, var(--border));
+  border-radius: var(--radius-control);
+}
+
+.reader-quick-view-scope > span {
+  min-width: 0;
+  display: grid;
+  gap: 3px;
+}
+
+.reader-quick-view-scope strong,
+.reader-quick-view-scope small {
+  display: block;
+}
+
+.reader-quick-view-scope strong {
+  font-size: 0.78rem;
+}
+
+.reader-quick-view-scope small {
+  color: var(--text-2);
+  font-size: 0.68rem;
+  line-height: 1.45;
+}
+
+.reader-quick-view-section {
+  display: grid;
+  gap: 10px;
+}
+
+.reader-quick-view-section > h3 {
+  margin: 0;
+  font-size: 0.76rem;
+}
+
+.reader-quick-theme-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 7px;
+}
+
+.reader-quick-theme-grid button {
+  min-height: 54px;
+  display: grid;
+  place-items: center;
+  gap: 4px;
+  padding: 6px;
+  color: var(--text-2);
+  background: var(--app-surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-control);
+  font-size: 0.68rem;
+}
+
+.reader-quick-theme-grid button > span {
+  width: 24px;
+  height: 24px;
+  border: 1px solid color-mix(in srgb, var(--text) 22%, transparent);
+  border-radius: 50%;
+}
+
+.reader-quick-theme-grid button.active {
+  color: var(--text);
+  background: var(--app-accent-soft);
+  border-color: var(--primary);
+}
+
+.reader-quick-view-section .reader-settings-slider {
+  padding: 8px 0;
+}
+
+.reader-quick-view-all {
+  min-height: 44px;
+  justify-self: stretch;
+}
+
+@media (max-width: 699px) {
+  .reader-quick-view-backdrop {
+    padding: 0;
+  }
+
+  .modal.reader-quick-view-dialog {
+    width: 100%;
+    max-height: min(82dvh, 720px);
+    margin: 0;
+    border-right: 0;
+    border-bottom: 0;
+    border-left: 0;
+    border-radius: var(--radius-overlay) var(--radius-overlay) 0 0;
+  }
+
+  .reader-quick-view-content {
+    padding-bottom: calc(18px + env(safe-area-inset-bottom));
+  }
+
+  .reader-quick-view-scope {
+    align-items: stretch;
+    flex-direction: column;
+  }
+}
+
 .reader-loading::after {
   content: '본문을 준비하는 중입니다.';
   position: absolute;
