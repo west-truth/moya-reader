@@ -19,7 +19,7 @@ const string = (value, max = 20000) => typeof value === 'string' && value.length
 const validUrl = (value) => string(value, 8192) && !Array.from(value).some((char) => char.charCodeAt(0) < 32);
 const id = (value) => typeof value === 'string' && /^[a-f0-9]{64}$/.test(value);
 const sourceId = (pkg, remote, namespace = 'moya.apk') => `${namespace}.${hash(pkg).slice(0, 24)}.${remote}`;
-const TTL = 10 * 60 * 1000;
+const TTL = 6 * 60 * 60 * 1000;
 const generation = (record) => `${record.digest}:${record.activation ?? 'legacy'}`;
 
 /** Converts APK output to the shared Moya source contract; all remote URLs stay in host-owned reference files. */
@@ -47,6 +47,9 @@ export class ApkSourceCatalog {
     this.sourceFile = sourceFile;
     this.description = description;
     this.pageConcurrency = pageConcurrency;
+  }
+  setCacheOwner(owner) {
+    this.#covers.setOwner(owner);
   }
   subscribe = (listener) => {
     this.#listeners.add(listener);
@@ -156,8 +159,9 @@ export class ApkSourceCatalog {
     await writeFile(temp, bytes, { mode: 0o600 });
     await rename(temp, path);
   }
-  async invoke(contributionId, method, input, signal) {
+  async invoke(contributionId, method, input, signal, options = {}) {
     signal.throwIfAborted();
+    if (options.refreshCovers) this.#covers.invalidatePrefix(`${contributionId}:`);
     const source = this.getSource(contributionId);
     const record =
       source && this.store.snapshot().packages.find((p) => p.pkg === source.packageId && p.enabled !== false);
@@ -315,14 +319,14 @@ export class ApkSourceCatalog {
         // Separate files avoid list/detail read-modify-write races. Old combined records remain readable.
         let detail = (await this.#read(detailPath)) ?? (saved.fetchedAt > 0 ? saved : undefined);
         const listedCover = fresh(saved, saved.listedAt) && validUrl(saved.raw.cover);
-        if (!(method === 'source.getCover' && listedCover) && !fresh(detail)) {
+        if (!(method === 'source.getCover' && listedCover) && (options.cacheMode === 'reload' || !fresh(detail))) {
           detail = await joinTask(
             this.#pending,
-            `detail:${contributionId}:${generation(record)}:${input.workId}`,
+            `detail:${contributionId}:${generation(record)}:${input.workId}:${options.cacheMode ?? ''}`,
             signal,
             async (sharedSignal) => {
               const cached = await this.#read(detailPath);
-              if (fresh(cached)) return cached;
+              if (options.cacheMode !== 'reload' && fresh(cached)) return cached;
               const raw = await request('detail', { workUrl: saved.raw.url, title: saved.raw.title }, sharedSignal);
               if (!object(raw)) throw new Error('apk_work_invalid');
               const value = {
@@ -362,7 +366,11 @@ export class ApkSourceCatalog {
       } else if (method === 'source.listReleases' || method === 'source.getContent') {
         const cachePath = join(directory, `${input.workId}-chapters.json`);
         let cache = await this.#read(cachePath);
-        if (!cache || cache.generation !== generation(record) || cache.fetchedAt + TTL <= Date.now()) {
+        if (
+          !cache ||
+          cache.generation !== generation(record) ||
+          (!input.cursor && (options.cacheMode === 'reload' || cache.fetchedAt + 2 * 60 * 1000 <= Date.now()))
+        ) {
           const key = `${contributionId}:${generation(record)}:${input.workId}`;
           cache = await joinTask(this.#pending, key, signal, async (sharedSignal) => {
             const rows = await request('chapters', { workUrl: saved.raw.url, title: saved.raw.title }, sharedSignal);
@@ -372,14 +380,22 @@ export class ApkSourceCatalog {
               rows.some((r) => !object(r) || !validUrl(r.url) || !string(r.title, 4096))
             )
               throw new Error('apk_chapters_invalid');
-            const value = { rows: [...rows].reverse(), fetchedAt: Date.now(), generation: generation(record) };
+            const value = {
+              rows: [...rows].reverse(),
+              fetchedAt: Date.now(),
+              snapshot: randomUUID(),
+              generation: generation(record),
+            };
             await this.#save(cachePath, value);
             return value;
           });
           current();
         }
         if (method === 'source.listReleases') {
-          const offset = input.cursor === undefined ? 0 : Number(input.cursor);
+          const versioned = typeof input.cursor === 'string' && /^chapters:([a-z0-9-]+):(\d+)$/.exec(input.cursor);
+          if (versioned && versioned[1] !== String(cache.snapshot ?? cache.fetchedAt))
+            throw new Error('source_catalog_changed');
+          const offset = input.cursor === undefined ? 0 : Number(versioned ? versioned[2] : input.cursor);
           if (!Number.isSafeInteger(offset) || offset < 0) throw new Error('invalid_source_cursor');
           result = {
             items: cache.rows.slice(offset, offset + 500).map((row, index) => ({
@@ -388,7 +404,9 @@ export class ApkSourceCatalog {
               order: offset + index,
               ...(Number.isFinite(row.number) && row.number >= 0 ? { number: row.number } : {}),
             })),
-            ...(offset + 500 < cache.rows.length ? { nextCursor: String(offset + 500) } : {}),
+            ...(offset + 500 < cache.rows.length
+              ? { nextCursor: `chapters:${cache.snapshot ?? cache.fetchedAt}:${offset + 500}` }
+              : {}),
           };
         } else {
           const chapter = cache.rows.find((row) => hash(row.url) === input.releaseId);

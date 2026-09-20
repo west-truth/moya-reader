@@ -19,7 +19,8 @@ const DB_NAME = 'noveldesk-external-sources';
 // Keep this at the last shipped version. Shared connection hints are server-owned in self-host mode
 // and reconstructed from the encrypted device credential in local mode, so they need no new store.
 const DB_VERSION = 6;
-const MAX_CACHE_PAGES_PER_CONNECTION = 24;
+const MAX_CACHE_BYTES = 32 * 1024 * 1024;
+const MAX_CACHE_PAGES = 1000;
 const CREDENTIAL_KEY_ID = 'external-source-credentials-v1';
 
 let dbPromise: Promise<IDBDatabase> | undefined;
@@ -355,24 +356,62 @@ export class ExternalSourceLocalStateStore implements ExternalSourceLocalState {
 
   async getCachePage(id: string): Promise<ExternalCatalogCachePage | undefined> {
     const db = await openExternalSourceDb();
-    const tx = db.transaction('cachePages', 'readonly');
-    return requestToPromise<ExternalCatalogCachePage | undefined>(tx.objectStore('cachePages').get(id));
+    const tx = db.transaction('cachePages', 'readwrite');
+    const store = tx.objectStore('cachePages');
+    const page = await requestToPromise<ExternalCatalogCachePage | undefined>(store.get(id));
+    const keepUntil = page?.retainUntil
+      ? Date.parse(page.retainUntil)
+      : Date.parse(page?.fetchedAt ?? '') + 7 * 86400_000;
+    if (!page || !Number.isFinite(keepUntil) || keepUntil <= Date.now()) {
+      if (page) store.delete(id);
+      await transactionDone(tx);
+      return undefined;
+    }
+    store.put({ ...page, lastAccessedAt: new Date().toISOString() });
+    await transactionDone(tx);
+    return page;
   }
 
   async saveCachePage(page: ExternalCatalogCachePage): Promise<void> {
-    const db = await openExternalSourceDb();
-    const existingTx = db.transaction('cachePages', 'readonly');
-    const existing = await requestToPromise<ExternalCatalogCachePage[]>(
-      existingTx.objectStore('cachePages').index('connectorId').getAll(IDBKeyRange.only(page.connectorId)),
+    const fetchedAt = Date.parse(page.fetchedAt);
+    const retainUntil = Math.min(
+      Date.parse(page.retainUntil ?? '') || fetchedAt + 7 * 86400_000,
+      fetchedAt + 7 * 86400_000,
     );
-    const sameConnection = existing
-      .filter((item) => item.accountConnectionId === page.accountConnectionId && item.id !== page.id)
-      .sort((left, right) => right.fetchedAt.localeCompare(left.fetchedAt));
-
+    const byteLength = new TextEncoder().encode(JSON.stringify(page)).length;
+    const db = await openExternalSourceDb();
     const tx = db.transaction('cachePages', 'readwrite');
     const store = tx.objectStore('cachePages');
-    store.put(page);
-    sameConnection.slice(MAX_CACHE_PAGES_PER_CONNECTION - 1).forEach((item) => store.delete(item.id));
+    const existing = await requestToPromise<ExternalCatalogCachePage[]>(store.getAll());
+    store.delete(page.id);
+    const rows = existing
+      .filter((entry) => entry.id !== page.id)
+      .sort((a, b) => (b.lastAccessedAt ?? b.fetchedAt).localeCompare(a.lastAccessedAt ?? a.fetchedAt));
+    const save = Number.isFinite(retainUntil) && retainUntil > Date.now() && byteLength <= MAX_CACHE_BYTES;
+    let bytes = save ? byteLength : 0,
+      count = save ? 1 : 0;
+    for (const entry of rows) {
+      const expiry = Date.parse(entry.retainUntil ?? '') || Date.parse(entry.fetchedAt) + 7 * 86400_000;
+      const size = entry.byteLength ?? new TextEncoder().encode(JSON.stringify(entry)).length;
+      if (
+        !Number.isFinite(expiry) ||
+        expiry <= Date.now() ||
+        count >= MAX_CACHE_PAGES ||
+        bytes + size > MAX_CACHE_BYTES
+      )
+        store.delete(entry.id);
+      else {
+        bytes += size;
+        count++;
+      }
+    }
+    if (save)
+      store.put({
+        ...page,
+        byteLength,
+        retainUntil: new Date(retainUntil).toISOString(),
+        lastAccessedAt: new Date().toISOString(),
+      });
     await transactionDone(tx);
   }
 
@@ -714,4 +753,12 @@ export async function resetExternalSourceLocalStateForTests(): Promise<void> {
     request.onerror = () => reject(request.error);
     request.onblocked = () => reject(new Error('External source database deletion is blocked.'));
   });
+}
+
+/** Metadata only; downloads, credentials and library links are deliberately outside this operation. */
+export async function clearSourceMetadataCache(): Promise<void> {
+  const db = await openExternalSourceDb();
+  const tx = db.transaction('cachePages', 'readwrite');
+  tx.objectStore('cachePages').clear();
+  await transactionDone(tx);
 }

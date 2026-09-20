@@ -41,8 +41,8 @@ describe('ExternalSourceLocalStateStore', () => {
       accountConnectionId: 'account-1',
       queryFingerprint: '{}',
       items: [],
-      fetchedAt: '2026-08-24T00:00:00.000Z',
-      expiresAt: '2026-08-24T00:15:00.000Z',
+      fetchedAt: new Date().toISOString(),
+      expiresAt: new Date(Date.now() + 900_000).toISOString(),
       schemaVersion: 1,
     };
     const source = { connectorId, accountConnectionId: 'account-1', remoteId: 'remote-1' };
@@ -118,7 +118,7 @@ describe('ExternalSourceLocalStateStore', () => {
     await store.saveSelectedItem(selectedItem);
 
     expect(await store.getCredential(connectorId)).toEqual(credential);
-    expect(await store.getCachePage(cache.id)).toEqual(cache);
+    expect(await store.getCachePage(cache.id)).toMatchObject(cache);
     expect(await store.listLinks(connectorId)).toEqual([link]);
     expect(await new ExternalSourceLocalStateStore().getDefaultFolder(connectorId, 'account-1')).toEqual(defaultFolder);
     expect(await store.getCatalogPreference(connectorId, 'account-1', 'source:9')).toEqual(catalogPreference);

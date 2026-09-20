@@ -89,3 +89,23 @@ test('errors and fills completed after close are never cached', async () => {
   });
   assert.equal(calls, 1);
 });
+
+test('transient failures retain expired covers within the retention limit, but authentication failures do not', async () => {
+  let now = 0;
+  const cache = new SourceCoverCache({ ttl: 10, keep: 100, now: () => now });
+  const first = await cache.resolve('cover', signal(), async () => image());
+  now = 11;
+  const failed = async () => {
+    throw new Error('HTTP 502');
+  };
+  assert.equal(await cache.resolve('cover', signal(), failed), first);
+  await assert.rejects(
+    cache.resolve('cover', signal(), async () => {
+      throw new Error('HTTP 403');
+    }),
+    /403/,
+  );
+  now = 101;
+  await assert.rejects(cache.resolve('cover', signal(), failed), /502/);
+  cache.clear();
+});

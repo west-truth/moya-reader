@@ -78,6 +78,8 @@ export interface ExternalSourceWorkDetail {
 }
 
 export interface ExternalSourceListInput {
+  /** Host-only: explicitly revalidate every host cache layer. */
+  readonly cacheMode?: 'reload';
   readonly accountConnectionId?: string;
   readonly parentRef?: string;
   readonly query?: string;
@@ -87,6 +89,7 @@ export interface ExternalSourceListInput {
 }
 
 export interface ExternalItemPage {
+  readonly cache?: { readonly fetchedAt: number; readonly stale?: boolean };
   readonly items: readonly ExternalItemSummary[];
   readonly nextCursor?: string;
   readonly detail?: ExternalSourceWorkDetail;
@@ -240,6 +243,10 @@ export interface ExternalSourceLink {
 }
 
 export interface ExternalCatalogCachePage {
+  readonly scope?: string;
+  readonly retainUntil?: string;
+  readonly byteLength?: number;
+  readonly lastAccessedAt?: string;
   /** Only a fully traversed series can be reused as an ordered work snapshot. */
   readonly completeSeries?: boolean;
   readonly detail?: ExternalSourceWorkDetail;

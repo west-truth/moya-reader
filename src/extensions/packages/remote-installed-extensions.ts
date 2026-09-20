@@ -512,6 +512,7 @@ export class RemoteInstalledExtensions implements InstalledExtensionManager {
     input: ExternalSourceListInput,
     signal: AbortSignal,
   ): Promise<ExternalItemPage> {
+    if (input.cacheMode === 'reload' && !input.cursor) this.covers.invalidateSource(id);
     return this.api
       .request<ExternalItemPage>(
         `/extensions/sources/${encodeURIComponent(id)}/list`,

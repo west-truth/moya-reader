@@ -25,6 +25,7 @@ const safeCodes = new Set([
   'prepared_download_unavailable',
   'compatibility_feature_unsupported',
   'source_http_failed',
+  'source_catalog_changed',
   'source_connection_failed',
   'source_tls_failed',
   'source_request_timeout',
@@ -115,9 +116,12 @@ export async function registerExtensionPackageRoutes(
 ): Promise<PackageRuntimeCatalog> {
   const catalog = new PackageRuntimeCatalog(store, execution);
   const repositories = new PackageRepositories(store, execution);
-  const installed = new InstalledPackageSourceRegistry(catalog);
-  const apkRegistry = apk ? new InstalledPackageSourceRegistry(apk.catalog) : undefined;
-  const mgRegistry = mangayomi ? new InstalledPackageSourceRegistry(mangayomi.catalog) : undefined;
+  const cacheOwner = Symbol('owner-source-cache');
+  const installed = new InstalledPackageSourceRegistry(catalog, cacheOwner);
+  apk?.catalog.setCacheOwner(cacheOwner);
+  mangayomi?.catalog.setCacheOwner(cacheOwner);
+  const apkRegistry = apk ? new InstalledPackageSourceRegistry(apk.catalog, cacheOwner) : undefined;
+  const mgRegistry = mangayomi ? new InstalledPackageSourceRegistry(mangayomi.catalog, cacheOwner) : undefined;
   const imageRegistry = apkRegistry ? compositeSourceRegistry(installed, apkRegistry) : installed;
   const registry = new AppExternalSourceRegistry(
     [],

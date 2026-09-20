@@ -1,3 +1,5 @@
+import { sourceCachePolicy, sourcePageTime, transientSourceFailure } from '../../external-sources/cache-policy';
+import { storedSourcePage, saveSourceCache } from '../../external-sources/cached-page';
 import { createHostedImageDownloadQueue } from '../../external-sources/series/hosted-image-download-queue';
 import type { HostedImageDownload, PreparedServerImport } from '../../services/import/hosted-image-import';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
@@ -18,6 +20,7 @@ import { persistentId128 } from '@noveldesk/text-core/hash';
 import type { Chapter, Novel } from '../../domain/types';
 import type {
   ExternalItemKey,
+  ExternalItemPage,
   ExternalItemSummary,
   ExternalSourceBrowseMode,
   ExternalSourceBrowseState,
@@ -77,8 +80,6 @@ import {
   MAX_SUBSCRIPTION_CHECK_TOTAL_PAGES,
   reconcileSubscriptionReleaseIds,
 } from './series-catalog-pagination';
-
-const CACHE_TTL_MS = 15 * 60 * 1_000;
 
 function normalizedSourceHash(value: string | undefined): string | undefined {
   return value
@@ -342,8 +343,12 @@ function cachePageId(
   sourceId: string,
   accountConnectionId: string | undefined,
   input: ExternalSourceListInput,
+  scope = 'local',
+  generation?: string,
 ): string {
-  return [
+  return JSON.stringify([
+    scope,
+    generation ?? '',
     sourceId,
     accountConnectionId ?? '',
     input.parentRef ?? '',
@@ -351,7 +356,7 @@ function cachePageId(
     input.browseMode ?? '',
     JSON.stringify(input.filters ?? []),
     input.cursor ?? '',
-  ].join('\u0000');
+  ]);
 }
 
 function queryFingerprint(input: ExternalSourceListInput): string {
@@ -723,11 +728,15 @@ export function useExternalSourceController(options: UseExternalSourceController
       sourceId: string,
       accountConnectionId: string | undefined,
       parentRef: string | undefined,
-      page: { readonly detail?: ExternalSourceWorkDetail; readonly items: readonly ExternalItemSummary[] },
+      page: {
+        readonly detail?: ExternalSourceWorkDetail;
+        readonly items: readonly ExternalItemSummary[];
+        readonly cache?: ExternalItemPage['cache'];
+      },
       complete: boolean,
       isCurrent: () => boolean = () => true,
     ) => {
-      if (!parentRef || !page.detail) return;
+      if (!parentRef || !page.detail || page.cache?.stale) return;
       const id = externalSourceSubscriptionId(sourceId, accountConnectionId, parentRef);
       const current = (await optionsRef.current.state.listSubscriptions(sourceId, accountConnectionId)).find(
         (item) => item.id === id,
@@ -825,15 +834,20 @@ export function useExternalSourceController(options: UseExternalSourceController
       }
       const normalizedInput: ExternalSourceListInput = {
         ...input,
+        ...(forceRefresh ? { cacheMode: 'reload' as const } : {}),
         accountConnectionId: connection.accountConnectionId,
       };
-      const id = cachePageId(sourceId, connection.accountConnectionId, normalizedInput);
-      let cached =
-        normalizedInput.parentRef && !normalizedInput.query
-          ? await optionsRef.current.state.getCachePage(id).catch(() => undefined)
-          : undefined;
+      const id = cachePageId(
+        sourceId,
+        connection.accountConnectionId,
+        normalizedInput,
+        optionsRef.current.settingsScope,
+        connection.connectionGeneration,
+      );
+      let cached = await optionsRef.current.state.getCachePage(id).catch(() => undefined);
+      if (cached && Date.parse(cached.fetchedAt) + sourceCachePolicy(input).keep <= Date.now()) cached = undefined;
       if (!mountedRef.current || abort.signal.aborted || listAbortRef.current !== abort) return;
-      const snapshot = !append && cached?.completeSeries && !cached.nextCursor ? cached : undefined;
+      const snapshot = !append ? cached : undefined;
       const connectionIsCurrent = () => {
         const current = optionsRef.current.registry.getExternalSourceStatus(sourceId, optionsRef.current.hostContext);
         return (
@@ -850,18 +864,41 @@ export function useExternalSourceController(options: UseExternalSourceController
         setCatalogLoading(false);
         return;
       }
-      const publish = (page: { items: readonly ExternalItemSummary[]; detail?: ExternalSourceWorkDetail }) => {
+      const publish = (page: {
+        items: readonly ExternalItemSummary[];
+        detail?: ExternalSourceWorkDetail;
+        nextCursor?: string;
+        browse?: ExternalSourceBrowseState;
+      }) => {
         if (localSeed) {
           localSeed.remoteItems = page.items;
           setRawItems(mergeSeriesCatalogItems(localSeed.items, page.items));
         } else setRawItems([...page.items]);
         setDetail(page.detail ?? localSeed?.detail);
-        setNextCursor(undefined);
+        setNextCursor(page.nextCursor);
+        setBrowse(page.browse);
+        if (page.browse) {
+          setCatalogBrowse(page.browse);
+          setCatalogBrowseParentRef(normalizedInput.parentRef);
+          setFilterValues(
+            normalizedInput.filters?.length
+              ? Object.fromEntries(
+                  (page.browse.filters ?? []).flatMap((definition) => {
+                    if (!('defaultValue' in definition)) return [];
+                    const change = normalizedInput.filters?.find(
+                      (v) => v.position === definition.position && v.groupPosition === definition.groupPosition,
+                    );
+                    return [[definition.id, change?.value ?? definition.defaultValue]];
+                  }),
+                )
+              : defaultFilterValues(page.browse.filters),
+          );
+        }
       };
       if (snapshot) {
         publish(snapshot);
         setLoading(false);
-        setStale(false);
+        setStale(Date.parse(snapshot.expiresAt) <= Date.now());
         if (!forceRefresh && Date.parse(snapshot.expiresAt) > Date.now()) {
           setCatalogLoading(false);
           return true;
@@ -895,7 +932,7 @@ export function useExternalSourceController(options: UseExternalSourceController
               optionsRef.current.registry.listExternalSource(
                 sourceId,
                 optionsRef.current.hostContext,
-                { ...normalizedInput, cursor },
+                { ...normalizedInput, cacheMode: undefined, cursor },
                 abort.signal,
               ),
             abort.signal,
@@ -913,10 +950,12 @@ export function useExternalSourceController(options: UseExternalSourceController
         )
           return;
         if (snapshot && series) {
-          const nextItems = cacheSafeItems(page.items);
+          setStale(page.cache?.stale === true);
+          const nextStored = storedSourcePage(id, sourceId, normalizedInput, page, optionsRef.current.settingsScope);
+          const nextItems = nextStored.items;
           if (
             JSON.stringify(snapshot.items) !== JSON.stringify(nextItems) ||
-            JSON.stringify(snapshot.detail) !== JSON.stringify({ ...page.detail, thumbnailUrl: undefined })
+            JSON.stringify(snapshot.detail) !== JSON.stringify(nextStored.detail)
           ) {
             const update = page;
             pendingCatalogApplyRef.current = () => {
@@ -924,13 +963,9 @@ export function useExternalSourceController(options: UseExternalSourceController
             };
             setCatalogUpdateAvailable(true);
           }
-          const now = currentIso();
-          await optionsRef.current.state.saveCachePage({
-            ...snapshot,
-            items: nextItems,
-            detail: { ...page.detail!, thumbnailUrl: undefined },
-            fetchedAt: now,
-            expiresAt: new Date(Date.now() + CACHE_TTL_MS).toISOString(),
+          await saveSourceCache(optionsRef.current.state, {
+            ...nextStored,
+            completeSeries: true,
           });
           await reconcileSubscriptionPage(
             sourceId,
@@ -984,7 +1019,7 @@ export function useExternalSourceController(options: UseExternalSourceController
         );
         setSelectedKeys((current) => new Set([...current].filter((key) => visibleKeys.has(key))));
         setNextCursor(page.nextCursor);
-        setStale(false);
+        setStale(page.cache?.stale === true);
         await reconcileSubscriptionPage(
           sourceId,
           connection.accountConnectionId,
@@ -993,20 +1028,17 @@ export function useExternalSourceController(options: UseExternalSourceController
           !normalizedInput.cursor && !page.nextCursor,
           () => !abort.signal.aborted && listAbortRef.current === abort,
         ).catch(() => undefined);
-        const fetchedAt = currentIso();
-        await optionsRef.current.state.saveCachePage({
+        await saveSourceCache(optionsRef.current.state, {
+          ...storedSourcePage(id, sourceId, normalizedInput, page, optionsRef.current.settingsScope),
           id,
           connectorId: sourceId,
           accountConnectionId: connection.accountConnectionId,
           queryFingerprint: queryFingerprint(normalizedInput),
           cursor: normalizedInput.cursor,
           nextCursor: page.nextCursor,
-          items: cacheSafeItems(page.items),
           completeSeries: series || undefined,
-          detail: series && page.detail ? { ...page.detail, thumbnailUrl: undefined } : undefined,
           browse: page.browse,
-          fetchedAt,
-          expiresAt: new Date(Date.now() + CACHE_TTL_MS).toISOString(),
+
           schemaVersion: 1,
         });
         if (!mountedRef.current || abort.signal.aborted || listAbortRef.current !== abort) return;
@@ -1015,16 +1047,23 @@ export function useExternalSourceController(options: UseExternalSourceController
         if (isAbort(error) || !mountedRef.current || abort.signal.aborted || listAbortRef.current !== abort)
           return undefined;
         cached ??= await optionsRef.current.state.getCachePage(id).catch(() => undefined);
+        if (
+          !transientSourceFailure(error) ||
+          (cached && Date.parse(cached.fetchedAt) + sourceCachePolicy(input).keep <= Date.now())
+        )
+          cached = undefined;
         if (!mountedRef.current || abort.signal.aborted || listAbortRef.current !== abort) return undefined;
         const failureMessage =
           error instanceof TextServerRequestError
             ? error.message
             : '외부 저장소 목록을 불러오지 못했습니다. 연결 상태를 확인하고 다시 시도해 주세요.';
+        const resetCursor =
+          cached || (error instanceof Error && /source_catalog_changed|목록이 갱신되었습니다/.test(error.message));
         setListFailure({
           message: cached ? `${failureMessage} 마지막으로 받아 둔 목록을 표시합니다.` : failureMessage,
           // Cached pages are already visible. Refresh from the start instead of appending them twice.
-          input: cached ? { ...input, cursor: undefined } : input,
-          append: cached ? false : append,
+          input: resetCursor ? { ...input, cursor: undefined } : input,
+          append: resetCursor ? false : append,
           sourceId,
         });
         if (cached) {
@@ -3148,7 +3187,7 @@ export function useExternalSourceController(options: UseExternalSourceController
             registry.listExternalSource(
               sourceId,
               context,
-              { parentRef: queue.collectionRemoteId, cursor },
+              { parentRef: queue.collectionRemoteId, cursor, cacheMode: cursor ? undefined : 'reload' },
               abort.signal,
             );
           const page = await completeSeriesCatalog(await read(), (cursor) => read(cursor), abort.signal);
@@ -3232,7 +3271,13 @@ export function useExternalSourceController(options: UseExternalSourceController
       if (connection.state !== 'connected' || connection.accountConnectionId !== link.source.accountConnectionId)
         return;
       const input = { parentRef: link.collectionRemoteId };
-      const id = cachePageId(sourceId, connection.accountConnectionId, input);
+      const id = cachePageId(
+        sourceId,
+        connection.accountConnectionId,
+        input,
+        optionsRef.current.settingsScope,
+        connection.connectionGeneration,
+      );
       const cached = await optionsRef.current.state.getCachePage(id);
       const cachedCatalogIsFresh =
         cached?.completeSeries === true && !cached.nextCursor && Date.parse(cached.expiresAt) > Date.now();
@@ -3250,7 +3295,7 @@ export function useExternalSourceController(options: UseExternalSourceController
           latestConnection.accountConnectionId !== connection.accountConnectionId
         )
           return;
-        await optionsRef.current.state.saveCachePage({
+        await saveSourceCache(optionsRef.current.state, {
           id,
           connectorId: sourceId,
           accountConnectionId: connection.accountConnectionId,
@@ -3258,8 +3303,10 @@ export function useExternalSourceController(options: UseExternalSourceController
           items: cacheSafeItems(catalog),
           completeSeries: true,
           detail: page.detail ? { ...page.detail, thumbnailUrl: undefined } : undefined,
-          fetchedAt: currentIso(),
-          expiresAt: new Date(Date.now() + CACHE_TTL_MS).toISOString(),
+          fetchedAt: new Date(sourcePageTime(page)).toISOString(),
+          expiresAt: new Date(sourcePageTime(page) + sourceCachePolicy(input).fresh).toISOString(),
+          retainUntil: new Date(sourcePageTime(page) + sourceCachePolicy(input).keep).toISOString(),
+          scope: optionsRef.current.settingsScope,
           schemaVersion: 1,
         });
       }
@@ -3466,7 +3513,16 @@ export function useExternalSourceController(options: UseExternalSourceController
       setLoading(true);
       setListFailure(undefined);
       try {
-        if (item.kind === 'work') setQuery('');
+        if (item.kind === 'work') {
+          setQuery('');
+          setDetail({
+            title: item.title,
+            author: item.author,
+            coverRef: item.coverRef,
+            thumbnailUrl: item.thumbnailUrl,
+          });
+          setRawItems([]);
+        }
         const next = [...breadcrumbs, { label: item.title, parentRef: item.navigationRef }];
         setBreadcrumbs(next);
         setSelectedKeys(new Set());
@@ -3916,6 +3972,7 @@ export function useExternalSourceController(options: UseExternalSourceController
                   accountConnectionId: source.connection.accountConnectionId,
                   parentRef: subscription.navigationRef,
                   cursor,
+                  cacheMode: cursor ? undefined : 'reload',
                 },
                 signal,
               );

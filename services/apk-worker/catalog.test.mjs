@@ -212,7 +212,7 @@ test('list refresh preserves detail cache and covers never require detail when t
   await invoke('getCover', { workId });
   assert.equal(calls.filter((c) => c.method === 'detail').length, 1);
   assert.equal(calls.filter((c) => c.method === 'cover').at(-1).input.url, cover);
-  now += 600001;
+  now += 6 * 60 * 60 * 1000 + 1;
   await assert.rejects(invoke('getWork', { workId }), /upstream_offline/);
 });
 
@@ -398,4 +398,46 @@ test('invalid cover replies are rejected and a later successful fetch can recove
   await assert.rejects(invoke('getCover', { workId }), /image_invalid/);
   assert.ok((await invoke('getCover', { workId })).result);
   assert.equal(attempts, 2);
+});
+
+test('chapter cursors stay on one snapshot; explicit refresh reaches origin without ordinary expiry evicting covers', async (t) => {
+  const { catalog, source, invoke, tools, calls } = await fixture(t);
+  const base = tools.worker;
+  let chapterCalls = 0;
+  tools.worker = (...args) => {
+    const worker = base(...args),
+      original = worker.request;
+    worker.request = async (method, input) => {
+      if (method === 'chapters') {
+        chapterCalls++;
+        return Array.from({ length: 501 }, (_, n) => ({ url: `/chapter/${n}`, title: `Chapter ${n}` }));
+      }
+      return original(method, input);
+    };
+    return worker;
+  };
+  const workId = (await invoke('listWorks')).result.items[0].id;
+  await invoke('getCover', { workId });
+  const first = (await invoke('listReleases', { workId })).result;
+  let now = Date.now();
+  t.mock.method(Date, 'now', () => now);
+  now += 120001;
+  assert.equal((await invoke('listReleases', { workId, cursor: first.nextCursor })).result.items.length, 1);
+  assert.equal(chapterCalls, 1);
+  const updated = (
+    await catalog.invoke(source, 'source.listReleases', { workId }, new AbortController().signal, {
+      cacheMode: 'reload',
+    })
+  ).result;
+  assert.equal(chapterCalls, 2);
+  await assert.rejects(invoke('listReleases', { workId, cursor: first.nextCursor }), /source_catalog_changed/);
+  assert.equal((await invoke('listReleases', { workId, cursor: updated.nextCursor })).result.items.length, 1);
+  await invoke('getCover', { workId });
+  assert.equal(calls.filter((c) => c.method === 'cover').length, 1);
+  await catalog.invoke(source, 'source.listReleases', { workId }, new AbortController().signal, {
+    cacheMode: 'reload',
+    refreshCovers: true,
+  });
+  await invoke('getCover', { workId });
+  assert.equal(calls.filter((c) => c.method === 'cover').length, 2);
 });

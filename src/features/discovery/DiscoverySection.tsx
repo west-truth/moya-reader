@@ -58,24 +58,38 @@ export function DiscoverySection({
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
   const [retry, setRetry] = useState(0);
+  const previous = useRef({ refresh, retry });
   const latest = useRef({ input, page });
   latest.current = { input, page };
   useEffect(() => {
     if (expanded || !near || unsupported || source?.connection.state !== 'connected') return;
     let active = true;
+    const force = previous.current.refresh !== refresh || previous.current.retry !== retry;
+    previous.current = { refresh, retry };
     setLoading(true);
     setError('');
     const fetchPage = async () => {
+      const saved = await session.restore(section.sourceId, latest.current.input);
+      if (active && saved && !latest.current.page) {
+        setPage(saved);
+        latest.current.page = saved;
+      }
+      if (!active) return undefined;
       if (section.filterSignature) {
-        const schema = await session.list(section.sourceId, { parentRef: section.parentRef, browseMode: section.mode });
+        const schema = await session.schema(
+          section.sourceId,
+          { parentRef: section.parentRef, browseMode: section.mode },
+          force,
+        );
         if (JSON.stringify(schema.browse?.filters ?? []) !== section.filterSignature)
           throw new Error('소스의 분류가 변경되었습니다. 전체 보기에서 분류를 다시 저장해 주세요.');
       }
-      return session.list(section.sourceId, latest.current.input, refresh > 0 || retry > 0);
+      return session.list(section.sourceId, latest.current.input, force);
     };
     void fetchPage()
       .then((result) => {
-        if (!active) return;
+        if (!active || !result) return;
+        if (result.cache?.stale) setError('연결을 확인하지 못했습니다.');
         if (result.browse && !result.browse.availableModes.includes(latest.current.input.browseMode ?? section.mode)) {
           setError('이 소스가 해당 목록을 지원하지 않습니다. 다른 목록을 선택해 주세요.');
           setPage(undefined);
@@ -86,12 +100,7 @@ export function DiscoverySection({
           setPage(undefined);
           return;
         }
-        if (
-          latest.current.page &&
-          !refresh &&
-          !retry &&
-          JSON.stringify(result.items) !== JSON.stringify(latest.current.page.items)
-        )
+        if (latest.current.page && !force && JSON.stringify(result.items) !== JSON.stringify(latest.current.page.items))
           setCandidate(result);
         else {
           setPage(result);

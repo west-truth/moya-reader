@@ -46,8 +46,11 @@ export function useDiscoveryPages(
     setBusy(true);
     setError('');
     void (async () => {
+      const restored = await session.restore(source, input);
+      if (!active) return;
+      if (restored && !pages.length) setResult({ key, pages: [restored] });
       if (filterSignature) {
-        const schema = await session.list(source, { parentRef: input.parentRef, browseMode: 'popular' });
+        const schema = await session.schema(source, { parentRef: input.parentRef, browseMode: 'popular' }, force);
         if (JSON.stringify(schema.browse?.filters ?? []) !== filterSignature)
           throw new Error('소스의 필터가 변경되었습니다. 탐색 편집에서 목록을 다시 설정해 주세요.');
         if (!active) return;
@@ -57,7 +60,11 @@ export function useDiscoveryPages(
       let cursor: string | undefined;
       for (let i = 0; i < depth && !visited.has(cursor); i++) {
         visited.add(cursor);
-        const page = await session.list(source, { ...input, cursor }, force);
+        const page = await session.list(
+          source,
+          { ...input, cursor },
+          force || (i > 0 && loaded[0]?.cache?.fetchedAt !== pages[0]?.cache?.fetchedAt),
+        );
         if (!active) return;
         if (page.browse && input.browseMode && !page.browse.availableModes.includes(input.browseMode))
           throw new Error('이 소스는 해당 목록을 지원하지 않습니다.');
@@ -66,6 +73,7 @@ export function useDiscoveryPages(
         cursor = page.nextCursor;
       }
       setResult({ key, pages: loaded });
+      if (loaded.some((page) => page.cache?.stale)) setError('저장된 목록입니다. 다시 시도해 주세요.');
     })()
       .catch((reason: unknown) => {
         if (active) setError(reason instanceof Error ? reason.message : '목록을 불러오지 못했습니다.');

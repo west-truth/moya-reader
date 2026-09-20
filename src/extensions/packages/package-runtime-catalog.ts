@@ -215,6 +215,7 @@ export class PackageRuntimeCatalog {
     method: M,
     input: Record<string, unknown>,
     signal: AbortSignal,
+    _cache?: { cacheMode?: 'reload'; refreshCovers?: boolean },
   ): Promise<{
     result: SourceResults[M];
     assets: ReadonlyMap<string, Blob>;

@@ -472,6 +472,27 @@ describe('source series pagination integration', () => {
     await act(async () => h.renderer.unmount());
   });
 
+  it('restarts expired page cursors and sends subscription checks through the origin refresh path', async () => {
+    const h = await fixture();
+    h.setPage(async (cursor) => {
+      if (cursor) throw new Error('source_catalog_changed');
+      return { items: [release(1)], nextCursor: 'expired-cursor' };
+    });
+    await act(async () => h.controller.selectSource(sourceId));
+    await act(async () => h.controller.loadMore());
+    expect(h.controller.listError).toBeDefined();
+    await act(async () => h.controller.listError!.retry());
+    expect(h.controller.listError).toBeUndefined();
+    const requests = vi.mocked(h.registry.listExternalSource).mock.calls;
+    expect(requests.at(-1)?.[2]).toMatchObject({ cursor: undefined, cacheMode: 'reload' });
+    h.setSubscriptions([subscription(sourceId)]);
+    h.setPage(async () => ({ detail: { title: 'Work' }, items: [release(1)] }));
+    await act(async () => h.controller.refresh());
+    await act(async () => h.controller.checkSubscriptions());
+    expect(vi.mocked(h.registry.listExternalSource).mock.calls.at(-1)?.[2]).toMatchObject({ cacheMode: 'reload' });
+    await act(async () => h.renderer.unmount());
+  });
+
   it('caps one subscription check at 50 metadata pages and starts with deferred works next time', async () => {
     const h = await fixture();
     await act(async () => h.controller.showLocalSeries(h.novel));
