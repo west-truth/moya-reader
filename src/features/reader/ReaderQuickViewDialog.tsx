@@ -22,7 +22,11 @@ export function ReaderQuickViewDialog({
   onUpdate,
   onSetBookOverride,
   onOpenAllSettings,
+  saveState,
+  onRetrySave,
 }: {
+  readonly saveState?: { readonly saving: boolean; readonly dirty: boolean; readonly error: boolean };
+  readonly onRetrySave?: () => void;
   readonly open: boolean;
   readonly profile: ReadingProfile;
   readonly readingFlow: ReaderRuntimeFlow;
@@ -42,6 +46,22 @@ export function ReaderQuickViewDialog({
       closeLabel="빠른 보기 닫기"
     >
       <div className="reader-quick-view-content">
+        <div role={saveState?.error ? 'alert' : 'status'}>
+          {saveState?.error ? (
+            <>
+              설정을 저장하지 못했습니다.{' '}
+              <button type="button" className="ghost-btn" onClick={onRetrySave}>
+                다시 저장
+              </button>
+            </>
+          ) : saveState?.saving ? (
+            '저장 중…'
+          ) : saveState?.dirty ? (
+            '변경 사항을 곧 저장합니다.'
+          ) : (
+            '변경 사항은 자동 저장됩니다.'
+          )}
+        </div>
         <div className="reader-quick-view-scope">
           <span>
             <strong>{bookOverrideEnabled ? '이 작품에만 적용' : '이 기기의 기본값'}</strong>
@@ -137,6 +157,9 @@ export function ReaderQuickViewDialog({
           )}
         </section>
 
+        {readingFlow === 'paginated' && profile.pageSpread !== 'single' && (
+          <p className="field-help">화면이 좁으면 한 쪽으로 표시합니다.</p>
+        )}
         <section className="reader-quick-view-section">
           <h3>좌우 여백</h3>
           <div className="segmented full" aria-label="빠른 좌우 여백">

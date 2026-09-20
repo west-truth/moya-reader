@@ -1,3 +1,4 @@
+import { ExtensionUpdatesPanel } from './ExtensionUpdatesPanel';
 import './extension-management.css';
 import { InstalledSourceContentConnection } from './InstalledSourceContentConnection';
 import { InstalledSourcePreferences } from './InstalledSourcePreferences';
@@ -26,6 +27,7 @@ export function InstalledExtensionsPanel({
   const snapshot = useSyncExternalStore(manager.subscribe, manager.getSnapshot, manager.getSnapshot);
   const input = useRef<HTMLInputElement>(null);
   const [showRepositories, setShowRepositories] = useState(false);
+  const [showUpdates, setShowUpdates] = useState(false);
   const [review, setReview] = useState<{ file: File; plan: PackageReview }>();
   const reviewFocus = useRef<HTMLElement>(null);
   useEffect(() => {
@@ -38,7 +40,7 @@ export function InstalledExtensionsPanel({
   const operation = useRef<AbortController>();
   const [error, setError] = useState<string>();
   const [message, setMessage] = useState<string>();
-  const browsing = showSuwayomi || showApk || showMangayomi || showRepositories;
+  const browsing = showUpdates || showSuwayomi || showApk || showMangayomi || showRepositories;
   const installedCount = snapshot.packages.filter((pkg) => pkg.active).length;
   useEffect(
     () => () => {
@@ -181,7 +183,7 @@ export function InstalledExtensionsPanel({
         주소입니다.
       </p>
       <div className="installed-extension-summary" aria-label="콘텐츠 소스 패키지 상태">
-        <span>사용 중 {installedCount}</span>
+        <span>Moya 패키지 {installedCount}</span>
         <span>소스 {snapshot.sources.length}</span>
         {snapshot.errors.length > 0 && <span className="warning">오류 {snapshot.errors.length}</span>}
         <span>{manager.target === 'server' ? '서버 설치' : '이 기기 설치'}</span>
@@ -195,9 +197,24 @@ export function InstalledExtensionsPanel({
             setShowApk(false);
             setShowSuwayomi(false);
             setShowRepositories(false);
+            setShowUpdates(false);
           }}
         >
           사용 중
+        </button>
+        <button
+          type="button"
+          disabled={busy}
+          aria-expanded={showUpdates}
+          onClick={() => {
+            setShowUpdates(!showUpdates);
+            setShowRepositories(false);
+            setShowMangayomi(false);
+            setShowApk(false);
+            setShowSuwayomi(false);
+          }}
+        >
+          업데이트 목록
         </button>
         {manager.mangayomi && (
           <button
@@ -208,6 +225,7 @@ export function InstalledExtensionsPanel({
               setShowApk(false);
               setShowSuwayomi(false);
               setShowRepositories(false);
+              setShowUpdates(false);
             }}
           >
             Mangayomi JS 확장
@@ -222,6 +240,7 @@ export function InstalledExtensionsPanel({
               setShowMangayomi(false);
               setShowSuwayomi(false);
               setShowRepositories(false);
+              setShowUpdates(false);
             }}
           >
             APK 확장
@@ -236,6 +255,7 @@ export function InstalledExtensionsPanel({
               setShowApk(false);
               setShowMangayomi(false);
               setShowRepositories(false);
+              setShowUpdates(false);
             }}
           >
             Suwayomi 확장
@@ -248,6 +268,7 @@ export function InstalledExtensionsPanel({
             aria-expanded={showRepositories}
             onClick={() => {
               setShowRepositories(!showRepositories);
+              setShowUpdates(false);
               setShowApk(false);
               setShowMangayomi(false);
               setShowSuwayomi(false);
@@ -281,6 +302,7 @@ export function InstalledExtensionsPanel({
             setShowMangayomi(false);
             setShowSuwayomi(false);
             setShowRepositories(false);
+            setShowUpdates(false);
             setReview(undefined);
             setReviewLocation(undefined);
             setAcceptedChange(false);
@@ -290,6 +312,7 @@ export function InstalledExtensionsPanel({
           }}
         />
       </div>
+      {showUpdates && <ExtensionUpdatesPanel manager={manager} suwayomi={suwayomi} />}
       {showSuwayomi && suwayomi && <SourceExtensionManagerPanel manager={suwayomi} initialRepository={apkRepository} />}
       {showApk && manager.apk && (
         <ApkExtensionsPanel manager={manager.apk} initialRepository={apkRepository} target={manager.target} />
@@ -331,6 +354,7 @@ export function InstalledExtensionsPanel({
                   setMangayomiRepository(url);
                   setShowMangayomi(true);
                   setShowRepositories(false);
+                  setShowUpdates(false);
                   setShowApk(false);
                   setShowSuwayomi(false);
                 }
@@ -343,6 +367,7 @@ export function InstalledExtensionsPanel({
                   if (manager.apk) setShowApk(true);
                   else setShowSuwayomi(true);
                   setShowRepositories(false);
+                  setShowUpdates(false);
                 }
               : undefined
           }

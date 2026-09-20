@@ -99,6 +99,8 @@ export type ExternalSeriesProfile =
   | { readonly kind: 'image_series'; readonly archiveFormat: 'cbz' | 'zip'; readonly readingDirection?: 'ltr' | 'rtl' };
 
 interface ExternalSourceContributionDescriptorBase {
+  /** Optional language metadata; absent means unknown, not all languages. */
+  readonly lang?: string;
   readonly id: ExtensionContributionId;
   readonly title: string;
   readonly description?: string;

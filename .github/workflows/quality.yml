@@ -31,6 +31,8 @@ jobs:
       - run: pnpm check:web-pages:browser
         env:
           READER_UI_BROWSER_CHANNEL: chromium
+      - run: pnpm test:settings-ux
+      - run: pnpm check:settings-ux
       - run: pnpm check:reader-stability
         env:
           READER_UI_BROWSER_CHANNEL: chromium

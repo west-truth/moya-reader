@@ -1,3 +1,4 @@
+import './reader-settings-panel.css';
 import { useEffect, useId, useRef, useState, type KeyboardEvent, type PointerEvent } from 'react';
 
 interface SettingsSliderProps {
@@ -7,10 +8,20 @@ interface SettingsSliderProps {
   readonly max: number;
   readonly step: number;
   readonly suffix?: string;
+  readonly disabled?: boolean;
   readonly onChange: (value: number) => void;
 }
 
-export function SettingsSlider({ label, value, min, max, step, suffix = '', onChange }: SettingsSliderProps) {
+export function SettingsSlider({
+  label,
+  value,
+  min,
+  max,
+  step,
+  suffix = '',
+  disabled = false,
+  onChange,
+}: SettingsSliderProps) {
   const sliderId = useId();
   const labelId = `${sliderId}-label`;
   const valueId = `${sliderId}-value`;
@@ -41,7 +52,7 @@ export function SettingsSlider({ label, value, min, max, step, suffix = '', onCh
   const position = max === min ? 0 : ((draft - min) / (max - min)) * 100;
 
   const handlePointerDown = (event: PointerEvent<HTMLButtonElement>) => {
-    if (!event.isPrimary || (event.pointerType === 'mouse' && event.button !== 0)) return;
+    if (disabled || !event.isPrimary || (event.pointerType === 'mouse' && event.button !== 0)) return;
     dragRef.current = {
       pointerId: event.pointerId,
       startX: event.clientX,
@@ -60,7 +71,10 @@ export function SettingsSlider({ label, value, min, max, step, suffix = '', onCh
     const deltaY = event.clientY - drag.startY;
     if (!drag.horizontal) {
       if (Math.max(Math.abs(deltaX), Math.abs(deltaY)) < 5) return;
-      if (Math.abs(deltaY) > Math.abs(deltaX)) return;
+      if (Math.abs(deltaY) > Math.abs(deltaX)) {
+        finishDrag(event, true);
+        return;
+      }
       drag.horizontal = true;
     }
     event.preventDefault();
@@ -97,7 +111,7 @@ export function SettingsSlider({ label, value, min, max, step, suffix = '', onCh
   };
 
   const commitNumberDraft = (input: HTMLInputElement) => {
-    const parsed = Number(input.value);
+    const parsed = input.value.trim() ? Number(input.value) : NaN;
     if (Number.isFinite(parsed)) commit(parsed);
     else setNumberDraft(formatNumber(value, step));
   };
@@ -111,6 +125,7 @@ export function SettingsSlider({ label, value, min, max, step, suffix = '', onCh
       <div className="reader-settings-slider-controls">
         <button
           type="button"
+          disabled={disabled}
           className="reader-settings-slider-step"
           aria-label={`${label} 줄이기`}
           onClick={() => commit(draft - step)}
@@ -118,15 +133,16 @@ export function SettingsSlider({ label, value, min, max, step, suffix = '', onCh
           −
         </button>
         <div className="reader-settings-slider-track-wrap">
-          <div ref={trackRef} className="reader-settings-slider-track" aria-hidden="true">
-            <span className="reader-settings-slider-fill" style={{ inlineSize: `${position}%` }} />
+          <div ref={trackRef} className="reader-settings-slider-track">
+            <span aria-hidden="true" className="reader-settings-slider-fill" style={{ inlineSize: `${position}%` }} />
             <button
               id={sliderId}
               type="button"
+              disabled={disabled}
               className="reader-settings-slider-thumb"
               style={{ '--reader-slider-position': `${position}%` } as React.CSSProperties}
               role="slider"
-              aria-labelledby={`${labelId} ${valueId}`}
+              aria-labelledby={labelId}
               aria-valuemin={min}
               aria-valuemax={max}
               aria-valuenow={draft}
@@ -136,11 +152,18 @@ export function SettingsSlider({ label, value, min, max, step, suffix = '', onCh
               onPointerMove={handlePointerMove}
               onPointerUp={(event) => finishDrag(event, false)}
               onPointerCancel={(event) => finishDrag(event, true)}
+              onLostPointerCapture={(event) => finishDrag(event, true)}
+              onBlur={() => {
+                dragRef.current = undefined;
+                setDraft(value);
+                setNumberDraft(formatNumber(value, step));
+              }}
             />
           </div>
         </div>
         <button
           type="button"
+          disabled={disabled}
           className="reader-settings-slider-step"
           aria-label={`${label} 늘리기`}
           onClick={() => commit(draft + step)}
@@ -151,6 +174,7 @@ export function SettingsSlider({ label, value, min, max, step, suffix = '', onCh
           <span className="sr-only">{label} 직접 입력</span>
           <input
             type="number"
+            disabled={disabled}
             min={min}
             max={max}
             step={step}

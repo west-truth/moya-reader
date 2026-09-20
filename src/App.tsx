@@ -663,7 +663,7 @@ export default function App() {
   const [correctionSpeakerDraft, setCorrectionSpeakerDraft] = useState('unknown');
   const [correctionEmotionDraft, setCorrectionEmotionDraft] = useState('neutral');
   const [correctionScope, setCorrectionScope] = useState<UserCorrection['applyScope']>('segment');
-  const [settingsInitialTab, setSettingsInitialTab] = useState<SettingsTab>('appearance');
+  const [settingsInitialTab, setSettingsInitialTab] = useState<SettingsTab>();
 
   const voiceProfilesRef = useRef<VoiceProfile[]>([]);
   const voiceProfileSaveQueueRef = useRef(Promise.resolve());
@@ -711,7 +711,7 @@ export default function App() {
     open: settingsOpen,
   } = readerSettingsController;
   const openReaderSettings = useCallback(() => {
-    setSettingsInitialTab('appearance');
+    setSettingsInitialTab(undefined);
     readerSettingsController.openPanel();
   }, [readerSettingsController]);
   const openExternalSourceSettings = useCallback(() => {
@@ -5726,7 +5726,10 @@ export default function App() {
   readerScreenHandle.setActions({
     openChapter: (chapter, options = {}) => bookWorkspace.openChapter(chapter, { ...options, novel: selectedNovel }),
     returnToChapters: () => navigateAppBack(() => returnToSourceSeriesDetails(bookWorkspace, externalSourceFeature)),
-    openSettings: openReaderSettings,
+    openSettings: () => {
+      setSettingsInitialTab('layout');
+      readerSettingsController.openPanel();
+    },
     openSync: () => setSyncPanelOpen(true),
     toggleAddon: () => setAddonOpen((open) => !open),
     openAddon: (tab: AddonTab) => {
@@ -5749,6 +5752,10 @@ export default function App() {
       changeReadingProfile({
         theme: readingProfile.theme === 'dark' || readingProfile.theme === 'midnight' ? 'light' : 'dark',
       }),
+    flushReadingSettings: () => {
+      void readerSettingsController.flush();
+    },
+    retryReadingSettings: readerSettingsController.retrySave,
     updateReadingProfile: changeReadingProfile,
     setReadingBookOverride: setReadingBookOverrideEnabled,
     toggleBookmark: (location: ReaderLocationSnapshot) => toggleBookmark(location),

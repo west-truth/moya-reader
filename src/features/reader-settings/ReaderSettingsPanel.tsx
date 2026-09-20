@@ -1,5 +1,6 @@
 import { publicAssetUrl } from '../../utils/public-asset-url';
 import {
+  ArrowLeft,
   BookOpenText,
   ChevronRight,
   Cloud,
@@ -12,7 +13,7 @@ import {
   RefreshCw,
   type LucideIcon,
 } from 'lucide-react';
-import { useState, type KeyboardEvent, type ReactNode } from 'react';
+import { useRef, useState, type KeyboardEvent, type ReactNode } from 'react';
 import type { GestureBindings, ReadingProfile, ReadingProfileOverride } from '../../domain/types';
 import type { PlatformRuntimeInfo, ProviderExecutionRuntimeKind } from '../../platform/runtime';
 import type { ReaderPersonalizationRepository } from '../../repositories/reader-personalization-repository';
@@ -145,25 +146,38 @@ function saveStatusLabel(controller: ReaderSettingsController): string {
 export default function ReaderSettingsPanel(props: ReaderSettingsPanelProps) {
   const { controller, profile } = props;
   const [tab, setTab] = useState<SettingsTab>(props.initialTab ?? 'appearance');
+  const [mobileDetail, setMobileDetail] = useState(Boolean(props.initialTab));
+  const titleRef = useRef<HTMLHeadingElement>(null);
+  const selectTab = (next: SettingsTab) => {
+    setTab(next);
+    setMobileDetail(true);
+    requestAnimationFrame(() => titleRef.current?.focus());
+  };
+  const backToCategories = () => {
+    setMobileDetail(false);
+    requestAnimationFrame(() => document.getElementById(`reader-settings-tab-${tab}`)?.focus());
+  };
   const [appearanceThemeTarget, setAppearanceThemeTarget] = useState<'application' | 'reader'>('application');
   const current = SETTINGS_SECTIONS.find((section) => section.id === tab) ?? SETTINGS_SECTIONS[0];
   const readerThemeColors = resolveReaderThemeColors(profile);
   const readingTab = tab === 'appearance' || tab === 'layout' || tab === 'gesture';
-  const showReadingFooter = readingTab && !(tab === 'appearance' && appearanceThemeTarget === 'application');
+  const showReadingFooter =
+    (tab === 'appearance' || tab === 'layout') && !(tab === 'appearance' && appearanceThemeTarget === 'application');
   const openDestination = (destination: () => void) => {
     controller.closePanel();
     destination();
   };
 
   const navigateTabs = (event: KeyboardEvent<HTMLButtonElement>, index: number) => {
-    if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return;
+    if (!['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 'Home', 'End'].includes(event.key)) return;
     event.preventDefault();
     const nextIndex =
       event.key === 'Home'
         ? 0
         : event.key === 'End'
           ? SETTINGS_SECTIONS.length - 1
-          : (index + (event.key === 'ArrowLeft' ? -1 : 1) + SETTINGS_SECTIONS.length) % SETTINGS_SECTIONS.length;
+          : (index + (event.key === 'ArrowLeft' || event.key === 'ArrowUp' ? -1 : 1) + SETTINGS_SECTIONS.length) %
+            SETTINGS_SECTIONS.length;
     const next = SETTINGS_SECTIONS[nextIndex];
     if (!next) return;
     setTab(next.id);
@@ -181,12 +195,15 @@ export default function ReaderSettingsPanel(props: ReaderSettingsPanelProps) {
           </span>
         </span>
       }
-      onClose={controller.closePanel}
+      onClose={(reason) => {
+        if (reason === 'escape' && mobileDetail && window.matchMedia('(max-width: 699px)').matches) backToCategories();
+        else controller.closePanel();
+      }}
       className="reader-settings-dialog"
       backdropClassName="reader-settings-backdrop"
       closeLabel="설정 닫기"
     >
-      <div className="reader-settings-body">
+      <div className="reader-settings-body" data-mobile-detail={mobileDetail}>
         <nav className="reader-settings-tabs" role="tablist" aria-label="설정 분류">
           {SETTINGS_SECTIONS.map((section, index) => {
             const Icon = section.icon;
@@ -199,9 +216,9 @@ export default function ReaderSettingsPanel(props: ReaderSettingsPanelProps) {
                 id={`reader-settings-tab-${section.id}`}
                 aria-controls={`reader-settings-panel-${section.id}`}
                 aria-selected={selected}
-                tabIndex={selected ? 0 : -1}
+                tabIndex={0}
                 className={selected ? 'active' : ''}
-                onClick={() => setTab(section.id)}
+                onClick={() => selectTab(section.id)}
                 onKeyDown={(event) => navigateTabs(event, index)}
               >
                 <Icon size={18} aria-hidden="true" />
@@ -222,11 +239,22 @@ export default function ReaderSettingsPanel(props: ReaderSettingsPanelProps) {
         <main className="reader-settings-main" data-has-footer={showReadingFooter || undefined}>
           <div className="reader-settings-content">
             <header className="reader-settings-page-title">
-              <h2>{current.label}</h2>
+              <button type="button" className="ghost-btn reader-settings-mobile-back" onClick={backToCategories}>
+                <ArrowLeft size={18} />
+                설정 목록
+              </button>
+              <h2 ref={titleRef} tabIndex={-1}>
+                {current.label}
+              </h2>
+              <small className="reader-settings-mobile-status" role="status">
+                {saveStatusLabel(controller)}
+              </small>
               <span>{current.description}</span>
               <span>
                 {readingTab
-                  ? '이 기기에 저장됩니다.'
+                  ? tab === 'gesture'
+                    ? '이 기기의 모든 작품에 적용됩니다.'
+                    : '이 기기에 저장됩니다.'
                   : tab === 'sources' || tab === 'extensions'
                     ? '공통 설정은 서버 연결 시 다른 기기에도 반영됩니다.'
                     : tab === 'downloads'
@@ -294,8 +322,14 @@ export default function ReaderSettingsPanel(props: ReaderSettingsPanelProps) {
                       <small>설치 가능한 패키지 목록 주소</small>
                     </span>
                   </section>
+                  <button type="button" className="ghost-btn" onClick={() => selectTab('downloads')}>
+                    다운로드 설정
+                  </button>
                   {props.installedPackages}
-                  <ExternalSourceSettingsPanel controller={props.externalSources} />
+                  <ExternalSourceSettingsPanel
+                    controller={props.externalSources}
+                    onBrowse={(id) => openDestination(() => props.externalSources.show(id))}
+                  />
                 </div>
               )}
               {tab === 'downloads' && <DownloadSettingsPanel controller={props.externalSources} />}

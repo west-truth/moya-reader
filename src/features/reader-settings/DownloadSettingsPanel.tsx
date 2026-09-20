@@ -124,7 +124,7 @@ export function DownloadSettingsPanel({ controller }: { readonly controller: Ext
         <div className="settings-section-heading">
           <Server size={18} aria-hidden="true" />
           <div>
-            <h3>서버 수집</h3>
+            <h3>회차 다운로드 대기열</h3>
             <p>self-host 소스가 원문이나 이미지를 받아 Moya 책장에 저장합니다.</p>
           </div>
         </div>
@@ -143,9 +143,12 @@ export function DownloadSettingsPanel({ controller }: { readonly controller: Ext
           </div>
           <div>
             <dt>브라우저 종료</dt>
-            <dd>작업은 중단되며 다음 접속에서 이어받을 수 있음</dd>
+            <dd>저장된 대기열은 다음 접속에서 복구 가능. 서버에서 진행 중인 요청은 즉시 취소되지 않을 수 있음</dd>
           </div>
         </dl>
+        <p className="field-help">
+          이 정책은 회차 대기열에 적용됩니다. 자동 미리 받기와 개별 파일 가져오기는 별도 작업입니다.
+        </p>
       </section>
 
       <section className="settings-section-card">

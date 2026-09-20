@@ -1,3 +1,4 @@
+import { SettingsSlider } from '../reader-settings/SettingsSlider';
 import { useFixedDocumentEntry, useFixedDocumentPageAnchor } from './use-fixed-document-entry';
 import { useComicPageFlow } from './use-comic-page-flow';
 import { useComicPageSizes } from './use-comic-page-sizes';
@@ -3430,26 +3431,24 @@ export default function FixedDocumentScreen({
                 </div>
               )}
               {(['top', 'right', 'bottom', 'left'] as const).map((side) => (
-                <label key={side}>
-                  <span>{{ top: '위', right: '오른쪽', bottom: '아래', left: '왼쪽' }[side]}</span>
-                  <input
-                    type="range"
-                    min="0"
-                    max="20"
-                    step="1"
-                    value={Math.round((comicProfile.manualCrop?.[side] ?? 0) * 100)}
-                    disabled={comicProfile.crop !== 'manual'}
-                    onChange={(event) =>
-                      updateComicProfile({
-                        manualCrop: {
-                          ...(comicProfile.manualCrop ?? DEFAULT_COMIC_READING_PROFILE.manualCrop!),
-                          [side]: Number(event.target.value) / 100,
-                        },
-                      })
-                    }
-                  />
-                  <output>{Math.round((comicProfile.manualCrop?.[side] ?? 0) * 100)}%</output>
-                </label>
+                <SettingsSlider
+                  key={side}
+                  label={{ top: '위 자르기', right: '오른쪽 자르기', bottom: '아래 자르기', left: '왼쪽 자르기' }[side]}
+                  min={0}
+                  max={20}
+                  step={1}
+                  suffix="%"
+                  value={Math.round((comicProfile.manualCrop?.[side] ?? 0) * 100)}
+                  disabled={comicProfile.crop !== 'manual'}
+                  onChange={(value) =>
+                    updateComicProfile({
+                      manualCrop: {
+                        ...(comicProfile.manualCrop ?? DEFAULT_COMIC_READING_PROFILE.manualCrop!),
+                        [side]: value / 100,
+                      },
+                    })
+                  }
+                />
               ))}
             </fieldset>
             <fieldset>
@@ -3461,17 +3460,16 @@ export default function FixedDocumentScreen({
                   ['saturation', '채도', 0, 200],
                 ] as const
               ).map(([key, label, minimum, maximum]) => (
-                <label key={key}>
-                  <span>{label}</span>
-                  <input
-                    type="range"
-                    min={minimum}
-                    max={maximum}
-                    value={Math.round(comicProfile[key] * 100)}
-                    onChange={(event) => updateComicProfile({ [key]: Number(event.target.value) / 100 })}
-                  />
-                  <output>{Math.round(comicProfile[key] * 100)}%</output>
-                </label>
+                <SettingsSlider
+                  key={key}
+                  label={label}
+                  min={minimum}
+                  max={maximum}
+                  step={1}
+                  suffix="%"
+                  value={Math.round(comicProfile[key] * 100)}
+                  onChange={(value) => updateComicProfile({ [key]: value / 100 })}
+                />
               ))}
               <label>
                 <span>흑백</span>

@@ -2204,7 +2204,7 @@
 }
 
 @media (max-width: 699px) {
-  .reader-settings-backdrop {
+  .modal-backdrop.reader-settings-backdrop {
     padding: 0;
   }
 
@@ -2458,4 +2458,58 @@
     flex: 1 1 0;
     min-height: 42px;
   }
+}
+
+.reader-settings-mobile-back,
+.reader-settings-mobile-status {
+  display: none;
+}
+@media (max-width: 699px) {
+  .reader-settings-body {
+    grid-template-rows: minmax(0, 1fr);
+  }
+  .reader-settings-body[data-mobile-detail='false'] .reader-settings-main,
+  .reader-settings-body[data-mobile-detail='true'] .reader-settings-tabs {
+    display: none;
+  }
+  .reader-settings-tabs {
+    flex-direction: column;
+    overflow-y: auto;
+    overflow-x: hidden;
+    padding: 12px;
+  }
+  .reader-settings-tabs button {
+    flex: none;
+    width: 100%;
+    min-height: 66px;
+    justify-content: flex-start;
+    white-space: normal;
+    text-align: start;
+  }
+  .reader-settings-tabs button > span {
+    flex: 1;
+  }
+  .reader-settings-tabs button > span > small,
+  .reader-settings-tabs button > svg:last-child {
+    display: block;
+  }
+  .reader-settings-tabs button strong {
+    font-size: 0.92rem;
+  }
+  .reader-settings-save-note {
+    display: flex;
+  }
+  .reader-settings-mobile-back {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    align-self: flex-start;
+  }
+  .reader-settings-mobile-status {
+    display: block;
+  }
+}
+.reader-settings-slider button:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
 }

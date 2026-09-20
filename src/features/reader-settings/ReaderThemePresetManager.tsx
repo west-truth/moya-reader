@@ -54,9 +54,13 @@ export function ReaderThemePresetManager({
   const [presets, setPresets] = useState(loadPresets);
   const [name, setName] = useState('');
   const [error, setError] = useState(false);
+  const [editing, setEditing] = useState<string>();
+  const [renameDraft, setRenameDraft] = useState('');
+  const duplicate = presets.some((preset) => preset.name === name.trim());
   const save = () => {
     const trimmed = name.trim();
     if (!trimmed) return;
+    if (duplicate && !window.confirm(`“${trimmed}” 테마의 색상과 밝기를 덮어쓸까요?`)) return;
     const next = [
       ...presets.filter((preset) => preset.name !== trimmed),
       {
@@ -103,7 +107,7 @@ export function ReaderThemePresetManager({
           />
         </label>
         <button type="button" className="ghost-btn" disabled={!name.trim()} onClick={save}>
-          현재 색상 저장
+          {duplicate ? '같은 이름의 테마 덮어쓰기' : '현재 색상 저장'}
         </button>
       </div>
       {error && (
@@ -115,24 +119,71 @@ export function ReaderThemePresetManager({
         <div className="reader-theme-preset-list">
           {presets.map((preset) => (
             <article key={preset.id}>
-              <button
-                type="button"
-                className="reader-theme-preset-apply"
-                onClick={() =>
-                  updateProfile({
-                    theme: 'custom',
-                    foreground: preset.foreground,
-                    background: preset.background,
-                    brightness: preset.brightness,
-                  })
-                }
-              >
-                <span style={{ color: preset.foreground, background: preset.background }}>가</span>
-                <strong>{preset.name}</strong>
-              </button>
-              <button type="button" className="ghost-btn" onClick={() => remove(preset.id)}>
-                삭제
-              </button>
+              {editing === preset.id ? (
+                <div className="reader-theme-preset-save">
+                  <input
+                    aria-label="변경할 테마 이름"
+                    value={renameDraft}
+                    maxLength={40}
+                    onChange={(event) => setRenameDraft(event.target.value)}
+                  />
+                  <button
+                    type="button"
+                    disabled={
+                      !renameDraft.trim() || presets.some((p) => p.id !== preset.id && p.name === renameDraft.trim())
+                    }
+                    onClick={() => {
+                      const next = presets.map((p) => (p.id === preset.id ? { ...p, name: renameDraft.trim() } : p));
+                      if (!storePresets(next)) {
+                        setError(true);
+                        return;
+                      }
+                      setPresets(next);
+                      setEditing(undefined);
+                      setError(false);
+                    }}
+                  >
+                    이름 저장
+                  </button>
+                  <button type="button" onClick={() => setEditing(undefined)}>
+                    취소
+                  </button>
+                  {presets.some((p) => p.id !== preset.id && p.name === renameDraft.trim()) && (
+                    <small role="status">이미 사용 중인 이름입니다.</small>
+                  )}
+                </div>
+              ) : (
+                <>
+                  <button
+                    type="button"
+                    className="reader-theme-preset-apply"
+                    onClick={() =>
+                      updateProfile({
+                        theme: 'custom',
+                        foreground: preset.foreground,
+                        background: preset.background,
+                        brightness: preset.brightness,
+                      })
+                    }
+                  >
+                    <span style={{ color: preset.foreground, background: preset.background }}>가</span>
+                    <strong>{preset.name}</strong>
+                  </button>
+                  <button
+                    type="button"
+                    className="ghost-btn"
+                    onClick={() => {
+                      setEditing(preset.id);
+                      setRenameDraft(preset.name);
+                    }}
+                  >
+                    이름 변경
+                  </button>
+                  <button type="button" className="ghost-btn" onClick={() => remove(preset.id)}>
+                    삭제
+                  </button>
+                </>
+              )}
             </article>
           ))}
         </div>

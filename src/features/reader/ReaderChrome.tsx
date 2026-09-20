@@ -446,7 +446,12 @@ export function ReaderChrome({
         profile={readingProfile}
         readingFlow={readingFlow}
         bookOverrideEnabled={bookOverrideEnabled}
-        onClose={() => setQuickViewOpen(false)}
+        onClose={() => {
+          actions.flushReadingSettings();
+          setQuickViewOpen(false);
+        }}
+        saveState={model.settingsSaveState}
+        onRetrySave={actions.retryReadingSettings}
         onUpdate={actions.updateReadingProfile}
         onSetBookOverride={actions.setReadingBookOverride}
         onOpenAllSettings={actions.openSettings}

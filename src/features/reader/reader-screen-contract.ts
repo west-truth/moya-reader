@@ -65,6 +65,7 @@ export interface ReaderScreenModel {
   readonly chapter: Chapter;
   readonly chapters: readonly Chapter[];
   readonly settings: ReaderSettings;
+  readonly settingsSaveState?: { readonly saving: boolean; readonly dirty: boolean; readonly error: boolean };
   readonly bookmarks: readonly Bookmark[];
   readonly highlights: readonly ReaderHighlight[];
   readonly localReadingPosition?: ReadingPosition;
@@ -83,6 +84,8 @@ export interface ReaderScreenActions {
   readonly returnToChapters: () => void;
   readonly openSettings: () => void;
   readonly openSync: () => void;
+  readonly flushReadingSettings: () => void;
+  readonly retryReadingSettings: () => void;
   readonly toggleAddon: () => void;
   readonly openAddon: (tab: ReaderAddonTab) => void;
   readonly closeActiveLayer: () => boolean;
@@ -139,6 +142,8 @@ const NO_ACTIONS: ReaderScreenActions = {
   returnToChapters: () => undefined,
   openSettings: () => undefined,
   openSync: () => undefined,
+  flushReadingSettings: () => undefined,
+  retryReadingSettings: () => undefined,
   toggleAddon: () => undefined,
   openAddon: () => undefined,
   closeActiveLayer: () => false,

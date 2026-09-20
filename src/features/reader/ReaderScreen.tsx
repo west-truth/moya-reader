@@ -587,6 +587,7 @@ function ReaderScreenComponent({ model, screenHandle }: ReaderScreenProps) {
 
   useStableDocumentShortcuts(true, (event) => {
     if (event.defaultPrevented) return;
+    if (event.target instanceof Element && event.target.closest('[role="dialog"]')) return;
     if (event.key === 'Escape' && footnote) {
       event.preventDefault();
       setFootnote(undefined);

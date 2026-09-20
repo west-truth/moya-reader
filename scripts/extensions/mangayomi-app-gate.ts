@@ -116,7 +116,7 @@ export async function runMangayomiAppGate(
   });
   fixture.setImage(Buffer.from(dataUrl.split(',')[1], 'base64'));
   await page.getByRole('button', { name: '설정', exact: true }).first().click();
-  await page.getByRole('tab', { name: /^익스텐션/ }).click();
+  await page.getByRole('tab', { name: /^콘텐츠 소스/ }).click();
   await page.getByRole('button', { name: 'Mangayomi JS 확장', exact: true }).click();
   const panel = page.getByRole('region', { name: 'Mangayomi JS 확장 관리', exact: true });
   await panel.getByLabel('Mangayomi JS 확장 파일', { exact: true }).setInputFiles(fixture.file);
@@ -206,7 +206,7 @@ async function runLiveMangayomiAppGate(
   output: string,
 ) {
   await page.getByRole('button', { name: '설정', exact: true }).first().click();
-  await page.getByRole('tab', { name: /^익스텐션/ }).click();
+  await page.getByRole('tab', { name: /^콘텐츠 소스/ }).click();
   await page.getByRole('button', { name: 'Mangayomi JS 확장', exact: true }).click();
   const panel = page.getByRole('region', { name: 'Mangayomi JS 확장 관리', exact: true });
   await panel.getByLabel('Mangayomi JS 확장 파일', { exact: true }).setInputFiles(fixture.file);

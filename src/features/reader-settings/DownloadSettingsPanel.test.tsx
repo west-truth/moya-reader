@@ -23,7 +23,7 @@ describe('DownloadSettingsPanel', () => {
     const text = JSON.stringify(root.toJSON());
     expect(text).toContain('5.0 MB / 100 MB');
     expect(text).toContain('서버 책장 용량은 포함하지 않습니다');
-    expect(text).toContain('다음 접속에서 이어받을 수 있음');
+    expect(text).toContain('다음 접속에서 복구 가능');
     act(() => root.unmount());
   });
 });

@@ -130,6 +130,8 @@ interface ActiveSerialImportQueue {
 export type { ExternalSourceRegistryPort } from '../../external-sources/app-external-source-registry';
 
 export interface ExternalSourceView {
+  readonly lang?: string;
+  readonly contentKind?: 'text' | 'image';
   readonly extensionManager?: import('../../external-sources/extension-management').SourceExtensionManager;
   readonly id: ExtensionContributionId;
   readonly title: string;
@@ -608,6 +610,13 @@ export function useExternalSourceController(options: UseExternalSourceController
         return {
           id: descriptor.id,
           title: descriptor.title,
+          lang: descriptor.lang,
+          contentKind:
+            descriptor.schemaVersion === 2 && descriptor.seriesProfile
+              ? descriptor.seriesProfile.kind === 'document_series'
+                ? ('text' as const)
+                : ('image' as const)
+              : undefined,
           description: descriptor.description,
           kind: descriptor.kind,
           origin: origin ?? 'plugin',
