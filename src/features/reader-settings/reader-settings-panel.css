@@ -207,6 +207,68 @@
   gap: 24px;
 }
 
+.reader-settings-source-sections,
+.reader-settings-destination-sections {
+  display: grid;
+  gap: 24px;
+}
+
+.reader-settings-destination-card {
+  display: grid;
+  justify-items: start;
+  gap: 16px;
+}
+
+.reader-settings-control-toggle,
+.reader-settings-select-row {
+  min-height: 56px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 18px;
+  padding-top: 12px;
+  border-top: 1px solid var(--border);
+}
+
+.reader-settings-control-toggle > span,
+.reader-settings-select-row > span {
+  min-width: 0;
+  display: grid;
+  gap: 4px;
+}
+
+.reader-settings-control-toggle strong,
+.reader-settings-select-row strong {
+  color: var(--text);
+  font-size: 0.78rem;
+}
+
+.reader-settings-control-toggle small,
+.reader-settings-select-row small,
+.reader-settings-fact,
+.reader-settings-scope-note {
+  color: var(--text-2);
+  font-size: 0.71rem;
+  line-height: 1.55;
+}
+
+.reader-settings-select-row select {
+  min-width: 90px;
+  min-height: 38px;
+}
+
+.reader-settings-fact,
+.reader-settings-scope-note {
+  margin: 0;
+}
+
+.reader-settings-scope-note {
+  padding: 12px 14px;
+  background: var(--app-surface-muted);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-control);
+}
+
 .external-source-settings-list {
   display: grid;
   gap: 8px;

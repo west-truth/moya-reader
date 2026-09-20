@@ -6454,6 +6454,8 @@ export default function App() {
             bookEnrichmentAutomation={bookEnrichmentAutomation}
             libraryCount={novels.length}
             initialTab={settingsInitialTab}
+            openSync={() => setSyncPanelOpen(true)}
+            openBackup={backupFeature.openPanel}
             updateProfile={changeReadingProfile}
             setBookOverrideEnabled={setReadingBookOverrideEnabled}
             resetProfile={() =>

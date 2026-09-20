@@ -3,6 +3,7 @@ import {
   BookOpenText,
   ChevronRight,
   Cloud,
+  Download,
   Info,
   Keyboard,
   LayoutPanelTop,
@@ -27,14 +28,17 @@ import { WebNovelMetadataExtensionSettings } from '../extensions/WebNovelMetadat
 import { ExternalSourceSettingsPanel } from '../external-sources/ExternalSourceSettingsPanel';
 import type { ExternalSourceController } from '../external-sources/useExternalSourceController';
 import { ApplicationInfoSettings } from './ApplicationInfoSettings';
+import { DownloadSettingsPanel } from './DownloadSettingsPanel';
 import { ReaderGestureSettings } from './ReaderGestureSettings';
 import { ReaderSettingsAppearance } from './ReaderSettingsAppearance';
 import { ReaderSettingsLayout } from './ReaderSettingsLayout';
+import { SyncAndBackupSettings } from './SyncAndBackupSettings';
 import { resolveReaderThemeColors } from './reader-theme-colors';
 import type { ReaderSettingsController } from './useReaderSettingsDraft';
 import './reader-settings-panel.css';
 
-export type SettingsTab = 'appearance' | 'layout' | 'gesture' | 'sources' | 'extensions' | 'application';
+export type SettingsTab =
+  'appearance' | 'layout' | 'gesture' | 'sources' | 'extensions' | 'downloads' | 'sync' | 'application';
 
 interface SettingsSection {
   readonly id: SettingsTab;
@@ -47,42 +51,56 @@ interface SettingsSection {
 const SETTINGS_SECTIONS: readonly SettingsSection[] = [
   {
     id: 'appearance',
-    label: '화면',
+    label: '모양',
     detail: '테마, 글꼴, 밝기',
     description: '앱과 리더의 색상, 본문 글꼴을 선택합니다.',
     icon: Palette,
   },
   {
     id: 'layout',
-    label: '본문',
+    label: '리더 보기',
     detail: '글자, 여백, 읽기 방식',
     description: '본문 조판과 이동 방식을 조정합니다.',
     icon: LayoutPanelTop,
   },
   {
     id: 'gesture',
-    label: '조작',
+    label: '리더 조작',
     detail: '탭, 스와이프, 화면 유지',
     description: '화면 입력과 기기 동작을 설정합니다.',
     icon: Keyboard,
   },
   {
     id: 'sources',
-    label: '소스',
-    detail: 'Dropbox, 작품 저장소',
-    description: '클라우드 저장소와 외부 작품 소스의 계정 연결을 관리합니다.',
+    label: '콘텐츠 소스',
+    detail: '연결, 패키지, 저장소',
+    description: '작품 제공자와 소스 패키지, 패키지 저장소를 관리합니다.',
     icon: Cloud,
   },
   {
     id: 'extensions',
-    label: '익스텐션',
-    detail: '내장, 커뮤니티, 권한',
-    description: '기능별 제공 범위와 요청 권한을 확인하고 켜거나 끕니다.',
+    label: '기능 확장',
+    detail: '부가 기능, 권한',
+    description: '리더와 앱에 기능을 더하는 확장의 권한과 상태를 관리합니다.',
     icon: Puzzle,
   },
   {
+    id: 'downloads',
+    label: '다운로드',
+    detail: '미리 받기, 대기열, 저장',
+    description: '서버 수집과 이 기기의 저장 동작을 구분해 설정합니다.',
+    icon: Download,
+  },
+  {
+    id: 'sync',
+    label: '동기화',
+    detail: '연결, 상태, 백업',
+    description: '기기 간 동기화 상태와 별도 백업·복원 기능으로 이동합니다.',
+    icon: Cloud,
+  },
+  {
     id: 'application',
-    label: '정보',
+    label: '앱 정보',
     detail: '버전, 환경, 라이선스',
     description: '앱과 실행 환경 정보를 확인합니다.',
     icon: BookOpenText,
@@ -107,6 +125,8 @@ export interface ReaderSettingsPanelProps {
   readonly bookEnrichmentAutomation?: BookEnrichmentAutomationController;
   readonly libraryCount?: number;
   readonly initialTab?: SettingsTab;
+  readonly openSync: () => void;
+  readonly openBackup: () => void;
   renderExtensionDetails?(extension: AppExtensionSnapshot): ReactNode;
   updateProfile(patch: ReadingProfileOverride): void;
   setBookOverrideEnabled(enabled: boolean): void;
@@ -130,6 +150,10 @@ export default function ReaderSettingsPanel(props: ReaderSettingsPanelProps) {
   const readerThemeColors = resolveReaderThemeColors(profile);
   const readingTab = tab === 'appearance' || tab === 'layout' || tab === 'gesture';
   const showReadingFooter = readingTab && !(tab === 'appearance' && appearanceThemeTarget === 'application');
+  const openDestination = (destination: () => void) => {
+    controller.closePanel();
+    destination();
+  };
 
   const navigateTabs = (event: KeyboardEvent<HTMLButtonElement>, index: number) => {
     if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return;
@@ -205,7 +229,9 @@ export default function ReaderSettingsPanel(props: ReaderSettingsPanelProps) {
                   ? '이 기기에 저장됩니다.'
                   : tab === 'sources' || tab === 'extensions'
                     ? '공통 설정은 서버 연결 시 다른 기기에도 반영됩니다.'
-                    : null}
+                    : tab === 'downloads'
+                      ? '항목마다 서버 또는 이 기기에서 실행됩니다.'
+                      : null}
               </span>
             </header>
             <div
@@ -233,7 +259,6 @@ export default function ReaderSettingsPanel(props: ReaderSettingsPanelProps) {
               {tab === 'extensions' && (
                 <ExtensionSettingsPanel
                   extensions={props.extensions}
-                  installedPackages={props.installedPackages}
                   setEnabled={props.setExtensionEnabled}
                   renderDetails={(extension) =>
                     props.renderExtensionDetails?.(extension) ??
@@ -251,7 +276,19 @@ export default function ReaderSettingsPanel(props: ReaderSettingsPanelProps) {
                   }
                 />
               )}
-              {tab === 'sources' && <ExternalSourceSettingsPanel controller={props.externalSources} />}
+              {tab === 'sources' && (
+                <div className="reader-settings-source-sections">
+                  {props.installedPackages}
+                  <ExternalSourceSettingsPanel controller={props.externalSources} />
+                </div>
+              )}
+              {tab === 'downloads' && <DownloadSettingsPanel controller={props.externalSources} />}
+              {tab === 'sync' && (
+                <SyncAndBackupSettings
+                  openSync={() => openDestination(props.openSync)}
+                  openBackup={() => openDestination(props.openBackup)}
+                />
+              )}
               {tab === 'application' && (
                 <ApplicationInfoSettings
                   platformRuntime={props.platformRuntime}
