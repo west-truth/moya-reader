@@ -7,6 +7,19 @@ import type {
 } from '../../domain/types';
 import { clamp } from '../../utils/format';
 
+export const READING_PROFILE_LIMITS = {
+  fontSize: { min: 11, max: 40 },
+  fontWeight: { min: 300, max: 800 },
+  lineHeight: { min: 1.2, max: 3 },
+  letterSpacing: { min: 0, max: 0.2 },
+  paragraphSpacing: { min: 0, max: 3 },
+  firstLineIndent: { min: 0, max: 4 },
+  marginX: { min: 0, max: 24 },
+  marginY: { min: 0, max: 16 },
+  contentWidth: { min: 420, max: 1280 },
+  brightness: { min: 0.5, max: 1 },
+} as const;
+
 export const DEFAULT_READING_PROFILE: ReadingProfile = {
   schemaVersion: 1,
   theme: 'dark',
@@ -67,19 +80,62 @@ export function normalizeReadingProfile(
     schemaVersion: 1,
     theme: ['light', 'dark', 'sepia', 'midnight', 'custom'].includes(theme) ? theme : 'dark',
     fontId: value?.fontId?.trim() || legacyFont,
-    fontSize: clamp(finite(value?.fontSize, legacy?.fontSize ?? 18), 11, 40),
-    fontWeight: Math.round(clamp(finite(value?.fontWeight, 400), 300, 800) / 100) * 100,
-    lineHeight: clamp(finite(value?.lineHeight, legacy?.lineHeight ?? 1.85), 1.2, 3),
-    letterSpacing: clamp(finite(value?.letterSpacing, 0), 0, 0.2),
-    paragraphSpacing: clamp(finite(value?.paragraphSpacing, legacy?.paragraphSpacing ?? 1.15), 0, 3),
-    firstLineIndent: clamp(finite(value?.firstLineIndent, 0), 0, 4),
+    fontSize: clamp(
+      finite(value?.fontSize, legacy?.fontSize ?? 18),
+      READING_PROFILE_LIMITS.fontSize.min,
+      READING_PROFILE_LIMITS.fontSize.max,
+    ),
+    fontWeight:
+      Math.round(
+        clamp(
+          finite(value?.fontWeight, 400),
+          READING_PROFILE_LIMITS.fontWeight.min,
+          READING_PROFILE_LIMITS.fontWeight.max,
+        ) / 100,
+      ) * 100,
+    lineHeight: clamp(
+      finite(value?.lineHeight, legacy?.lineHeight ?? 1.85),
+      READING_PROFILE_LIMITS.lineHeight.min,
+      READING_PROFILE_LIMITS.lineHeight.max,
+    ),
+    letterSpacing: clamp(
+      finite(value?.letterSpacing, 0),
+      READING_PROFILE_LIMITS.letterSpacing.min,
+      READING_PROFILE_LIMITS.letterSpacing.max,
+    ),
+    paragraphSpacing: clamp(
+      finite(value?.paragraphSpacing, legacy?.paragraphSpacing ?? 1.15),
+      READING_PROFILE_LIMITS.paragraphSpacing.min,
+      READING_PROFILE_LIMITS.paragraphSpacing.max,
+    ),
+    firstLineIndent: clamp(
+      finite(value?.firstLineIndent, 0),
+      READING_PROFILE_LIMITS.firstLineIndent.min,
+      READING_PROFILE_LIMITS.firstLineIndent.max,
+    ),
     textAlign: value?.textAlign === 'justify' ? 'justify' : 'start',
-    marginX: clamp(finite(value?.marginX, legacy?.marginX ?? 12), 0, 24),
-    marginY: clamp(finite(value?.marginY, legacy?.marginY ?? 4), 0, 16),
-    contentWidth: clamp(finite(value?.contentWidth, legacy?.contentWidth ?? 760), 420, 1280),
+    marginX: clamp(
+      finite(value?.marginX, legacy?.marginX ?? 12),
+      READING_PROFILE_LIMITS.marginX.min,
+      READING_PROFILE_LIMITS.marginX.max,
+    ),
+    marginY: clamp(
+      finite(value?.marginY, legacy?.marginY ?? 4),
+      READING_PROFILE_LIMITS.marginY.min,
+      READING_PROFILE_LIMITS.marginY.max,
+    ),
+    contentWidth: clamp(
+      finite(value?.contentWidth, legacy?.contentWidth ?? 760),
+      READING_PROFILE_LIMITS.contentWidth.min,
+      READING_PROFILE_LIMITS.contentWidth.max,
+    ),
     foreground: safeColor(value?.foreground),
     background: safeColor(value?.background),
-    brightness: clamp(finite(value?.brightness, 1), 0.5, 1),
+    brightness: clamp(
+      finite(value?.brightness, 1),
+      READING_PROFILE_LIMITS.brightness.min,
+      READING_PROFILE_LIMITS.brightness.max,
+    ),
     flow,
     modeLock,
     pageTurnMotion,

@@ -5,6 +5,7 @@ import type { ReaderPersonalizationRepository } from '../../repositories/reader-
 import { normalizeApplicationThemeColors } from './app-theme';
 import { ReaderUserFontManager } from './ReaderUserFontManager';
 import { SettingsSlider } from './SettingsSlider';
+import { READING_PROFILE_LIMITS } from './reading-profile';
 import { resolveReaderThemeColors } from './reader-theme-colors';
 import type { ReaderSettingsController } from './useReaderSettingsDraft';
 
@@ -177,8 +178,8 @@ export function ReaderSettingsAppearance({
             <SettingsSlider
               label="리더 밝기"
               value={profile.brightness}
-              min={0.5}
-              max={1}
+              min={READING_PROFILE_LIMITS.brightness.min}
+              max={READING_PROFILE_LIMITS.brightness.max}
               step={0.05}
               onChange={(brightness) => updateProfile({ brightness })}
             />

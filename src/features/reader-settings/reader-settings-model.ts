@@ -1,10 +1,11 @@
 import type { ReaderSettings } from '../../domain/types';
 import { defaultSettings } from '../../repositories/reader-defaults';
+import { READING_PROFILE_LIMITS } from './reading-profile';
 
-export const READER_FONT_SIZE_MIN = 13;
-export const READER_FONT_SIZE_MAX = 28;
-export const READER_CONTENT_WIDTH_MIN = 560;
-export const READER_CONTENT_WIDTH_MAX = 1040;
+export const READER_FONT_SIZE_MIN = READING_PROFILE_LIMITS.fontSize.min;
+export const READER_FONT_SIZE_MAX = READING_PROFILE_LIMITS.fontSize.max;
+export const READER_CONTENT_WIDTH_MIN = READING_PROFILE_LIMITS.contentWidth.min;
+export const READER_CONTENT_WIDTH_MAX = READING_PROFILE_LIMITS.contentWidth.max;
 
 type ReadingPresetSettings = Pick<
   ReaderSettings,

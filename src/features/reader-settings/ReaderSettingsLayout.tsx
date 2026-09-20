@@ -5,6 +5,7 @@ import {
   READER_FONT_SIZE_MAX,
   READER_FONT_SIZE_MIN,
 } from './reader-settings-model';
+import { READING_PROFILE_LIMITS } from './reading-profile';
 import { SettingsSlider } from './SettingsSlider';
 import { resolveReaderThemeColors } from './reader-theme-colors';
 import type { ReaderSettingsController } from './useReaderSettingsDraft';
@@ -37,16 +38,16 @@ export function ReaderSettingsLayout({
           <SettingsSlider
             label="굵기"
             value={profile.fontWeight}
-            min={300}
-            max={800}
+            min={READING_PROFILE_LIMITS.fontWeight.min}
+            max={READING_PROFILE_LIMITS.fontWeight.max}
             step={100}
             onChange={(fontWeight) => updateProfile({ fontWeight })}
           />
           <SettingsSlider
             label="자간"
             value={profile.letterSpacing}
-            min={0}
-            max={0.2}
+            min={READING_PROFILE_LIMITS.letterSpacing.min}
+            max={READING_PROFILE_LIMITS.letterSpacing.max}
             step={0.01}
             suffix="em"
             onChange={(letterSpacing) => updateProfile({ letterSpacing })}
@@ -81,16 +82,16 @@ export function ReaderSettingsLayout({
           <SettingsSlider
             label="줄 간격"
             value={profile.lineHeight}
-            min={1.35}
-            max={2.6}
+            min={READING_PROFILE_LIMITS.lineHeight.min}
+            max={READING_PROFILE_LIMITS.lineHeight.max}
             step={0.05}
             onChange={(lineHeight) => updateProfile({ lineHeight })}
           />
           <SettingsSlider
             label="문단 간격"
             value={profile.paragraphSpacing}
-            min={0.6}
-            max={2.4}
+            min={READING_PROFILE_LIMITS.paragraphSpacing.min}
+            max={READING_PROFILE_LIMITS.paragraphSpacing.max}
             step={0.05}
             suffix="em"
             onChange={(paragraphSpacing) => updateProfile({ paragraphSpacing })}
@@ -98,8 +99,8 @@ export function ReaderSettingsLayout({
           <SettingsSlider
             label="첫 줄 들여쓰기"
             value={profile.firstLineIndent}
-            min={0}
-            max={4}
+            min={READING_PROFILE_LIMITS.firstLineIndent.min}
+            max={READING_PROFILE_LIMITS.firstLineIndent.max}
             step={0.25}
             suffix="em"
             onChange={(firstLineIndent) => updateProfile({ firstLineIndent })}
@@ -113,8 +114,8 @@ export function ReaderSettingsLayout({
           <SettingsSlider
             label="가로 여백"
             value={profile.marginX}
-            min={3}
-            max={20}
+            min={READING_PROFILE_LIMITS.marginX.min}
+            max={READING_PROFILE_LIMITS.marginX.max}
             step={1}
             suffix="vw"
             onChange={(marginX) => updateProfile({ marginX })}
@@ -122,8 +123,8 @@ export function ReaderSettingsLayout({
           <SettingsSlider
             label="세로 여백"
             value={profile.marginY}
-            min={0}
-            max={12}
+            min={READING_PROFILE_LIMITS.marginY.min}
+            max={READING_PROFILE_LIMITS.marginY.max}
             step={1}
             suffix="vh"
             onChange={(marginY) => updateProfile({ marginY })}
