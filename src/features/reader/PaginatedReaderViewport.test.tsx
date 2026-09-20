@@ -95,7 +95,7 @@ describe('inactive pagination work', () => {
     try {
       await act(async () => {
         renderer = create(render('revision-1'), {
-          createNodeMock: () => ({ clientWidth: 800, clientHeight: 600 }),
+          createNodeMock: () => ({ clientWidth: 800, clientHeight: 600, replaceChildren: vi.fn() }),
         });
       });
       expect(loadReaderPageMap).toHaveBeenCalledTimes(1);
@@ -171,7 +171,7 @@ describe('inactive pagination work', () => {
     try {
       await act(async () => {
         renderer = create(render(false), {
-          createNodeMock: () => ({ clientWidth: 800, clientHeight: 600 }),
+          createNodeMock: () => ({ clientWidth: 800, clientHeight: 600, replaceChildren: vi.fn() }),
         });
       });
       expect(loadReaderPageMap).not.toHaveBeenCalled();

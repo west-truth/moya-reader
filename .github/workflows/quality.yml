@@ -3,14 +3,44 @@ name: Quality
 on:
   pull_request:
   push:
-    branches: [main]
+    branches:
+      - main
   workflow_dispatch:
 
 permissions:
   contents: read
 
+concurrency:
+  group: quality-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
+  changes:
+    runs-on: ubuntu-24.04
+    outputs:
+      code: ${{ steps.scope.outputs.code }}
+      web: ${{ steps.scope.outputs.web }}
+      settings: ${{ steps.scope.outputs.settings }}
+      reader: ${{ steps.scope.outputs.reader }}
+      discovery: ${{ steps.scope.outputs.discovery }}
+      extensions: ${{ steps.scope.outputs.extensions }}
+      native: ${{ steps.scope.outputs.native }}
+      deploy: ${{ steps.scope.outputs.deploy }}
+      text: ${{ steps.scope.outputs.text }}
+      apk: ${{ steps.scope.outputs.apk }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - name: Select checks for changed areas
+        id: scope
+        env:
+          QUALITY_BASE: ${{ github.event.pull_request.base.sha }}
+        run: node scripts/ci/quality-scope.mjs
+
   browser-web:
+    needs: changes
+    if: needs.changes.outputs.web == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
@@ -23,34 +53,93 @@ jobs:
           node-version: 22
           cache: pnpm
       - run: pnpm install --frozen-lockfile
-      - run: corepack pnpm check:web-local
+      - name: Build and verify browser artifact
+        run: |
+          pnpm web:build
+          pnpm --filter @moya/web check:artifact
         env:
           WEB_BASE_PATH: /moya-reader/
-      - run: pnpm exec vitest run src/features/fixed-document/ComicPageFlow.test.ts src/features/fixed-document/archive-page-loader.test.ts src/features/fixed-document/use-archive-page-images.test.tsx
-      - name: Verify source cache reuse and refresh
-        run: |
-          node --test services/apk-worker/catalog.test.mjs services/apk-worker/source-cover-cache.test.mjs services/apk-worker/shared-task.test.mjs
-          pnpm exec vitest run src/external-sources/source-cache-policy.test.ts src/external-sources/session-cover-cache.test.ts src/external-sources/local-state.test.ts src/features/discovery src/features/external-sources/useExternalSourceController.pagination.test.tsx --maxWorkers=2
       - run: pnpm exec playwright-core install --with-deps chromium
       - run: pnpm check:web-pages:browser
         env:
           READER_UI_BROWSER_CHANNEL: chromium
-      - run: pnpm test:settings-ux
       - run: pnpm check:settings-ux
+        if: needs.changes.outputs.settings == 'true'
       - run: pnpm check:discovery-ux
         env:
           READER_UI_BROWSER_CHANNEL: chromium
+        if: needs.changes.outputs.discovery == 'true'
       - name: Verify paginated blind reading
         run: node scripts/performance/auto-scroll-smoke.mjs --paginated
         env:
           READER_UI_BROWSER_CHANNEL: chromium
+        if: needs.changes.outputs.reader == 'true'
       - run: pnpm check:reader-stability
         env:
           READER_UI_BROWSER_CHANNEL: chromium
+        if: needs.changes.outputs.reader == 'true'
 
   hosted-source:
-    # Keep the source-release license inventory and hosted deployment checks on
-    # the same Linux/glibc family used by the production Node images.
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - uses: pnpm/action-setup@v6
+        with:
+          version: 11.7.0
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Static checks and shared typecheck (once)
+        run: |
+          pnpm format:check
+          pnpm check:public-source
+          pnpm check:licenses:source-release
+          pnpm lint
+          pnpm check:css
+          pnpm check:contract-boundaries
+          pnpm typecheck
+        env:
+          FORMAT_BASE_REF: ${{ github.event.pull_request.base.sha }}
+      - name: Unit and integration tests (de-duplicated)
+        run: |
+          node --test scripts/ci/quality-scope.test.mjs
+          node scripts/ci/quality-tests.mjs
+          pnpm test:extension-runtime
+          pnpm test:extension-sdk
+          pnpm test:extension-cli
+      - name: APK source cache tests
+        if: needs.changes.outputs.apk == 'true' || needs.changes.outputs.extensions == 'true'
+        run: node --test services/apk-worker/catalog.test.mjs services/apk-worker/source-cover-cache.test.mjs services/apk-worker/shared-task.test.mjs
+      - name: Verify production server and web bundles
+        run: |
+          pnpm check:server:production
+          pnpm check:hosted
+          pnpm exec vite build
+      - name: Install and test text-source companion
+        working-directory: services/text-source-server
+        run: |
+          npm ci --ignore-scripts --no-audit --no-fund
+          npm test
+        if: needs.changes.outputs.text == 'true'
+      - name: Install browser for original Mangayomi App gate
+        run: pnpm exec playwright-core install --with-deps chromium
+        if: needs.changes.outputs.extensions == 'true'
+      - name: Verify original Mangayomi install through comic reader
+        run: pnpm check:extension-mangayomi-app
+        env:
+          READER_UI_BROWSER_CHANNEL: chromium
+        if: needs.changes.outputs.extensions == 'true'
+
+  hosted-compose:
+    needs: changes
+    if: needs.changes.outputs.deploy == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     steps:
@@ -63,46 +152,6 @@ jobs:
           node-version: 22
           cache: pnpm
       - run: pnpm install --frozen-lockfile
-      - run: pnpm check:web-server
-      - name: Verify account discovery configuration
-        run: pnpm exec vitest run apps/server/src/routes/books/discovery-settings-routes.integration.test.ts apps/server/src/routes/books/chapter-actions.integration.test.ts apps/server/src/routes/books/route-registration.test.ts --maxWorkers=2
-      - name: Install and test text-source companion
-        working-directory: services/text-source-server
-        run: |
-          npm ci --ignore-scripts --no-audit --no-fund
-          npm test
-      - name: Verify text-source contracts and chapter workflows
-        run: >-
-          pnpm exec vitest run
-          src/external-sources/text-server
-          src/external-sources/series
-          src/external-sources/source-normalization.test.ts
-          src/integration-settings
-          src/features/book-workspace
-          src/features/external-sources/SourceReleasePanel.test.tsx
-          src/features/external-sources/complete-series-catalog.test.ts
-          src/features/external-sources/series-catalog-pagination.test.ts
-          src/features/external-sources/source-cover.test.ts
-          src/features/external-sources/useExternalSourceController.pagination.test.tsx
-          src/features/reader/ReaderChapterHeading.test.tsx
-          src/test/import-expected-base.test.ts
-          src/test/document-series-import.test.ts
-          src/test/content-revision-remap-hash.test.ts
-          src/features/import/local-document-series-import.test.ts
-          src/services/import/browser-import-service.test.ts
-          packages/document-series-core
-          packages/extension-contracts
-          apps/server/src/routes/text-source-gateway.test.ts
-          apps/server/src/services/import-expected-base.integration.test.ts
-          apps/server/src/services/book-revision/reader-state-restore.integration.test.ts
-          --maxWorkers=2
-      - name: Install browser for original Mangayomi App gate
-        run: pnpm exec playwright-core install --with-deps chromium
-      - name: Verify original Mangayomi install through comic reader
-        run: pnpm check:extension-mangayomi-app
-        env:
-          READER_UI_BROWSER_CHANNEL: chromium
-      - run: pnpm check:mobile-readiness
       - run: docker compose config --quiet
       - run: docker compose -f compose.yaml -f compose.local-tts.yaml config --quiet
       - name: Validate public and Suwayomi Compose profiles
@@ -122,6 +171,8 @@ jobs:
         run: pnpm check:hosted:e2e -- --public --project-name moya-ci-${{ github.run_id }}-${{ github.run_attempt }}
 
   windows-native-source:
+    needs: changes
+    if: needs.changes.outputs.native == 'true'
     runs-on: windows-latest
     timeout-minutes: 30
     steps:
@@ -141,3 +192,4 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: pnpm check:rust
       - run: pnpm check:native-source
+      - run: pnpm check:mobile-readiness

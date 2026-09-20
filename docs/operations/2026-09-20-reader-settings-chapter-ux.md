@@ -24,3 +24,7 @@
 - 페이지 블라인드 재현 명령: `node scripts/performance/auto-scroll-smoke.mjs --paginated` (`READER_UI_BROWSER_EXECUTABLE` 또는 `READER_UI_BROWSER_CHANNEL` 지원).
 
 운영 데이터나 실행 중인 Docker 서비스는 변경하지 않았다.
+
+## CI 후속 정리
+
+기존 페이지 뷰어 테스트의 가짜 DOM에 `replaceChildren()`이 빠진 것을 수정했다. 해당 회귀 검사는 계속 실행한다. 중복 테스트와 무조건 실행하던 무거운 검사 정리는 [CI 실행 범위 기록](2026-09-20-ci-scope.md)을 따른다.
