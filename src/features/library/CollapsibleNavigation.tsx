@@ -23,6 +23,7 @@ export function CollapsibleNavigation({
     }
   });
   useEffect(() => {
+    if (typeof window === 'undefined') return;
     const read = () => {
       try {
         setCollapsed(localStorage.getItem(key) === 'true');
