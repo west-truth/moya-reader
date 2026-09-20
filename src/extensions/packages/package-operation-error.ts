@@ -1,4 +1,8 @@
 const messages: Readonly<Record<string, string>> = {
+  apk_version_not_newer: '이미 같은 버전과 파일이 설치되어 있습니다. 업데이트 목록을 다시 확인해 주세요.',
+  apk_install_conflict: '다른 작업으로 설치 상태가 바뀌었습니다. 업데이트를 다시 확인해 주세요.',
+  apk_repository_conflict: '저장소 목록이 바뀌었습니다. 업데이트를 다시 확인해 주세요.',
+  apk_review_expired: '설치 검토가 만료됐습니다. 업데이트를 다시 선택해 주세요.',
   source_preferences_conflict: '확장 설정이 변경됐습니다. 설정을 다시 열어 주세요.',
   invalid_source_preferences: '확장 설정 값을 확인해 주세요.',
   source_browser_unavailable:

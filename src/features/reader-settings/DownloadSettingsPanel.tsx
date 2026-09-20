@@ -79,6 +79,7 @@ function DeviceStorageEstimate() {
 export function DownloadSettingsPanel({ controller }: { readonly controller: ExternalSourceController }) {
   const autoDownload = controller.autoDownloadNext ?? false;
   const count = controller.autoDownloadNextCount ?? 1;
+  const retention = controller.downloadRetention;
   return (
     <div className="reader-settings-destination-sections">
       <section className="settings-section-card">
@@ -119,6 +120,91 @@ export function DownloadSettingsPanel({ controller }: { readonly controller: Ext
       </section>
 
       <SourceDownloadRecovery controller={controller} />
+
+      {retention && (
+        <section className="settings-section-card" aria-label="읽은 회차 정리">
+          <div className="settings-section-heading">
+            <HardDrive size={18} aria-hidden="true" />
+            <div>
+              <h3>읽은 회차 정리</h3>
+              <p>읽음 표시된 회차 중 뒤의 회차를 충분히 읽은 다운로드만 정리합니다.</p>
+            </div>
+          </div>
+          <label className="reader-settings-control-toggle">
+            <span>
+              <strong>리더를 나온 뒤 자동 정리</strong>
+              <small>
+                기본 꺼짐 · 이 기기에서 읽고 나온 작품에 적용됩니다. 서버 다운로드를 지우면 다른 기기에도 반영됩니다.
+              </small>
+            </span>
+            <input
+              type="checkbox"
+              checked={retention.enabled}
+              disabled={retention.busy}
+              onChange={(e) => retention.setEnabled(e.target.checked)}
+            />
+          </label>
+          <label className="reader-settings-select-row">
+            <span>
+              <strong>정리 전 더 읽을 회차 수</strong>
+              <small>5회 설정: 1화를 읽은 뒤 이후 5개 회차도 읽었을 때 1화를 정리 대상으로 봅니다.</small>
+            </span>
+            <select
+              aria-label="정리 전 더 읽을 회차 수"
+              value={retention.keep}
+              disabled={retention.busy}
+              onChange={(e) => retention.setKeep(Number(e.target.value) as 5 | 10 | 20)}
+            >
+              <option value={5}>5회</option>
+              <option value={10}>10회</option>
+              <option value={20}>20회</option>
+            </select>
+          </label>
+          <p className="field-help">
+            현재 이어볼 회차, 안 읽은 회차, 즐겨찾기 작품, 직접 가져온 파일은 보존합니다. 리더나 다운로드 작업 중에는
+            정리하지 않습니다. 삭제한 회차는 다시 다운로드해야 하며, 소스 사정에 따라 다시 받지 못할 수 있습니다.
+          </p>
+          <div className="installed-extension-actions">
+            <button type="button" disabled={retention.busy || controller.busy} onClick={() => void retention.inspect()}>
+              {retention.busy ? '처리 중…' : '정리 대상 미리보기'}
+            </button>
+            {Boolean(retention.preview?.length) && (
+              <button
+                type="button"
+                disabled={retention.busy || controller.busy || retention.readerActive}
+                onClick={() => void retention.clean()}
+              >
+                확인 후 지금 정리
+              </button>
+            )}
+          </div>
+          {retention.preview && (
+            <div role="status">
+              {retention.preview.length ? (
+                <>
+                  <p>
+                    {retention.preview.length}개 작품 · {retention.preview.reduce((n, p) => n + p.sections.length, 0)}회
+                    정리 가능
+                  </p>
+                  <details>
+                    <summary>작품별 대상 보기</summary>
+                    <ul>
+                      {retention.preview.map((p) => (
+                        <li key={p.bookId}>
+                          {p.title} · {p.sections.length}회
+                        </li>
+                      ))}
+                    </ul>
+                  </details>
+                </>
+              ) : (
+                <p>지금 정리할 회차가 없습니다.</p>
+              )}
+            </div>
+          )}
+          {retention.error && <p role="alert">{retention.error}</p>}
+        </section>
+      )}
 
       <section className="settings-section-card">
         <div className="settings-section-heading">

@@ -18,6 +18,43 @@ import { dispatchApkCommand } from '../apk-command.js';
 import { OUTBOUND_PROXY_KEY } from '../outbound-proxy.js';
 const roots: string[] = [];
 const hosts: MangayomiExtensionHost[] = [];
+it('updates a newer repository version with identical JS bytes and preserves disabled state after reopen', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'moya-version-only-update-'));
+  roots.push(root);
+  let version = '0.2.4';
+  const vault = new EncryptedSourceCredentialVault(join(root, 'vault'), Buffer.alloc(32, 4));
+  const transport: typeof compatibilityHttp = async (input) => ({
+    bytes: Buffer.from(input.url.endsWith('.json') ? JSON.stringify([{ ...fixtureRow, version }]) : fixtureSource),
+    statusCode: 200,
+    headers: {},
+    contentType: 'text/plain',
+    url: input.url,
+  });
+  let host = await MangayomiExtensionHost.open(join(root, 'host'), vault, transport);
+  hosts.push(host);
+  const repo = 'https://repo.example/index.min.json';
+  const signal = new AbortController().signal;
+  const install = async () => {
+    await host.refreshRepository(repo, signal);
+    const entry = host.snapshot().repositories[0]!.entries[0]!;
+    const plan = await host.inspect(repo, entry.pkg, entry.code, signal);
+    await host.install(plan.id, plan.revision, signal);
+    return plan;
+  };
+  const first = await install();
+  await host.change(first.pkg, host.snapshot().revision, 'disable');
+  version = '0.2.7';
+  const updated = await install();
+  expect(updated.digest).toBe(first.digest);
+  expect(host.snapshot().packages[0]).toMatchObject({ version: '0.2.7', enabled: false });
+  host.close();
+  host = await MangayomiExtensionHost.open(join(root, 'host'), vault, transport);
+  hosts.push(host);
+  expect(host.snapshot().packages[0]).toMatchObject({ version: '0.2.7', enabled: false });
+  await expect(install()).rejects.toThrow('apk_version_not_newer');
+  version = '0.2.4';
+  await expect(install()).rejects.toThrow('apk_version_not_newer');
+});
 it('installs a novel repository and returns cleaned UTF-8 chapters instead of image pages', async () => {
   const root = await mkdtemp(join(tmpdir(), 'moya-mangayomi-novel-'));
   roots.push(root);

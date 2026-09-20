@@ -47,10 +47,11 @@ describe('ReaderSettingsPanel', () => {
 
     expect(markup).toContain('reader-settings-dialog');
     expect(markup).toContain('reader-settings-backdrop');
-    expect(markup.match(/role="tab"/g)).toHaveLength(8);
+    expect(markup.match(/role="tab"/g)).toHaveLength(7);
     expect(markup).toContain('콘텐츠 소스');
     expect(markup).toContain('기능 확장');
     expect(markup).toContain('다운로드');
+    expect(markup).not.toContain('id="reader-settings-tab-downloads"');
     expect(markup).toContain('동기화');
     expect(markup).toContain('테마, 글꼴, 밝기');
     expect(markup).toContain('글자, 여백, 읽기 방식');

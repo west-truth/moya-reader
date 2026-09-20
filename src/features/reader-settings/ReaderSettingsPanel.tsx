@@ -74,7 +74,7 @@ const SETTINGS_SECTIONS: readonly SettingsSection[] = [
   {
     id: 'sources',
     label: '콘텐츠 소스',
-    detail: '연결, 패키지, 저장소',
+    detail: '연결, 패키지, 다운로드',
     description: '작품 제공자와 소스 패키지, 패키지 저장소를 관리합니다.',
     icon: Cloud,
   },
@@ -84,13 +84,6 @@ const SETTINGS_SECTIONS: readonly SettingsSection[] = [
     detail: '부가 기능, 권한',
     description: '리더와 앱에 기능을 더하는 확장의 권한과 상태를 관리합니다.',
     icon: Puzzle,
-  },
-  {
-    id: 'downloads',
-    label: '다운로드',
-    detail: '미리 받기, 대기열, 저장',
-    description: '서버 수집과 이 기기의 저장 동작을 구분해 설정합니다.',
-    icon: Download,
   },
   {
     id: 'sync',
@@ -151,14 +144,25 @@ export default function ReaderSettingsPanel(props: ReaderSettingsPanelProps) {
   const selectTab = (next: SettingsTab) => {
     setTab(next);
     setMobileDetail(true);
-    requestAnimationFrame(() => titleRef.current?.focus());
+    requestAnimationFrame(() => {
+      titleRef.current?.focus({ preventScroll: true });
+      const content = titleRef.current?.closest('.reader-settings-content');
+      if (content) content.scrollTop = 0;
+    });
   };
   const backToCategories = () => {
+    if (tab === 'downloads') {
+      selectTab('sources');
+      return;
+    }
     setMobileDetail(false);
     requestAnimationFrame(() => document.getElementById(`reader-settings-tab-${tab}`)?.focus());
   };
   const [appearanceThemeTarget, setAppearanceThemeTarget] = useState<'application' | 'reader'>('application');
-  const current = SETTINGS_SECTIONS.find((section) => section.id === tab) ?? SETTINGS_SECTIONS[0];
+  const current =
+    tab === 'downloads'
+      ? { label: '다운로드', description: '콘텐츠 소스의 미리 받기와 읽은 회차 보관을 설정합니다.' }
+      : (SETTINGS_SECTIONS.find((section) => section.id === tab) ?? SETTINGS_SECTIONS[0]);
   const readerThemeColors = resolveReaderThemeColors(profile);
   const readingTab = tab === 'appearance' || tab === 'layout' || tab === 'gesture';
   const showReadingFooter =
@@ -207,7 +211,7 @@ export default function ReaderSettingsPanel(props: ReaderSettingsPanelProps) {
         <nav className="reader-settings-tabs" role="tablist" aria-label="설정 분류">
           {SETTINGS_SECTIONS.map((section, index) => {
             const Icon = section.icon;
-            const selected = section.id === tab;
+            const selected = section.id === tab || (section.id === 'sources' && tab === 'downloads');
             return (
               <button
                 key={section.id}
@@ -239,9 +243,13 @@ export default function ReaderSettingsPanel(props: ReaderSettingsPanelProps) {
         <main className="reader-settings-main" data-has-footer={showReadingFooter || undefined}>
           <div className="reader-settings-content">
             <header className="reader-settings-page-title">
-              <button type="button" className="ghost-btn reader-settings-mobile-back" onClick={backToCategories}>
+              <button
+                type="button"
+                className={`ghost-btn reader-settings-mobile-back${tab === 'downloads' ? ' is-subpage' : ''}`}
+                onClick={backToCategories}
+              >
                 <ArrowLeft size={18} />
-                설정 목록
+                {tab === 'downloads' ? '콘텐츠 소스' : '설정 목록'}
               </button>
               <h2 ref={titleRef} tabIndex={-1}>
                 {current.label}
@@ -263,9 +271,9 @@ export default function ReaderSettingsPanel(props: ReaderSettingsPanelProps) {
               </span>
             </header>
             <div
-              id={`reader-settings-panel-${tab}`}
+              id={`reader-settings-panel-${tab === 'downloads' ? 'sources' : tab}`}
               role="tabpanel"
-              aria-labelledby={`reader-settings-tab-${tab}`}
+              aria-labelledby={`reader-settings-tab-${tab === 'downloads' ? 'sources' : tab}`}
               className="reader-settings-panel"
             >
               {tab === 'appearance' && (
@@ -323,7 +331,7 @@ export default function ReaderSettingsPanel(props: ReaderSettingsPanelProps) {
                     </span>
                   </section>
                   <button type="button" className="ghost-btn" onClick={() => selectTab('downloads')}>
-                    다운로드 설정
+                    <Download size={18} aria-hidden="true" /> 다운로드 및 저장공간
                   </button>
                   {props.installedPackages}
                   <ExternalSourceSettingsPanel

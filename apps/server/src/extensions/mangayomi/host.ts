@@ -308,7 +308,9 @@ export class MangayomiExtensionHost {
     if (!/class\s+DefaultExtension\s+extends\s+MProvider\b/.test(source))
       throw new Error('compatibility_feature_unsupported');
     if (revision !== this.state.revision) throw new Error('apk_repository_conflict');
-    if (old?.digest === digest) throw new Error('apk_version_not_newer');
+    // A repository release may advance its version without changing the JS bytes.
+    if (old?.digest === digest && entry.version.localeCompare(old.version, 'en', { numeric: true }) <= 0)
+      throw new Error('apk_version_not_newer');
     const id = randomUUID();
     this.plans.set(id, { revision, digest, metadata: entry, repository: url, source, expires: Date.now() + 900000 });
     return {

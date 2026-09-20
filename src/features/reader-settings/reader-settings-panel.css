@@ -9,7 +9,10 @@
   background: var(--app-panel);
 }
 
-.reader-settings-dialog > header {
+.modal.reader-settings-dialog > header {
+  position: relative;
+  top: 0;
+  flex-shrink: 0;
   min-height: 58px;
   margin: 0;
   padding: 0 14px 0 18px;
@@ -151,8 +154,17 @@
   overflow-y: auto;
 }
 
-.reader-settings-page-title {
-  margin-bottom: 6px;
+.modal.reader-settings-dialog .reader-settings-page-title {
+  position: static;
+  display: block;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  margin: 0 0 6px;
+}
+.reader-settings-mobile-back.is-subpage {
+  display: flex;
+  margin-bottom: 14px;
 }
 
 .reader-settings-page-title h2 {
@@ -614,6 +626,64 @@
   min-height: 36px;
   max-width: 100%;
   white-space: normal;
+  padding: 8px 12px;
+  color: var(--app-text);
+  background: var(--app-surface);
+  border: 1px solid var(--app-line);
+  border-radius: 10px;
+}
+
+.external-source-settings-card > .installed-extension-actions {
+  padding: 0 14px 14px;
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.installed-extension-actions button[aria-pressed='true'] {
+  color: var(--app-accent);
+  background: var(--app-accent-soft);
+  border-color: var(--app-accent);
+}
+.source-updates-panel button {
+  min-height: 40px;
+  padding: 8px 12px;
+  border: 1px solid var(--app-line);
+  border-radius: 10px;
+  background: var(--app-surface);
+  color: var(--app-text);
+}
+.source-update-row {
+  padding: 12px;
+  border: 1px solid var(--app-line);
+  border-radius: 10px;
+  background: var(--app-surface);
+}
+.source-update-row strong,
+.source-update-row small {
+  display: block;
+}
+.source-update-row small {
+  color: var(--text-2);
+  font-size: 12px;
+  margin-top: 5px;
+  overflow-wrap: anywhere;
+}
+.source-update-row input {
+  accent-color: var(--app-accent);
+  flex-shrink: 0;
+}
+.reader-settings-dialog .source-settings-filters input,
+.reader-settings-dialog .source-settings-filters select {
+  min-height: 42px;
+  min-width: 0;
+  padding: 8px 10px;
+  background: var(--app-surface);
+  color: var(--app-text);
+  border: 1px solid var(--app-line);
+  border-radius: 10px;
+}
+.reader-settings-dialog input[type='checkbox'] {
+  accent-color: var(--app-accent);
 }
 
 .installed-extension-origin {
