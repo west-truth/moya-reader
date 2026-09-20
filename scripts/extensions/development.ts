@@ -9,6 +9,7 @@ export interface DevelopmentOptions {
   readonly input?: string;
   readonly fixture?: string;
   readonly network?: boolean;
+  readonly preferences?: string;
 }
 
 export const ignoredDevelopmentPath = (path: string) =>
@@ -81,6 +82,7 @@ export async function runDevelopmentIteration(folder: string, options: Developme
   const value = await runProjectSource(pkg, options.method, input, {
     network: options.network,
     fixtures: fixtureValue,
+    preferences: options.preferences ? await loadJson(options.preferences, 64 * 1024) : undefined,
   });
   return {
     id: pkg.manifest.extension.id,

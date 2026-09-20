@@ -98,3 +98,15 @@ GitHub 필수 CI의 현재 결과는 PR checks를 단일 기준으로 삼는다.
   진행 중 요청을 덮어쓰지 않는다. 전체 목록에도 본문 수신을 포함하는 60초 취소 신호를 적용했다.
 - `.moyaext` 설치 확인 뒤 이전 pending이 남거나 변경 작업이 그 요청을 무기한 기다리는 경로도 정리했다.
 - 검증: APK·Mangayomi 각각 설치 전 요청 지연 → 설치 → 새 소스 표시 → 이전 응답 도착 후 유지 회귀 검사 통과.
+
+### PR #51 검토 후 보완 — SDK 개발 실행기
+
+- 재현: 공개 SDK의 `http.request`, `sleep`, `preferences.get`이 check는 통과하지만 run/dev/preview에서
+  broker 미등록으로 실패했다.
+- 수정: 개발 실행기에 세 메서드를 연결했다. HTTP 네트워크 실행은 기존 호스트 전송을 재사용하고 origin,
+  본문 한도와 취소를 유지한다. fixture에서도 전체 status/header/body 응답을 제공한다.
+- 설정은 manifest 기본값과 명시적인 `--preferences` 로컬 JSON을 사용하며 운영 자격 증명은 읽지 않는다.
+- 검증: 집중 검사 24개, Web·스크립트 타입 검사와 변경 파일 lint, checkout 밖에 설치한 실제 CLI tarball의 새 SDK 호출·설정 옵션·서명 패키지/index 흐름 통과.
+  독립 배포 검사에서 발견한 CommonJS 호스트 의존성 로딩과 runtime 상대경로도 수정했다.
+  번들에 포함되는 의존성의 라이선스 원문은 `dist/THIRD_PARTY_NOTICES.txt`에 함께 배포한다.
+- WebView와 운영 로그인 연결의 CLI 미지원 범위를 SDK 참조에 명시했다. 이를 전체 SDK 호환으로 표현하지 않는다.

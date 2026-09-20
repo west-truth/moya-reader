@@ -50,3 +50,10 @@ Moya code is Apache-2.0; third-party dependencies retain their own licenses in t
 `index` verifies every `.moyaext` in the given directory, calculates SHA-256 and versions from actual bytes, and writes a host-compatible repository index. Keep one current archive per extension ID in that directory. Duplicate IDs, corrupt packages, or a manifest pointing to a different update repository fail without writing the index. Archive URLs refer to the same directory as the public index; publish them together. This command performs no uploads.
 
 `keygen` creates a new P-256 key directory (POSIX 0700, private PEM 0600). Keep the private key outside your public release/source repository and reuse it for updates. `pack --key` uses the existing Moya publisher signature format; omitting it creates an unsigned package. No keys are sent to network services.
+
+`run`, `dev`, and `preview` support SDK `http.request`, `sleep`, and `preferences.get`.
+Preferences use manifest defaults; pass `--preferences local-preferences.json` for declared local overrides
+(e.g. `{"language":"en"}`). Unknown keys and invalid values are rejected. No production credentials or private-origin
+grants are loaded. Keep sensitive development values out of version control.
+Full HTTP fixtures may include `method`, `status`, `headers`, and `body`/`bodyBase64`; redirects and error statuses are
+returned to the guest. Browser evaluation and production login sessions still require an isolated Moya app.

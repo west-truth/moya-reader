@@ -15,7 +15,7 @@ async function main() {
   const [command, folder, ...args] = process.argv.slice(2);
   if (!['init', 'check', 'pack', 'run', 'dev', 'preview', 'index', 'keygen'].includes(command) || !folder)
     throw new Error(
-      'Usage: moya-extension keygen <new-key-folder> | index <archives-folder> --url https://host/index.json --out index.json [--name Name] | init <new-folder> --id org.example.source [--kind text|images --name Name] | <check|pack|run|dev|preview> <folder> [--out file.moyaext --key publisher.pem] [--method source.listWorks --input input.json --fixture fixtures.json | --network]',
+      'Usage: moya-extension keygen <new-key-folder> | index <archives-folder> --url https://host/index.json --out index.json [--name Name] | init <new-folder> --id org.example.source [--kind text|images --name Name] | <check|pack|run|dev|preview> <folder> [--out file.moyaext --key publisher.pem] [--method source.listWorks --input input.json --fixture fixtures.json | --network] [--preferences local-preferences.json]',
     );
   const options = new Map<string, string>();
   for (let i = 0; i < args.length; i++) {
@@ -26,6 +26,7 @@ async function main() {
         '--method',
         '--input',
         '--fixture',
+        '--preferences',
         '--network',
         '--id',
         '--kind',
@@ -46,7 +47,7 @@ async function main() {
       : command === 'init'
         ? ['--id', '--kind', '--name']
         : command === 'run' || command === 'dev' || command === 'preview'
-          ? ['--method', '--input', '--fixture', '--network']
+          ? ['--method', '--input', '--fixture', '--network', '--preferences']
           : command === 'pack'
             ? ['--out', '--key']
             : [];
@@ -81,12 +82,19 @@ async function main() {
     return;
   }
   if (command === 'dev' || command === 'preview') {
-    if ((options.has('--input') || options.has('--fixture') || options.has('--network')) && !options.has('--method'))
+    if (
+      (options.has('--input') ||
+        options.has('--fixture') ||
+        options.has('--network') ||
+        options.has('--preferences')) &&
+      !options.has('--method')
+    )
       throw new Error('development_method_required');
     const development = {
       method: options.get('--method') as SourceMethod | undefined,
       input: options.has('--input') ? projectPath(options.get('--input')!) : undefined,
       fixture: options.has('--fixture') ? projectPath(options.get('--fixture')!) : undefined,
+      preferences: options.has('--preferences') ? projectPath(options.get('--preferences')!) : undefined,
       network: options.has('--network'),
     };
     if (command === 'dev') await watchDevelopmentProject(projectPath(folder), development);
@@ -150,6 +158,9 @@ async function main() {
       const value = await runProjectSource(pkg, method, input, {
         network: options.has('--network'),
         fixtures,
+        preferences: options.has('--preferences')
+          ? JSON.parse((await boundedFile(projectPath(options.get('--preferences')!), 64 * 1024)).toString('utf8'))
+          : undefined,
         signal: controller.signal,
       });
       // Raw downloaded text/images are deliberately not printed to terminal or build logs.

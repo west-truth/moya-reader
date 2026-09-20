@@ -32,6 +32,56 @@ async function project(code = source) {
 }
 
 describe('extension folder development and packaged execution', () => {
+  it('runs SDK HTTP, sleep and local preferences through the packaged guest', async () => {
+    const folder = await project(
+      source.replace(
+        "async listWorks(input,ctx){return {items:input.query==='missing'?[]:[{id:'work',title}],nextCursor:'opaque=2'}}",
+        "async listWorks(input,ctx){await ctx.sleep(1);const response=await ctx.http.request({url:input.query||'https://catalog.example/probe',method:'POST',body:'data'});return {items:[{id:'work',title:JSON.stringify([response,await ctx.preferences.get('language'),await ctx.preferences.get('missing')])}]}}",
+      ),
+    );
+    const manifest = {
+      ...examplePackageManifest(),
+      preferences: [
+        {
+          sourceId: 'org.example.catalog.source',
+          fields: [{ key: 'language', title: 'Language', kind: 'text', secret: false, defaultValue: 'ko' }],
+        },
+      ],
+    };
+    await writeFile(resolve(folder, 'manifest.json'), JSON.stringify(manifest));
+    const pkg = await buildProject(folder);
+    await checkProjectPackage(pkg);
+    const options = {
+      fixtures: [
+        {
+          url: 'https://catalog.example/probe',
+          method: 'POST',
+          status: 401,
+          body: 'unauthorized',
+          headers: { 'x-example': 'fixture' },
+        },
+      ],
+    };
+    const input = { sourceId: 'org.example.catalog.source' };
+    const run = await runProjectSource(pkg, 'source.listWorks', input, options);
+    expect(JSON.parse((run.result as { items: readonly { title: string }[] }).items[0].title)).toEqual([
+      { statusCode: 401, headers: { 'content-type': 'text/plain', 'x-example': 'fixture' }, body: 'unauthorized' },
+      'ko',
+      null,
+    ]);
+    const override = await runProjectSource(pkg, 'source.listWorks', input, {
+      ...options,
+      preferences: { language: 'en' },
+    });
+    expect(JSON.parse((override.result as { items: readonly { title: string }[] }).items[0].title)[1]).toBe('en');
+    await expect(
+      runProjectSource(pkg, 'source.listWorks', input, { ...options, preferences: { unknown: 'no' } }),
+    ).rejects.toThrow('invalid_source_preferences');
+    await expect(
+      runProjectSource(pkg, 'source.listWorks', { ...input, query: 'https://ungranted.example/probe' }, options),
+    ).rejects.toThrow('source_url_denied');
+    await expect(runProjectSource(pkg, 'source.listWorks', input)).rejects.toThrow('fixture_missing');
+  });
   it('bundles the storage SDK and returns staged changes without accessing developer files', async () => {
     const folder = await project(
       source.replace(

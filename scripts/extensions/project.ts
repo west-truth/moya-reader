@@ -1,3 +1,4 @@
+import { developmentContext } from './development-context';
 import { readFile, realpath, stat } from 'node:fs/promises';
 import { createRequire } from 'node:module';
 import { dirname, isAbsolute, relative, resolve } from 'node:path';
@@ -150,7 +151,8 @@ export async function checkProjectPackage(pkg: VerifiedMoyaPackage, signal?: Abo
 
 export interface DevelopmentFixture {
   readonly url: string;
-  readonly method?: 'GET' | 'POST';
+  readonly method?: string;
+  readonly headers?: Record<string, string>;
   readonly status?: number;
   readonly body?: string;
   readonly bodyBase64?: string;
@@ -166,6 +168,7 @@ export async function runProjectSource(
     fixtures?: readonly DevelopmentFixture[];
     signal?: AbortSignal;
     state?: SourceStateValues;
+    preferences?: unknown;
     /** Explicit test/development injection. CLI never reads production provider settings. */
     contentResolver?: SourceContentResolver;
   } = {},
@@ -218,7 +221,13 @@ export async function runProjectSource(
         source: pkg.source,
         method,
         input,
-        broker: { ...broker.methods, ...storage.methods },
+        broker: {
+          ...broker.methods,
+          ...storage.methods,
+          ...developmentContext(pkg, String(input.sourceId), options, () => {
+            developmentTransportFailure = 'fixture_missing';
+          }),
+        },
         signal: options.signal,
         timeoutMs: 30000,
       });

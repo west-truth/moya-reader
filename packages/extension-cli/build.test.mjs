@@ -53,6 +53,37 @@ test(
         assert.equal(content.result.kind, kind);
         assert.ok(content.assets.length > 0);
         assert.ok(content.assets.every((asset) => asset.byteLength > 0));
+        if (kind === 'text') {
+          const manifestPath = join(root, kind, 'manifest.json');
+          const manifest = JSON.parse(await readFile(manifestPath, 'utf8'));
+          manifest.preferences = [
+            {
+              sourceId: `${id}.source`,
+              fields: [{ key: 'label', title: 'Label', kind: 'text', secret: false, defaultValue: 'default' }],
+            },
+          ];
+          await writeFile(manifestPath, JSON.stringify(manifest));
+          const entry = join(root, kind, 'src/index.ts');
+          await writeFile(
+            entry,
+            (await readFile(entry, 'utf8')).replace(
+              'async listWorks({ query, cursor }) {',
+              "async listWorks({ query, cursor }, ctx) { await ctx.sleep(1); const response = await ctx.http.request({url:'https://catalog.example/chapter.txt'}); if(response.statusCode !== 200) throw new Error('unexpected_status'); work.title = await ctx.preferences.get('label');",
+            ),
+          );
+          await writeFile(join(root, 'preferences.json'), JSON.stringify({ label: 'Local preferences' }));
+          const result = await cli([
+            'run',
+            kind,
+            '--method',
+            'source.listWorks',
+            '--fixture',
+            `${kind}/fixtures.json`,
+            '--preferences',
+            'preferences.json',
+          ]);
+          assert.equal(result.result.items[0].title, 'Local preferences');
+        }
         const archive = await cli(['pack', kind, '--out', `${kind}/extension.moyaext`, '--key', 'keys/publisher.pem']);
         assert.equal(archive.id, id);
         assert.equal(archive.publisherFingerprint, publisher.publicKeyFingerprint);

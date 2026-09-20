@@ -81,3 +81,16 @@
 
 전체 예제와 인증·저장소 설명은 [개발 가이드](source-development.md), 키 보관과 업데이트 절차는
 [공개 릴리스 절차](publishing.md)를 참고한다.
+
+## CLI 실행 범위
+
+`run`, `dev`, `preview`에서도 `http.request`, `sleep`, `preferences.get`을 실행할 수 있다.
+HTTP는 기본적으로 `--fixture fixtures.json`의 응답을 사용하고, 실제 외부 접속은 `--network`를 명시해야 한다.
+`http.request`는 3xx/4xx도 status/header/body로 반환하며 자동 redirect를 하지 않는다. 다음 URL도 manifest origin
+검사를 통과해야 한다. fixture는 `url`, `method`, `status`, `headers`, `body` 또는 `bodyBase64`를 사용할 수 있다.
+
+설정은 manifest의 해당 source 기본값을 사용한다. `--preferences local-preferences.json`으로 선언한 설정을
+재정의할 수 있다(예: `{"language":"ko"}`). 알 수 없는 키나 잘못된 타입은 거부한다. 이 파일은 로컬 개발용이며
+운영 cookie·vault·private-origin 권한을 가져오지 않는다. 민감값을 넣은 파일은 커밋하지 않는다.
+
+`webview.evaluate`와 운영 로그인 연결은 이 CLI에서 제공하지 않는다. 해당 기능은 격리된 Moya 앱에서 확인한다.

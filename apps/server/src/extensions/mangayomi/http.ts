@@ -3,7 +3,7 @@ import { request as httpRequest } from 'node:http';
 import { lookup } from 'node:dns/promises';
 import { isIP } from 'node:net';
 import { createBrotliDecompress, createGunzip, createInflate } from 'node:zlib';
-import { isPublicSourceAddress } from '@moya/extension-runtime/source-http';
+import { isPublicSourceAddress } from '../../../../../packages/extension-runtime/source-http.mjs';
 import { pinnedProxyAgent } from '../outbound-proxy.js';
 import { compatibilityHttpPolicy, type CompatibilityHttpOptions } from './http-options.js';
 

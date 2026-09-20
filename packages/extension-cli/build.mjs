@@ -1,5 +1,6 @@
 import { createRequire } from 'node:module';
-import { cp, mkdir, readFile, writeFile, chmod, rm } from 'node:fs/promises';
+import { basename, resolve } from 'node:path';
+import { cp, mkdir, readFile, writeFile, chmod, rm, readdir } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 const require = createRequire(new URL('../../apps/server/package.json', import.meta.url));
 const { build } = require('esbuild');
@@ -10,7 +11,8 @@ const manifest = JSON.parse(await readFile(new URL('./package.json', import.meta
 // Only generated package output; never touch extension installations or author projects.
 await rm(dist, { recursive: true, force: true });
 await mkdir(dist, { recursive: true });
-await build({
+const bundle = await build({
+  metafile: true,
   entryPoints: [fileURLToPath(new URL('scripts/extensions/cli.ts', root))],
   outfile: fileURLToPath(new URL('scripts/extensions/cli.js', dist)),
   bundle: true,
@@ -18,19 +20,37 @@ await build({
   format: 'esm',
   target: 'node22',
   external: Object.keys(manifest.dependencies),
-  banner: { js: '#!/usr/bin/env node' },
+  banner: {
+    js: '#!/usr/bin/env node\nimport { createRequire as createBundleRequire } from "node:module"; const require = createBundleRequire(import.meta.url);',
+  },
   plugins: [
     {
       name: 'retain-isolated-runtime',
       setup(builder) {
         builder.onResolve({ filter: /packages\/extension-runtime\/.*\.mjs$/ }, (args) => ({
-          path: args.path,
+          path: `../../packages/extension-runtime/${basename(args.path)}`,
           external: true,
         }));
       },
     },
   ],
 });
+// Host HTTP helpers include small CommonJS dependencies. Ship their license texts with the bundle.
+const bundledPackages = new Set(
+  Object.keys(bundle.metafile.inputs).flatMap((path) => {
+    const matches = [...path.matchAll(/node_modules\/(?:@[^/]+\/)?[^/]+/g)];
+    const match = matches.at(-1);
+    return match ? [resolve(path.slice(0, match.index + match[0].length))] : [];
+  }),
+);
+let notices = '';
+for (const folder of [...bundledPackages].sort()) {
+  const info = JSON.parse(await readFile(resolve(folder, 'package.json'), 'utf8'));
+  const license = (await readdir(folder)).find((name) => /^licen[sc]e(?:\..*)?$/i.test(name));
+  if (!license) throw new Error(`Missing bundled license: ${info.name}`);
+  notices += `## ${info.name}@${info.version}\n\n${await readFile(resolve(folder, license), 'utf8')}\n\n`;
+}
+await writeFile(new URL('THIRD_PARTY_NOTICES.txt', dist), notices);
 await chmod(new URL('scripts/extensions/cli.js', dist), 0o755);
 const runtime = new URL('packages/extension-runtime/', root);
 await mkdir(new URL('packages/extension-runtime/', dist), { recursive: true });
