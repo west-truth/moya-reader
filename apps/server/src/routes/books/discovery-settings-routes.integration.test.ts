@@ -60,6 +60,24 @@ const harness = await startPostgresIntegrationHarness();
         expect((await a.inject({ method: 'PUT', url: '/api/settings', payload: { ttsSpeed: 1.5 } })).statusCode).toBe(
           200,
         );
+        const downloadPolicy = { autoNext: true, nextCount: 3, retentionEnabled: true, keepRead: 10 };
+        expect((await a.inject({ method: 'PUT', url: '/api/settings', payload: { downloadPolicy } })).statusCode).toBe(
+          200,
+        );
+        expect((await a.inject('/api/settings')).json().settings.downloadPolicy).toEqual(downloadPolicy);
+        expect((await b.inject('/api/settings')).json().settings.downloadPolicy).toBeUndefined();
+        expect(
+          (
+            await a.inject({
+              method: 'PUT',
+              url: '/api/settings',
+              payload: { downloadPolicy: { ...downloadPolicy, keepRead: 0 } },
+            })
+          ).statusCode,
+        ).toBe(400);
+        // Older clients saving ordinary settings must not erase the shared download policy.
+        await a.inject({ method: 'PUT', url: '/api/settings', payload: { ttsSpeed: 1.5 } });
+        expect((await a.inject('/api/settings')).json().settings.downloadPolicy).toEqual(downloadPolicy);
         const integrations = {
           schemaVersion: 1,
           revision: 0,

@@ -1,3 +1,4 @@
+import { legacyDownloadPolicy } from './features/external-sources/download-policy';
 import { useDiscoveryController } from './features/discovery/useDiscoveryController';
 import { X } from 'lucide-react';
 import { platformCloudVaultProvider } from './platform/cloud-account-provider';
@@ -712,6 +713,38 @@ export default function App() {
     updateSettings,
     open: settingsOpen,
   } = readerSettingsController;
+  const downloadSettingsScope = `${remoteApiClient?.readerSettingsScope ?? 'local'}:${selfHostAuth?.account.username ?? 'local'}`;
+  const legacyDownloads = useMemo(() => legacyDownloadPolicy(downloadSettingsScope), [downloadSettingsScope]);
+  useEffect(() => {
+    if (!remoteApiClient) return;
+    let active = true;
+    const refresh = () => {
+      void readerRepository
+        .getSettings()
+        .then((next) => {
+          if (!active) return;
+          setReaderSettings(next);
+          if (!next.downloadPolicy)
+            updateSettings((current) =>
+              current.downloadPolicy ? current : { ...current, downloadPolicy: legacyDownloads },
+            );
+        })
+        .catch(() => undefined);
+    };
+    if (readerSettingsController.open) refresh();
+    window.addEventListener('focus', refresh);
+    return () => {
+      active = false;
+      window.removeEventListener('focus', refresh);
+    };
+  }, [
+    remoteApiClient,
+    readerRepository,
+    setReaderSettings,
+    readerSettingsController.open,
+    updateSettings,
+    legacyDownloads,
+  ]);
   const openReaderSettings = useCallback(() => {
     setSettingsInitialTab(undefined);
     readerSettingsController.openPanel();
@@ -1444,8 +1477,18 @@ export default function App() {
     notify: showToast,
   });
   const externalSourceFeature = useExternalSourceController({
+    downloadPolicy: settings.downloadPolicy ?? legacyDownloads,
+    updateDownloadPolicy: (patch) =>
+      updateSettings((previous) => ({
+        ...previous,
+        downloadPolicy: {
+          ...legacyDownloads,
+          ...previous.downloadPolicy,
+          ...patch,
+        },
+      })),
     readingActive: view === 'reader' || view === 'document',
-    settingsScope: `${remoteApiClient?.readerSettingsScope ?? 'local'}:${selfHostAuth?.account.username ?? 'local'}`,
+    settingsScope: downloadSettingsScope,
     readingTarget:
       (view === 'reader' || view === 'document') && selectedNovel && currentChapter?.documentSectionId
         ? { novelId: selectedNovel.id, sectionId: currentChapter.documentSectionId }

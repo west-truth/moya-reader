@@ -41,13 +41,19 @@ export function useDownloadRetention(input: {
     }
   });
   // A different account/server never inherits automatic deletion from this mount.
-  const enabled = policy.key === key && policy.enabled;
-  const keep = policy.key === key ? policy.keep : 5;
+  const enabled = input.options.downloadPolicy?.retentionEnabled ?? (policy.key === key && policy.enabled);
+  const keep = input.options.downloadPolicy?.keepRead ?? (policy.key === key ? policy.keep : 5);
   const [busy, setBusy] = useState(false);
   const running = useRef(false);
   const [error, setError] = useState('');
   const [preview, setPreview] = useState<Candidate[]>();
   const save = (next: { enabled: boolean; keep: RetainedReadCount }) => {
+    if (input.options.updateDownloadPolicy) {
+      input.options.updateDownloadPolicy({ retentionEnabled: next.enabled, keepRead: next.keep });
+      setPreview(undefined);
+      setError('');
+      return;
+    }
     try {
       localStorage.setItem(key, JSON.stringify(next));
       setPolicy({ key, ...next });

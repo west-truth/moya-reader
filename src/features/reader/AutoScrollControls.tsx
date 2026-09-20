@@ -58,7 +58,13 @@ export function AutoScrollControls({
           />
           회차 끝에서 다음 회차로 이동
         </label>
-        {!allowed && <p>스크롤 모드에서 본문 준비와 듣기를 마친 뒤 사용할 수 있습니다.</p>}
+        {!allowed && (
+          <p>
+            {!controller.modeAllowed
+              ? '페이지 모드에서는 블라인드를 선택해 주세요.'
+              : '본문 준비와 듣기를 마친 뒤 사용할 수 있습니다.'}
+          </p>
+        )}
         <button
           className="primary-btn"
           type="button"

@@ -1,3 +1,4 @@
+import { AutoReadingPresentation } from './auto-reading-modes';
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
 import type { Paragraph, ReaderAnchor, ReaderPageBoundary } from '../../domain/types';
 import { PARAGRAPHS_PER_PAGE } from '../../repositories/reader-defaults';
@@ -120,6 +121,18 @@ export function PaginatedReaderViewport(
     [chapter.index, chapter.title, chapter.documentSectionId, chapter.documentSectionTitle],
   );
   const rootRef = useRef<HTMLElement>(null);
+  const autoOverlayRef = useRef<HTMLDivElement>(null);
+  const autoPresentation = useRef(new AutoReadingPresentation());
+  const autoGeneration = useRef(0);
+  const autoNeighbor = useRef<{ key: string; loading: boolean; boundary?: ReaderPageBoundary; failed?: boolean }>();
+  const autoTurning = useRef(false);
+  const resetAutoReading = useCallback(() => {
+    if (autoTurning.current) navigationRef.current++;
+    autoGeneration.current++;
+    autoNeighbor.current = undefined;
+    autoTurning.current = false;
+    autoPresentation.current.reset(autoOverlayRef.current);
+  }, []);
   const stageRef = useRef<HTMLDivElement>(null);
   const pageRef = useRef<HTMLElement>(null);
   const measureRef = useRef<HTMLDivElement>(null);
@@ -654,9 +667,84 @@ export function PaginatedReaderViewport(
     },
     [chapter.id, contentRevisionId, getParagraphAtIndex, novel.id, seek, session],
   );
+  useEffect(() => {
+    resetAutoReading();
+    return resetAutoReading;
+  }, [isActive, pageMapKey, resetAutoReading]);
   const api = useMemo<ReaderViewportApi>(
     () => ({
       flow: 'paginated',
+      resetAutoReading,
+      advanceAutoReading: (autoMode, amount) => {
+        const root = rootRef.current;
+        const overlay = autoOverlayRef.current;
+        const current = viewRef.current;
+        if (
+          !autoMode.startsWith('blind-') ||
+          !isActive ||
+          preparing ||
+          !root ||
+          !overlay ||
+          !current ||
+          current.key !== pageMapKey ||
+          autoTurning.current
+        )
+          return 'waiting';
+        if ([...root.querySelectorAll('.is-current img')].some((image) => !(image as HTMLImageElement).complete))
+          return 'waiting';
+        const edge = (current.secondaryBoundary ?? current.boundary).end;
+        const key = JSON.stringify(edge);
+        if (autoNeighbor.current?.key !== key) {
+          const next = { key, loading: true } as NonNullable<typeof autoNeighbor.current>;
+          autoNeighbor.current = next;
+          void session.window
+            .adjacent(edge, 1)
+            .then((boundary) => {
+              next.boundary = boundary;
+            })
+            .catch(() => {
+              next.failed = true;
+            })
+            .finally(() => {
+              next.loading = false;
+            });
+        }
+        const next = autoNeighbor.current;
+        if (next.loading) return 'waiting';
+        if (next.failed) {
+          onPaginationFailure();
+          return 'waiting';
+        }
+        const bounds = root.getBoundingClientRect();
+        const style = getComputedStyle(root);
+        return autoPresentation.current.advance(autoMode, amount, {
+          root,
+          overlay,
+          top: bounds.top + (parseFloat(style.paddingTop) || 0),
+          bottom: bounds.bottom - (parseFloat(style.paddingBottom) || 0),
+          count: chapter.paragraphCount,
+          anchor: () => current.boundary.start,
+          paragraph: (index) => paragraphCacheRef.current.get(index),
+          load: async () => undefined,
+          range: () => undefined,
+          advance: (pixels) => {
+            if (!next.boundary) return 'end';
+            if (pixels > 0) {
+              const generation = autoGeneration.current;
+              const navigation = navigationRef.current;
+              autoTurning.current = true;
+              void commitPage(next.boundary, navigation, 1)
+                .catch(() => {
+                  if (generation === autoGeneration.current) onPaginationFailure();
+                })
+                .finally(() => {
+                  if (generation === autoGeneration.current) autoTurning.current = false;
+                });
+            }
+            return 'moving';
+          },
+        });
+      },
       resetContent: () => {
         void seekParagraph(0);
       },
@@ -711,6 +799,11 @@ export function PaginatedReaderViewport(
       chapter.id,
       chapter.paragraphCount,
       contentRevisionId,
+      isActive,
+      preparing,
+      commitPage,
+      onPaginationFailure,
+      resetAutoReading,
       flushPosition,
       getParagraphAtIndex,
       goChapter,
@@ -777,6 +870,7 @@ export function PaginatedReaderViewport(
       }}
       onClick={(event) => event.stopPropagation()}
     >
+      <div ref={autoOverlayRef} className="reader-auto-reading-overlay" hidden aria-hidden="true" />
       <div
         ref={measureRef}
         className="reader-document reader-pagination-measure"

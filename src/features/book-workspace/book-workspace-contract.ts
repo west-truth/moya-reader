@@ -64,6 +64,13 @@ export interface BookWorkspaceReaderArtifacts {
 }
 
 export interface BookWorkspaceRepositoryPort {
+  renameChapter?(novelId: string, chapterId: string, title: string, expectedContentRevisionId?: string): Promise<void>;
+  markChaptersRead?(
+    novelId: string,
+    chapterId: string,
+    previous: boolean,
+    expectedContentRevisionId?: string,
+  ): Promise<void>;
   listChapters(novelId: string): Promise<Chapter[]>;
   getNovel(novelId: string): Promise<Novel | undefined>;
   getReadingPosition(novelId: string): Promise<ReadingPosition | undefined>;

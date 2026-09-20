@@ -38,6 +38,7 @@ export function sharedReaderSettings(settings: Partial<ReaderSettings>): SharedR
     ttsPlayback: settings.ttsPlayback,
     ttsBookOverrides: settings.ttsBookOverrides,
     aiWorkflows: settings.aiWorkflows,
+    downloadPolicy: settings.downloadPolicy,
   };
   return Object.fromEntries(Object.entries(shared).filter(([, value]) => value !== undefined)) as SharedReaderSettings;
 }

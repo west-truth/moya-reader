@@ -712,6 +712,24 @@ export class BookWorkspaceController {
     );
   };
 
+  readonly renameChapter = async (chapter: Chapter, title: string): Promise<void> => {
+    const novel = this.state.selectedNovel;
+    if (!novel || chapter.novelId !== novel.id || !this.ports.repository.renameChapter) return;
+    await this.ports.repository.renameChapter(novel.id, chapter.id, title, novel.activeContentRevisionId);
+    const chapters = await this.ports.repository.listChapters(novel.id);
+    if (this.state.selectedNovel?.id === novel.id) this.updateState({ chapters });
+    await this.ports.adjacent.refreshAfterLocalMutation();
+  };
+
+  readonly markChapterListRead = async (chapter: Chapter, previous: boolean): Promise<void> => {
+    const novel = this.state.selectedNovel;
+    if (!novel || chapter.novelId !== novel.id || !this.ports.repository.markChaptersRead) return;
+    await this.ports.repository.markChaptersRead(novel.id, chapter.id, previous, novel.activeContentRevisionId);
+    const chapters = await this.ports.repository.listChapters(novel.id);
+    if (this.state.selectedNovel?.id === novel.id) this.updateState({ chapters });
+    await this.ports.adjacent.refreshAfterLocalMutation();
+  };
+
   readonly markCurrentChapterRead = async (): Promise<void> => {
     const projection = buildBookWorkspaceReadingProjection(this.state);
     const chapter = projection.currentReadTargetChapter;

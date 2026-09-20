@@ -6,19 +6,21 @@ export type NextReleaseCount = 1 | 2 | 3;
 
 /** One attempt per reading section. A commit must never start a chain of downloads. */
 export function useNextReleaseDownload(input: {
+  policy?: import('../../domain/types').DownloadPolicy;
+  updatePolicy?: (patch: Partial<import('../../domain/types').DownloadPolicy>) => void;
   readingKey?: string;
   busy: boolean;
   run(signal: AbortSignal, count: NextReleaseCount): Promise<void>;
   reportError(): void;
 }) {
-  const [enabled, setEnabled] = useState(() => {
+  const [localEnabled, setEnabled] = useState(() => {
     try {
       return localStorage.getItem(KEY) === 'true';
     } catch {
       return false;
     }
   });
-  const [count, updateCount] = useState<NextReleaseCount>(() => {
+  const [localCount, updateCount] = useState<NextReleaseCount>(() => {
     try {
       const value = Number(localStorage.getItem(COUNT_KEY));
       return value === 2 || value === 3 ? value : 1;
@@ -26,6 +28,8 @@ export function useNextReleaseDownload(input: {
       return 1;
     }
   });
+  const enabled = input.policy?.autoNext ?? localEnabled;
+  const count = input.policy?.nextCount ?? localCount;
   const latest = useRef(input);
   latest.current = input;
   const attempted = useRef<string>();
@@ -62,6 +66,10 @@ export function useNextReleaseDownload(input: {
     count,
     setCount(value: NextReleaseCount) {
       if (![1, 2, 3].includes(value)) return;
+      if (input.updatePolicy) {
+        input.updatePolicy({ nextCount: value });
+        return;
+      }
       try {
         localStorage.setItem(COUNT_KEY, String(value));
       } catch {
@@ -70,6 +78,10 @@ export function useNextReleaseDownload(input: {
       updateCount(value);
     },
     setEnabled(value: boolean) {
+      if (input.updatePolicy) {
+        input.updatePolicy({ autoNext: value });
+        return;
+      }
       try {
         localStorage.setItem(KEY, String(value));
       } catch {

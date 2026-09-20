@@ -51,7 +51,7 @@ const SETTINGS_SECTIONS: readonly SettingsSection[] = [
   {
     id: 'appearance',
     label: '모양',
-    detail: '테마, 글꼴, 밝기',
+    detail: '앱 테마',
     icon: Palette,
   },
   {
@@ -149,15 +149,13 @@ export default function ReaderSettingsPanel(props: ReaderSettingsPanelProps) {
     setMobileDetail(false);
     requestAnimationFrame(() => document.getElementById(`reader-settings-tab-${tab}`)?.focus());
   };
-  const [appearanceThemeTarget, setAppearanceThemeTarget] = useState<'application' | 'reader'>('application');
   const current =
     tab === 'downloads'
       ? { label: '다운로드' }
       : (SETTINGS_SECTIONS.find((section) => section.id === tab) ?? SETTINGS_SECTIONS[0]);
   const readerThemeColors = resolveReaderThemeColors(profile);
   const readingTab = tab === 'appearance' || tab === 'layout' || tab === 'gesture';
-  const showReadingFooter =
-    (tab === 'appearance' || tab === 'layout') && !(tab === 'appearance' && appearanceThemeTarget === 'application');
+  const showReadingFooter = tab === 'layout';
   const openDestination = (destination: () => void) => {
     controller.closePanel();
     destination();
@@ -260,12 +258,20 @@ export default function ReaderSettingsPanel(props: ReaderSettingsPanelProps) {
                   profile={profile}
                   updateProfile={props.updateProfile}
                   personalizationRepository={props.personalizationRepository}
-                  themeTarget={appearanceThemeTarget}
-                  setThemeTarget={setAppearanceThemeTarget}
+                  themeTarget="application"
                 />
               )}
               {tab === 'layout' && (
-                <ReaderSettingsLayout controller={controller} profile={profile} updateProfile={props.updateProfile} />
+                <>
+                  <ReaderSettingsAppearance
+                    controller={controller}
+                    profile={profile}
+                    updateProfile={props.updateProfile}
+                    personalizationRepository={props.personalizationRepository}
+                    themeTarget="reader"
+                  />
+                  <ReaderSettingsLayout controller={controller} profile={profile} updateProfile={props.updateProfile} />
+                </>
               )}
               {tab === 'gesture' && (
                 <ReaderGestureSettings bindings={props.gestureBindings} update={props.updateGestureBindings} />
@@ -354,7 +360,7 @@ export default function ReaderSettingsPanel(props: ReaderSettingsPanelProps) {
                 </button>
               </div>
             )}
-            {tab === 'appearance' && appearanceThemeTarget === 'reader' && (
+            {tab === 'layout' && (
               <div
                 className={`reader-settings-preview font-${controller.settings.font}`}
                 style={{

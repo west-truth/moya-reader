@@ -24,14 +24,12 @@ export function ReaderSettingsAppearance({
   updateProfile,
   personalizationRepository,
   themeTarget,
-  setThemeTarget,
 }: {
   controller: ReaderSettingsController;
   profile: ReadingProfile;
   updateProfile: (patch: ReadingProfileOverride) => void;
   personalizationRepository?: ReaderPersonalizationRepository;
   themeTarget: 'application' | 'reader';
-  setThemeTarget: (target: 'application' | 'reader') => void;
 }) {
   const appTheme = controller.settings.applicationTheme ?? 'dark';
   const appColors = normalizeApplicationThemeColors(controller.settings.applicationThemeColors);
@@ -50,30 +48,7 @@ export function ReaderSettingsAppearance({
       <section className="reader-settings-group">
         <div className="reader-settings-section-heading">
           <h3>테마</h3>
-          <div className="segmented reader-theme-target" aria-label="테마 적용 대상">
-            <button
-              type="button"
-              className={themeTarget === 'application' ? 'active' : ''}
-              onClick={() => setThemeTarget('application')}
-              aria-pressed={themeTarget === 'application'}
-            >
-              앱 UI
-            </button>
-            <button
-              type="button"
-              className={themeTarget === 'reader' ? 'active' : ''}
-              onClick={() => setThemeTarget('reader')}
-              aria-pressed={themeTarget === 'reader'}
-            >
-              리더
-            </button>
-          </div>
         </div>
-        <p className="field-help reader-theme-scope-help">
-          {themeTarget === 'application'
-            ? '책장과 설정 등 앱 화면에 적용됩니다.'
-            : '소설 본문에 적용되며 책별로 다르게 저장할 수 있습니다.'}
-        </p>
         <div className="reader-theme-grid">
           {THEMES.map((theme) => (
             <button

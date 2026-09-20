@@ -105,6 +105,7 @@ export function readerSettingsEqual(left: ReaderSettings, right: ReaderSettings)
     left.marginY === right.marginY &&
     left.contentWidth === right.contentWidth &&
     left.flow === right.flow &&
+    JSON.stringify(left.downloadPolicy) === JSON.stringify(right.downloadPolicy) &&
     left.ttsSpeed === right.ttsSpeed &&
     left.ttsVoiceURI === right.ttsVoiceURI &&
     JSON.stringify(left.ttsPlayback) === JSON.stringify(right.ttsPlayback) &&

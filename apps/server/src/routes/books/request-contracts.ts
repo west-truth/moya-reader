@@ -324,6 +324,26 @@ export function validateSettingsBody(value: unknown): ValidationResult<ReaderSet
   const body = recordBody(value);
   if (!body) return { ok: false, error: 'settings body must be an object' };
   const next = { ...defaultSettings };
+  if (body.downloadPolicy !== undefined) {
+    const policy = recordBody(body.downloadPolicy);
+    if (
+      !policy ||
+      typeof policy.autoNext !== 'boolean' ||
+      typeof policy.retentionEnabled !== 'boolean' ||
+      ![1, 2, 3].includes(Number(policy.nextCount)) ||
+      typeof policy.nextCount !== 'number' ||
+      ![5, 10, 20].includes(Number(policy.keepRead)) ||
+      typeof policy.keepRead !== 'number'
+    ) {
+      return { ok: false, error: 'downloadPolicy is invalid' };
+    }
+    next.downloadPolicy = {
+      autoNext: policy.autoNext,
+      nextCount: policy.nextCount as 1 | 2 | 3,
+      retentionEnabled: policy.retentionEnabled,
+      keepRead: policy.keepRead as 5 | 10 | 20,
+    };
+  }
   const applicationTheme = body.applicationTheme;
   if (applicationTheme !== undefined) {
     if (!['light', 'dark', 'sepia', 'midnight', 'custom'].includes(String(applicationTheme))) {

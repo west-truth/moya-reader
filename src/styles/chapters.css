@@ -978,3 +978,46 @@
     min-width: 37px;
   }
 }
+
+.chapter-row-with-menu {
+  display: flex;
+  align-items: center;
+  border-bottom: 1px solid var(--border);
+}
+
+.chapters-screen .chapter-row-with-menu .chapter-row {
+  flex: 1;
+  min-width: 0;
+  border-bottom: 0;
+}
+
+.chapter-row-with-menu > .icon-btn {
+  flex: 0 0 40px;
+  margin-right: 8px;
+}
+
+.chapters-screen .chapter-list-head {
+  margin-right: 48px;
+}
+
+.chapter-actions-list {
+  display: grid;
+  gap: 8px;
+}
+
+.chapter-actions-list .ghost-btn {
+  justify-content: flex-start;
+  min-height: 44px;
+}
+
+.chapter-actions-dialog form label {
+  display: grid;
+  gap: 8px;
+}
+
+.chapter-actions-buttons {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 16px;
+}

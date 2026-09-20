@@ -61,6 +61,21 @@ describe('automatic text scrolling', () => {
     vi.unstubAllGlobals();
   });
 
+  it('allows blind modes in pagination and keeps scrolling modes disabled', () => {
+    const advanceAutoReading = vi.fn(() => 'moving' as const);
+    viewport.current = { ...viewport.current, flow: 'paginated', advanceAutoReading };
+    render();
+    act(() => controller.start());
+    expect(controller.running).toBe(false);
+    act(() => controller.setMode('blind-line'));
+    act(() => controller.start());
+    advance(40);
+    expect(controller.running).toBe(true);
+    expect(advanceAutoReading).toHaveBeenCalled();
+    act(() => controller.setMode('pixel'));
+    expect(controller.running).toBe(false);
+  });
+
   it('starts only explicitly, accumulates small steps and drops long frame delays', () => {
     advance(10);
     expect(step).not.toHaveBeenCalled();
