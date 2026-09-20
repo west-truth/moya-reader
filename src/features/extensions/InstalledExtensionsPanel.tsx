@@ -38,6 +38,8 @@ export function InstalledExtensionsPanel({
   const operation = useRef<AbortController>();
   const [error, setError] = useState<string>();
   const [message, setMessage] = useState<string>();
+  const browsing = showSuwayomi || showApk || showMangayomi || showRepositories;
+  const installedCount = snapshot.packages.filter((pkg) => pkg.active).length;
   useEffect(
     () => () => {
       operation.current?.abort();
@@ -162,19 +164,41 @@ export function InstalledExtensionsPanel({
     </section>
   );
   return (
-    <section className="settings-section-card installed-extension-panel" aria-label="설치형 확장">
+    <section className="settings-section-card installed-extension-panel" aria-label="콘텐츠 소스 패키지">
       <div className="settings-section-heading">
         <FilePlus2 size={18} aria-hidden="true" />
         <div>
-          <h3>설치형 확장</h3>
+          <h3>콘텐츠 소스 패키지</h3>
           <p>
             {manager.target === 'server'
-              ? '서버에 설치하면 연결된 기기에서 같은 소스를 사용할 수 있습니다.'
-              : '이 기기에 설치합니다. 별도 소스 서버 없이 사용할 수 있습니다.'}
+              ? '서버에 설치한 패키지가 작품 소스를 제공하며 연결된 기기에서 함께 사용할 수 있습니다.'
+              : '이 기기에 설치한 패키지가 작품 소스를 제공합니다. 별도 소스 서버가 필요하지 않습니다.'}
           </p>
         </div>
       </div>
-      <div className="installed-extension-actions">
+      <p className="field-help">
+        패키지는 설치 단위이고, 하나의 패키지가 여러 작품 소스를 제공할 수 있습니다. 저장소는 설치 가능한 패키지 목록
+        주소입니다.
+      </p>
+      <div className="installed-extension-summary" aria-label="콘텐츠 소스 패키지 상태">
+        <span>사용 중 {installedCount}</span>
+        <span>소스 {snapshot.sources.length}</span>
+        {snapshot.errors.length > 0 && <span className="warning">오류 {snapshot.errors.length}</span>}
+        <span>{manager.target === 'server' ? '서버 설치' : '이 기기 설치'}</span>
+      </div>
+      <div className="installed-extension-actions installed-extension-navigation" aria-label="소스 패키지 관리">
+        <button
+          type="button"
+          aria-pressed={!browsing}
+          onClick={() => {
+            setShowMangayomi(false);
+            setShowApk(false);
+            setShowSuwayomi(false);
+            setShowRepositories(false);
+          }}
+        >
+          사용 중
+        </button>
         {manager.mangayomi && (
           <button
             type="button"
@@ -334,103 +358,107 @@ export function InstalledExtensionsPanel({
           }}
         />
       )}
-      <div className="extension-settings-list">
-        {snapshot.packages
-          .filter((pkg) => pkg.active)
-          .map((pkg) => (
-            <article key={pkg.id} className="extension-settings-card">
-              <div className="extension-settings-card-heading">
-                <div>
-                  <strong>{pkg.active!.manifest.extension.name}</strong>
-                  <p className="muted">v{pkg.active!.manifest.extension.version}</p>
-                </div>
-                <label className="reader-settings-toggle">
-                  <input
-                    type="checkbox"
-                    checked={pkg.enabled}
-                    disabled={busy}
-                    aria-label={`${pkg.active!.manifest.extension.name} 사용`}
-                    onChange={(event) =>
-                      void run(() => manager.change(pkg.id, pkg.revision, event.target.checked ? 'enable' : 'disable'))
-                    }
-                  />{' '}
-                  사용
-                </label>
-              </div>
-              {snapshot.errors.some((error) => error.packageId === pkg.id) && (
-                <p className="field-help warning">
-                  확장을 실행하지 못했습니다. 새 버전을 설치하거나 이전 버전으로 되돌려 주세요.
-                </p>
-              )}
-              <details>
-                <summary>관리</summary>
-                <p className="field-help">확장을 제거해도 이미 받은 작품은 남습니다.</p>
-                <div className="installed-extension-actions">
-                  {pkg.active!.manifest.updates && manager.checkUpdate && (
-                    <button
-                      type="button"
+      {!browsing && (
+        <div className="extension-settings-list" aria-label="사용 중인 콘텐츠 소스 패키지">
+          {snapshot.packages
+            .filter((pkg) => pkg.active)
+            .map((pkg) => (
+              <article key={pkg.id} className="extension-settings-card">
+                <div className="extension-settings-card-heading">
+                  <div>
+                    <strong>{pkg.active!.manifest.extension.name}</strong>
+                    <p className="muted">v{pkg.active!.manifest.extension.version}</p>
+                  </div>
+                  <label className="reader-settings-toggle">
+                    <input
+                      type="checkbox"
+                      checked={pkg.enabled}
                       disabled={busy}
-                      onClick={() =>
-                        void run(async (signal) => {
-                          setReview(undefined);
-                          setReviewLocation('installed:' + pkg.id);
-                          setAcceptedChange(false);
-                          const update = await manager.checkUpdate!(pkg.id, pkg.revision, signal);
-                          if (update) setReview(update);
-                          else setMessage('새 버전이 없습니다.');
-                        }, '확장 업데이트 확인')
+                      aria-label={`${pkg.active!.manifest.extension.name} 사용`}
+                      onChange={(event) =>
+                        void run(() =>
+                          manager.change(pkg.id, pkg.revision, event.target.checked ? 'enable' : 'disable'),
+                        )
                       }
-                    >
-                      업데이트 확인
-                    </button>
-                  )}
-                  {pkg.previous && (
+                    />{' '}
+                    사용
+                  </label>
+                </div>
+                {snapshot.errors.some((error) => error.packageId === pkg.id) && (
+                  <p className="field-help warning">
+                    확장을 실행하지 못했습니다. 새 버전을 설치하거나 이전 버전으로 되돌려 주세요.
+                  </p>
+                )}
+                <details>
+                  <summary>관리</summary>
+                  <p className="field-help">확장을 제거해도 이미 받은 작품은 남습니다.</p>
+                  <div className="installed-extension-actions">
+                    {pkg.active!.manifest.updates && manager.checkUpdate && (
+                      <button
+                        type="button"
+                        disabled={busy}
+                        onClick={() =>
+                          void run(async (signal) => {
+                            setReview(undefined);
+                            setReviewLocation('installed:' + pkg.id);
+                            setAcceptedChange(false);
+                            const update = await manager.checkUpdate!(pkg.id, pkg.revision, signal);
+                            if (update) setReview(update);
+                            else setMessage('새 버전이 없습니다.');
+                          }, '확장 업데이트 확인')
+                        }
+                      >
+                        업데이트 확인
+                      </button>
+                    )}
+                    {pkg.previous && (
+                      <button
+                        type="button"
+                        disabled={busy}
+                        onClick={() => void run(() => manager.change(pkg.id, pkg.revision, 'rollback'))}
+                      >
+                        이전 버전 복원
+                      </button>
+                    )}
                     <button
                       type="button"
                       disabled={busy}
-                      onClick={() => void run(() => manager.change(pkg.id, pkg.revision, 'rollback'))}
+                      onClick={() => void run(() => manager.change(pkg.id, pkg.revision, 'remove'))}
                     >
-                      이전 버전 복원
+                      확장 제거
                     </button>
-                  )}
-                  <button
-                    type="button"
-                    disabled={busy}
-                    onClick={() => void run(() => manager.change(pkg.id, pkg.revision, 'remove'))}
-                  >
-                    확장 제거
-                  </button>
-                </div>
-              </details>
-              {reviewLocation === 'installed:' + pkg.id && reviewCard}
-              {pkg.active!.manifest.preferences?.map((preferences) => (
-                <InstalledSourcePreferences
-                  key={preferences.sourceId}
-                  manager={manager}
-                  sourceId={preferences.sourceId}
-                  disabled={!!busy}
-                />
-              ))}
-              {pkg.active!.manifest.requestedAccess.contentServices?.map((service) => (
-                <InstalledSourceContentConnection
-                  key={`content:${pkg.revision}:${service.sourceId}`}
-                  manager={manager}
-                  sourceId={service.sourceId}
-                  disabled={busy || !pkg.enabled}
-                />
-              ))}
-              {pkg.active!.manifest.requestedAccess.authentication?.map((auth) => (
-                <InstalledSourceAuthentication
-                  key={`${pkg.revision}:${auth.sourceId}`}
-                  manager={manager}
-                  auth={auth}
-                  disabled={busy || !pkg.enabled}
-                />
-              ))}
-            </article>
-          ))}
-      </div>
-      {snapshot.available && !snapshot.packages.some((pkg) => pkg.active) && !review && (
+                  </div>
+                </details>
+                {reviewLocation === 'installed:' + pkg.id && reviewCard}
+                {pkg.active!.manifest.preferences?.map((preferences) => (
+                  <InstalledSourcePreferences
+                    key={preferences.sourceId}
+                    manager={manager}
+                    sourceId={preferences.sourceId}
+                    disabled={!!busy}
+                  />
+                ))}
+                {pkg.active!.manifest.requestedAccess.contentServices?.map((service) => (
+                  <InstalledSourceContentConnection
+                    key={`content:${pkg.revision}:${service.sourceId}`}
+                    manager={manager}
+                    sourceId={service.sourceId}
+                    disabled={busy || !pkg.enabled}
+                  />
+                ))}
+                {pkg.active!.manifest.requestedAccess.authentication?.map((auth) => (
+                  <InstalledSourceAuthentication
+                    key={`${pkg.revision}:${auth.sourceId}`}
+                    manager={manager}
+                    auth={auth}
+                    disabled={busy || !pkg.enabled}
+                  />
+                ))}
+              </article>
+            ))}
+        </div>
+      )}
+      {!browsing && snapshot.available && !snapshot.packages.some((pkg) => pkg.active) && !review && (
         <p className="muted">설치한 확장이 없습니다.</p>
       )}
     </section>

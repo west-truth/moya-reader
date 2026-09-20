@@ -278,6 +278,22 @@ export default function ReaderSettingsPanel(props: ReaderSettingsPanelProps) {
               )}
               {tab === 'sources' && (
                 <div className="reader-settings-source-sections">
+                  <section className="reader-settings-source-intro" aria-label="콘텐츠 소스 구성">
+                    <span>
+                      <strong>사용 중</strong>
+                      <small>연결하고 켠 작품 제공자</small>
+                    </span>
+                    <ChevronRight size={14} aria-hidden="true" />
+                    <span>
+                      <strong>패키지</strong>
+                      <small>소스를 설치·업데이트하는 단위</small>
+                    </span>
+                    <ChevronRight size={14} aria-hidden="true" />
+                    <span>
+                      <strong>저장소</strong>
+                      <small>설치 가능한 패키지 목록 주소</small>
+                    </span>
+                  </section>
                   {props.installedPackages}
                   <ExternalSourceSettingsPanel controller={props.externalSources} />
                 </div>

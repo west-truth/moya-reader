@@ -94,6 +94,31 @@
   padding-bottom: 16px;
   border-bottom: 1px solid var(--border);
 }
+
+:is(section.installed-extension-panel, div.extension-management) .installed-extension-summary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+}
+
+:is(section.installed-extension-panel, div.extension-management) .installed-extension-summary > span {
+  padding: 5px 8px;
+  color: var(--text-2);
+  background: var(--app-surface-muted);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  font-size: 12px;
+}
+
+:is(section.installed-extension-panel, div.extension-management) .installed-extension-summary > span.warning {
+  color: var(--danger);
+  border-color: color-mix(in srgb, var(--danger) 40%, var(--border));
+}
+
+:is(section.installed-extension-panel, div.extension-management) .installed-extension-navigation {
+  display: flex;
+  flex-wrap: wrap;
+}
 :is(section.installed-extension-panel, div.extension-management)
   :is(.extension-settings-list, .installed-extension-list) {
   gap: 12px;

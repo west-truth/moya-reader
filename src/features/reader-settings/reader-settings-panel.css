@@ -213,6 +213,37 @@
   gap: 24px;
 }
 
+.reader-settings-source-intro {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr) auto minmax(0, 1fr);
+  align-items: center;
+  gap: 8px;
+  padding: 12px 14px;
+  background: var(--app-surface-muted);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-control);
+}
+
+.reader-settings-source-intro > span {
+  min-width: 0;
+  display: grid;
+  gap: 3px;
+}
+
+.reader-settings-source-intro strong {
+  font-size: 0.73rem;
+}
+
+.reader-settings-source-intro small {
+  color: var(--text-2);
+  font-size: 0.64rem;
+  line-height: 1.4;
+}
+
+.reader-settings-source-intro > svg {
+  color: var(--muted);
+}
+
 .reader-settings-destination-card {
   display: grid;
   justify-items: start;
@@ -2232,6 +2263,14 @@
 
   .reader-settings-range-grid.compact {
     grid-template-columns: 1fr;
+  }
+
+  .reader-settings-source-intro {
+    grid-template-columns: 1fr;
+  }
+
+  .reader-settings-source-intro > svg {
+    display: none;
   }
 
   .reader-settings-slider {
