@@ -1157,6 +1157,25 @@ describe('useExternalSourceController remote updates', () => {
     }
   });
 
+  it('preserves known capacity errors instead of reporting a connection failure', async () => {
+    const harness = await createHarness({ downloadedContent: '본문' });
+    vi.mocked(harness.registry.listExternalSource).mockRejectedValueOnce(
+      Object.assign(new Error('translated'), { cause: new Error('source_storage_limit') }),
+    );
+    try {
+      await act(async () =>
+        harness.controller.openItem({
+          ...harness.controller.items[0]!,
+          kind: 'folder',
+          navigationRef: 'source:novels',
+        }),
+      );
+      expect(harness.controller.listError?.message).toBe('소스의 저장 한도를 초과했습니다. 기존 데이터는 유지됩니다.');
+    } finally {
+      await act(async () => harness.renderer.unmount());
+    }
+  });
+
   it.each(['request', 'cache', 'fallback-cache', 'closed'] as const)(
     'ignores an older browse failure while waiting for %s',
     async (phase) => {

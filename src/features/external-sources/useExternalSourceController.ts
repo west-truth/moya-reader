@@ -4,6 +4,7 @@ import { createHostedImageDownloadQueue } from '../../external-sources/series/ho
 import type { HostedImageDownload, PreparedServerImport } from '../../services/import/hosted-image-import';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { TextServerRequestError } from '../../external-sources/text-server/text-server-errors';
+import { packageOperationMessage } from '../../extensions/packages/package-operation-error';
 import { createSeriesDownloadQueue } from '../../external-sources/series/series-download-queue';
 import { filterAndSortReleases } from './source-release-list-model';
 import { completeSeriesCatalog } from './complete-series-catalog';
@@ -1056,9 +1057,10 @@ export function useExternalSourceController(options: UseExternalSourceController
           cached = undefined;
         if (!mountedRef.current || abort.signal.aborted || listAbortRef.current !== abort) return undefined;
         const failureMessage =
-          error instanceof TextServerRequestError
+          packageOperationMessage(error) ??
+          (error instanceof TextServerRequestError
             ? error.message
-            : '외부 저장소 목록을 불러오지 못했습니다. 연결 상태를 확인하고 다시 시도해 주세요.';
+            : '외부 저장소 목록을 불러오지 못했습니다. 연결 상태를 확인하고 다시 시도해 주세요.');
         const resetCursor =
           cached || (error instanceof Error && /source_catalog_changed|목록이 갱신되었습니다/.test(error.message));
         setListFailure({
