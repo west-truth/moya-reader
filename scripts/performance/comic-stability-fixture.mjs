@@ -5,13 +5,17 @@ import { IndexedDbComicReadingProfileRepository } from '../../src/storage/comic-
 import { DEFAULT_COMIC_READING_PROFILE } from '../../src/features/fixed-document/comic-layout.ts';
 import '../../src/styles/tokens.css';
 import '../../src/styles/base.css';
+import '../../src/styles/dialogs-import.css';
+import '../../src/styles/shell.css';
+import '../../src/styles/library.css';
 
 const legacy = new URLSearchParams(location.search).has('legacy');
 const seamless = !new URLSearchParams(location.search).has('gapped');
 const pagedComic = new URLSearchParams(location.search).has('paged-comic');
-const sectionSize = new URLSearchParams(location.search).has('long-comic') ? 200 : 40;
+const params = new URLSearchParams(location.search);
+const sectionSize = params.has('auto-comic') ? 3 : params.has('long-comic') ? 200 : 40;
 let delay = 0;
-let failedPage = -1;
+let failedPage = params.has('failed-next') ? 1 : -1;
 let assetVersion = 0;
 const requests = [];
 const repository = {
@@ -20,9 +24,9 @@ const repository = {
 const assets = {
   getEmbeddedResource: async (_, id, signal) => {
     requests.push(id);
-    await new Promise((resolve) => setTimeout(resolve, delay));
-    signal?.throwIfAborted();
     const index = Number(id.split(':')[0].slice(1));
+    await new Promise((resolve) => setTimeout(resolve, delay + (params.has('slow-next') && index > 0 ? 4500 : 0)));
+    signal?.throwIfAborted();
     if (index === failedPage) throw new Error('Injected image failure');
     const height = 600 + (index % 7) * 500;
     return {
@@ -89,7 +93,8 @@ function Fixture() {
 async function main() {
   await new IndexedDbComicReadingProfileRepository().save('comic-review', {
     ...DEFAULT_COMIC_READING_PROFILE,
-    mode: pagedComic ? 'single' : 'vertical',
+    mode: pagedComic ? (params.has('spread') ? 'spread' : 'single') : 'vertical',
+    direction: params.has('rtl') ? 'rtl' : 'ltr',
     seamlessVertical: pagedComic ? false : seamless,
     fit: 'width',
     pageTurnMotion: 'page',

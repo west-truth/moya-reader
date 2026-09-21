@@ -39,8 +39,23 @@ try {
     const errors = [];
     page.on('pageerror', (error) => errors.push(error.message));
     if (process.argv.includes('--paginated')) {
-      await page.goto(baseUrl + '?paged&variable');
+      await page.goto(baseUrl + '?paged&variable' + (width >= 760 ? '&spread=double' : ''));
+      await page.waitForFunction(() => readerFixture?.api()?.getAnchor());
+      assert.equal(await page.locator('.reader-paginated-page.is-current').count(), width >= 760 ? 2 : 1);
       await page.waitForFunction(() => globalThis.readerFixture?.api()?.getAnchor());
+      await page.evaluate(() => {
+        autoFixture.setOpen(false);
+        autoFixture.controller.setMode('page-turn');
+        autoFixture.controller.setInterval(3);
+      });
+      const beforeTurn = await page.evaluate(() => JSON.stringify(readerFixture.api().getAnchor()));
+      await page.evaluate(() => autoFixture.controller.start());
+      await page.waitForFunction((anchor) => JSON.stringify(readerFixture.api().getAnchor()) !== anchor, beforeTurn, {
+        timeout: 8000,
+      });
+      assert.equal(await page.locator('.reader-auto-reading-overlay:not([hidden])').count(), 0);
+      await page.mouse.click(8, 100);
+      assert.equal(await page.evaluate(() => autoFixture.controller.running), false);
       for (const mode of ['blind-pixel', 'blind-line']) {
         await page.evaluate((mode) => {
           globalThis.autoFixture.setOpen(false);
@@ -84,7 +99,34 @@ try {
       });
       await page.waitForFunction(() => !globalThis.autoFixture.controller.running, undefined, { timeout: 8000 });
       assert.deepEqual(errors, []);
-      console.log(engine, width, 'paginated blind pixel/line, page turn, stop and chapter end passed');
+      await page.goto(baseUrl + '?paged&images&empty-images');
+      await page.waitForFunction(() => readerFixture?.api()?.getAnchor());
+      await page.evaluate(async () => {
+        autoFixture.setOpen(false);
+        readerFixture.pauseImages();
+        await readerFixture.api().scrollToParagraphIndex(19);
+      });
+      await page.locator('.is-current .reader-image-placeholder.is-loading').waitFor();
+      const imageAnchor = await page.evaluate(() => JSON.stringify(readerFixture.api().getAnchor()));
+      await page.evaluate(() => {
+        autoFixture.controller.setMode('page-turn');
+        autoFixture.controller.setInterval(3);
+      });
+      await page.evaluate(() => autoFixture.controller.start());
+      await page.waitForTimeout(3300);
+      assert.equal(await page.evaluate(() => JSON.stringify(readerFixture.api().getAnchor())), imageAnchor);
+      await page.evaluate(() => readerFixture.resumeImages());
+      await page.waitForFunction(() => document.querySelector('.is-current img')?.naturalWidth > 0);
+      await page.waitForFunction((anchor) => JSON.stringify(readerFixture.api().getAnchor()) !== anchor, imageAnchor, {
+        timeout: 8000,
+      });
+      await page.evaluate(() => autoFixture.controller.stop());
+      assert.deepEqual(errors, []);
+      console.log(
+        engine,
+        width,
+        'timed page turns, delayed illustration, blind pixel/line, stop and chapter end passed',
+      );
       await page.close();
       continue;
     }
@@ -113,7 +155,8 @@ try {
       JSON.stringify(geometry),
     );
     assert.equal(await page.locator('input[type=checkbox]').isChecked(), false);
-    await page.locator('input[type=range]').fill('12');
+    await page.getByRole('slider', { name: '읽기 속도' }).focus();
+    await page.keyboard.press('End');
     await page.locator('.reader-auto-scroll-dialog .primary-btn').click();
     await page.waitForFunction(() => globalThis.autoFixture.controller.running);
     const start = await page.locator('.reader-scroll.is-active').evaluate((root) => root.scrollTop);

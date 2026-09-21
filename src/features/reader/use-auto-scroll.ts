@@ -1,12 +1,18 @@
 import { useCallback, useEffect, useRef, useState, type MutableRefObject } from 'react';
-import type { ReaderViewportApi } from './ReaderViewport';
-import { autoReadingRate, isAutoReadingMode, type AutoReadingMode } from './auto-reading-modes';
+import { autoReadingRate, isAutoReadingMode, type AutoReadingMode, type AutoReadingResult } from './auto-reading-modes';
+
+export interface AutoReadingViewport {
+  readonly flow?: 'scroll' | 'paginated';
+  readonly advanceAutoScroll?: (pixels: number) => AutoReadingResult;
+  readonly advanceAutoReading?: (mode: AutoReadingMode, amount: number) => AutoReadingResult;
+  readonly resetAutoReading?: () => void;
+}
 
 const SPEED_KEY = 'moya.reader-auto-scroll-speed.v1';
 const MODE_KEY = 'moya.reader-auto-scroll-mode.v1';
-function savedMode(): AutoReadingMode {
+function savedMode(key: string): AutoReadingMode {
   try {
-    const value = localStorage.getItem(MODE_KEY);
+    const value = localStorage.getItem(key);
     return isAutoReadingMode(value) ? value : 'pixel';
   } catch {
     return 'pixel';
@@ -22,17 +28,38 @@ function savedSpeed(): number {
 }
 
 export function useAutoScroll(
-  viewport: MutableRefObject<ReaderViewportApi | undefined>,
+  viewport: MutableRefObject<AutoReadingViewport | undefined>,
   scope: string,
   allowed: boolean,
   ready = true,
   nextChapter?: { scope: string; open: (isCurrent: () => boolean) => Promise<void> },
+  kind: 'text' | 'comic' = 'text',
 ) {
   const [speed, setSpeedState] = useState(savedSpeed);
-  const [mode, setModeState] = useState<AutoReadingMode>(savedMode);
+  const modeKey = kind === 'text' ? MODE_KEY : 'moya.comic-auto-reading-mode.v1';
+  const intervalKey = `moya.${kind}-auto-page-interval.v1`;
+  const [mode, setModeState] = useState<AutoReadingMode>(() => savedMode(modeKey));
+  const [interval, setIntervalState] = useState(() => {
+    try {
+      const value = Number(localStorage.getItem(intervalKey));
+      if (Number.isInteger(value) && value >= 3 && value <= 120) return value;
+    } catch {
+      /* Optional preference. */
+    }
+    return kind === 'comic' ? 10 : 20;
+  });
   const [continueChapter, setContinueChapter] = useState(false);
   const [started, setStarted] = useState(false);
-  const modeAllowed = viewport.current?.flow !== 'paginated' || mode.startsWith('blind-');
+  const flow = viewport.current?.flow;
+  const supportedModes =
+    flow === 'paginated'
+      ? kind === 'comic'
+        ? ['page-turn']
+        : ['page-turn', 'blind-pixel', 'blind-line']
+      : kind === 'comic'
+        ? ['pixel']
+        : ['pixel', 'line', 'page', 'blind-pixel', 'blind-line', 'rsvp'];
+  const modeAllowed = supportedModes.includes(mode);
   const running = allowed && modeAllowed && started;
   const owner = useRef(scope);
   const pending = useRef<{ scope: string; deadline: number }>();
@@ -59,9 +86,18 @@ export function useAutoScroll(
     stop();
     setModeState(value);
     try {
-      localStorage.setItem(MODE_KEY, value);
+      localStorage.setItem(modeKey, value);
     } catch {
       /* Optional browser preference. */
+    }
+  };
+  const setInterval = (value: number) => {
+    if (!Number.isInteger(value) || value < 3 || value > 120) return;
+    setIntervalState(value);
+    try {
+      localStorage.setItem(intervalKey, String(value));
+    } catch {
+      /* Optional preference. */
     }
   };
   const setSpeed = (value: number) => {
@@ -73,6 +109,10 @@ export function useAutoScroll(
       /* Browser storage is optional. */
     }
   };
+
+  useEffect(() => {
+    stop();
+  }, [flow, stop]);
 
   useEffect(() => {
     if (!running) stop();
@@ -91,6 +131,7 @@ export function useAutoScroll(
     let frame = 0;
     let previous: number | undefined;
     let remainder = 0;
+    let pageElapsed = 0;
     let endSince: number | undefined;
     let initializedBlindScope: string | undefined;
     const tick = (now: number) => {
@@ -108,6 +149,7 @@ export function useAutoScroll(
       }
       if (!latest.current.ready || latest.current.scope !== owner.current) {
         endSince = undefined;
+        pageElapsed = 0;
         frame = requestAnimationFrame(tick);
         return;
       }
@@ -115,7 +157,26 @@ export function useAutoScroll(
         const initialized = viewport.current?.advanceAutoReading?.(mode, 0);
         if (initialized === 'moving') initializedBlindScope = latest.current.scope;
       }
-      remainder += (elapsed * autoReadingRate(mode, speed)) / 1000;
+      if (mode === 'page-turn') {
+        const status = viewport.current?.advanceAutoReading?.(mode, 0);
+        if (!status || status === 'failed') {
+          stop();
+          return;
+        }
+        if (status === 'waiting') {
+          pageElapsed = 0;
+          endSince = undefined;
+          frame = requestAnimationFrame(tick);
+          return;
+        }
+        pageElapsed += elapsed;
+        if (pageElapsed < interval * 1000 && endSince === undefined) {
+          frame = requestAnimationFrame(tick);
+          return;
+        }
+        pageElapsed = 0;
+      }
+      remainder += mode === 'page-turn' ? 1 : (elapsed * autoReadingRate(mode, speed)) / 1000;
       const pixels = Math.floor(remainder);
       remainder -= pixels;
       if (pixels > 0 || endSince !== undefined) {
@@ -123,7 +184,7 @@ export function useAutoScroll(
           mode === 'pixel'
             ? viewport.current?.advanceAutoScroll?.(pixels)
             : viewport.current?.advanceAutoReading?.(mode, pixels);
-        if (!result) {
+        if (!result || result === 'failed') {
           stop();
           return;
         }
@@ -172,11 +233,14 @@ export function useAutoScroll(
       window.removeEventListener('blur', stop);
       window.removeEventListener('resize', stop);
     };
-  }, [running, speed, mode, stop, viewport]);
+  }, [running, speed, interval, mode, stop, viewport]);
 
   return {
     running,
     modeAllowed,
+    supportedModes,
+    interval,
+    setInterval,
     speed,
     mode,
     setMode,

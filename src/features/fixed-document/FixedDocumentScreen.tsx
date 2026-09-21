@@ -1,3 +1,5 @@
+import { AutoScrollControls } from '../reader/AutoScrollControls';
+import { useComicAutoReading } from './use-comic-auto-reading';
 import { SettingsSlider } from '../reader-settings/SettingsSlider';
 import { useFixedDocumentEntry, useFixedDocumentPageAnchor } from './use-fixed-document-entry';
 import { useComicPageFlow } from './use-comic-page-flow';
@@ -734,6 +736,7 @@ export default function FixedDocumentScreen({
   const [listeningRangeStart, setListeningRangeStart] = useState(pageIndex + 1);
   const [listeningRangeEnd, setListeningRangeEnd] = useState(Math.min(totalPages, pageIndex + 10));
   const [comicSettingsOpen, setComicSettingsOpen] = useState(false);
+  const [autoReadingOpen, setAutoReadingOpen] = useState(false);
   const [comicProfile, setComicProfile] = useState<ComicReadingProfile>(DEFAULT_COMIC_READING_PROFILE);
   const [comicPageHints, setComicPageHints] = useState<Map<number, ComicPageLayoutHint>>(() => new Map());
   const [comicCropStatus, setComicCropStatus] = useState<'idle' | 'running' | 'failed'>('idle');
@@ -983,13 +986,24 @@ export default function FixedDocumentScreen({
     () => new Set(wantedPageKey.split(',').filter(Boolean).map(Number)),
     [wantedPageKey],
   );
+  const nextAutoPages = useMemo(() => {
+    const end = currentDocumentSection
+      ? currentDocumentSection.startPageIndex + currentDocumentSection.pageCount
+      : totalPages;
+    const pages =
+      effectiveViewMode === 'spread'
+        ? (comicSpreads[comicSpreadForPage(comicSpreads, pageIndex) + 1]?.readingOrder ?? [])
+        : [pageIndex + 1];
+    return pages.length && pages[0] < end ? pages.filter((index) => index < totalPages) : [];
+  }, [currentDocumentSection, totalPages, effectiveViewMode, comicSpreads, pageIndex]);
   const imageWantedPageIndexes = useMemo(() => {
     const displayed = displayedPageKey.split(',').filter(Boolean).map(Number);
     const wanted = archiveFullImageWindow(displayed, pageIndex, totalPages);
-    if (!continuousView || !currentDocumentSection) return new Set(wanted);
+    if (!continuousView) return new Set([...wanted, ...nextAutoPages]);
+    if (!currentDocumentSection) return new Set(wanted);
     const sectionEnd = currentDocumentSection.startPageIndex + currentDocumentSection.pageCount;
     return new Set(wanted.filter((index) => index >= currentDocumentSection.startPageIndex && index < sectionEnd));
-  }, [continuousView, currentDocumentSection, displayedPageKey, pageIndex, totalPages]);
+  }, [continuousView, currentDocumentSection, displayedPageKey, pageIndex, totalPages, nextAutoPages]);
 
   const recordArchiveImageDimensions = useCallback(
     (index: number, dimensions: ContinuousImageDimensions) => {
@@ -2149,11 +2163,43 @@ export default function FixedDocumentScreen({
         ? CONTINUOUS_SECTION_BOUNDARY_HEIGHT
         : CONTINUOUS_SECTION_NAV_HEIGHT
       : 0;
+  const autoScopeSuffix = `${effectiveViewMode}:${fit}:${zoom}:${rotation}`;
+  const autoReadingAllowed =
+    novel.format === 'image_archive' &&
+    !comicSettingsOpen &&
+    !mobileMenuOpen &&
+    !mobileThumbnailOpen &&
+    !searchOpen &&
+    !annotationOpen;
+  const autoReading = useComicAutoReading({
+    viewport: viewportRef,
+    content: continuousContentRef,
+    continuous: continuousView,
+    scope: `${novel.id}:${continuousSectionKey}:${autoScopeSuffix}`,
+    allowed: autoReadingAllowed && documentStatus !== 'failed',
+    ready: documentStatus === 'ready',
+    visiblePages: displayedPages,
+    nearbyPages: stableComicFlow ? comicFlow.nearby : displayedPages,
+    nextPages: nextAutoPages,
+    pages: archiveImages.pages,
+    errors: archiveImages.errors,
+    footerHeight: continuousSectionFooterHeight,
+    turn: () => turnPage(1),
+    reportError: archiveImages.reportError,
+    nextChapter: nextDocumentSection
+      ? {
+          scope: `${novel.id}:${nextDocumentSection.id}:${autoScopeSuffix}`,
+          open: async (isCurrent) => {
+            if (isCurrent()) goToPage(nextDocumentSection.startPageIndex);
+          },
+        }
+      : undefined,
+  });
   const scrollSectionBoundary = useScrollChapterBoundary({
     rootRef: viewportRef,
     contentRef: continuousContentRef,
     chapterId: continuousSectionKey,
-    enabled: continuousView && Boolean(currentDocumentSection && nextDocumentSection),
+    enabled: continuousView && !autoReading.running && Boolean(currentDocumentSection && nextDocumentSection),
     onNextChapter: () => {
       if (nextDocumentSection) goToPage(nextDocumentSection.startPageIndex);
     },
@@ -2383,6 +2429,18 @@ export default function FixedDocumentScreen({
           )}
         </div>
         <div className="fixed-doc-toolbar" aria-label="문서 보기 설정">
+          {novel.format === 'image_archive' && (
+            <button
+              type="button"
+              title="자동 읽기"
+              onClick={() => {
+                autoReading.stop();
+                setAutoReadingOpen(true);
+              }}
+            >
+              <Play size={17} />
+            </button>
+          )}
           {novel.format === 'image_archive' && (
             <button type="button" title="현재 화면 다시 불러오기" onClick={() => archiveImages.retry()}>
               <RefreshCw size={17} />
@@ -2983,6 +3041,12 @@ export default function FixedDocumentScreen({
           </button>
         </section>
       </div>
+      <AutoScrollControls
+        controller={autoReading}
+        open={autoReadingOpen}
+        allowed={autoReadingAllowed && documentStatus === 'ready' && autoReading.modeAllowed}
+        onClose={() => setAutoReadingOpen(false)}
+      />
       {mobileMenuOpen && (
         <aside
           id="fixed-doc-mobile-menu"
@@ -2996,6 +3060,18 @@ export default function FixedDocumentScreen({
             </button>
           </header>
           <div className="fixed-doc-mobile-actions">
+            {novel.format === 'image_archive' && (
+              <button
+                type="button"
+                onClick={() => {
+                  autoReading.stop();
+                  setMobileMenuOpen(false);
+                  setAutoReadingOpen(true);
+                }}
+              >
+                <Play size={16} /> 자동 읽기
+              </button>
+            )}
             <button
               type="button"
               onClick={() => {

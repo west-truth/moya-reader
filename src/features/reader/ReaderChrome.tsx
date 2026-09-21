@@ -420,7 +420,7 @@ export function ReaderChrome({
                 </button>
                 {onOpenAutoScroll && (
                   <button type="button" role="menuitem" onClick={() => runOverflowAction(onOpenAutoScroll)}>
-                    <ChevronsRight size={15} /> 자동 스크롤
+                    <ChevronsRight size={15} /> 자동 읽기
                   </button>
                 )}
                 <button type="button" role="menuitem" onClick={() => runOverflowAction(actions.toggleNightTheme)}>

@@ -1,6 +1,7 @@
 import type { Paragraph, ReaderAnchor } from '../../domain/types';
 
 export const AUTO_READING_MODES = [
+  { id: 'page-turn', label: '자동 넘기기', description: '설정한 시간마다 다음 페이지로 이동합니다.' },
   { id: 'pixel', label: '픽셀 단위 스크롤', description: '본문이 일정한 속도로 부드럽게 올라갑니다.' },
   { id: 'line', label: '줄 단위 스크롤', description: '일정한 간격으로 한 줄씩 올라갑니다.' },
   {
@@ -25,7 +26,7 @@ export const AUTO_READING_MODES = [
   },
 ] as const;
 export type AutoReadingMode = (typeof AUTO_READING_MODES)[number]['id'];
-export type AutoReadingResult = 'moving' | 'waiting' | 'end';
+export type AutoReadingResult = 'moving' | 'waiting' | 'end' | 'failed';
 export function isAutoReadingMode(value: unknown): value is AutoReadingMode {
   return AUTO_READING_MODES.some((mode) => mode.id === value);
 }

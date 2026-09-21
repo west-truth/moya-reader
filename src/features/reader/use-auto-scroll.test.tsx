@@ -215,4 +215,42 @@ describe('automatic text scrolling', () => {
     expect(advanceAutoReading).toHaveBeenCalledTimes(3);
     expect(step).not.toHaveBeenCalled();
   });
+  it('counts a full page interval only after readiness and never catches up delayed turns', () => {
+    let result: 'moving' | 'waiting' | 'failed' = 'waiting';
+    const turn = vi.fn(() => result);
+    viewport.current = { ...viewport.current, flow: 'paginated', advanceAutoReading: turn };
+    render();
+    act(() => controller.setMode('page-turn'));
+    act(() => controller.setInterval(3));
+    act(() => controller.start());
+    advance(100);
+    expect(turn.mock.calls.filter((call: unknown[]) => call[1] === 1)).toHaveLength(0);
+    result = 'moving';
+    advance(59);
+    expect(turn.mock.calls.filter((call: unknown[]) => call[1] === 1)).toHaveLength(0);
+    advance(1);
+    expect(turn.mock.calls.filter((call: unknown[]) => call[1] === 1)).toHaveLength(1);
+    tick(60000);
+    expect(turn.mock.calls.filter((call: unknown[]) => call[1] === 1)).toHaveLength(1);
+    result = 'waiting';
+    advance(80);
+    result = 'moving';
+    advance(59);
+    expect(turn.mock.calls.filter((call: unknown[]) => call[1] === 1)).toHaveLength(1);
+    advance(1);
+    expect(turn.mock.calls.filter((call: unknown[]) => call[1] === 1)).toHaveLength(2);
+    result = 'failed';
+    advance(1);
+    expect(controller.running).toBe(false);
+  });
+
+  it('stops on a flow switch even for a mode supported in both views', () => {
+    viewport.current = { ...viewport.current, advanceAutoReading: () => 'moving' };
+    act(() => controller.setMode('blind-line'));
+    act(() => controller.start());
+    expect(controller.running).toBe(true);
+    viewport.current = { ...viewport.current, flow: 'paginated' };
+    render();
+    expect(controller.running).toBe(false);
+  });
 });

@@ -1,3 +1,6 @@
+import { useEffect } from 'react';
+import { SettingsSlider } from '../reader-settings/SettingsSlider';
+import './auto-scroll-controls.css';
 import { Pause } from 'lucide-react';
 import { Dialog } from '../../shared/ui/Dialog';
 import type { useAutoScroll } from './use-auto-scroll';
@@ -14,9 +17,12 @@ export function AutoScrollControls({
   readonly onClose: () => void;
   readonly allowed: boolean;
 }) {
+  useEffect(() => {
+    if (open && !controller.modeAllowed) controller.setMode(controller.supportedModes[0] as AutoReadingMode);
+  }, [open, controller]);
   return (
     <div data-auto-scroll-controls>
-      <Dialog open={open} title="자동 스크롤" onClose={onClose} className="reader-auto-scroll-dialog">
+      <Dialog open={open} title="자동 읽기" onClose={onClose} className="reader-auto-scroll-dialog">
         <label className="reader-auto-scroll-mode">
           방식
           <select
@@ -24,32 +30,37 @@ export function AutoScrollControls({
             value={controller.mode}
             onChange={(event) => controller.setMode(event.target.value as AutoReadingMode)}
           >
-            {AUTO_READING_MODES.map((mode) => (
+            {AUTO_READING_MODES.filter((mode) => controller.supportedModes.includes(mode.id)).map((mode) => (
               <option key={mode.id} value={mode.id}>
                 {mode.label}
               </option>
             ))}
           </select>
         </label>
-        <p>{AUTO_READING_MODES.find((mode) => mode.id === controller.mode)?.description} 화면을 조작하면 멈춥니다.</p>
-        <label className="reader-auto-scroll-speed">
-          <span>
-            속도 <output>{autoReadingSpeedLabel(controller.mode, controller.speed)}</output>
-          </span>
-          <input
-            aria-label="자동 스크롤 속도"
-            type="range"
-            min="1"
-            max="12"
-            step="1"
-            value={controller.speed}
-            onChange={(event) => controller.setSpeed(Number(event.target.value))}
+        <p>화면을 조작하면 멈춥니다.</p>
+        {controller.mode === 'page-turn' ? (
+          <SettingsSlider
+            label="넘김 간격"
+            value={controller.interval}
+            min={3}
+            max={120}
+            step={1}
+            suffix="초"
+            onChange={controller.setInterval}
           />
-          <span>
-            <small>느리게</small>
-            <small>빠르게</small>
-          </span>
-        </label>
+        ) : (
+          <>
+            <SettingsSlider
+              label="읽기 속도"
+              value={controller.speed}
+              min={1}
+              max={12}
+              step={1}
+              onChange={controller.setSpeed}
+            />
+            <p>{autoReadingSpeedLabel(controller.mode, controller.speed)}</p>
+          </>
+        )}
         <label className="reader-auto-scroll-next">
           <input
             type="checkbox"
@@ -61,7 +72,7 @@ export function AutoScrollControls({
         {!allowed && (
           <p>
             {!controller.modeAllowed
-              ? '페이지 모드에서는 블라인드를 선택해 주세요.'
+              ? '현재 보기에서 사용할 방식을 선택해 주세요.'
               : '본문 준비와 듣기를 마친 뒤 사용할 수 있습니다.'}
           </p>
         )}
@@ -78,13 +89,8 @@ export function AutoScrollControls({
         </button>
       </Dialog>
       {controller.running && (
-        <button
-          type="button"
-          className="reader-auto-scroll-stop"
-          onClick={controller.stop}
-          aria-label="자동 스크롤 정지"
-        >
-          <Pause size={16} /> 자동 스크롤 정지
+        <button type="button" className="reader-auto-scroll-stop" onClick={controller.stop} aria-label="자동 읽기 정지">
+          <Pause size={16} /> 자동 읽기 정지
         </button>
       )}
     </div>
