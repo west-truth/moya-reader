@@ -1,3 +1,4 @@
+import { DiscoveryHeading } from './DiscoveryHeading';
 import type { WorkView } from '../../components/work-view';
 import { useEffect, useRef } from 'react';
 import { Search } from 'lucide-react';
@@ -26,6 +27,8 @@ export function DiscoverySourceView({
   owned,
   controls = true,
   query = '',
+  headingTitle,
+  headingEyebrow,
 }: {
   viewMode?: WorkView;
   section: DiscoverySection;
@@ -36,6 +39,8 @@ export function DiscoverySourceView({
   owned(item: ExternalItemSummary): boolean;
   controls?: boolean;
   query?: string;
+  headingTitle?: string;
+  headingEyebrow?: string;
 }) {
   const root = useRef<HTMLDivElement>(null);
   const initial: ExternalSourceListInput = {
@@ -108,9 +113,15 @@ export function DiscoverySourceView({
     return <p className="discovery-message">소스를 사용할 수 없습니다. 소스 관리에서 연결을 확인해 주세요.</p>;
   return (
     <div className="discovery-source-view" ref={root}>
+      <DiscoveryHeading
+        title={headingTitle ?? (section.title || source.title)}
+        eyebrow={headingEyebrow}
+        loading={data.busy}
+        failed={Boolean(data.error)}
+        refresh={data.retry}
+      />
       {controls && (
         <>
-          <h2>{section.title || source.title}</h2>
           <div className="discovery-source-modes" aria-label="작품 목록">
             {modes
               .filter((mode) => mode !== 'search')
@@ -206,14 +217,10 @@ export function DiscoverySourceView({
           )}
         </>
       )}
-      {data.error && (
-        <div className="discovery-message" role="status">
-          {data.hasPage ? '불러온 작품은 그대로 표시합니다. ' : ''}
+      {data.error && !data.hasPage && (
+        <p className="discovery-inline-message" role="status">
           {data.error}
-          <button type="button" className="ghost-btn" disabled={data.busy} onClick={data.retry}>
-            다시 시도
-          </button>
-        </div>
+        </p>
       )}
       {!data.hasPage && data.busy && <p role="status">작품을 불러오는 중…</p>}
       <div className="discovery-grid" data-view={viewMode} aria-busy={data.busy}>

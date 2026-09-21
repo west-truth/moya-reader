@@ -159,7 +159,8 @@ export default function DiscoveryScreen({
                       setQuickSource(undefined);
                     }}
                   >
-                    {pinnedSource(t) && <Pin size={14} aria-hidden="true" />} {t.title}
+                    {pinnedSource(t) && <Pin size={14} aria-hidden="true" />}
+                    <span>{t.title}</span>
                   </button>
                 ))}
                 {quickSource && (
@@ -169,7 +170,8 @@ export default function DiscoveryScreen({
                     onClick={() => setQuickSource(undefined)}
                     aria-label="임시 소스 닫기"
                   >
-                    {sources.sources.find((s) => s.id === quickSource)?.title ?? '소스'} <X size={14} />
+                    <span>{sources.sources.find((s) => s.id === quickSource)?.title ?? '소스'}</span>
+                    <X size={14} aria-hidden="true" />
                   </button>
                 )}
               </nav>
