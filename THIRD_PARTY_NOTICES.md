@@ -105,6 +105,14 @@ Their npm license texts are included with the packaged dependencies. Windows use
 the self-host image uses Debian's Chromium and CJK font packages, whose notices remain in the image's package inventory.
 No Mangayomi application source or private extension code is redistributed as part of this adapter.
 
+## Source cover thumbnails
+
+Hosted source-cover thumbnails use `sharp@0.34.5` (Apache-2.0) and its platform-specific libvips 8.17.3
+distribution. The dynamically loaded native libraries and dependency notices remain in the deployed npm packages;
+their exact npm versions are recorded in `third_party/production-license-inventory.json`. The libvips package README
+lists the bundled codec/library licenses. Upstream source and build recipes are at
+<https://github.com/lovell/sharp/tree/v0.34.5> and <https://github.com/lovell/sharp-libvips>.
+
 ## Release requirements still open
 
 - Decide how corresponding source/relinking information for `7zz.wasm` is delivered with binary web/container

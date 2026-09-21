@@ -13,6 +13,7 @@ const canonicalInventoryTarget = Object.freeze({ os: 'linux', arch: 'x64', libc:
 const platformSpecificPackagePatterns = [
   /^@msgpackr-extract\/msgpackr-extract-(?:darwin|linux|win32)-/,
   /^@napi-rs\/canvas-(?:android|darwin|freebsd|linux|win32)-/,
+  /^@img\/sharp-(?:libvips-)?(?:darwin|linux|win32|wasm32)(?:-|$)/,
 ];
 const sourceReleaseGate = process.argv.includes('--source-release');
 const releaseGate = process.argv.includes('--release');

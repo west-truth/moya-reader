@@ -1,9 +1,11 @@
+import { useSourceWorkLayout } from './source-work-layout';
 import { sourceCachePolicy, sourcePageTime, transientSourceFailure } from '../../external-sources/cache-policy';
 import { storedSourcePage, saveSourceCache } from '../../external-sources/cached-page';
 import { createHostedImageDownloadQueue } from '../../external-sources/series/hosted-image-download-queue';
 import type { HostedImageDownload, PreparedServerImport } from '../../services/import/hosted-image-import';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { TextServerRequestError } from '../../external-sources/text-server/text-server-errors';
+import { packageOperationMessage } from '../../extensions/packages/package-operation-error';
 import { createSeriesDownloadQueue } from '../../external-sources/series/series-download-queue';
 import { filterAndSortReleases } from './source-release-list-model';
 import { completeSeriesCatalog } from './complete-series-catalog';
@@ -454,6 +456,7 @@ function filterChanges(
 }
 
 export function useExternalSourceController(options: UseExternalSourceControllerOptions): ExternalSourceController {
+  const [workLayout] = useSourceWorkLayout();
   const optionsRef = useRef(options);
   optionsRef.current = options;
   const [open, setOpen] = useState(false);
@@ -558,9 +561,18 @@ export function useExternalSourceController(options: UseExternalSourceController
   const mountedRef = useRef(true);
   const openRef = useRef(open);
 
+  const contributions = useMemo(() => {
+    void options.extensionRevision;
+    void brokerRevision;
+    return options.registry.getExternalSources();
+  }, [brokerRevision, options.extensionRevision, options.registry]);
+  const hideListCovers =
+    workLayout === 'text' &&
+    contributions.some(({ descriptor }) => descriptor.id === activeSourceId && descriptor.kind === 'catalog');
+
   const coverTargets = JSON.stringify([
     ...(detail?.coverRef ? [detail.coverRef] : []),
-    ...rawItems.flatMap((item) => (item.coverRef ? [item.coverRef] : [])),
+    ...rawItems.flatMap((item) => (item.coverRef && !hideListCovers ? [item.coverRef] : [])),
   ]);
   useEffect(() => {
     if (!open) return;
@@ -603,12 +615,6 @@ export function useExternalSourceController(options: UseExternalSourceController
   useEffect(() => {
     openRef.current = open;
   }, [open]);
-
-  const contributions = useMemo(() => {
-    void options.extensionRevision;
-    void brokerRevision;
-    return options.registry.getExternalSources();
-  }, [brokerRevision, options.extensionRevision, options.registry]);
 
   const sources = useMemo<readonly ExternalSourceView[]>(
     () =>
@@ -1056,9 +1062,10 @@ export function useExternalSourceController(options: UseExternalSourceController
           cached = undefined;
         if (!mountedRef.current || abort.signal.aborted || listAbortRef.current !== abort) return undefined;
         const failureMessage =
-          error instanceof TextServerRequestError
+          packageOperationMessage(error) ??
+          (error instanceof TextServerRequestError
             ? error.message
-            : '외부 저장소 목록을 불러오지 못했습니다. 연결 상태를 확인하고 다시 시도해 주세요.';
+            : '외부 저장소 목록을 불러오지 못했습니다. 연결 상태를 확인하고 다시 시도해 주세요.');
         const resetCursor =
           cached || (error instanceof Error && /source_catalog_changed|목록이 갱신되었습니다/.test(error.message));
         setListFailure({

@@ -1,3 +1,4 @@
+import { WorkViewControl } from '../../components/WorkViewControl';
 import {
   AlertTriangle,
   ArrowLeft,
@@ -11,9 +12,6 @@ import {
   FilePenLine,
   FilePlus2,
   Folder,
-  Grid2X2,
-  LayoutGrid,
-  List,
   LoaderCircle,
   ListChecks,
   Pencil,
@@ -32,9 +30,9 @@ import {
   Upload,
   X,
 } from 'lucide-react';
-import { useMemo, useRef, useState, type FormEvent } from 'react';
+import { useMemo, useRef, type FormEvent } from 'react';
 import { useNavigationScroll } from '../navigation/navigation-view-state';
-import { readSourceWorkLayout, saveSourceWorkLayout, type SourceWorkLayout } from './source-work-layout';
+import { useSourceWorkLayout } from './source-work-layout';
 import type { Novel } from '../../domain/types';
 import { SourceFilterControl } from './SourceFilterControl';
 import { externalItemKeyId } from '../../external-sources/contracts';
@@ -386,10 +384,12 @@ function SourceItemCard({
   item,
   controller,
   libraryAddEnabled,
+  showCover = true,
 }: {
   item: ExternalSourceItemView;
   controller: ExternalSourceController;
   libraryAddEnabled: boolean;
+  showCover?: boolean;
 }) {
   const itemId = externalItemKeyId(item.key);
   const selectable = canSelectItem(item);
@@ -406,15 +406,17 @@ function SourceItemCard({
           onClick={() => void controller.openItem(item)}
         />
       )}
-      <div className="source-hub-card-cover" data-format={(item.formatHint ?? 'book').toLocaleLowerCase()}>
-        {item.thumbnailUrl ? (
-          <img src={item.thumbnailUrl} alt="" loading="lazy" decoding="async" referrerPolicy="no-referrer" />
-        ) : item.kind === 'work' ? (
-          <BookOpen size={28} aria-hidden="true" />
-        ) : (
-          <FileText size={28} aria-hidden="true" />
-        )}
-      </div>
+      {showCover && (
+        <div className="source-hub-card-cover" data-format={(item.formatHint ?? 'book').toLocaleLowerCase()}>
+          {item.thumbnailUrl ? (
+            <img src={item.thumbnailUrl} alt="" loading="lazy" decoding="async" referrerPolicy="no-referrer" />
+          ) : item.kind === 'work' ? (
+            <BookOpen size={28} aria-hidden="true" />
+          ) : (
+            <FileText size={28} aria-hidden="true" />
+          )}
+        </div>
+      )}
       <div className="source-hub-card-copy">
         {(!browsableWork || controller.canRemoveItems) && (
           <div className="source-hub-card-heading">
@@ -480,11 +482,7 @@ export default function SourceHubScreen({
   localSeriesTitleEditor,
 }: SourceHubScreenProps) {
   const scrollRef = useRef<HTMLDivElement>(null);
-  const [workLayout, setWorkLayout] = useState(readSourceWorkLayout);
-  const changeWorkLayout = (value: SourceWorkLayout) => {
-    setWorkLayout(value);
-    saveSourceWorkLayout(value);
-  };
+  const [workLayout, changeWorkLayout] = useSourceWorkLayout();
   const taskByItemKey = useMemo(() => {
     const tasks = new Map<string, ImportTaskView>();
     for (const task of controller.tasks) {
@@ -1102,27 +1100,7 @@ export default function SourceHubScreen({
                     <span>{formatCount(contentItems.length)}개</span>
                   </div>
                   {activeSource?.kind === 'catalog' && !controller.detail && (
-                    <div className="source-hub-layout-options" role="group" aria-label="작품 표시 방식">
-                      {(
-                        [
-                          ['covers', '큰 표지', Grid2X2],
-                          ['cards', '카드', LayoutGrid],
-                          ['list', '목록', List],
-                        ] as const
-                      ).map(([value, label, Icon]) => (
-                        <button
-                          key={value}
-                          type="button"
-                          aria-label={`${label} 보기`}
-                          title={`${label} 보기`}
-                          aria-pressed={workLayout === value}
-                          onClick={() => changeWorkLayout(value)}
-                        >
-                          <Icon size={17} aria-hidden="true" />
-                          <span>{label}</span>
-                        </button>
-                      ))}
-                    </div>
+                    <WorkViewControl value={workLayout} onChange={changeWorkLayout} label="소스 보기 방식" />
                   )}
                   <label>
                     <input
@@ -1203,6 +1181,7 @@ export default function SourceHubScreen({
                   >
                     {contentItems.map((item) => (
                       <SourceItemCard
+                        showCover={activeSource?.kind !== 'catalog' || workLayout !== 'text'}
                         key={externalItemKeyId(item.key)}
                         item={item}
                         controller={controller}

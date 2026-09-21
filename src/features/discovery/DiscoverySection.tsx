@@ -1,3 +1,4 @@
+import type { WorkView } from '../../components/work-view';
 import { DiscoveryCard, useNear } from './DiscoveryCard';
 import { DiscoverySourceView } from './DiscoverySourceView';
 import { useNavigationViewState } from '../navigation/navigation-view-state';
@@ -8,6 +9,7 @@ import type { DiscoverySession } from './discovery-session';
 import type { DiscoverySection as Section } from './discovery-config';
 
 export function DiscoverySection({
+  viewMode = 'grid',
   section,
   source,
   session,
@@ -17,6 +19,7 @@ export function DiscoverySection({
   owned,
   positions,
 }: {
+  viewMode?: WorkView;
   section: Section;
   source?: ExternalSourceView;
   session: DiscoverySession;
@@ -153,6 +156,7 @@ export function DiscoverySection({
       {expanded && !unsupported ? (
         <>
           <DiscoverySourceView
+            viewMode={viewMode}
             section={section}
             source={source}
             session={session}
@@ -199,9 +203,10 @@ export function DiscoverySection({
           )}
           {page && (
             <>
-              <div className="discovery-rail" ref={rail} aria-busy={loading}>
+              <div className="discovery-rail" data-view={viewMode} ref={rail} aria-busy={loading}>
                 {page.items.slice(0, 12).map((item) => (
                   <DiscoveryCard
+                    viewMode={viewMode}
                     key={JSON.stringify(item.key)}
                     item={item}
                     session={session}

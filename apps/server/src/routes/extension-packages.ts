@@ -1,5 +1,6 @@
 import { validContentConnectionRequest } from '../../../../packages/extension-contracts/source-content-service.js';
 import { Readable } from 'node:stream';
+import { sourceCoverThumbnail } from '../extensions/source-cover-thumbnail.js';
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import type { ExtensionContributionId } from '@noveldesk/extension-contracts';
 import { validateSourceAuthenticationRequest } from '@noveldesk/extension-contracts/package';
@@ -140,6 +141,8 @@ export async function registerExtensionPackageRoutes(
     } catch (error) {
       const message = error instanceof Error ? error.message : '';
       const code = safeCodes.has(message) ? message : 'extension_operation_failed';
+      if (code === 'source_storage_limit' || code === 'source_body_limit')
+        reply.log.warn({ code }, 'source_capacity_limit');
       const status =
         code === 'execution_busy' || code === 'source_rate_limited'
           ? 429
@@ -382,7 +385,8 @@ export async function registerExtensionPackageRoutes(
         if (!result) return reply.code(404).send({ error: 'cover_unavailable' });
         if (!['image/png', 'image/jpeg', 'image/webp', 'image/gif'].includes(result.contentType))
           return reply.code(422).send({ error: 'invalid_source_image' });
-        const blob = assets.get(result.handle)!;
+        const original = assets.get(result.handle)!;
+        const blob = sourceCatalog === catalog ? await sourceCoverThumbnail(original, signal) : original;
         reply.header('Content-Type', blob.type).header('Content-Length', blob.size);
         return reply.send(Readable.fromWeb(blob.stream() as import('node:stream/web').ReadableStream));
       }),

@@ -9,15 +9,16 @@
     "libc": "glibc"
   },
   "summary": {
-    "componentCount": 209,
+    "componentCount": 213,
     "byLicense": {
       "0BSD": 1,
-      "Apache-2.0": 43,
+      "Apache-2.0": 45,
       "Apache-2.0 OR MIT": 1,
       "BSD-2-Clause": 9,
       "BSD-3-Clause": 16,
       "ISC": 8,
-      "MIT": 130,
+      "LGPL-3.0-or-later": 1,
+      "MIT": 131,
       "SEE LICENSE IN License.txt": 1
     }
   },
@@ -210,6 +211,27 @@
       "version": "0.7.3",
       "license": "Apache-2.0",
       "homepage": "https://github.com/googleworkspace/drive-picker-element"
+    },
+    {
+      "ecosystem": "npm",
+      "name": "@img/colour",
+      "version": "1.1.0",
+      "license": "MIT",
+      "homepage": "https://github.com/lovell/colour#readme"
+    },
+    {
+      "ecosystem": "npm",
+      "name": "@img/sharp-libvips-linux-x64",
+      "version": "1.2.4",
+      "license": "LGPL-3.0-or-later",
+      "homepage": "https://sharp.pixelplumbing.com"
+    },
+    {
+      "ecosystem": "npm",
+      "name": "@img/sharp-linux-x64",
+      "version": "0.34.5",
+      "license": "Apache-2.0",
+      "homepage": "https://sharp.pixelplumbing.com"
     },
     {
       "ecosystem": "npm",
@@ -1323,6 +1345,13 @@
       "version": "2.7.2",
       "license": "MIT",
       "homepage": "https://github.com/nfriedly/set-cookie-parser"
+    },
+    {
+      "ecosystem": "npm",
+      "name": "sharp",
+      "version": "0.34.5",
+      "license": "Apache-2.0",
+      "homepage": "https://sharp.pixelplumbing.com"
     },
     {
       "ecosystem": "npm",

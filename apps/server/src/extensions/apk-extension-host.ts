@@ -1,6 +1,7 @@
 import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { createHash, randomUUID } from 'node:crypto';
+import { thumbnailCoverAsset } from './source-cover-thumbnail.js';
 import { createSourceBroker } from '@moya/extension-runtime/source-broker';
 import {
   parseMangaApkIndex,
@@ -23,7 +24,7 @@ export class ApkExtensionHost {
   static async open(java: string, build: string, root: string) {
     const tools = await createJavaApkTools(java, build);
     const store = await new ApkInstallations(root, tools).open();
-    const catalog = new ApkSourceCatalog(store, tools);
+    const catalog = new ApkSourceCatalog(store, tools, { transformCover: thumbnailCoverAsset });
     const host = new ApkExtensionHost(store, catalog);
     try {
       const data = await readFile(join(root, 'repositories.json'));

@@ -441,6 +441,21 @@ async function createDocumentHarness(serialCount = 3) {
 }
 
 describe('text serial download task parity', () => {
+  it('skips catalogue cover resolution when the device uses text view', async () => {
+    vi.stubGlobal('localStorage', { getItem: () => 'text' });
+    const resolveCover = vi.fn(async () => 'blob:unused');
+    let harness: Awaited<ReturnType<typeof createHarness>> | undefined;
+    try {
+      harness = await createHarness({ downloadedContent: 'fixture', coverRef: true, resolveCover });
+      await act(async () => harness!.controller.show(SOURCE_ID));
+      expect(harness.controller.items.length).toBeGreaterThan(0);
+      expect(resolveCover).not.toHaveBeenCalled();
+    } finally {
+      if (harness) await act(async () => harness!.renderer.unmount());
+      vi.unstubAllGlobals();
+    }
+  });
+
   it('recovers only missing comic releases after restart and never opens the resumed work', async () => {
     await resetExternalSourceLocalStateForTests();
     const store = new ExternalSourceLocalStateStore();
@@ -1152,6 +1167,25 @@ describe('useExternalSourceController remote updates', () => {
       );
       expect(harness.controller.listError).toBeUndefined();
       expect(harness.controller.items).toHaveLength(1);
+    } finally {
+      await act(async () => harness.renderer.unmount());
+    }
+  });
+
+  it('preserves known capacity errors instead of reporting a connection failure', async () => {
+    const harness = await createHarness({ downloadedContent: '본문' });
+    vi.mocked(harness.registry.listExternalSource).mockRejectedValueOnce(
+      Object.assign(new Error('translated'), { cause: new Error('source_storage_limit') }),
+    );
+    try {
+      await act(async () =>
+        harness.controller.openItem({
+          ...harness.controller.items[0]!,
+          kind: 'folder',
+          navigationRef: 'source:novels',
+        }),
+      );
+      expect(harness.controller.listError?.message).toBe('소스의 저장 한도를 초과했습니다. 기존 데이터는 유지됩니다.');
     } finally {
       await act(async () => harness.renderer.unmount());
     }

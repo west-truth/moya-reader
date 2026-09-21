@@ -4,6 +4,17 @@ import { runExtension } from '../host.mjs';
 
 const source = (expression) => `globalThis.moyaExtension = async (method, input, host) => (${expression});`;
 
+test('large compatibility state round-trips without widening the normal guest JSON limit', async () => {
+  const input = { cache: 'x'.repeat(1200 * 1024) };
+  const invoke = { source: source('input'), method: 'invoke', input, timeoutMs: 10000, memoryBytes: 64 * 1024 * 1024 };
+  assert.deepEqual(await runExtension({ ...invoke, profile: 'mangayomi-v1' }), input);
+  await assert.rejects(runExtension(invoke), /payload_limit/);
+  await assert.rejects(
+    runExtension({ ...invoke, profile: 'mangayomi-v1', input: { cache: 'x'.repeat(4 * 1024 * 1024) } }),
+    /payload_limit/,
+  );
+});
+
 test('isolated realm has no browser, Node, filesystem or network authority', async () => {
   const value = await runExtension({
     source: source(

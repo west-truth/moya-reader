@@ -8,4 +8,5 @@ allowBuilds:
   esbuild: true
   msgpackr-extract: true
   protobufjs: true
+  sharp: true
   tesseract.js: false

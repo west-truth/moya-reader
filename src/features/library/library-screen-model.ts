@@ -1,3 +1,4 @@
+import type { WorkView } from '../../components/work-view';
 import type { Novel } from '../../domain/types';
 import { bookUnitLabel, isFixedDocumentFormat } from '../../domain/book-format';
 import { formatDateTime } from '../../utils/format';
@@ -5,7 +6,7 @@ import { formatCount } from '../../utils/format';
 
 export type LibraryFilter = 'all' | 'reading' | 'finished' | 'unread' | 'favorite' | 'trash';
 export type LibrarySort = 'recent' | 'title' | 'added';
-export type LibraryViewMode = 'grid' | 'list';
+export type LibraryViewMode = WorkView;
 
 export interface NovelReadStateSelectors {
   hasReadActivity(novel: Novel): boolean;

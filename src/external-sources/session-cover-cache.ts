@@ -12,6 +12,24 @@ export class SessionCoverCache {
   private pending = new Map<string, Promise<string | undefined>>();
   private failures = new Map<string, { time: number; error: unknown }>();
   private lifetime = new AbortController();
+  private waiters = new Map<string, Set<AbortSignal>>();
+  private pins = new Map<string, Map<AbortSignal, () => void>>();
+  constructor(
+    private maxBytes = 64 * 1024 * 1024,
+    private maxEntries = 400,
+  ) {}
+  private pin(url: string, signal: AbortSignal) {
+    if (signal.aborted) return;
+    const users = this.pins.get(url) ?? new Map<AbortSignal, () => void>();
+    if (users.has(signal)) return;
+    const release = () => {
+      users.delete(signal);
+      if (!users.size) this.pins.delete(url);
+    };
+    users.set(signal, release);
+    this.pins.set(url, users);
+    signal.addEventListener('abort', release, { once: true });
+  }
   async resolve(
     key: string,
     load: (signal: AbortSignal) => Promise<Blob | undefined>,
@@ -22,15 +40,24 @@ export class SessionCoverCache {
     if (found) {
       this.entries.delete(key);
       this.entries.set(key, found);
-      if (found.time + COVER_FRESH_MS > Date.now()) return found.url;
+      if (found.time + COVER_FRESH_MS > Date.now()) {
+        this.pin(found.url, signal);
+        return found.url;
+      }
     }
     const retained = found && found.time + COVER_KEEP_MS > Date.now() ? found : undefined;
     const failure = this.failures.get(key);
-    if (failure && Date.now() - failure.time < 30_000) {
-      if (retained && transientSourceFailure(failure.error)) return retained.url;
+    if (failure && Date.now() - failure.time < (transientSourceFailure(failure.error) ? 2_000 : 30_000)) {
+      if (retained && transientSourceFailure(failure.error)) {
+        this.pin(retained.url, signal);
+        return retained.url;
+      }
       throw failure.error;
     }
     this.failures.delete(key);
+    const waiters = this.waiters.get(key) ?? new Set<AbortSignal>();
+    waiters.add(signal);
+    this.waiters.set(key, waiters);
     let request = this.pending.get(key);
     if (!request) {
       const generation = this.lifetime;
@@ -50,6 +77,8 @@ export class SessionCoverCache {
         }
         this.trim(blob.size);
         const url = URL.createObjectURL(blob);
+        // Protect delivery before the next completed download can evict this URL.
+        for (const consumer of waiters) this.pin(url, consumer);
         this.entries.set(key, { url, bytes: blob.size, time: Date.now() });
         return url;
       })();
@@ -66,12 +95,14 @@ export class SessionCoverCache {
           if (this.pending.get(key) === request) {
             this.pending.delete(key);
             this.operations.delete(key);
+            this.waiters.delete(key);
           }
         })
         .catch(() => undefined);
     }
     if (retained) {
       void request.catch(() => undefined);
+      this.pin(retained.url, signal);
       return retained.url;
     }
     // Each consumer may leave independently; the shared bounded request can finish for other consumers.
@@ -86,7 +117,10 @@ export class SessionCoverCache {
         (url) => {
           cleanup();
           if (signal.aborted) reject(signal.reason);
-          else resolve(url);
+          else {
+            if (url) this.pin(url, signal);
+            resolve(url);
+          }
         },
         (error) => {
           cleanup();
@@ -98,6 +132,7 @@ export class SessionCoverCache {
   private trim(incoming: number) {
     let bytes = [...this.entries.values(), ...this.retired.values()].reduce((n, e) => n + e.bytes, 0);
     const visible = new Set(typeof document === 'undefined' ? [] : Array.from(document.images).map((img) => img.src));
+    for (const url of this.pins.keys()) visible.add(url);
     for (const [url, entry] of this.retired) {
       if (visible.has(url)) continue;
       URL.revokeObjectURL(url);
@@ -105,7 +140,7 @@ export class SessionCoverCache {
       bytes -= entry.bytes;
     }
     for (const [key, entry] of this.entries) {
-      if (this.entries.size < 200 && bytes + incoming <= 32 * 1024 * 1024) break;
+      if (this.entries.size < this.maxEntries && bytes + incoming <= this.maxBytes) break;
       if (visible.has(entry.url)) continue;
       URL.revokeObjectURL(entry.url);
       this.entries.delete(key);
@@ -119,6 +154,7 @@ export class SessionCoverCache {
         operation.abort();
         this.operations.delete(key);
         this.pending.delete(key);
+        this.waiters.delete(key);
       }
     for (const [key, entry] of this.entries) {
       if (!key.startsWith(prefix)) continue;
@@ -131,6 +167,10 @@ export class SessionCoverCache {
   clear() {
     this.lifetime.abort();
     this.lifetime = new AbortController();
+    for (const users of this.pins.values())
+      for (const [signal, release] of users) signal.removeEventListener('abort', release);
+    this.pins.clear();
+    this.waiters.clear();
     for (const entry of this.entries.values()) URL.revokeObjectURL(entry.url);
     for (const url of this.retired.keys()) URL.revokeObjectURL(url);
     this.retired.clear();

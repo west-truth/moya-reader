@@ -319,7 +319,7 @@ describe('LibraryScreen', () => {
 
     expect(markup).toContain('class="library-screen"');
     expect(markup).toContain('읽을 파일을 책장에 추가하세요');
-    expect(markup).toContain('RAR/CBR');
+    expect(markup).toContain('만화 압축 파일');
     expect(markup).toContain('샘플 추가');
     expect(markup).not.toContain('class="books-grid"');
     expect(markup).not.toContain('class="books-list"');
@@ -456,7 +456,7 @@ describe('LibraryScreen', () => {
     expect(markup).not.toContain('IMAGE ZIP');
   });
 
-  it.each(['grid', 'list'] as const)(
+  it.each(['grid', 'compact', 'list', 'text'] as const)(
     'opens %s item details and keeps the direct reading action separate',
     (viewMode) => {
       const reading = novel({
@@ -627,8 +627,8 @@ describe('LibraryScreen', () => {
     expect(markup).not.toContain('Ctrl K');
     expect(markup).toContain('aria-label="책장 필터"');
     expect(markup).toContain('aria-label="책장 정렬"');
-    expect(markup).toContain('role="group" aria-label="책장 보기 방식"');
-    expect(markup).toContain('aria-pressed="true"');
+    expect(markup).toContain('aria-label="라이브러리 보기 방식"');
+    expect(markup).toContain('value="grid" selected=""');
     expect(markup).toContain('aria-current="page"');
     expect(markup).toContain('role="progressbar" aria-label="접근성 작품 전체 작품 진행률"');
     expect(markup).toContain('aria-valuenow="34"');

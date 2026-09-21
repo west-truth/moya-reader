@@ -2,6 +2,7 @@ import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import {
   jsonText,
+  invocationJsonLimit,
   MAX_SOURCE_BYTES,
   PUBLIC_FAILURE_CODES,
   readFrames,
@@ -27,7 +28,7 @@ export async function runExtension(input) {
   if (typeof input?.source !== 'string' || Buffer.byteLength(input.source) > MAX_SOURCE_BYTES)
     throw new ExtensionRuntimeError('invalid_invocation');
   try {
-    jsonText(input.input ?? null);
+    jsonText(input.input ?? null, invocationJsonLimit(input.profile));
     return await admission.run(() => executeExtension(input), input.signal);
   } catch (error) {
     if (error instanceof ExtensionRuntimeError) throw error;
@@ -71,7 +72,7 @@ async function executeExtension({
   }
   let inputText;
   try {
-    inputText = jsonText(input);
+    inputText = jsonText(input, invocationJsonLimit(profile));
   } catch {
     throw new ExtensionRuntimeError('payload_limit');
   }
@@ -123,7 +124,7 @@ async function executeExtension({
         if (settled) return;
         if (frame?.type === 'result') {
           try {
-            jsonText(frame.value);
+            jsonText(frame.value, invocationJsonLimit(profile));
             finish(undefined, frame.value);
           } catch {
             finish('payload_limit');

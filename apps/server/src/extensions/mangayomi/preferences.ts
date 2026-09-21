@@ -68,7 +68,7 @@ export function validatePreferenceChanges(value: unknown): asserts value is Pref
 
 /** SharedPreferences also contains source-managed catalog caches, not just form values. */
 export function validatePreferenceState(value: unknown): asserts value is PreferenceValues {
-  validatePreferences(value, 256 * 1024, 2048, 'source_storage_limit');
+  validatePreferences(value, 2 * 1024 * 1024, 8192, 'source_storage_limit');
 }
 
 function validatePreferences(

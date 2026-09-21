@@ -1,3 +1,4 @@
+import { isCoverView } from '../../components/work-view';
 import { BookOpen, Check, Pencil, Play, RotateCcw, Star, Trash2 } from 'lucide-react';
 import { bookFormatLabel, isFixedDocumentFormat } from '../../domain/book-format';
 import { formatCount, formatProgress } from '../../utils/format';
@@ -6,7 +7,7 @@ import type { LibraryExternalWorkView, LibraryScreenProps } from './library-scre
 import { LibraryReadingProgress } from './LibraryReadingProgress';
 import { BookCover } from './BookCover';
 import { VirtualizedLibraryCollection } from './VirtualizedLibraryCollection';
-import { importTaskIsActive, type ImportTaskView } from '../import/import-task-projection';
+import { importTaskIsActive, importTaskLabel, type ImportTaskView } from '../import/import-task-projection';
 import { libraryBookPreviewHandlers } from './library-book-preview';
 import {
   LibraryImportTaskActions,
@@ -209,7 +210,12 @@ function ExternalWorkListRow({
   work,
   actions,
   importTask,
-}: Pick<LibraryScreenProps, 'actions'> & { work: LibraryExternalWorkView; importTask?: ImportTaskView }) {
+  showCover = true,
+}: Pick<LibraryScreenProps, 'actions'> & {
+  work: LibraryExternalWorkView;
+  importTask?: ImportTaskView;
+  showCover?: boolean;
+}) {
   return (
     <article className="book-list-row external-work-list-row" role="listitem">
       <button
@@ -218,10 +224,12 @@ function ExternalWorkListRow({
         aria-label={`${work.title} 원격 회차 열기`}
         onClick={() => void actions.books.openExternal(work.id)}
       />
-      <div className="book-cover-wrap">
-        <ExternalWorkCover work={work} thumbnail={false} />
-        {importTask && <LibraryImportTaskOverlay task={importTask} />}
-      </div>
+      {showCover && (
+        <div className="book-cover-wrap">
+          <ExternalWorkCover work={work} thumbnail={false} />
+          {importTask && <LibraryImportTaskOverlay task={importTask} />}
+        </div>
+      )}
       <div className="book-list-main">
         <div className="book-list-title">
           <h3>{work.title}</h3>
@@ -234,7 +242,7 @@ function ExternalWorkListRow({
       </div>
       <div className="book-list-progress">
         <strong>{work.newReleaseCount > 0 ? `새 회차 ${work.newReleaseCount}` : '최신'}</strong>
-        <span>Suwayomi 연결 작품</span>
+        <span>{importTask ? importTaskLabel(importTask) : '원격 작품'}</span>
       </div>
       {importTask?.phase === 'failed' ? (
         <LibraryImportTaskActions task={importTask} actions={actions} />
@@ -292,7 +300,9 @@ function LibraryBookCard(props: LibraryBookItemProps) {
           />
         )}
         <div className="card-row">
-          <strong>{trashed ? '휴지통' : formatProgress(book.bookProgress)}</strong>
+          <strong>
+            {importTask ? importTaskLabel(importTask) : trashed ? '휴지통' : formatProgress(book.bookProgress)}
+          </strong>
           <span>{book.lastReadLabel}</span>
           {importTask?.phase === 'failed' ? (
             <LibraryImportTaskActions task={importTask} actions={props.actions} />
@@ -328,17 +338,20 @@ function LibraryBookListRow(props: LibraryBookItemProps) {
             : `${book.novel.title} ${isFixedDocumentFormat(book.novel.format) ? '문서 열기' : '작품 상세 열기'}`
         }
       />
-      <div className="book-cover-wrap">
-        <BookCover novel={book.novel} className={classNames('book-cover thumb', book.coverClass)}>
-          {model.management.selectionMode && <SelectionMark selected={selected} />}
-          {!model.management.selectionMode && (
-            <span className="book-format-overlay">{bookFormatLabel(book.novel)}</span>
-          )}
-        </BookCover>
-        {importTask && <LibraryImportTaskOverlay task={importTask} compact />}
-      </div>
+      {model.viewMode !== 'text' && (
+        <div className="book-cover-wrap">
+          <BookCover novel={book.novel} className={classNames('book-cover thumb', book.coverClass)}>
+            {model.management.selectionMode && <SelectionMark selected={selected} />}
+            {!model.management.selectionMode && (
+              <span className="book-format-overlay">{bookFormatLabel(book.novel)}</span>
+            )}
+          </BookCover>
+          {importTask && <LibraryImportTaskOverlay task={importTask} compact />}
+        </div>
+      )}
       <div className="book-list-main">
         <div className="book-list-title">
+          {model.viewMode === 'text' && model.management.selectionMode && <SelectionMark selected={selected} />}
           <h3>{book.novel.title}</h3>
           {book.novel.favorite && <Star size={14} fill="currentColor" />}
         </div>
@@ -353,7 +366,9 @@ function LibraryBookListRow(props: LibraryBookItemProps) {
         )}
       </div>
       <div className="book-list-progress">
-        <strong>{trashed ? '휴지통' : formatProgress(book.bookProgress)}</strong>
+        <strong>
+          {importTask ? importTaskLabel(importTask) : trashed ? '휴지통' : formatProgress(book.bookProgress)}
+        </strong>
         <span>{book.lastReadLabel}</span>
       </div>
       {importTask?.phase === 'failed' ? (
@@ -366,7 +381,7 @@ function LibraryBookListRow(props: LibraryBookItemProps) {
 }
 
 export function LibraryBookCollection(props: LibraryScreenProps) {
-  const collectionClass = props.model.viewMode === 'grid' ? 'books-grid' : 'books-list';
+  const collectionClass = isCoverView(props.model.viewMode) ? 'books-grid' : 'books-list';
   const externalWorks = props.model.management.selectionMode ? [] : (props.model.externalSources.libraryWorks ?? []);
   const tasks = props.model.management.selectionMode
     ? []
@@ -406,14 +421,14 @@ export function LibraryBookCollection(props: LibraryScreenProps) {
     const renderItem = (index: number) => {
       const item = items[index];
       if (item.kind === 'task') {
-        return props.model.viewMode === 'grid' ? (
+        return isCoverView(props.model.viewMode) ? (
           <LibraryImportTaskCard key={item.key} task={item.task} actions={props.actions} />
         ) : (
           <LibraryImportTaskListRow key={item.key} task={item.task} actions={props.actions} />
         );
       }
       if (item.kind === 'external') {
-        return props.model.viewMode === 'grid' ? (
+        return isCoverView(props.model.viewMode) ? (
           <ExternalWorkCard
             key={item.key}
             work={item.work}
@@ -422,6 +437,7 @@ export function LibraryBookCollection(props: LibraryScreenProps) {
           />
         ) : (
           <ExternalWorkListRow
+            showCover={props.model.viewMode !== 'text'}
             key={item.key}
             work={item.work}
             actions={props.actions}
@@ -429,7 +445,7 @@ export function LibraryBookCollection(props: LibraryScreenProps) {
           />
         );
       }
-      return props.model.viewMode === 'grid' ? (
+      return isCoverView(props.model.viewMode) ? (
         <LibraryBookCard key={item.key} book={item.book} importTask={taskForBook(item.book.novel.id)} {...props} />
       ) : (
         <LibraryBookListRow key={item.key} book={item.book} importTask={taskForBook(item.book.novel.id)} {...props} />
@@ -442,8 +458,11 @@ export function LibraryBookCollection(props: LibraryScreenProps) {
             {props.model.management.selectedBookIds.size}권 선택됨
           </p>
         )}
-        <div className={props.model.viewMode === 'list' ? 'books-list library-virtual-list-shell' : undefined}>
-          {props.model.viewMode === 'list' && (
+        <div
+          data-view={props.model.viewMode}
+          className={!isCoverView(props.model.viewMode) ? 'books-list library-virtual-list-shell' : undefined}
+        >
+          {!isCoverView(props.model.viewMode) && (
             <div className="book-list-head">
               <span>작품</span>
               <span>전체 진행률</span>
@@ -474,8 +493,8 @@ export function LibraryBookCollection(props: LibraryScreenProps) {
           {props.model.management.selectedBookIds.size}권 선택됨
         </p>
       )}
-      <div className={collectionClass} role="list" aria-label="작품 목록">
-        {props.model.viewMode === 'list' && (
+      <div className={collectionClass} data-view={props.model.viewMode} role="list" aria-label="작품 목록">
+        {!isCoverView(props.model.viewMode) && (
           <div className="book-list-head" aria-hidden="true">
             <span>작품</span>
             <span>전체 진행률</span>
@@ -483,14 +502,14 @@ export function LibraryBookCollection(props: LibraryScreenProps) {
           </div>
         )}
         {standaloneTasks.map((task) =>
-          props.model.viewMode === 'grid' ? (
+          isCoverView(props.model.viewMode) ? (
             <LibraryImportTaskCard key={task.id} task={task} actions={props.actions} />
           ) : (
             <LibraryImportTaskListRow key={task.id} task={task} actions={props.actions} />
           ),
         )}
         {externalWorks.map((work) =>
-          props.model.viewMode === 'grid' ? (
+          isCoverView(props.model.viewMode) ? (
             <ExternalWorkCard
               key={work.id}
               work={work}
@@ -499,6 +518,7 @@ export function LibraryBookCollection(props: LibraryScreenProps) {
             />
           ) : (
             <ExternalWorkListRow
+              showCover={props.model.viewMode !== 'text'}
               key={work.id}
               work={work}
               actions={props.actions}
@@ -507,7 +527,7 @@ export function LibraryBookCollection(props: LibraryScreenProps) {
           ),
         )}
         {props.model.collection.visibleBooks.map((book) =>
-          props.model.viewMode === 'grid' ? (
+          isCoverView(props.model.viewMode) ? (
             <LibraryBookCard key={book.novel.id} book={book} importTask={taskForBook(book.novel.id)} {...props} />
           ) : (
             <LibraryBookListRow key={book.novel.id} book={book} importTask={taskForBook(book.novel.id)} {...props} />

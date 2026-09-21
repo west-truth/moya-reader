@@ -1,3 +1,4 @@
+import { isWorkView } from '../../components/work-view';
 import type { LibrarySort, LibraryViewMode } from './library-screen-model';
 
 const KEY = 'moya.library-view.v1';
@@ -21,9 +22,7 @@ export function readLibraryViewPreferences(): LibraryViewPreferences {
       preferences.librarySort === 'added'
         ? { librarySort: preferences.librarySort }
         : {}),
-      ...(preferences.libraryViewMode === 'grid' || preferences.libraryViewMode === 'list'
-        ? { libraryViewMode: preferences.libraryViewMode }
-        : {}),
+      ...(isWorkView(preferences.libraryViewMode) ? { libraryViewMode: preferences.libraryViewMode } : {}),
     };
   } catch {
     return {};

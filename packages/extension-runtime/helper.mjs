@@ -3,7 +3,7 @@ import releaseVariant from '@jitl/quickjs-wasmfile-release-sync';
 import { createCipheriv, createDecipheriv } from 'node:crypto';
 import {
   jsonText,
-  MAX_JSON_BYTES,
+  invocationJsonLimit,
   MAX_TEXT_RPC_BYTES,
   PUBLIC_FAILURE_CODES,
   readFrames,
@@ -170,12 +170,12 @@ async function invoke(frame) {
         }
         const text = context.getString(state.value);
         state.value.dispose();
-        if (Buffer.byteLength(text) > MAX_JSON_BYTES) {
+        if (Buffer.byteLength(text) > invocationJsonLimit(frame.profile)) {
           fail('payload_limit');
           return;
         }
         const value = JSON.parse(text);
-        jsonText(value);
+        jsonText(value, invocationJsonLimit(frame.profile));
         finished = true;
         sendFrame(process.stdout, { type: 'result', value });
         promise.dispose();

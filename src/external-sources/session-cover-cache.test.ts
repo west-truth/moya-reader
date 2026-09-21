@@ -33,14 +33,37 @@ describe('SessionCoverCache', () => {
     let id = 0;
     const revoke = vi.fn();
     vi.stubGlobal('URL', { createObjectURL: () => `blob:${++id}`, revokeObjectURL: revoke });
-    const cache = new SessionCoverCache();
+    const cache = new SessionCoverCache(64 * 1024 * 1024, 200);
     const load = async () => new Blob(['image'], { type: 'image/png' });
     const signal = new AbortController().signal;
     const first = await cache.resolve('0', load, signal);
     vi.stubGlobal('document', { images: [{ src: first }] });
-    for (let i = 1; i <= 200; i++) await cache.resolve(String(i), load, signal);
+    for (let i = 1; i <= 200; i++) {
+      const consumer = new AbortController();
+      await cache.resolve(String(i), load, consumer.signal);
+      consumer.abort();
+    }
     expect(revoke).not.toHaveBeenCalledWith(first);
     expect(revoke).toHaveBeenCalledWith('blob:2');
+    cache.clear();
+  });
+  it('protects concurrent delivery before DOM mounting, then evicts released consumers', async () => {
+    let id = 0;
+    const revoke = vi.fn();
+    vi.stubGlobal('URL', { createObjectURL: () => `blob:${++id}`, revokeObjectURL: revoke });
+    vi.stubGlobal('document', { images: [] });
+    const cache = new SessionCoverCache(8, 400);
+    const consumers = Array.from({ length: 4 }, () => new AbortController());
+    const load = async () => new Blob(['1234'], { type: 'image/jpeg' });
+    const urls = await Promise.all(consumers.map((consumer, i) => cache.resolve(String(i), load, consumer.signal)));
+    expect(revoke).not.toHaveBeenCalled();
+    consumers[0].abort();
+    consumers[1].abort();
+    await cache.resolve('extra', load, consumers[2].signal);
+    expect(revoke).toHaveBeenCalledWith(urls[0]);
+    expect(revoke).toHaveBeenCalledWith(urls[1]);
+    expect(revoke).not.toHaveBeenCalledWith(urls[2]);
+    expect(revoke).not.toHaveBeenCalledWith(urls[3]);
     cache.clear();
   });
   it('rejects stale in-flight data after clear without publishing an object URL', async () => {
