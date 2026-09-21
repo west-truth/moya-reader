@@ -9,7 +9,8 @@ import { assertUploadDiskSpace, UploadSpaceError } from '../services/upload-file
 import { localUploadLimit } from '../services/local-archive-policy.js';
 import { enqueueImportJob } from '../queue.js';
 import { pruneStaleUploadSessions, removeUploadDirectory, uploadDirectory } from '../services/upload-cleanup.js';
-import type { ChapterSplitMode, ImportExpectedBase } from '@noveldesk/contracts';
+import { isEncodingMode } from '@noveldesk/text-core/parser';
+import type { ChapterSplitMode, EncodingMode, ImportExpectedBase } from '@noveldesk/contracts';
 import { parseImportExpectedBase } from '../services/import-expected-base.js';
 import {
   nonNegativeInteger,
@@ -25,7 +26,7 @@ interface InitUploadBody {
   fileName?: string;
   sizeBytes?: number;
   contentType?: string;
-  encoding?: 'auto' | 'utf-8' | 'euc-kr';
+  encoding?: EncodingMode;
   chapterSplitMode?: ChapterSplitMode;
   clientHashHint?: string;
   sourceContentHash?: string;
@@ -169,6 +170,8 @@ export async function registerUploadRoutes(
 ): Promise<void> {
   app.post<{ Body: InitUploadBody }>('/api/uploads/init', async (request, reply) => {
     const body = request.body ?? {};
+    if (body.encoding !== undefined && !isEncodingMode(body.encoding))
+      return reply.code(400).send({ error: '지원하지 않는 텍스트 인코딩입니다.' });
     const sizeBytes = positiveInteger(body.sizeBytes);
     if (!body.fileName || !sizeBytes) {
       return reply.code(400).send({ error: 'fileName and positive sizeBytes are required' });

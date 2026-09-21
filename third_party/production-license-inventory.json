@@ -9,7 +9,7 @@
     "libc": "glibc"
   },
   "summary": {
-    "componentCount": 213,
+    "componentCount": 214,
     "byLicense": {
       "0BSD": 1,
       "Apache-2.0": 45,
@@ -18,7 +18,7 @@
       "BSD-3-Clause": 16,
       "ISC": 8,
       "LGPL-3.0-or-later": 1,
-      "MIT": 131,
+      "MIT": 132,
       "SEE LICENSE IN License.txt": 1
     }
   },
@@ -253,6 +253,13 @@
       "version": "0.32.0",
       "license": "MIT",
       "homepage": "https://github.com/justjake/quickjs-emscripten#readme"
+    },
+    {
+      "ecosystem": "npm",
+      "name": "@kayahr/text-encoding",
+      "version": "2.2.0",
+      "license": "MIT",
+      "homepage": "https://github.com/kayahr/text-encoding"
     },
     {
       "ecosystem": "npm",

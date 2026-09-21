@@ -1,6 +1,6 @@
 import { LOCAL_ARCHIVE_SERIES_TYPE } from '@noveldesk/document-series-core';
 import pg from 'pg';
-import type { Chapter, Paragraph, ParagraphPage, UserCorrection } from '@noveldesk/contracts';
+import type { EncodingMode, Chapter, Paragraph, ParagraphPage, UserCorrection } from '@noveldesk/contracts';
 import {
   applyChapterStructureCommands,
   chapterStructureViews,
@@ -36,7 +36,7 @@ interface HostedBookRow extends pg.QueryResultRow {
   active_character_graph_revision_id: string | null;
   object_id: string;
   source_file_name: string;
-  source_encoding: 'auto' | 'utf-8' | 'euc-kr' | null;
+  source_encoding: EncodingMode | null;
   normalized_text_hash: string;
   analysis_status: string;
   storage_key: string;

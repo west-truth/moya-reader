@@ -41,6 +41,32 @@ function appWithUploads(pool: pg.Pool, queue: Queue) {
 }
 
 describe('upload routes', () => {
+  it('stores an explicit legacy encoding and rejects unknown decoder labels before uploading', async () => {
+    const pool = { query: vi.fn(async () => ({ rows: [] })) } as unknown as pg.Pool;
+    const app = await appWithUploads(pool, { add: vi.fn() } as unknown as Queue);
+    try {
+      const response = await app.inject({
+        method: 'POST',
+        url: '/api/uploads/init',
+        payload: { fileName: 'japanese.txt', sizeBytes: 4, encoding: 'shift_jis' },
+      });
+      expect(response.statusCode).toBe(200);
+      expect(vi.mocked(pool.query).mock.calls[0]?.[1]?.[5]).toBe('shift_jis');
+      vi.mocked(pool.query).mockClear();
+      for (const encoding of ['unknown-encoding', 'constructor', {}, null]) {
+        const invalid = await app.inject({
+          method: 'POST',
+          url: '/api/uploads/init',
+          payload: { fileName: 'japanese.txt', sizeBytes: 4, encoding },
+        });
+        expect(invalid.statusCode).toBe(400);
+      }
+      expect(pool.query).not.toHaveBeenCalled();
+    } finally {
+      await app.close();
+    }
+  });
+
   it('rejects insufficient temporary space before creating an upload session', async () => {
     const space = vi
       .spyOn(uploadFile, 'assertUploadDiskSpace')

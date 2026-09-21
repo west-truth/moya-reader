@@ -65,6 +65,15 @@ describe('ImportDialog', () => {
     expect(markup).toMatch(/<label class="field-label" for="[^"]+">텍스트 화 분리 방식<\/label><select id="[^"]+"/);
   });
 
+  it('offers the extended encodings for text imports and keeps the selection', () => {
+    const markup = renderToStaticMarkup(<ImportDialog controller={controller({ encoding: 'shift_jis' })} />);
+    expect(markup).toContain('value="shift_jis" selected=""');
+    expect(markup).toContain('UTF-16 BE');
+    expect(markup).toContain('GB18030 / GBK');
+    expect(markup).toContain('Big5');
+    expect(markup).toContain('ISO-2022-JP');
+  });
+
   it('renders selected files, import progress, and resumable upload sessions', () => {
     const selectedFile = { name: '연재본.txt', size: 2048, lastModified: 1 } as File;
     const markup = renderToStaticMarkup(

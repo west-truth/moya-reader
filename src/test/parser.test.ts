@@ -7,7 +7,7 @@ import {
   parseNovelFileForImport,
   previewNovelChapterSplit,
 } from '../domain/parser';
-import type { Paragraph, ParsedNovelImportChapterSource } from '../domain/types';
+import type { EncodingMode, Paragraph, ParsedNovelImportChapterSource } from '../domain/types';
 
 function toBuffer(text: string): ArrayBuffer {
   return new TextEncoder().encode(text).buffer as ArrayBuffer;
@@ -658,5 +658,110 @@ The third body adds a title-bearing high-risk marker, proving the middle of the 
     } finally {
       vi.useRealTimers();
     }
+  });
+});
+
+describe('text encoding compatibility', () => {
+  // Fixed bytes generated with the named source encodings, not a mocked decoder.
+  it.each([
+    {
+      encoding: 'utf-8',
+      text: '한글 본문 😀',
+      bytes: [
+        0xed, 0x95, 0x9c, 0xea, 0xb8, 0x80, 0x20, 0xeb, 0xb3, 0xb8, 0xeb, 0xac, 0xb8, 0x20, 0xf0, 0x9f, 0x98, 0x80,
+      ],
+    },
+    {
+      encoding: 'euc-kr',
+      text: '똠방각하 한글',
+      bytes: [0x8c, 0x63, 0xb9, 0xe6, 0xb0, 0xa2, 0xc7, 0xcf, 0x20, 0xc7, 0xd1, 0xb1, 0xdb],
+    },
+    {
+      encoding: 'utf-16le',
+      text: '한글 본문 😀',
+      bytes: [0x5c, 0xd5, 0x0, 0xae, 0x20, 0x0, 0xf8, 0xbc, 0x38, 0xbb, 0x20, 0x0, 0x3d, 0xd8, 0x0, 0xde],
+    },
+    {
+      encoding: 'utf-16be',
+      text: '한글 본문 😀',
+      bytes: [0xd5, 0x5c, 0xae, 0x0, 0x0, 0x20, 0xbc, 0xf8, 0xbb, 0x38, 0x0, 0x20, 0xd8, 0x3d, 0xde, 0x0],
+    },
+    { encoding: 'shift_jis', text: '日本語 髙', bytes: [0x93, 0xfa, 0x96, 0x7b, 0x8c, 0xea, 0x20, 0xee, 0xe0] },
+    {
+      encoding: 'euc-jp',
+      text: '日本語 あいう',
+      bytes: [0xc6, 0xfc, 0xcb, 0xdc, 0xb8, 0xec, 0x20, 0xa4, 0xa2, 0xa4, 0xa4, 0xa4, 0xa6],
+    },
+    {
+      encoding: 'iso-2022-jp',
+      text: '日本語 あいう',
+      bytes: [
+        0x1b, 0x24, 0x42, 0x46, 0x7c, 0x4b, 0x5c, 0x38, 0x6c, 0x1b, 0x28, 0x42, 0x20, 0x1b, 0x24, 0x42, 0x24, 0x22,
+        0x24, 0x24, 0x24, 0x26, 0x1b, 0x28, 0x42,
+      ],
+    },
+    {
+      encoding: 'gb18030',
+      text: '中文小说 😀',
+      bytes: [0xd6, 0xd0, 0xce, 0xc4, 0xd0, 0xa1, 0xcb, 0xb5, 0x20, 0x94, 0x39, 0xfc, 0x36],
+    },
+    { encoding: 'big5', text: '中文小說', bytes: [0xa4, 0xa4, 0xa4, 0xe5, 0xa4, 0x70, 0xbb, 0xa1] },
+    {
+      encoding: 'windows-1252',
+      text: 'Café — déjà vu €',
+      bytes: [0x43, 0x61, 0x66, 0xe9, 0x20, 0x97, 0x20, 0x64, 0xe9, 0x6a, 0xe0, 0x20, 0x76, 0x75, 0x20, 0x80],
+    },
+    {
+      encoding: 'windows-1251',
+      text: 'Привет мир',
+      bytes: [0xcf, 0xf0, 0xe8, 0xe2, 0xe5, 0xf2, 0x20, 0xec, 0xe8, 0xf0],
+    },
+  ])('imports $encoding without changing text or source encoding', async ({ encoding, text, bytes }) => {
+    const parsed = await parseNovelFile('encoding.txt', bytesToBuffer(bytes), encoding as EncodingMode);
+    expect(parsed.novel.rawText).toBe(text);
+    expect(parsed.novel.sourceEncoding).toBe(encoding);
+    if (encoding === 'euc-kr') expect(decodeNovelTextWithEncoding(bytesToBuffer(bytes), 'auto').text).toBe(text);
+    const streamed = await parseNovelFileForImport('encoding.txt', bytesToBuffer(bytes), encoding as EncodingMode);
+    expect(streamed.novel.sourceEncoding).toBe(encoding);
+    expect((await collectImportParagraphs(streamed.consumeChapterParagraphs())).map((p) => p.text).join('\n')).toBe(
+      text,
+    );
+  });
+
+  it.each(['utf-16le', 'utf-16be'] as const)(
+    'detects %s with and without BOM and preserves paragraph identities',
+    async (encoding) => {
+      const text = '제 1화 시작\n\n한글 본문과 이모지 😀가 있습니다.';
+      const utf8 = await parseNovelFile('same.txt', toBuffer(text), 'auto');
+      const bytes: number[] = [];
+      for (let i = 0; i < text.length; i++) {
+        const code = text.charCodeAt(i);
+        bytes.push(...(encoding === 'utf-16le' ? [code & 255, code >>> 8] : [code >>> 8, code & 255]));
+      }
+      for (const prefix of [[], encoding === 'utf-16le' ? [0xff, 0xfe] : [0xfe, 0xff]]) {
+        const buffer = bytesToBuffer([...prefix, ...bytes]);
+        const parsed = await parseNovelFile('same.txt', buffer, 'auto');
+        expect(parsed.novel.rawText).toBe(text);
+        expect(parsed.novel.sourceEncoding).toBe(encoding);
+        expect(parsed.novel.normalizedTextHash).toBe(utf8.novel.normalizedTextHash);
+        expect(parsed.paragraphs.map((p) => p.id)).toEqual(utf8.paragraphs.map((p) => p.id));
+        expect((await previewNovelChapterSplit('same.txt', buffer, 'auto')).sourceEncoding).toBe(encoding);
+      }
+    },
+  );
+
+  it('handles a BOM-only UTF-16 file and does not guess an odd-length ASCII file as UTF-16', () => {
+    expect(decodeNovelTextWithEncoding(bytesToBuffer([0xfe, 0xff]), 'auto')).toEqual({
+      text: '',
+      encoding: 'utf-16be',
+    });
+    expect(decodeNovelTextWithEncoding(toBuffer('ASCII'), 'auto')).toEqual({ text: 'ASCII', encoding: 'utf-8' });
+  });
+
+  it.each([
+    [0xff, 0xfe, 0, 0],
+    [0, 0, 0xfe, 0xff],
+  ])('does not misread UTF-32 BOM %j as UTF-16', (...bytes) => {
+    expect(() => decodeNovelTextWithEncoding(bytesToBuffer(bytes), 'auto')).toThrow('UTF-32');
   });
 });

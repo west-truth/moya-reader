@@ -78,10 +78,17 @@
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
+    "@kayahr/text-encoding": "2.2.0",
     "@noble/hashes": "2.0.1"
   },
   "devDependencies": {
     "@noveldesk/contracts": "workspace:*",
     "typescript": "^5.6.3"
+  },
+  "imports": {
+    "#korean-decoder": {
+      "browser": "./parser/korean-decoder.browser.ts",
+      "default": "./parser/korean-decoder.ts"
+    }
   }
 }

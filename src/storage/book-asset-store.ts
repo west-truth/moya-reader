@@ -1,4 +1,5 @@
-import type { BookAssetMetadata, ParsedNovelImportAsset } from '../domain/types';
+import { decodeNovelTextWithEncoding, isEncodingMode } from '@noveldesk/text-core/parser';
+import type { EncodingMode, BookAssetMetadata, ParsedNovelImportAsset } from '../domain/types';
 import {
   type ApprovedEnrichmentCoverMutationReceipt,
   type ApprovedEnrichmentCoverRestoreInput,
@@ -831,8 +832,9 @@ function sourceMatches(expectedHash: string, bytes: ArrayBuffer, encoding?: stri
   if (version === 'v2-sha256-tagged') return integrityHash(bytes) === expectedHash;
   if (version === 'v1-sha256') return integrityHash(bytes).slice('sha256:'.length) === expectedHash;
   if (version !== 'v1-fnv32') return false;
-  const decoder = new TextDecoder(encoding === 'euc-kr' ? 'euc-kr' : 'utf-8');
-  return hashSync(decoder.decode(bytes)) === expectedHash;
+  return (
+    hashSync(decodeNovelTextWithEncoding(bytes, isEncodingMode(encoding) ? encoding : 'auto').text) === expectedHash
+  );
 }
 
 export async function reselectOriginalBookSource(
@@ -872,7 +874,7 @@ async function persistActiveBookSource(
     fileName: string;
     contentType: string;
     provenance: 'original' | 'canonical_reconstruction';
-    encoding: 'utf-8' | 'euc-kr' | 'auto';
+    encoding: EncodingMode;
   },
 ): Promise<BookAssetMetadata> {
   const now = new Date().toISOString();

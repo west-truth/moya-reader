@@ -101,7 +101,12 @@ for (const file of collectFiles(textCoreRoot)) {
       }
       continue;
     }
-    if (!specifier.startsWith('@noble/hashes/')) {
+    if (
+      !specifier.startsWith('@noble/hashes/') &&
+      !['#korean-decoder', '@kayahr/text-encoding/no-encodings', '@kayahr/text-encoding/encodings/euc-kr'].includes(
+        specifier,
+      )
+    ) {
       failures.push(`${path.relative(workspaceRoot, file)} imports unsupported runtime module ${specifier}`);
     }
   }
