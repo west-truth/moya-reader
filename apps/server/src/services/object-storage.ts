@@ -52,17 +52,20 @@ export async function putRawBookObject(
   client: S3Client,
   config: ServerConfig,
   key: string,
-  body: Buffer,
+  body: Buffer | Blob,
   contentType: string,
+  signal?: AbortSignal,
 ): Promise<void> {
   await ensureBucketForWrite(client, config.s3.bucket);
   await client.send(
     new PutObjectCommand({
       Bucket: config.s3.bucket,
       Key: key,
-      Body: body,
+      Body: body instanceof Blob ? Readable.fromWeb(body.stream() as never) : body,
+      ContentLength: body instanceof Blob ? body.size : body.length,
       ContentType: contentType,
     }),
+    { abortSignal: signal },
   );
 }
 

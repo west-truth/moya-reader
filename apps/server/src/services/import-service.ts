@@ -1,4 +1,3 @@
-import { readFile } from 'node:fs/promises';
 import { randomUUID } from 'node:crypto';
 import pg from 'pg';
 import { ServerConfig } from '../config.js';
@@ -30,7 +29,8 @@ import type {
 import { integrityHash, persistentId128 } from '@noveldesk/text-core/hash';
 import { paragraphPageId, parsedChapterId, parsedParagraphId } from '@noveldesk/text-core/identity/parser';
 import { validateUploadCompleteness } from './upload-validation.js';
-import { removeUploadDirectory } from './upload-cleanup.js';
+import { assembleUploadFile } from './upload-file.js';
+import { removeUploadDirectory, uploadDirectory } from './upload-cleanup.js';
 import {
   finalizeBookReplacement,
   prepareBookReplacement,
@@ -551,10 +551,7 @@ export async function replaceParsedBookContent(client: CommandQueryable, bookId:
   await client.query('delete from chapters where book_id = $1', [bookId]);
 }
 
-async function readUploadBuffer(
-  pool: pg.Pool,
-  uploadId: string,
-): Promise<{ session: UploadSessionRow; buffer: Buffer }> {
+async function readUploadFile(pool: pg.Pool, config: ServerConfig, uploadId: string, signal: AbortSignal) {
   const sessionResult = await pool.query<UploadSessionRow>('select * from upload_sessions where id = $1', [uploadId]);
   const session = sessionResult.rows[0];
   if (!session) throw new Error(`Upload session not found: ${uploadId}`);
@@ -577,25 +574,13 @@ async function readUploadBuffer(
     throw new Error(`Upload is incomplete: ${validation.error}`);
   }
 
-  const expectedBytes = Number(session.size_bytes);
-  const buffer = Buffer.allocUnsafe(expectedBytes);
-  let offset = 0;
-  for (const chunk of chunksResult.rows) {
-    const chunkBuffer = await readFile(chunk.storage_path);
-    const declaredSize = Number(chunk.size_bytes);
-    if (chunkBuffer.length !== declaredSize) {
-      throw new Error(
-        `Upload chunk ${chunk.chunk_index} size mismatch: expected ${declaredSize}, got ${chunkBuffer.length}`,
-      );
-    }
-    chunkBuffer.copy(buffer, offset);
-    offset += chunkBuffer.length;
-  }
-  if (offset !== expectedBytes) {
-    throw new Error(`Upload size mismatch: expected ${expectedBytes}, got ${offset}`);
-  }
-
-  return { session, buffer };
+  const file = await assembleUploadFile({
+    directory: uploadDirectory(config, uploadId),
+    expectedBytes: Number(session.size_bytes),
+    chunks: chunksResult.rows,
+    signal,
+  });
+  return { session, ...file };
 }
 
 export function arrayBufferFromBuffer(buffer: Buffer): ArrayBuffer {
@@ -743,20 +728,23 @@ export async function processImportJob(
   const uploadedObjectKeys: string[] = [];
   let importCommitted = false;
   let appendNoop = false;
+  let disposeUploadFile: (() => Promise<void>) | undefined;
   let appendLockClient: pg.PoolClient | undefined;
   let appendLockBookId: string | undefined;
   try {
     await assertImportExecutionActive(pool, jobId, attempt.executionId);
-    const { session, buffer: uploadBuffer } = await readUploadBuffer(pool, uploadId);
+    const upload = await readUploadFile(pool, config, uploadId, importAbort.signal);
+    disposeUploadFile = upload.dispose;
+    const { session } = upload;
+    let sourceBlob = upload.blob;
     const expectedBase = parseImportExpectedBase(session.expected_base);
     if (expectedBase && (!session.client_book_id || session.import_mode === 'append_image_series')) {
       throw new Error('invalid_import_expected_base');
     }
-    let buffer: Buffer | undefined = uploadBuffer;
-    const bytesRead = buffer.length;
+    const bytesRead = sourceBlob.size;
     const totalBytes = Number(session.size_bytes);
     measurements.counts.uploadBytes = bytesRead;
-    const uploadedSourceContentHash = integrityHash(buffer);
+    const uploadedSourceContentHash = upload.contentHash;
     if (session.source_content_hash && uploadedSourceContentHash !== session.source_content_hash) {
       throw new Error('Uploaded source bytes do not match sourceContentHash');
     }
@@ -800,9 +788,7 @@ export async function processImportJob(
           type: appendBase.content_type || 'application/vnd.comicbook+zip',
         }),
         existingSourceHash: appendBase.raw_text_hash,
-        delta: new Blob([arrayBufferFromBuffer(buffer)], {
-          type: session.content_type || 'application/vnd.comicbook+zip',
-        }),
+        delta: sourceBlob,
         deltaHash: uploadedSourceContentHash,
         bookId,
         signal: importAbort.signal,
@@ -858,7 +844,7 @@ export async function processImportJob(
         pageAssetIds: merged.pageAssetIds,
         signal: importAbort.signal,
       });
-      buffer = Buffer.from(await merged.source.arrayBuffer());
+      sourceBlob = merged.source;
       sourceContentHash = merged.sourceContentHash;
       canonicalContentType = COMIC_SOURCE_CONTENT_TYPE;
       await updateImportJobProgress(
@@ -888,15 +874,12 @@ export async function processImportJob(
     );
     await assertImportExecutionActive(pool, jobId, attempt.executionId);
     measurements.start('parse_archive');
-    let arrayBuffer: ArrayBuffer | undefined = arrayBufferFromBuffer(buffer);
     let parsed: ParsedNovelImport;
-    let sourceBlob = new Blob([arrayBuffer]);
     const comicPackage =
       !preparedComic && /\.(zip|cbz)$/i.test(canonicalFileName) ? await unpackComicSource(sourceBlob) : undefined;
     if (comicPackage) {
       sourceBlob = comicPackage.source;
-      buffer = Buffer.from(await sourceBlob.arrayBuffer());
-      sourceContentHash = integrityHash(buffer);
+      sourceContentHash = integrityHash(new Uint8Array(await sourceBlob.arrayBuffer()));
       canonicalContentType = COMIC_SOURCE_CONTENT_TYPE;
       preparedComic = await materializeComicSource({
         manifest: comicPackage.manifest,
@@ -917,19 +900,22 @@ export async function processImportJob(
         sourceContentHash,
       });
     } else if (/\.epub$/i.test(canonicalFileName)) {
-      parsed = materializeEpubImport(await parseEpub(new Blob([arrayBuffer], { type: 'application/epub+zip' })), {
+      parsed = materializeEpubImport(await parseEpub(sourceBlob), {
         fileName: canonicalFileName,
-        sourceBytes: new Uint8Array(arrayBuffer),
+        sourceBytes: new Uint8Array(await sourceBlob.arrayBuffer()),
         clientBookId: session.client_book_id ?? undefined,
       });
     } else if (/\.pdf$/i.test(canonicalFileName)) {
       parsed = await materializePdfImport({
         fileName: canonicalFileName,
-        sourceBytes: new Uint8Array(arrayBuffer),
+        sourceBytes: new Uint8Array(await sourceBlob.arrayBuffer()),
         clientBookId: session.client_book_id ?? undefined,
       });
     } else if (/\.(zip|cbz|rar|cbr|7z|cb7)$/i.test(canonicalFileName)) {
-      const document = await openImageArchiveStream(new Blob([arrayBuffer]), { fileName: canonicalFileName });
+      const document = await openImageArchiveStream(sourceBlob, {
+        fileName: canonicalFileName,
+        signal: importAbort.signal,
+      });
       parsed = materializeStreamingImageArchiveImport({
         fileName: canonicalFileName,
         sourceContentHash,
@@ -938,13 +924,12 @@ export async function processImportJob(
       });
     } else {
       parsed = rekeyParsedNovelImport(
-        await parseNovelFileForImport(canonicalFileName, arrayBuffer, session.encoding, {
+        await parseNovelFileForImport(canonicalFileName, await sourceBlob.arrayBuffer(), session.encoding, {
           chapterSplitMode: session.chapter_split_mode ?? 'auto',
         }),
         session.client_book_id,
       );
     }
-    arrayBuffer = undefined;
     measurements.counts.pageCount =
       parsed.novel.format === 'image_archive' || parsed.novel.format === 'pdf' ? parsed.chapters.length : 0;
     await updateImportJobProgress(
@@ -965,15 +950,14 @@ export async function processImportJob(
     const objectId = persistentId128('object', [rawHash]);
     const storageKey = `${session.user_id}/sources/${objectId}/${jobId}/${attempt.executionId ?? randomUUID()}/attempt-${attempt.attemptNumber}/${canonicalFileName}`;
     const s3Client = createS3Client(config);
-    const canonicalSizeBytes = buffer.length;
+    const canonicalSizeBytes = sourceBlob.size;
     measurements.counts.canonicalBytes = canonicalSizeBytes;
     measurements.start('write_source');
 
     await assertImportExecutionActive(pool, jobId, attempt.executionId);
     await reserveObjectDeletions(pool, [storageKey], 'import_source_staging');
-    await putRawBookObject(s3Client, config, storageKey, buffer, canonicalContentType);
+    await putRawBookObject(s3Client, config, storageKey, sourceBlob, canonicalContentType, importAbort.signal);
     uploadedObjectKeys.push(storageKey);
-    buffer = undefined;
     measurements.start('write_assets');
     const reusePage =
       incrementalImageSeriesAppend && appendLockClient
@@ -1126,7 +1110,6 @@ export async function processImportJob(
         );
       }
     }
-    arrayBuffer = undefined;
     await assertImportExecutionActive(pool, jobId, attempt.executionId);
 
     measurements.start('commit_database');
@@ -1503,6 +1486,7 @@ export async function processImportJob(
     throw error;
   } finally {
     clearInterval(heartbeat);
+    await disposeUploadFile?.().catch(() => undefined);
     measurements.finish(importCommitted ? (appendNoop ? 'noop' : 'committed') : 'not_committed');
     if (appendLockClient && appendLockBookId) {
       await unlockImageSeriesAppend(appendLockClient, appendLockBookId).catch(() => undefined);

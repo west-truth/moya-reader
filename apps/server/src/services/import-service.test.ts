@@ -1062,9 +1062,9 @@ describe('server import service', () => {
     const storedSource = vi.mocked(putRawBookObject).mock.calls.find((call) => String(call[2]).includes('/sources/'));
     expect(storedSource).toBeDefined();
     const mergedManifest = await readSeriesImageArchiveManifest(
-      new Blob([new Uint8Array(storedSource?.[3] ?? Buffer.alloc(0))], {
-        type: String(storedSource?.[4] ?? ''),
-      }),
+      storedSource?.[3] instanceof Blob
+        ? storedSource[3]
+        : new Blob([new Uint8Array(storedSource?.[3] ?? Buffer.alloc(0))]),
     );
     expect(mergedManifest?.chapters.map((chapter) => [chapter.remoteId, chapter.title])).toEqual([
       ['chapter:101', '1화 수정'],
@@ -1254,9 +1254,9 @@ describe('server import service', () => {
     const storedSource = vi.mocked(putRawBookObject).mock.calls.find((call) => String(call[2]).includes('/sources/'));
     expect(storedSource).toBeDefined();
     const mergedManifest = await readSeriesImageArchiveManifest(
-      new Blob([new Uint8Array(storedSource?.[3] ?? Buffer.alloc(0))], {
-        type: String(storedSource?.[4] ?? ''),
-      }),
+      storedSource?.[3] instanceof Blob
+        ? storedSource[3]
+        : new Blob([new Uint8Array(storedSource?.[3] ?? Buffer.alloc(0))]),
     );
     expect(mergedManifest?.chapters.map((chapter) => chapter.remoteId)).toEqual(['chapter:101', 'chapter:102']);
     expect(
