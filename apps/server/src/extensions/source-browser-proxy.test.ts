@@ -1,8 +1,73 @@
 import { createServer } from 'node:net';
-import { request } from 'node:http';
+import { request, createServer as createHttpServer } from 'node:http';
 import { once } from 'node:events';
 import { expect, it } from 'vitest';
 import { openSourceBrowserProxy } from './source-browser-proxy';
+
+it.each([
+  { purpose: undefined, megabytes: 40, complete: false },
+  { purpose: 'image-pages' as const, megabytes: 40, complete: true },
+  { purpose: 'image-pages' as const, megabytes: 289, complete: false },
+])('bounds actual browser traffic for $purpose at $megabytes MiB', async ({ purpose, megabytes, complete }) => {
+  const chunk = Buffer.alloc(1024 * 1024);
+  const upstream = createHttpServer((_request, response) => {
+    let sent = 0;
+    const pump = () => {
+      while (sent < megabytes && !response.destroyed) {
+        sent++;
+        if (!response.write(chunk)) {
+          response.once('drain', pump);
+          return;
+        }
+      }
+      response.end();
+    };
+    pump();
+  });
+  upstream.listen(0, '127.0.0.1');
+  await once(upstream, 'listening');
+  const origin = `http://127.0.0.1:${(upstream.address() as { port: number }).port}`;
+  const proxy = await openSourceBrowserProxy(
+    { key: 'limits', purpose, privateOrigins: [origin] },
+    AbortSignal.timeout(10000),
+  );
+  try {
+    let received = 0;
+    const finished = await new Promise<boolean>((resolve) => {
+      const endpoint = new URL(proxy.proxy.server);
+      const req = request(
+        {
+          hostname: endpoint.hostname,
+          port: endpoint.port,
+          path: origin + '/',
+          agent: false,
+          signal: AbortSignal.timeout(10000),
+          headers: {
+            'proxy-authorization':
+              'Basic ' + Buffer.from(proxy.proxy.username + ':' + proxy.proxy.password).toString('base64'),
+          },
+        },
+        (response) => {
+          response.on('data', (bytes) => {
+            received += bytes.length;
+          });
+          response.on('end', () => resolve(true));
+          response.on('error', () => resolve(false));
+        },
+      );
+      req.on('error', () => resolve(false));
+      req.end();
+    });
+    expect(finished).toBe(complete);
+    if (complete) expect(received).toBe(megabytes * chunk.length);
+    else expect(received).toBeLessThan(megabytes * chunk.length);
+    expect(proxy.failure).toBe(complete ? undefined : 'source_body_limit');
+  } finally {
+    proxy.close();
+    upstream.closeAllConnections();
+    await new Promise<void>((resolve) => upstream.close(() => resolve()));
+  }
+});
 
 it('keeps CONNECT bytes opaque, requires internal credentials, and denies ungranted loopback', async () => {
   const echo = createServer((socket) => socket.pipe(socket));

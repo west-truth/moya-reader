@@ -597,6 +597,7 @@ export class MangayomiExtensionHost {
               privateOrigins: options.privateOrigins,
               outboundProxy,
               browserMode: options.browserMode,
+              purpose: method === 'pages' ? 'image-pages' : undefined,
             },
             requestSignal,
           ),

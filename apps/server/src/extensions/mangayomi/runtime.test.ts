@@ -11,6 +11,26 @@ import { validateRepositoryIndex } from '../../../../../src/extensions/packages/
 
 import { fixtureRow, fixtureSource } from './test-fixture.js';
 describe('Mangayomi compatibility runtime', () => {
+  it('preserves a safe browser capacity error when the extension replaces its message', async () => {
+    await expect(
+      invokeMangayomi({
+        entry: parseMangayomiIndex([fixtureRow])[0],
+        source: `class DefaultExtension extends MProvider {
+        async getPageList(url) {
+          try { await evaluateJavascriptViaWebview(url,{},['document.title'],33); }
+          catch { throw new Error('maker-specific viewer failure'); }
+        }
+      }`,
+        action: 'pages',
+        params: { chapterUrl: 'https://site.example/chapter' },
+        signal: AbortSignal.timeout(5000),
+        webview: async (request) => {
+          expect(request.timeoutMs).toBe(63000);
+          throw new Error('source_body_limit');
+        },
+      }),
+    ).rejects.toThrow('source_body_limit');
+  });
   it('supports the direct WebView message bridge used by novel content and preserves its timeout and string result', async () => {
     const calls: { timeoutMs?: number }[] = [];
     const value = await invokeMangayomi({

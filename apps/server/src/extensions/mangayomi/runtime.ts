@@ -73,19 +73,40 @@ export async function invokeMangayomi(input: MangayomiInvocation, transport = co
             (typeof request.timeout !== 'number' || !Number.isFinite(request.timeout) || request.timeout <= 0))
         )
           throw new Error('invalid_source_invocation');
-        return await input.webview(
-          {
-            url: request.url,
-            headers: request.headers,
-            script: mangayomiWebViewScript(request.scripts as string[]),
-            waitUntil: 'load',
-            timeoutMs:
-              request.timeout === undefined
-                ? 25000
-                : Math.max(100, Math.min(90000, Math.round(Number(request.timeout) * 1000))),
-          },
-          signal,
-        );
+        const scriptTimeoutMs =
+          request.timeout === undefined
+            ? 25000
+            : Math.max(100, Math.min(90000, Math.round(Number(request.timeout) * 1000)));
+        try {
+          const result = await input.webview(
+            {
+              url: request.url,
+              headers: request.headers,
+              script: mangayomiWebViewScript(request.scripts as string[]),
+              waitUntil: 'load',
+              // A full chapter can spend time loading images before its collector script starts.
+              // Allow navigation overhead without consuming all of the maker's collection window.
+              timeoutMs: Math.min(90000, scriptTimeoutMs + (input.action === 'pages' ? 30000 : 0)),
+            },
+            signal,
+          );
+          lastTransportFailure = undefined;
+          return result;
+        } catch (error) {
+          if (
+            [
+              'source_body_limit',
+              'source_request_timeout',
+              'source_browser_unavailable',
+              'source_browser_failed',
+              'source_connection_failed',
+              'source_tls_failed',
+              'source_access_denied',
+            ].includes((error as Error).message)
+          )
+            lastTransportFailure = (error as Error).message;
+          throw error;
+        }
       },
       'compatibility.http': async (raw, signal) => {
         if (['preferences', 'metadata'].includes(input.action) || ++requests > 240)
