@@ -126,6 +126,29 @@ test('persisted work identities and chapter order feed the ordinary image contra
   await assert.rejects(invoke('getContent', { workId: work.id, releaseId: 'bad' }), /release_unavailable/);
   await assert.rejects(invoke('getWork', { workId: '../secret' }), /invalid_source_work/);
 });
+test('transforms covers once before caching, without touching downloaded chapter bytes', async (t) => {
+  const { catalog, invoke, calls } = await fixture(t);
+  let transforms = 0;
+  catalog.transformCover = async () => {
+    transforms++;
+    return { blob: new Blob(['thumbnail'], { type: 'image/webp' }), sha256: 'thumbnail-hash' };
+  };
+  const workId = (await invoke('listWorks')).result.items[0].id;
+  for (let i = 0; i < 2; i++) {
+    const cover = await invoke('getCover', { workId });
+    assert.equal(await cover.assets.get(cover.result.handle).text(), 'thumbnail');
+    assert.equal(cover.result.sha256, 'thumbnail-hash');
+  }
+  assert.equal(transforms, 1);
+  assert.equal(calls.filter((call) => call.method === 'cover').length, 1);
+  const releaseId = (await invoke('listReleases', { workId })).result.items[0].id;
+  const content = await invoke('getContent', { workId, releaseId });
+  assert.deepEqual(
+    new Uint8Array(await [...content.assets.values()][0].arrayBuffer()),
+    new Uint8Array([255, 216, 255, 217]),
+  );
+  assert.equal(transforms, 1);
+});
 test('original preferences use the current worker and reject stale replies', async (t) => {
   const { catalog, store, tools } = await fixture(t);
   let revision = 3,

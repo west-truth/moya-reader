@@ -11,6 +11,10 @@ export class ApkSourceCatalog implements InstalledSourceCatalogPort {
       sourceFile?: string;
       description?: string;
       pageConcurrency?: 1 | 2 | 3;
+      transformCover?: (
+        image: { blob: Blob; sha256: string },
+        signal: AbortSignal,
+      ) => Promise<{ blob: Blob; sha256: string }>;
     },
   );
   getSources: InstalledSourceCatalogPort['getSources'];

@@ -38,6 +38,7 @@
     "pdfjs-dist": "5.7.284",
     "pg": "^8.13.1",
     "playwright-core": "1.61.1",
+    "sharp": "0.34.5",
     "socks": "2.8.10",
     "tough-cookie": "6.0.0"
   },

@@ -18,6 +18,7 @@ const extraFilters = [
   'src/features/fixed-document/use-archive-page-images.test.tsx',
   'src/external-sources/source-cache-policy.test.ts',
   'src/external-sources/session-cover-cache.test.ts',
+  'apps/server/src/extensions/source-cover-thumbnail.test.ts',
   'src/external-sources/local-state.test.ts',
   'src/features/discovery',
   'src/features/external-sources/useExternalSourceController.pagination.test.tsx',

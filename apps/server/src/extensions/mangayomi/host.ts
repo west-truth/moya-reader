@@ -5,6 +5,7 @@ import {
   type SourceBrowserMode,
 } from '../source-browser-mode.js';
 import { createHash, randomUUID } from 'node:crypto';
+import { thumbnailCoverAsset } from '../source-cover-thumbnail.js';
 import { novelHtmlText } from './novel-content.js';
 import { mkdir, readFile, writeFile, rename } from 'node:fs/promises';
 import { join } from 'node:path';
@@ -116,6 +117,7 @@ export class MangayomiExtensionHost {
         sourceFile: 'source.js',
         description: 'Mangayomi JavaScript 소스',
         pageConcurrency: 3,
+        transformCover: thumbnailCoverAsset,
       },
     );
   }

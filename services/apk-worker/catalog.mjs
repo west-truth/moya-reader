@@ -38,6 +38,7 @@ export class ApkSourceCatalog {
       sourceFile = 'source.jar',
       description = '설치한 APK의 만화 페이지 소스',
       pageConcurrency = 1,
+      transformCover = async (image) => image,
     } = {},
   ) {
     this.store = store;
@@ -47,6 +48,7 @@ export class ApkSourceCatalog {
     this.sourceFile = sourceFile;
     this.description = description;
     this.pageConcurrency = pageConcurrency;
+    this.transformCover = transformCover;
   }
   setCacheOwner(owner) {
     this.#covers.setOwner(owner);
@@ -359,7 +361,11 @@ export class ApkSourceCatalog {
                   await this.#covers.resolve(
                     `${contributionId}:${generation(record)}:${hash(raw.cover)}`,
                     signal,
-                    async (sharedSignal) => imageAsset(await request('cover', { url: raw.cover }, sharedSignal)),
+                    async (sharedSignal) =>
+                      this.transformCover(
+                        imageAsset(await request('cover', { url: raw.cover }, sharedSignal)),
+                        sharedSignal,
+                      ),
                   ),
                 )
               : null;
