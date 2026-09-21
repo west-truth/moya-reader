@@ -24,3 +24,7 @@
 
 - [WHATWG Encoding Standard](https://encoding.spec.whatwg.org/) — 인코딩 이름·TextDecoder 및 한국어/일본어/중국어 디코딩 규약.
 - [@kayahr/text-encoding](https://github.com/kayahr/text-encoding) — 언어별 모듈만 등록하는 API. 전체 인코딩 일괄 가져오기 대신 `no-encodings`와 `encodings/euc-kr` 사용.
+
+## CI 배포 의존성 수정
+
+PR #59의 hosted-source 검사에서 `@kayahr/text-encoding`이 서버 운영 의존성에 없다는 오류가 발견됐다. 공유 패키지는 개발 의존성으로 번들링하지만 디코더는 외부 import로 남아, production-only 설치에서 빠지는 문제였다. 서버의 직접 운영 의존성에 동일 버전을 추가했다. 운영 번들 검사와 Docker와 동일한 `pnpm deploy --prod` 산출물에서 CP949 확장 한글 디코딩을 확인했다. 라이선스 구성은 기존 214개로 동일하다. 전체 단위 테스트는 반복하지 않았다.

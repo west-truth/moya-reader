@@ -126,6 +126,9 @@ importers:
       '@google/genai':
         specifier: ^2.10.0
         version: 2.10.0
+      '@kayahr/text-encoding':
+        specifier: 2.2.0
+        version: 2.2.0
       '@moya/extension-runtime':
         specifier: workspace:*
         version: link:../../packages/extension-runtime
