@@ -1,19 +1,13 @@
-export type SourceWorkLayout = 'cards' | 'covers' | 'list';
+import { readWorkView, saveWorkView, useWorkView, type WorkView } from '../../components/work-view';
+export type SourceWorkLayout = WorkView;
 const STORAGE_KEY = 'noveldesk.external-source-work-layout.v1';
 
 export function readSourceWorkLayout(): SourceWorkLayout {
-  try {
-    const value = localStorage.getItem(STORAGE_KEY);
-    return value === 'covers' || value === 'list' ? value : 'cards';
-  } catch {
-    return 'cards';
-  }
+  return readWorkView(STORAGE_KEY);
 }
-
 export function saveSourceWorkLayout(value: SourceWorkLayout): void {
-  try {
-    localStorage.setItem(STORAGE_KEY, value);
-  } catch {
-    // Presentation remains usable when browser storage is unavailable.
-  }
+  saveWorkView(STORAGE_KEY, value);
+}
+export function useSourceWorkLayout() {
+  return useWorkView(STORAGE_KEY);
 }

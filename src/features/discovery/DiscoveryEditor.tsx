@@ -236,20 +236,6 @@ export function DiscoveryEditor({
                   />
                   표시
                 </label>
-                <label>
-                  표시 밀도
-                  <select
-                    value={tab.density}
-                    onChange={(e) =>
-                      update((d) => {
-                        d.tabs[index]!.density = e.target.value as 'comfortable' | 'compact';
-                      })
-                    }
-                  >
-                    <option value="comfortable">여유롭게</option>
-                    <option value="compact">촘촘하게</option>
-                  </select>
-                </label>
               </div>
               {tab.sections.map((section, sectionIndex) => (
                 <div

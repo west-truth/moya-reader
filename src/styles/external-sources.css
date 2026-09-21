@@ -1215,52 +1215,54 @@
   color: var(--primary);
   background: color-mix(in srgb, var(--primary) 12%, transparent);
 }
-.source-hub-card-grid[data-layout='covers'] {
+.source-hub-card-grid:is([data-layout='grid'], [data-layout='compact']) {
   grid-template-columns: repeat(auto-fill, minmax(164px, 1fr));
 }
-.source-hub-card-grid[data-layout='covers'] .source-hub-card {
+.source-hub-card-grid:is([data-layout='grid'], [data-layout='compact']) .source-hub-card {
   display: flex;
   flex-direction: column;
   min-height: 0;
   gap: 12px;
   padding: 12px;
 }
-.source-hub-card-grid[data-layout='covers'] .source-hub-card-cover {
+.source-hub-card-grid:is([data-layout='grid'], [data-layout='compact']) .source-hub-card-cover {
   width: 100%;
   height: auto;
   aspect-ratio: 2 / 3;
   flex-shrink: 0;
 }
-.source-hub-card-grid[data-layout='covers'] .source-hub-card-copy {
+.source-hub-card-grid:is([data-layout='grid'], [data-layout='compact']) .source-hub-card-copy {
   flex: 1;
   gap: 4px;
 }
-.source-hub-card-grid[data-layout='covers'] .source-hub-card-actions {
+.source-hub-card-grid:is([data-layout='grid'], [data-layout='compact']) .source-hub-card-actions {
   padding-top: 10px;
 }
-.source-hub-card-grid[data-layout='list'] {
+.source-hub-card-grid:is([data-layout='list'], [data-layout='text']) {
   grid-template-columns: minmax(0, 1fr);
   gap: 8px;
 }
-.source-hub-card-grid[data-layout='list'] .source-hub-card {
+.source-hub-card-grid:is([data-layout='list'], [data-layout='text']) .source-hub-card {
   grid-template-columns: 52px minmax(0, 1fr);
   min-height: 98px;
   padding: 10px 12px;
   align-items: center;
 }
-.source-hub-card-grid[data-layout='list'] .source-hub-card-cover {
+.source-hub-card-grid:is([data-layout='list'], [data-layout='text']) .source-hub-card-cover {
   height: 78px;
 }
-.source-hub-card-grid[data-layout='list'] .source-hub-card-copy {
+.source-hub-card-grid:is([data-layout='list'], [data-layout='text']) .source-hub-card-copy {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
   align-items: center;
   column-gap: 12px;
 }
-.source-hub-card-grid[data-layout='list'] .source-hub-card-copy > :not(.source-hub-card-actions) {
+.source-hub-card-grid:is([data-layout='list'], [data-layout='text'])
+  .source-hub-card-copy
+  > :not(.source-hub-card-actions) {
   grid-column: 1;
 }
-.source-hub-card-grid[data-layout='list'] .source-hub-card-actions {
+.source-hub-card-grid:is([data-layout='list'], [data-layout='text']) .source-hub-card-actions {
   grid-column: 2;
   grid-row: 1 / span 5;
   margin: 0;
@@ -1269,19 +1271,19 @@
   .source-hub-layout-options button {
     min-height: 44px;
   }
-  .source-hub-card-grid[data-layout='covers'] {
+  .source-hub-card-grid:is([data-layout='grid'], [data-layout='compact']) {
     grid-template-columns: repeat(2, minmax(0, 1fr));
     gap: 10px;
   }
-  .source-hub-card-grid[data-layout='covers'] .source-hub-card {
+  .source-hub-card-grid:is([data-layout='grid'], [data-layout='compact']) .source-hub-card {
     padding: 9px;
   }
-  .source-hub-card-grid[data-layout='list'] .source-hub-card-actions button {
+  .source-hub-card-grid:is([data-layout='list'], [data-layout='text']) .source-hub-card-actions button {
     width: 44px;
     height: 44px;
     padding: 0;
   }
-  .source-hub-card-grid[data-layout='list'] .source-hub-card-actions button span {
+  .source-hub-card-grid:is([data-layout='list'], [data-layout='text']) .source-hub-card-actions button span {
     display: none;
   }
 }
@@ -1422,4 +1424,30 @@
 }
 .source-download-recovery-row button {
   flex-shrink: 0;
+}
+
+.source-hub-card-grid[data-layout='compact'] {
+  grid-template-columns: repeat(auto-fill, minmax(124px, 1fr));
+  gap: 12px;
+}
+.source-hub-card-grid[data-layout='compact'] .source-hub-card {
+  padding: 8px;
+}
+.source-hub-card-grid[data-layout='compact'] .source-hub-card-action {
+  min-width: 0;
+  width: 100%;
+  padding: 8px 4px;
+}
+.source-hub-card-grid[data-layout='text'] .source-hub-card {
+  grid-template-columns: minmax(0, 1fr);
+  min-height: 64px;
+}
+@media (max-width: 699px) {
+  .source-hub-card-grid[data-layout='compact'] {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 8px;
+  }
+  .source-hub-card-grid[data-layout='compact'] .source-hub-card-action span {
+    display: none;
+  }
 }

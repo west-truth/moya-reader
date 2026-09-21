@@ -1,3 +1,4 @@
+import { useSourceWorkLayout } from './source-work-layout';
 import { sourceCachePolicy, sourcePageTime, transientSourceFailure } from '../../external-sources/cache-policy';
 import { storedSourcePage, saveSourceCache } from '../../external-sources/cached-page';
 import { createHostedImageDownloadQueue } from '../../external-sources/series/hosted-image-download-queue';
@@ -455,6 +456,7 @@ function filterChanges(
 }
 
 export function useExternalSourceController(options: UseExternalSourceControllerOptions): ExternalSourceController {
+  const [workLayout] = useSourceWorkLayout();
   const optionsRef = useRef(options);
   optionsRef.current = options;
   const [open, setOpen] = useState(false);
@@ -559,9 +561,18 @@ export function useExternalSourceController(options: UseExternalSourceController
   const mountedRef = useRef(true);
   const openRef = useRef(open);
 
+  const contributions = useMemo(() => {
+    void options.extensionRevision;
+    void brokerRevision;
+    return options.registry.getExternalSources();
+  }, [brokerRevision, options.extensionRevision, options.registry]);
+  const hideListCovers =
+    workLayout === 'text' &&
+    contributions.some(({ descriptor }) => descriptor.id === activeSourceId && descriptor.kind === 'catalog');
+
   const coverTargets = JSON.stringify([
     ...(detail?.coverRef ? [detail.coverRef] : []),
-    ...rawItems.flatMap((item) => (item.coverRef ? [item.coverRef] : [])),
+    ...rawItems.flatMap((item) => (item.coverRef && !hideListCovers ? [item.coverRef] : [])),
   ]);
   useEffect(() => {
     if (!open) return;
@@ -604,12 +615,6 @@ export function useExternalSourceController(options: UseExternalSourceController
   useEffect(() => {
     openRef.current = open;
   }, [open]);
-
-  const contributions = useMemo(() => {
-    void options.extensionRevision;
-    void brokerRevision;
-    return options.registry.getExternalSources();
-  }, [brokerRevision, options.extensionRevision, options.registry]);
 
   const sources = useMemo<readonly ExternalSourceView[]>(
     () =>

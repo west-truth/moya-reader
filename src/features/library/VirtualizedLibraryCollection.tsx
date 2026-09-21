@@ -1,3 +1,4 @@
+import { isCoverView } from '../../components/work-view';
 import { defaultRangeExtractor, useVirtualizer } from '@tanstack/react-virtual';
 import { useCallback, useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react';
 import type { LibraryViewMode } from './library-screen-model';
@@ -23,13 +24,13 @@ export function VirtualizedLibraryCollection({
   const [focusedItem, setFocusedItem] = useState<number>();
   const focusedControl = useRef(0);
   const focusedRow = focusedItem === undefined ? undefined : Math.floor(focusedItem / layout.columns);
-  const className = viewMode === 'grid' ? 'books-grid' : 'books-list';
+  const className = isCoverView(viewMode) ? 'books-grid' : 'books-list';
   const getScrollElement = useCallback(() => rootRef.current?.closest<HTMLElement>('.library-main') ?? null, []);
   const rowCount = Math.ceil(count / layout.columns);
   const virtualizer = useVirtualizer({
     count: rowCount,
     getScrollElement,
-    estimateSize: () => (viewMode === 'list' ? 80 : layout.estimate),
+    estimateSize: () => (!isCoverView(viewMode) ? 80 : layout.estimate),
     getItemKey: (row) => itemKey(row * layout.columns),
     scrollMargin: layout.margin,
     gap: layout.gap,
@@ -54,8 +55,8 @@ export function VirtualizedLibraryCollection({
     const measure = () => {
       const style = getComputedStyle(root);
       const tracks = style.gridTemplateColumns.split(' ').filter(Boolean);
-      const columns = viewMode === 'grid' ? Math.max(1, tracks.length) : 1;
-      const gap = viewMode === 'grid' ? Number.parseFloat(style.rowGap) || 0 : 0;
+      const columns = isCoverView(viewMode) ? Math.max(1, tracks.length) : 1;
+      const gap = isCoverView(viewMode) ? Number.parseFloat(style.rowGap) || 0 : 0;
       const margin =
         root.getBoundingClientRect().top - scrollElement.getBoundingClientRect().top + scrollElement.scrollTop;
       const cardWidth = Number.parseFloat(tracks[0]) || 200;
@@ -113,6 +114,7 @@ export function VirtualizedLibraryCollection({
     <div
       ref={rootRef}
       className={`${className} library-virtual-collection`}
+      data-view={viewMode}
       role="list"
       aria-label="작품 목록"
       style={{ height: virtualizer.getTotalSize() }}
@@ -133,6 +135,7 @@ export function VirtualizedLibraryCollection({
           ref={virtualizer.measureElement}
           data-index={row.index}
           className={`${className} library-virtual-row`}
+          data-view={viewMode}
           role="presentation"
           style={{ transform: `translateY(${row.start - layout.margin}px)` }}
         >

@@ -1,3 +1,4 @@
+import { WorkViewControl } from '../../components/WorkViewControl';
 import { CollapsibleNavigation } from './CollapsibleNavigation';
 import '../discovery/discovery.css';
 import { BrandWordmark } from '../../shared/ui/BrandWordmark';
@@ -12,10 +13,8 @@ import {
   Folder,
   FolderCog,
   FolderPlus,
-  Grid2X2,
   Home,
   Library,
-  List,
   Menu,
   MoreVertical,
   Plus,
@@ -712,28 +711,11 @@ export function LibraryMobileHeader(props: LibraryScreenProps & { sourceMode?: L
             </button>
           ))}
           <strong>레이아웃</strong>
-          <div role="group" aria-label="모바일 보기 방식">
-            <button
-              type="button"
-              className={model.viewMode === 'grid' ? 'active' : ''}
-              onClick={() => {
-                actions.controls.setViewMode('grid');
-                setPanel(null);
-              }}
-            >
-              <Grid2X2 size={16} /> 표지
-            </button>
-            <button
-              type="button"
-              className={model.viewMode === 'list' ? 'active' : ''}
-              onClick={() => {
-                actions.controls.setViewMode('list');
-                setPanel(null);
-              }}
-            >
-              <List size={16} /> 목록
-            </button>
-          </div>
+          <WorkViewControl
+            value={model.viewMode}
+            onChange={actions.controls.setViewMode}
+            label="라이브러리 보기 방식"
+          />
         </section>
       )}
       {panel === 'more' && (

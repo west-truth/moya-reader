@@ -21,8 +21,10 @@ function RecentReadingBand({ model, actions }: LibraryScreenProps) {
   const book = model.collection.featuredBook;
   if (!book) return null;
   return (
-    <section className="recent-band" aria-label="최근 읽던 작품">
-      <BookCover novel={book.novel} className={classNames('book-cover', book.coverClass)} />
+    <section data-view={model.viewMode} className="recent-band" aria-label="최근 읽던 작품">
+      {model.viewMode !== 'text' && (
+        <BookCover novel={book.novel} className={classNames('book-cover', book.coverClass)} />
+      )}
       <div className="recent-copy">
         <span className="eyebrow">최근 읽던 작품</span>
         <h2>{book.novel.title}</h2>

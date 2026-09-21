@@ -1,3 +1,4 @@
+import type { WorkView } from '../../components/work-view';
 import { useEffect, useRef } from 'react';
 import { Search } from 'lucide-react';
 import type {
@@ -16,6 +17,7 @@ import type { DiscoverySection } from './discovery-config';
 import { useDiscoveryPages } from './useDiscoveryPages';
 
 export function DiscoverySourceView({
+  viewMode = 'grid',
   section,
   source,
   session,
@@ -25,6 +27,7 @@ export function DiscoverySourceView({
   controls = true,
   query = '',
 }: {
+  viewMode?: WorkView;
   section: DiscoverySection;
   source?: ExternalSourceView;
   session: DiscoverySession;
@@ -213,9 +216,10 @@ export function DiscoverySourceView({
         </div>
       )}
       {!data.hasPage && data.busy && <p role="status">작품을 불러오는 중…</p>}
-      <div className="discovery-grid" aria-busy={data.busy}>
+      <div className="discovery-grid" data-view={viewMode} aria-busy={data.busy}>
         {data.items.map((item) => (
           <DiscoveryCard
+            viewMode={viewMode}
             key={JSON.stringify(item.key)}
             item={item}
             session={session}

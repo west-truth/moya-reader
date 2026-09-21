@@ -1,3 +1,5 @@
+import { WorkViewControl } from '../../components/WorkViewControl';
+import { useWorkView } from '../../components/work-view';
 import { useDiscoveryScroll } from './useDiscoveryScroll';
 import { useRef, useState, useLayoutEffect } from 'react';
 import { Compass, RefreshCw, Search, SlidersHorizontal, Pin, X } from 'lucide-react';
@@ -32,6 +34,10 @@ export default function DiscoveryScreen({
   const [quickSource, setQuickSource] = useNavigationViewState<string | undefined>(
     `discovery-quick:${scope}`,
     undefined,
+  );
+  const [viewMode, setViewMode] = useWorkView(
+    `moya.discovery-view:${quickSource ?? tab?.id ?? 'home'}`,
+    tab?.density === 'compact' ? 'compact' : 'grid',
   );
   const [pinError, setPinError] = useState('');
   const [editing, setEditing] = useState(false);
@@ -118,6 +124,7 @@ export default function DiscoveryScreen({
               <h1>탐색</h1>
             </div>
             <div>
+              <WorkViewControl value={viewMode} onChange={setViewMode} label="탐색 보기 방식" />
               <button
                 type="button"
                 className="ghost-btn"
@@ -213,8 +220,9 @@ export default function DiscoveryScreen({
               </form>
             )}
             {dedicated ? (
-              <div className="discovery-sections" data-density={tab?.density} data-discovery-section={dedicated.id}>
+              <div className="discovery-sections" data-discovery-section={dedicated.id}>
                 <DiscoverySourceView
+                  viewMode={viewMode}
                   key={JSON.stringify([dedicated, session.key(dedicated.sourceId, {})])}
                   section={dedicated}
                   source={sources.sources.find((s) => s.id === dedicated.sourceId)}
@@ -243,7 +251,7 @@ export default function DiscoveryScreen({
                 </div>
               </div>
             ) : (
-              <div className="discovery-sections" data-density={tab?.density}>
+              <div className="discovery-sections">
                 {rows.map((section) => {
                   const source = sources.sources.find((s) => s.id === section.sourceId);
                   const key = JSON.stringify([
@@ -255,6 +263,7 @@ export default function DiscoveryScreen({
                   ]);
                   return (
                     <DiscoverySection
+                      viewMode={viewMode}
                       key={key}
                       section={section}
                       source={source}

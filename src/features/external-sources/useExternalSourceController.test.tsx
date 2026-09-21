@@ -441,6 +441,21 @@ async function createDocumentHarness(serialCount = 3) {
 }
 
 describe('text serial download task parity', () => {
+  it('skips catalogue cover resolution when the device uses text view', async () => {
+    vi.stubGlobal('localStorage', { getItem: () => 'text' });
+    const resolveCover = vi.fn(async () => 'blob:unused');
+    let harness: Awaited<ReturnType<typeof createHarness>> | undefined;
+    try {
+      harness = await createHarness({ downloadedContent: 'fixture', coverRef: true, resolveCover });
+      await act(async () => harness!.controller.show(SOURCE_ID));
+      expect(harness.controller.items.length).toBeGreaterThan(0);
+      expect(resolveCover).not.toHaveBeenCalled();
+    } finally {
+      if (harness) await act(async () => harness!.renderer.unmount());
+      vi.unstubAllGlobals();
+    }
+  });
+
   it('recovers only missing comic releases after restart and never opens the resumed work', async () => {
     await resetExternalSourceLocalStateForTests();
     const store = new ExternalSourceLocalStateStore();

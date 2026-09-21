@@ -1,4 +1,5 @@
-import { CheckSquare, Filter, Folder, FolderCog, Grid2X2, List, Trash2, X } from 'lucide-react';
+import { WorkViewControl } from '../../components/WorkViewControl';
+import { CheckSquare, Filter, Folder, FolderCog, Trash2, X } from 'lucide-react';
 import { formatCount } from '../../utils/format';
 import type { LibraryFilter } from './library-screen-model';
 import type { LibraryScreenProps } from './library-screen-contract';
@@ -72,26 +73,7 @@ export function LibraryControls({ model, actions }: LibraryScreenProps) {
             <option value="added">최근 추가 순</option>
           </select>
         </label>
-        <div className="library-view-control" role="group" aria-label="책장 보기 방식">
-          <button
-            type="button"
-            className={model.viewMode === 'list' ? 'active' : ''}
-            onClick={() => actions.controls.setViewMode('list')}
-            aria-label="목록 보기"
-            aria-pressed={model.viewMode === 'list'}
-          >
-            <List size={16} />
-          </button>
-          <button
-            type="button"
-            className={model.viewMode === 'grid' ? 'active' : ''}
-            onClick={() => actions.controls.setViewMode('grid')}
-            aria-label="표지 보기"
-            aria-pressed={model.viewMode === 'grid'}
-          >
-            <Grid2X2 size={16} />
-          </button>
-        </div>
+        <WorkViewControl value={model.viewMode} onChange={actions.controls.setViewMode} label="라이브러리 보기 방식" />
         {model.management.available && !model.management.selectionMode && (
           <button className="ghost-btn library-select-start" type="button" onClick={actions.controls.startSelection}>
             <CheckSquare size={16} /> 선택
