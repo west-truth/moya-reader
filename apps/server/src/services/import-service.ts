@@ -906,6 +906,9 @@ export async function processImportJob(
     );
     await assertImportExecutionActive(pool, jobId, attempt.executionId);
     measurements.start('parse_archive');
+    const s3Client = createS3Client(config);
+    const storedAssets: Array<Omit<ParsedNovelImportAsset, 'bytes'> & { byteLength: number; storageKey: string }> = [];
+    const shouldReportEpubAssets = createImportProgressUpdateThrottle();
     let parsed: ParsedNovelImport;
     const comicPackage =
       !preparedComic && /\.(zip|cbz)$/i.test(canonicalFileName) ? await unpackComicSource(sourceBlob) : undefined;
@@ -938,6 +941,32 @@ export async function processImportJob(
         clientBookId: session.client_book_id ?? undefined,
         signal: importAbort.signal,
         maxExpandedBytes: MAX_LOCAL_ARCHIVE_EXPANDED_BYTES,
+        onAsset: async (asset) => {
+          const key = `${session.user_id}/${asset.bookId}/staged/${jobId}/${attempt.executionId ?? 'legacy'}/attempt-${attempt.attemptNumber}/${asset.id}/${asset.fileName}`;
+          await assertImportExecutionActive(pool, jobId, attempt.executionId);
+          await reserveObjectDeletions(pool, [key], 'import_asset_staging');
+          await putRawBookObject(
+            s3Client,
+            config,
+            key,
+            Buffer.from(asset.bytes),
+            asset.contentType,
+            importAbort.signal,
+          );
+          uploadedObjectKeys.push(key);
+          const { bytes, ...metadata } = asset;
+          storedAssets.push({ ...metadata, byteLength: bytes.byteLength, storageKey: key });
+          if (shouldReportEpubAssets())
+            await updateImportJobProgress(
+              pool,
+              jobId,
+              {
+                stage: 'writing',
+                message: `이미지 저장 ${storedAssets.length.toLocaleString()}개`,
+              },
+              attempt.executionId,
+            );
+        },
       });
     } else if (/\.pdf$/i.test(canonicalFileName)) {
       parsed = await materializePdfImport({
@@ -984,7 +1013,6 @@ export async function processImportJob(
     const rawHash = parsed.novel.rawTextHash;
     const objectId = persistentId128('object', [rawHash]);
     const storageKey = `${session.user_id}/sources/${objectId}/${jobId}/${attempt.executionId ?? randomUUID()}/attempt-${attempt.attemptNumber}/${canonicalFileName}`;
-    const s3Client = createS3Client(config);
     const canonicalSizeBytes = sourceBlob.size;
     measurements.counts.canonicalBytes = canonicalSizeBytes;
     measurements.start('write_source');
@@ -1002,7 +1030,6 @@ export async function processImportJob(
             inspectStoredObject(s3Client, config, key),
           )
         : undefined;
-    const storedAssets: Array<Omit<ParsedNovelImportAsset, 'bytes'> & { byteLength: number; storageKey: string }> = [];
     if (comicPlan && appendLockClient) {
       const retained = await retainComicAssets({
         client: appendLockClient,

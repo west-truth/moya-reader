@@ -1,5 +1,3 @@
-import { bytesToHex } from '@noble/hashes/utils.js';
-import { sha256 } from '@noble/hashes/sha2.js';
 import {
   DOMParser,
   type Document as XmlDocument,
@@ -773,7 +771,12 @@ export async function parseEpub(blob: Blob): Promise<EpubDocument> {
 
 async function parseEpubDocument(
   blob: Blob,
-  options: { deferResources?: boolean; maxExpandedBytes?: number; signal?: AbortSignal } = {},
+  options: {
+    deferResources?: boolean;
+    maxExpandedBytes?: number;
+    signal?: AbortSignal;
+    onResource?: (resource: EpubResource, context: { normalizedTextHash: string; coverHref?: string }) => Promise<void>;
+  } = {},
 ): Promise<EpubDocument> {
   let reader: ZipReader<Blob> | undefined;
   try {
@@ -816,6 +819,7 @@ async function parseEpubDocument(
     const coverHref = coverBinding?.logicalHref ?? coverItem?.href;
     if (coverHref) referenced.add(coverHref);
     const resources: EpubResource[] = [];
+    const normalizedTextHash = epubNormalizedTextHash(sections);
     for (const href of referenced) {
       const recovered = imageRecovery?.byLogicalHref.get(href);
       const item = recovered?.item ?? [...manifest.values()].find((candidate) => candidate.href === href);
@@ -823,10 +827,10 @@ async function parseEpubDocument(
       options.signal?.throwIfAborted();
       const record = recovered?.entry ?? findEntry(entries, href);
       const bytes = await entryBytes(record);
+      const resource = { href, mediaType: item.mediaType, contentHash: integrityHash(bytes), bytes };
+      await options.onResource?.(resource, { normalizedTextHash, coverHref });
       resources.push({
-        href,
-        mediaType: item.mediaType,
-        contentHash: `sha256:${bytesToHex(sha256(bytes))}`,
+        ...resource,
         bytes: options.deferResources ? new Uint8Array(0) : bytes,
         ...(options.deferResources ? { archiveIndex: entries.ordered.indexOf(record) } : {}),
       });
@@ -858,14 +862,19 @@ export interface MaterializeEpubImportOptions {
   readonly now?: string;
 }
 
+function epubNormalizedTextHash(sections: readonly EpubSection[]): string {
+  return integrityHash(
+    sections
+      .map((section) => [section.title, ...section.blocks.map((block) => block.plainText)].filter(Boolean).join('\n\n'))
+      .join('\n\n\n'),
+  );
+}
+
 export function materializeEpubImport(
   document: EpubDocument,
   options: MaterializeEpubImportOptions,
 ): ParsedNovelImport {
-  const normalizedText = document.sections
-    .map((section) => [section.title, ...section.blocks.map((block) => block.plainText)].filter(Boolean).join('\n\n'))
-    .join('\n\n\n');
-  const normalizedTextHash = integrityHash(normalizedText);
+  const normalizedTextHash = epubNormalizedTextHash(document.sections);
   const sourceHash =
     options.sourceContentHash ?? (options.sourceBytes ? integrityHash(options.sourceBytes) : undefined);
   if (!sourceHash) throw new Error('EPUB source hash is required');
@@ -1002,18 +1011,46 @@ export function materializeEpubImport(
   };
 }
 
-/** Hash one image at a time, then reread it for storage. No book-sized image array is retained. */
+/** A storage sink consumes each image once; iterator callers retain the bounded two-pass path. */
 export async function materializeStreamingEpubImport(
   blob: Blob,
   options: Omit<MaterializeEpubImportOptions, 'sourceBytes'> & {
     sourceContentHash: string;
     maxExpandedBytes?: number;
     signal?: AbortSignal;
+    onAsset?: (asset: ParsedNovelImportAsset) => Promise<void>;
   },
 ): Promise<ParsedNovelImport> {
-  const document = await parseEpubDocument(blob, { ...options, deferResources: true });
+  const document = await parseEpubDocument(blob, {
+    ...options,
+    deferResources: true,
+    onResource: options.onAsset
+      ? async (resource, context) => {
+          const bookId = options.clientBookId?.trim() || parsedNovelId(options.fileName, context.normalizedTextHash);
+          const asset: ParsedNovelImportAsset = {
+            id: persistentId128('epub_resource', [bookId, resource.href, resource.contentHash]),
+            bookId,
+            kind: 'epub_resource',
+            provenance: 'epub_embedded',
+            fileName: fileNameFromHref(resource.href),
+            contentType: resource.mediaType,
+            contentHash: resource.contentHash,
+            bytes: resource.bytes,
+          };
+          await options.onAsset!(asset);
+          if (resource.href === context.coverHref) {
+            await options.onAsset!({
+              ...asset,
+              id: persistentId128('epub_cover', [bookId, resource.contentHash]),
+              kind: 'cover',
+            });
+          }
+        }
+      : undefined,
+  });
   const parsed = materializeEpubImport(document, options);
   const descriptors = parsed.embeddedAssets ?? [];
+  if (options.onAsset) return { ...parsed, embeddedAssets: undefined };
   let consumed = false;
   return {
     ...parsed,
