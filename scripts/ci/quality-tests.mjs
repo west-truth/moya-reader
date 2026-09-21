@@ -30,6 +30,7 @@ const extraFilters = [
   'src/external-sources/source-normalization.test.ts',
   'src/integration-settings',
   'src/features/book-workspace',
+  'src/features/library/LibraryScreen.test.tsx',
   'src/features/external-sources/SourceReleasePanel.test.tsx',
   'src/features/external-sources/complete-series-catalog.test.ts',
   'src/features/external-sources/series-catalog-pagination.test.ts',
