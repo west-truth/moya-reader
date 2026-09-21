@@ -286,10 +286,19 @@ Normal API requests remain limited to 32 MiB, while `/api/backups/*` accepts the
 disables nginx request buffering. Backup restore is not yet a streaming parser and can temporarily use substantial API
 memory; the default API limit is 2 GiB. Test a representative restore before relying on the backup.
 
-Hosted import still assembles the uploaded source for the parser, so `MAX_UPLOAD_BYTES=500 MiB` is a protocol ceiling,
-not a promise that every compressed 500 MiB archive fits in the default 3 GiB worker. Fixed-document page reads are
-streamed from object storage, but archive parsing and backup restore remain memory-sensitive. Do not raise the upload
-limit without a representative large-file gate and worker memory observation.
+Hosted standalone EPUB/ZIP/CBZ imports use attempt-owned temporary files, streaming original-object writes and bounded
+image batches. `MAX_ARCHIVE_UPLOAD_BYTES` defaults to 4 GiB (and cannot exceed 4 GiB); expanded archive contents are
+limited to 8 GiB. EPUB text remains limited to 128 MiB and individual entries to 32 MiB; comic pages to 64 MiB.
+`MAX_UPLOAD_BYTES` retains its 500 MiB default for other formats and episode append. Large Moya portable restore
+containers, RAR/7z/PDF and browser-only imports have not gained multi-gigabyte support.
+
+Keep `IMPORT_WORKER_CONCURRENCY=1` for large-file workloads. Allow temporary space for both uploaded chunks and the
+assembled file, in addition to permanent originals and extracted images in object storage. Assembly checks free space;
+a later disk/storage failure still fails the attempt without replacing existing Library content. Upload chunks remain
+available for retry until normal retention cleanup. No whole-body reverse-proxy increase is needed: uploads remain
+chunked. A worker process peak of about 281–286 MiB was observed for 1.06 GiB EPUB and 2.11 GiB CBZ fixtures under a
+1 GiB container limit; this is a measurement, not a bound for all books. See the
+[implementation plan and acceptance results](2026-09-22-large-local-import-plan.md).
 
 ## Verification and known limits
 

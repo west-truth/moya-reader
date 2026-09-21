@@ -5,6 +5,7 @@ import { FastifyInstance } from 'fastify';
 import { Queue } from 'bullmq';
 import pg from 'pg';
 import { ServerConfig } from '../config.js';
+import { localUploadLimit } from '../services/local-archive-policy.js';
 import { enqueueImportJob } from '../queue.js';
 import { pruneStaleUploadSessions, removeUploadDirectory, uploadDirectory } from '../services/upload-cleanup.js';
 import type { ChapterSplitMode, ImportExpectedBase } from '@noveldesk/contracts';
@@ -169,9 +170,10 @@ export async function registerUploadRoutes(
     if (!body.fileName || !sizeBytes) {
       return reply.code(400).send({ error: 'fileName and positive sizeBytes are required' });
     }
-    const uploadSizeError = validateUploadSize(sizeBytes, config.maxUploadBytes);
+    const maxUploadBytes = localUploadLimit(config, sanitizeFileName(body.fileName), body.importMode);
+    const uploadSizeError = validateUploadSize(sizeBytes, maxUploadBytes);
     if (uploadSizeError) {
-      return reply.code(413).send({ error: uploadSizeError, maxUploadBytes: config.maxUploadBytes });
+      return reply.code(413).send({ error: uploadSizeError, maxUploadBytes });
     }
     const totalChunks = body.totalChunks === undefined ? undefined : positiveInteger(body.totalChunks);
     if (body.totalChunks !== undefined && !totalChunks) {

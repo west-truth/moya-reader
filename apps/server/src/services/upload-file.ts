@@ -50,7 +50,7 @@ export async function assembleUploadFile(input: {
   } catch (error) {
     await dispose();
     if ((error as NodeJS.ErrnoException).code === 'ENOSPC')
-      throw new Error('가져오기 중 임시 저장공간이 부족해졌습니다.');
+      throw new Error('가져오기 중 임시 저장공간이 부족해졌습니다.', { cause: error });
     throw error;
   }
 }

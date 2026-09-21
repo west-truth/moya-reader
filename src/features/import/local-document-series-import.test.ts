@@ -220,3 +220,16 @@ describe('local document series import', () => {
     expect(parsed.chapters.map((chapter) => chapter.title)).toEqual(['제1화', '제2화']);
   });
 });
+
+it('leaves large EPUBs to individual server import without an eager preview', async () => {
+  const file = {
+    name: '소설 1권.epub',
+    size: 1024 ** 3,
+    arrayBuffer: () => {
+      throw new Error('whole-file read');
+    },
+  } as unknown as File;
+  expect(
+    await inspectLocalDocumentSeriesImport([file], [], { encoding: 'auto', chapterSplitMode: 'auto' }),
+  ).toBeUndefined();
+});

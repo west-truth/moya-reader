@@ -37,7 +37,7 @@ export function importFailureMessage(fileName: string, error: unknown): string {
       return `"${fileName}" 업로드 상태가 서버와 충돌했습니다. 파일을 다시 선택해 이어서 시도하세요.`;
     }
     if (error.status === 413) {
-      return `"${fileName}"이 서버 또는 reverse proxy의 크기 제한을 넘었습니다. MAX_UPLOAD_BYTES와 client_max_body_size를 확인하세요.`;
+      return `"${fileName}"이 서버의 업로드 용량 한도를 넘었습니다.`;
     }
     if (error.status === 429) {
       return `"${fileName}" 서버가 현재 바쁩니다. 잠시 후 다시 시도하세요.`;

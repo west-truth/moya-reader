@@ -35,6 +35,7 @@ export interface ServerConfig {
   dataDir: string;
   maxChunkBytes: number;
   maxUploadBytes: number;
+  maxArchiveUploadBytes?: number;
   staleUploadMaxAgeMs: number;
   runMigrationsOnStart: boolean;
   defaultUserId: string;
@@ -240,6 +241,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): ServerConfig {
     dataDir: path.resolve(env.SERVER_DATA_DIR ?? '.server-data'),
     maxChunkBytes: positiveIntegerFromEnv(env, 'MAX_CHUNK_BYTES', 16 * 1024 * 1024),
     maxUploadBytes: positiveIntegerFromEnv(env, 'MAX_UPLOAD_BYTES', 500 * 1024 * 1024),
+    maxArchiveUploadBytes: positiveIntegerFromEnv(env, 'MAX_ARCHIVE_UPLOAD_BYTES', 4 * 1024 ** 3),
     staleUploadMaxAgeMs: nonNegativeIntegerFromEnv(env, 'STALE_UPLOAD_MAX_AGE_MS', 7 * 24 * 60 * 60 * 1000),
     runMigrationsOnStart: boolFromEnv(env.RUN_MIGRATIONS_ON_START, true),
     defaultUserId: env.DEFAULT_USER_ID ?? 'user_dev',

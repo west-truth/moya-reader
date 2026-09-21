@@ -3,7 +3,7 @@ import pg from 'pg';
 import { ServerConfig } from '../config.js';
 import { createS3Client, getObjectBuffer, inspectStoredObject, putRawBookObject } from './object-storage.js';
 import { parseNovelFileForImport } from '@noveldesk/text-core/parser';
-import { materializeEpubImport, parseEpub } from '@noveldesk/epub-core';
+import { materializeStreamingEpubImport } from '@noveldesk/epub-core';
 import {
   hasDocumentSeriesManifest,
   materializeDocumentSeriesArchive,
@@ -29,6 +29,11 @@ import type {
 import { integrityHash, persistentId128 } from '@noveldesk/text-core/hash';
 import { paragraphPageId, parsedChapterId, parsedParagraphId } from '@noveldesk/text-core/identity/parser';
 import { validateUploadCompleteness } from './upload-validation.js';
+import {
+  assertLargeArchiveSupported,
+  localUploadLimit,
+  MAX_LOCAL_ARCHIVE_EXPANDED_BYTES,
+} from './local-archive-policy.js';
 import { assembleUploadFile } from './upload-file.js';
 import { removeUploadDirectory, uploadDirectory } from './upload-cleanup.js';
 import {
@@ -95,6 +100,7 @@ interface ImageSeriesAppendBaseRow {
   readonly storage_key: string;
   readonly content_type: string;
   readonly total_chapters: number | string;
+  readonly size_bytes?: number | string;
   readonly raw_text_hash: string;
 }
 
@@ -555,6 +561,8 @@ async function readUploadFile(pool: pg.Pool, config: ServerConfig, uploadId: str
   const sessionResult = await pool.query<UploadSessionRow>('select * from upload_sessions where id = $1', [uploadId]);
   const session = sessionResult.rows[0];
   if (!session) throw new Error(`Upload session not found: ${uploadId}`);
+  if (Number(session.size_bytes) > localUploadLimit(config, session.file_name, session.import_mode))
+    throw new Error('파일 크기가 이 형식의 서버 업로드 한도를 초과했습니다.');
 
   const chunksResult = await pool.query<UploadChunkRow>(
     'select chunk_index, size_bytes, storage_path from upload_chunks where upload_id = $1 order by chunk_index asc',
@@ -616,7 +624,7 @@ async function loadImageSeriesAppendBase(
 ): Promise<ImageSeriesAppendBaseRow> {
   const result = await queryable.query<ImageSeriesAppendBaseRow>(
     `select book.id, book.format, book.active_content_revision_id, book.source_file_name,
-            object.storage_key, object.content_type, object.raw_text_hash, book.total_chapters
+            object.storage_key, object.content_type, object.raw_text_hash, object.size_bytes, book.total_chapters
        from library_books book
        join book_objects object on object.id = book.object_id
       where book.id = $1 and book.user_id = $2 and book.deleted_at is null`,
@@ -737,6 +745,7 @@ export async function processImportJob(
     disposeUploadFile = upload.dispose;
     const { session } = upload;
     let sourceBlob = upload.blob;
+    await assertLargeArchiveSupported(sourceBlob, session.file_name, config.maxUploadBytes, importAbort.signal);
     const expectedBase = parseImportExpectedBase(session.expected_base);
     if (expectedBase && (!session.client_book_id || session.import_mode === 'append_image_series')) {
       throw new Error('invalid_import_expected_base');
@@ -772,6 +781,8 @@ export async function processImportJob(
       appendBaseContentRevisionId = appendBase.active_content_revision_id;
       appendNoopTotalChapters = Number(appendBase.total_chapters);
       const s3Client = createS3Client(config);
+      if (Number(appendBase.size_bytes ?? 0) > config.maxUploadBytes)
+        throw new Error('대용량 로컬 만화에 회차를 추가하는 기능은 아직 지원하지 않습니다.');
       const existingObject = await getObjectBuffer(s3Client, config, appendBase.storage_key);
       measurements.counts.baseBytes = existingObject.body.length;
       const existingAssets = await appendLockClient.query<{
@@ -900,10 +911,12 @@ export async function processImportJob(
         sourceContentHash,
       });
     } else if (/\.epub$/i.test(canonicalFileName)) {
-      parsed = materializeEpubImport(await parseEpub(sourceBlob), {
+      parsed = await materializeStreamingEpubImport(sourceBlob, {
         fileName: canonicalFileName,
-        sourceBytes: new Uint8Array(await sourceBlob.arrayBuffer()),
+        sourceContentHash,
         clientBookId: session.client_book_id ?? undefined,
+        signal: importAbort.signal,
+        maxExpandedBytes: MAX_LOCAL_ARCHIVE_EXPANDED_BYTES,
       });
     } else if (/\.pdf$/i.test(canonicalFileName)) {
       parsed = await materializePdfImport({
@@ -913,6 +926,7 @@ export async function processImportJob(
       });
     } else if (/\.(zip|cbz|rar|cbr|7z|cb7)$/i.test(canonicalFileName)) {
       const document = await openImageArchiveStream(sourceBlob, {
+        maxExpandedBytes: MAX_LOCAL_ARCHIVE_EXPANDED_BYTES,
         fileName: canonicalFileName,
         signal: importAbort.signal,
       });

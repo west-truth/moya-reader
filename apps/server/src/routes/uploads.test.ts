@@ -792,3 +792,31 @@ describe('upload routes', () => {
     await app.close();
   });
 });
+
+it('accepts a 4GiB EPUB chunk plan but rejects larger archives and large legacy formats at init', async () => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), 'moya-large-upload-init-'));
+  const app = Fastify();
+  const config = {
+    ...testConfig(),
+    dataDir: directory,
+    maxUploadBytes: 500 * 1024 ** 2,
+    maxArchiveUploadBytes: 4 * 1024 ** 3,
+    maxChunkBytes: 16 * 1024 ** 2,
+  };
+  const pool = { query: vi.fn(async () => ({ rows: [] })) } as unknown as pg.Pool;
+  await registerUploadRoutes(app, pool, config, { add: vi.fn() } as unknown as Queue);
+  try {
+    const init = (fileName: string, sizeBytes: number) =>
+      app.inject({
+        method: 'POST',
+        url: '/api/uploads/init',
+        payload: { fileName, sizeBytes, totalChunks: Math.ceil(sizeBytes / config.maxChunkBytes) },
+      });
+    expect((await init('book.epub', 4 * 1024 ** 3)).statusCode).toBe(200);
+    expect((await init('book.cbz', 4 * 1024 ** 3 + 1)).statusCode).toBe(413);
+    expect((await init('book.pdf', 1024 ** 3)).statusCode).toBe(413);
+  } finally {
+    await app.close();
+    await rm(directory, { recursive: true, force: true });
+  }
+});

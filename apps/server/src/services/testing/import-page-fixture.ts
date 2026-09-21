@@ -13,6 +13,28 @@ import { migrateDatabase } from '../../db/migrate.js';
 import { processImportJob } from '../import-service.js';
 import { createStructuredLogger } from '../../observability/logger.js';
 
+// Streaming PutObject bodies use the SDK's aws-chunked checksum envelope.
+// A real S3 server removes this transport framing before storing object bytes.
+function decodeAwsChunks(body: Buffer, decodedLength: number): Buffer {
+  const chunks: Buffer[] = [];
+  let offset = 0;
+  while (offset < body.length) {
+    const end = body.indexOf('\r\n', offset);
+    if (end < 0) throw new Error('Invalid aws-chunked header');
+    const size = Number.parseInt(body.toString('ascii', offset, end), 16);
+    if (!Number.isSafeInteger(size) || size < 0) throw new Error('Invalid aws-chunked size');
+    offset = end + 2;
+    if (size === 0) break; // Remaining bytes are checksum trailers.
+    if (offset + size + 2 > body.length || body.toString('ascii', offset + size, offset + size + 2) !== '\r\n')
+      throw new Error('Incomplete aws-chunked body');
+    chunks.push(body.subarray(offset, offset + size));
+    offset += size + 2;
+  }
+  const decoded = Buffer.concat(chunks);
+  if (decoded.length !== decodedLength) throw new Error('S3 decoded length mismatch');
+  return decoded;
+}
+
 // A real loopback HTTP transport for the production S3 SDK, not a MinIO performance model.
 export async function withImportPageFixture<T>(pool: pg.Pool, run: (fixture: ImportPageFixture) => Promise<T>) {
   await migrateDatabase(pool);
@@ -37,7 +59,10 @@ export async function withImportPageFixture<T>(pool: pg.Pool, run: (fixture: Imp
       if (request.method === 'PUT') {
         const chunks: Buffer[] = [];
         for await (const chunk of request) chunks.push(Buffer.from(chunk));
-        const bytes = Buffer.concat(chunks);
+        const body = Buffer.concat(chunks);
+        const bytes = String(request.headers['content-encoding']).includes('aws-chunked')
+          ? decodeAwsChunks(body, Number(request.headers['x-amz-decoded-content-length']))
+          : body;
         objects.set(key, { bytes, type: String(request.headers['content-type']) });
         puts.push({ key, bytes: bytes.length });
         await fixture.onPut?.(key);
