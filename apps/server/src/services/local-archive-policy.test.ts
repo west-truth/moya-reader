@@ -7,6 +7,7 @@ it('only raises standalone EPUB/ZIP/CBZ uploads, respects archive overrides and 
   for (const name of ['book.epub', 'book.CBZ', 'book.zip']) expect(localUploadLimit(config, name)).toBe(4 * 1024 ** 3);
   for (const name of ['book.pdf', 'book.rar', 'book.7z', 'book.txt'])
     expect(localUploadLimit(config, name)).toBe(config.maxUploadBytes);
+  expect(localUploadLimit(config, 'book.cbz', 'append_local_archive')).toBe(MAX_LOCAL_ARCHIVE_BYTES);
   expect(localUploadLimit(config, 'book.cbz', 'append_image_series')).toBe(config.maxUploadBytes);
   expect(localUploadLimit({ ...config, maxArchiveUploadBytes: 1024 }, 'book.epub')).toBe(1024);
   expect(localUploadLimit({ ...config, maxArchiveUploadBytes: 8 * 1024 ** 3 }, 'book.epub')).toBe(

@@ -30,7 +30,7 @@ interface InitUploadBody {
   clientHashHint?: string;
   sourceContentHash?: string;
   clientBookId?: string;
-  importMode?: 'replace_book' | 'append_image_series';
+  importMode?: 'replace_book' | 'append_image_series' | 'append_local_archive';
   baseActiveContentRevisionId?: string;
   expectedBase?: ImportExpectedBase;
   totalChunks?: number;
@@ -43,7 +43,7 @@ interface UploadSessionRow {
   content_type?: string;
   encoding?: string;
   chapter_split_mode?: ChapterSplitMode;
-  import_mode?: 'replace_book' | 'append_image_series';
+  import_mode?: 'replace_book' | 'append_image_series' | 'append_local_archive';
   base_active_content_revision_id?: string | null;
   expected_base?: ImportExpectedBase | null;
   status: string;
@@ -77,9 +77,11 @@ function validClientBookId(value: unknown): string | undefined {
   return /^[A-Za-z0-9:_-]{1,160}$/.test(trimmed) ? trimmed : undefined;
 }
 
-function validImportMode(value: unknown): 'replace_book' | 'append_image_series' | undefined {
+function validImportMode(value: unknown): 'replace_book' | 'append_image_series' | 'append_local_archive' | undefined {
   if (value === undefined) return 'replace_book';
-  return value === 'replace_book' || value === 'append_image_series' ? value : undefined;
+  return value === 'replace_book' || value === 'append_image_series' || value === 'append_local_archive'
+    ? value
+    : undefined;
 }
 
 function validChapterSplitMode(value: unknown): ChapterSplitMode | undefined {
@@ -209,6 +211,14 @@ export async function registerUploadRoutes(
     if (body.baseActiveContentRevisionId !== undefined && !baseActiveContentRevisionId) {
       return reply.code(400).send({ error: 'baseActiveContentRevisionId must be a safe identifier when provided' });
     }
+    if (
+      importMode === 'append_local_archive' &&
+      (!clientBookId ||
+        !sourceContentHash ||
+        !baseActiveContentRevisionId ||
+        !/\.(epub|zip|cbz)$/iu.test(body.fileName))
+    )
+      return reply.code(400).send({ error: '회차 추가에는 대상 작품과 EPUB 또는 ZIP·CBZ 원본이 필요합니다.' });
     if (importMode === 'append_image_series') {
       if (!clientBookId || !sourceContentHash || !baseActiveContentRevisionId) {
         return reply.code(400).send({

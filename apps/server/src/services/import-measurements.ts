@@ -5,6 +5,7 @@ type ImportPhase =
   | 'append_lock'
   | 'base_read_merge'
   | 'parse_archive'
+  | 'preserve_source_parts'
   | 'write_source'
   | 'write_assets'
   | 'commit_database'

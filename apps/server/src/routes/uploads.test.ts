@@ -830,14 +830,24 @@ it('accepts a 4GiB EPUB chunk plan but rejects larger archives and large legacy 
   const pool = { query: vi.fn(async () => ({ rows: [] })) } as unknown as pg.Pool;
   await registerUploadRoutes(app, pool, config, { add: vi.fn() } as unknown as Queue);
   try {
-    const init = (fileName: string, sizeBytes: number) =>
+    const init = (fileName: string, sizeBytes: number, extra: Record<string, unknown> = {}) =>
       app.inject({
         method: 'POST',
         url: '/api/uploads/init',
-        payload: { fileName, sizeBytes, totalChunks: Math.ceil(sizeBytes / config.maxChunkBytes) },
+        payload: { fileName, sizeBytes, totalChunks: Math.ceil(sizeBytes / config.maxChunkBytes), ...extra },
       });
     expect((await init('book.epub', 4 * 1024 ** 3)).statusCode).toBe(200);
     expect(space).toHaveBeenCalledWith(path.join(directory, 'uploads'), 8 * 1024 ** 3);
+    const append = {
+      importMode: 'append_local_archive',
+      clientBookId: 'book',
+      baseActiveContentRevisionId: 'revision',
+      sourceContentHash: `sha256:${'a'.repeat(64)}`,
+    };
+    expect((await init('volume.cbz', 4 * 1024 ** 3, append)).statusCode).toBe(200);
+    expect((await init('volume.epub', 1024, { ...append, baseActiveContentRevisionId: undefined })).statusCode).toBe(
+      400,
+    );
     expect((await init('book.cbz', 4 * 1024 ** 3 + 1)).statusCode).toBe(413);
     expect((await init('book.pdf', 1024 ** 3)).statusCode).toBe(413);
   } finally {

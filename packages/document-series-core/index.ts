@@ -1,3 +1,4 @@
+export { LOCAL_ARCHIVE_SERIES_TYPE, isLocalArchiveSeries, type LocalArchiveSeries } from './local-archive-series';
 import type {
   BookFormat,
   Chapter,

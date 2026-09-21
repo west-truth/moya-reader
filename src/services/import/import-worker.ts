@@ -15,7 +15,7 @@ interface StartMessage {
   chapterSplitMode?: ChapterSplitMode;
   clientBookId?: string;
   expectedBase?: import('./import-service').ImportExpectedBase;
-  importMode?: 'replace_book' | 'append_image_series';
+  importMode?: 'replace_book' | 'append_image_series' | 'append_local_archive';
   baseActiveContentRevisionId?: string;
   expectedSourceContentHash?: string;
   expectedNormalizedTextHash?: string;

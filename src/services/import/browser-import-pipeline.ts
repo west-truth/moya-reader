@@ -33,7 +33,7 @@ export interface BrowserImportPipelineInput {
   chapterSplitMode?: ChapterSplitMode;
   clientBookId?: string;
   expectedBase?: import('./import-service').ImportExpectedBase;
-  importMode?: 'replace_book' | 'append_image_series';
+  importMode?: 'replace_book' | 'append_image_series' | 'append_local_archive';
   baseActiveContentRevisionId?: string;
   expectedSourceContentHash?: string;
   expectedBaseActiveContentRevisionId?: string;
@@ -44,6 +44,10 @@ export interface BrowserImportPipelineInput {
   shouldCancel?: () => boolean;
   onProgress: (progress: ImportProgress) => void;
   yieldControl?: () => Promise<void>;
+}
+
+function assertBrowserImportMode(input: BrowserImportPipelineInput): void {
+  if (input.importMode === 'append_local_archive') throw new Error('대용량 회차 추가는 서버 연결이 필요합니다.');
 }
 
 function importAbortError(): Error {
@@ -274,6 +278,7 @@ async function decodeImportSource(input: BrowserImportPipelineInput) {
 }
 
 export async function runBrowserImportPipeline(input: BrowserImportPipelineInput): Promise<ImportResult> {
+  assertBrowserImportMode(input);
   const { bytesRead, decoded, rawTextHash } = await decodeImportSource(input);
   assertExpectedSourceContentHash(input, rawTextHash);
   input.buffer = new ArrayBuffer(0);
@@ -342,6 +347,7 @@ export async function runBrowserImportPipeline(input: BrowserImportPipelineInput
 }
 
 export async function runBrowserEpubImportPipeline(input: BrowserImportPipelineInput): Promise<ImportResult> {
+  assertBrowserImportMode(input);
   const bytes = new Uint8Array(input.buffer);
   await reportAndYield(
     input,
@@ -403,6 +409,7 @@ export async function runBrowserEpubImportPipeline(input: BrowserImportPipelineI
 }
 
 export async function runBrowserFixedDocumentImportPipeline(input: BrowserImportPipelineInput): Promise<ImportResult> {
+  assertBrowserImportMode(input);
   if (input.importMode === 'append_image_series')
     return withComicAppendLock(input.clientBookId ?? '', () => runBrowserImageSeriesAppendPipeline(input));
   const bytes = new Uint8Array(input.buffer);

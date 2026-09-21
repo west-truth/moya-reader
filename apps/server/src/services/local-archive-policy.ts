@@ -9,7 +9,7 @@ export function localUploadLimit(
   fileName: string,
   importMode = 'replace_book',
 ): number {
-  return importMode === 'replace_book' && /\.(epub|zip|cbz)$/i.test(fileName)
+  return ['replace_book', 'append_local_archive'].includes(importMode) && /\.(epub|zip|cbz)$/i.test(fileName)
     ? Math.min(config.maxArchiveUploadBytes ?? config.maxUploadBytes, MAX_LOCAL_ARCHIVE_BYTES)
     : config.maxUploadBytes;
 }

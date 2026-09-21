@@ -34,11 +34,14 @@ export function ImportDialog({ controller }: ImportDialogProps) {
   return (
     <Dialog
       open={controller.isOpen}
-      title="책 가져오기"
+      title={controller.seriesTargetLocked ? '회차 추가' : '책 가져오기'}
       onClose={controller.close}
       closeLabel="가져오기 닫기"
       className="import-dialog"
     >
+      {controller.appendTargetTitle && (
+        <p className="field-help">{controller.appendTargetTitle}에 순서대로 추가합니다.</p>
+      )}
       <input
         ref={fileInputRef}
         type="file"

@@ -1,3 +1,4 @@
+import { LOCAL_ARCHIVE_SERIES_TYPE } from '@noveldesk/document-series-core';
 import pg from 'pg';
 import type { Chapter, Paragraph, ParagraphPage, UserCorrection } from '@noveldesk/contracts';
 import {
@@ -123,6 +124,8 @@ async function loadHostedStructure(
   );
   const book = result.rows[0];
   if (!book?.active_content_revision_id) throw new Error('Book or active content revision was not found');
+  if (book.content_type === LOCAL_ARCHIVE_SERIES_TYPE)
+    throw new Error('합본의 본문 분할·병합은 아직 지원하지 않습니다.');
   const [chapterRows, pageRows, stored] = await Promise.all([
     queryable.query<Record<string, unknown>>('select * from chapters where book_id = $1 order by chapter_index', [
       bookId,

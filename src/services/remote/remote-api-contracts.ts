@@ -14,7 +14,7 @@ export interface RemoteUploadStatus {
   fileName?: string;
   sizeBytes: number;
   chapterSplitMode?: ChapterSplitMode;
-  importMode?: 'replace_book' | 'append_image_series';
+  importMode?: 'replace_book' | 'append_image_series' | 'append_local_archive';
   baseActiveContentRevisionId?: string;
   expectedBase?: import('@noveldesk/contracts').ImportExpectedBase;
   status: string;

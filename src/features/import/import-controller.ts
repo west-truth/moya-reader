@@ -118,6 +118,7 @@ export async function runImportBatch(
     });
 
     let controller: ImportController | undefined;
+    let stopAfterFailure = false;
     try {
       callbacks.onFileStarted?.(file);
       controller = input.importService.importFile(
@@ -127,7 +128,10 @@ export async function runImportBatch(
           chapterSplitMode: input.chapterSplitMode,
           clientBookId,
           importMode,
-          baseActiveContentRevisionId,
+          baseActiveContentRevisionId:
+            importMode === 'append_local_archive' && clientBookId
+              ? ((await input.getNovel(clientBookId))?.activeContentRevisionId ?? baseActiveContentRevisionId)
+              : baseActiveContentRevisionId,
           expectedSourceContentHash,
           archivePassword: input.importService.supportsArchivePassword ? input.archivePassword : undefined,
         },
@@ -149,6 +153,7 @@ export async function runImportBatch(
       }
       failed += 1;
       callbacks.onFileFailed(file, error);
+      stopAfterFailure = importMode === 'append_local_archive';
     } finally {
       if (controller) cancellation.release(controller);
     }
@@ -161,6 +166,7 @@ export async function runImportBatch(
       skipped: input.skipped,
       currentFileName: file.name,
     });
+    if (stopAfterFailure) break;
   }
 
   return { completed, failed, skipped: input.skipped, aborted, lastImportedNovel };

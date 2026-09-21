@@ -1,5 +1,6 @@
 import {
   CreateBucketCommand,
+  CopyObjectCommand,
   DeleteObjectCommand,
   GetObjectCommand,
   HeadBucketCommand,
@@ -196,4 +197,22 @@ function objectBodyToReadable(body: unknown): Readable {
   if (body instanceof Readable) return body;
   if (body instanceof Uint8Array) return Readable.from([body]);
   throw new TypeError('Stored object body is not a readable stream.');
+}
+
+/** First adoption retains the original under an attempt-owned key without downloading it into RAM. */
+export async function copyStoredObject(
+  client: S3Client,
+  config: ServerConfig,
+  sourceKey: string,
+  targetKey: string,
+  signal?: AbortSignal,
+): Promise<void> {
+  await client.send(
+    new CopyObjectCommand({
+      Bucket: config.s3.bucket,
+      Key: targetKey,
+      CopySource: [config.s3.bucket, ...sourceKey.split('/')].map(encodeURIComponent).join('/'),
+    }),
+    { abortSignal: signal },
+  );
 }

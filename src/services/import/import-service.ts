@@ -45,7 +45,7 @@ export interface ImportFileInput {
    * local and Hosted boundaries update a manifest of immutable comic originals
    * before their normal atomic activation path. Text/EPUB imports do not use this mode.
    */
-  importMode?: 'replace_book' | 'append_image_series';
+  importMode?: 'replace_book' | 'append_image_series' | 'append_local_archive';
   /**
    * Required with `append_image_series`. Supporting boundaries may merge new
    * sections over a newer base, but reject stale replacements of an existing section.
@@ -83,6 +83,7 @@ export interface ImportService {
   readonly supportsExpectedNormalizedTextHash?: boolean;
   readonly supportsExpectedSourceContentHash?: boolean;
   readonly supportsIncrementalImageSeriesAppend?: boolean;
+  readonly supportsLocalArchiveAppend?: boolean;
   importFile(input: ImportFileInput, onProgress: (progress: ImportProgress) => void): ImportController;
 }
 

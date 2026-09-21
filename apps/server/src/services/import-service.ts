@@ -1,7 +1,23 @@
+import { LOCAL_ARCHIVE_SERIES_TYPE } from '@noveldesk/document-series-core';
+import {
+  loadLocalAppendBase,
+  localAppendAlreadyPresent,
+  promoteLocalComicSection,
+  localSourceAsset,
+  localAppendSource,
+  offsetLocalAppend,
+  type LocalAppendBase,
+} from './local-archive-append.js';
 import { randomUUID } from 'node:crypto';
 import pg from 'pg';
 import { ServerConfig } from '../config.js';
-import { createS3Client, getObjectBuffer, inspectStoredObject, putRawBookObject } from './object-storage.js';
+import {
+  copyStoredObject,
+  createS3Client,
+  getObjectBuffer,
+  inspectStoredObject,
+  putRawBookObject,
+} from './object-storage.js';
 import { parseNovelFileForImport } from '@noveldesk/text-core/parser';
 import { materializeStreamingEpubImport } from '@noveldesk/epub-core';
 import {
@@ -87,7 +103,7 @@ interface UploadSessionRow {
   total_chunks: number | null;
   client_book_id?: string | null;
   source_content_hash?: string | null;
-  import_mode?: 'replace_book' | 'append_image_series';
+  import_mode?: 'replace_book' | 'append_image_series' | 'append_local_archive';
   base_active_content_revision_id?: string | null;
   expected_base?: import('@noveldesk/contracts').ImportExpectedBase | null;
 }
@@ -639,6 +655,7 @@ async function loadImageSeriesAppendBase(
   );
   const row = result.rows[0];
   if (!row) throw new Error('회차를 추가할 기존 만화 작품이나 원본을 찾지 못했습니다.');
+  if (row.content_type === LOCAL_ARCHIVE_SERIES_TYPE) throw new Error('이 합본은 원본 파일로 회차를 추가해 주세요.');
   if (row.format !== 'image_archive') throw new Error('만화 작품에만 회차 delta를 추가할 수 있습니다.');
   if (!row.active_content_revision_id) throw new Error('기존 만화 작품의 활성 본문 revision을 찾지 못했습니다.');
   return row;
@@ -767,7 +784,12 @@ export async function processImportJob(
     let sourceBlob = upload.blob;
     await assertLargeArchiveSupported(sourceBlob, session.file_name, config.maxUploadBytes, importAbort.signal);
     const expectedBase = parseImportExpectedBase(session.expected_base);
-    if (expectedBase && (!session.client_book_id || session.import_mode === 'append_image_series')) {
+    if (
+      expectedBase &&
+      (!session.client_book_id ||
+        session.import_mode === 'append_image_series' ||
+        session.import_mode === 'append_local_archive')
+    ) {
       throw new Error('invalid_import_expected_base');
     }
     const bytesRead = sourceBlob.size;
@@ -784,11 +806,48 @@ export async function processImportJob(
     let appendNoopTotalChapters = 0;
     const importMode = session.import_mode ?? 'replace_book';
     const incrementalImageSeriesAppend = importMode === 'append_image_series';
+    const localArchiveAppend = importMode === 'append_local_archive';
+    let localAppendBase: LocalAppendBase | undefined;
+    if (localArchiveAppend) {
+      const bookId = session.client_book_id;
+      if (!bookId) throw new Error('회차를 추가할 작품이 없습니다.');
+      appendLockBookId = bookId;
+      appendLockClient = await lockImageSeriesAppend(pool, bookId);
+      localAppendBase = await loadLocalAppendBase(appendLockClient, session.user_id, bookId, session.file_name);
+      appendBaseContentRevisionId = localAppendBase.active_content_revision_id;
+      if (localAppendAlreadyPresent(localAppendBase, uploadedSourceContentHash)) {
+        appendNoop = true;
+        await finalizeNoopImageSeriesAppend(appendLockClient, {
+          uploadId,
+          jobId,
+          bookId,
+          userId: session.user_id,
+          expectedContentRevisionId: appendBaseContentRevisionId,
+          bytesRead,
+          totalBytes,
+          totalChapters: Number(localAppendBase.total_chapters),
+          attempt,
+        });
+        importCommitted = true;
+        await removeUploadDirectory(config, uploadId);
+        return;
+      }
+      if (session.base_active_content_revision_id !== appendBaseContentRevisionId)
+        throw new Error('작품이 다른 작업에서 변경되었습니다. 목록을 갱신한 뒤 다시 추가해 주세요.');
+      if (
+        localAppendBase.assets.some(
+          (a) => a.kind === 'source_part' && a.fileName.normalize('NFKC') === session.file_name.normalize('NFKC'),
+        ) ||
+        (localAppendBase.content_type !== LOCAL_ARCHIVE_SERIES_TYPE &&
+          localAppendBase.source_file_name.normalize('NFKC') === session.file_name.normalize('NFKC'))
+      )
+        throw new Error('같은 이름의 다른 원본이 있습니다. 파일 이름을 구분한 뒤 추가해 주세요.');
+    }
     let comicPlan: ComicSourceAppendPlan | undefined;
     let preparedComic: ParsedNovelImport | undefined;
     const comicPagePartsToRead = new Map<string, Blob>();
     const comicPageIdsToRead = new Set<string>();
-    measurements.counts.incrementalAppend = incrementalImageSeriesAppend;
+    measurements.counts.incrementalAppend = incrementalImageSeriesAppend || localArchiveAppend;
     if (incrementalImageSeriesAppend) {
       const bookId = session.client_book_id?.trim();
       if (!bookId) throw new Error('회차 delta에 대상 만화 작품 ID가 없습니다.');
@@ -926,9 +985,12 @@ export async function processImportJob(
         signal: importAbort.signal,
       });
     }
+    if (localArchiveAppend && (preparedComic || comicPackage))
+      throw new Error('일반 EPUB 또는 ZIP·CBZ 원본을 선택해 주세요.');
     if (preparedComic) {
       parsed = preparedComic;
     } else if (/\.zip$/i.test(canonicalFileName) && (await hasDocumentSeriesManifest(sourceBlob))) {
+      if (localArchiveAppend) throw new Error('일반 EPUB 또는 ZIP·CBZ 원본을 선택해 주세요.');
       parsed = await materializeDocumentSeriesArchive(sourceBlob, {
         fileName: canonicalFileName,
         clientBookId: session.client_book_id ?? undefined,
@@ -942,6 +1004,7 @@ export async function processImportJob(
         signal: importAbort.signal,
         maxExpandedBytes: MAX_LOCAL_ARCHIVE_EXPANDED_BYTES,
         onAsset: async (asset) => {
+          if (localAppendBase?.assets.some((existing) => existing.id === asset.id)) return;
           const key = `${session.user_id}/${asset.bookId}/staged/${jobId}/${attempt.executionId ?? 'legacy'}/attempt-${attempt.attemptNumber}/${asset.id}/${asset.fileName}`;
           await assertImportExecutionActive(pool, jobId, attempt.executionId);
           await reserveObjectDeletions(pool, [key], 'import_asset_staging');
@@ -993,6 +1056,74 @@ export async function processImportJob(
         }),
         session.client_book_id,
       );
+    }
+    if (localAppendBase) {
+      measurements.start('preserve_source_parts');
+      if (parsed.novel.format !== localAppendBase.format) throw new Error('회차 형식이 기존 작품과 다릅니다.');
+      if (
+        parsed.novel.format === 'image_archive' &&
+        Number(localAppendBase.total_chapters) + parsed.chapters.length > 20_000
+      )
+        throw new Error('작품당 20,000페이지까지 추가할 수 있습니다.');
+      const original = sourceBlob;
+      const newIds = new Set(storedAssets.map((asset) => asset.id));
+      storedAssets.push(...localAppendBase.assets.filter((asset) => !newIds.has(asset.id)));
+      const reusedPages = localAppendBase.assets.filter(
+        (asset) => asset.kind === 'document_page' && !newIds.has(asset.id),
+      );
+      measurements.counts.reusedPages = reusedPages.length;
+      measurements.counts.reusedPageBytes = reusedPages.reduce((bytes, asset) => bytes + asset.byteLength, 0);
+      // Protect the first original from shared book_objects cleanup. Later appends never copy old parts.
+      if (
+        localAppendBase.content_type !== LOCAL_ARCHIVE_SERIES_TYPE &&
+        !localAppendBase.assets.some((a) => a.kind === 'source_part')
+      ) {
+        await updateImportJobProgress(pool, jobId, { message: '기존 원본 보관 중' }, attempt.executionId);
+        await assertImportExecutionActive(pool, jobId, attempt.executionId);
+        const part = localSourceAsset(
+          localAppendBase.id,
+          localAppendBase.raw_text_hash,
+          localAppendBase.source_file_name,
+          localAppendBase.content_type,
+          Number(localAppendBase.size_bytes),
+          0,
+        );
+        const key = `${session.user_id}/${part.bookId}/staged/${jobId}/${attempt.executionId ?? 'legacy'}/attempt-${attempt.attemptNumber}/${part.id}/original`;
+        await reserveObjectDeletions(pool, [key], 'import_source_part_staging');
+        await copyStoredObject(s3Client, config, localAppendBase.storage_key, key, importAbort.signal);
+        uploadedObjectKeys.push(key);
+        storedAssets.push({ ...part, storageKey: key });
+      }
+      await updateImportJobProgress(pool, jobId, { message: '새 회차 원본 저장 중' }, attempt.executionId);
+      await assertImportExecutionActive(pool, jobId, attempt.executionId);
+      const part = localSourceAsset(
+        localAppendBase.id,
+        uploadedSourceContentHash,
+        session.file_name,
+        canonicalContentType,
+        original.size,
+        Number(localAppendBase.chapter_index) + 1,
+      );
+      const key = `${session.user_id}/${part.bookId}/staged/${jobId}/${attempt.executionId ?? 'legacy'}/attempt-${attempt.attemptNumber}/${part.id}/original`;
+      await reserveObjectDeletions(pool, [key], 'import_source_part_staging');
+      await putRawBookObject(s3Client, config, key, original, canonicalContentType, importAbort.signal);
+      uploadedObjectKeys.push(key);
+      storedAssets.push({ ...part, storageKey: key });
+      const source = localAppendSource(localAppendBase, storedAssets);
+      parsed = offsetLocalAppend(
+        parsed,
+        localAppendBase,
+        uploadedSourceContentHash,
+        session.file_name.replace(/\.(epub|zip|cbz)$/iu, ''),
+      );
+      sourceBlob = source.blob;
+      sourceContentHash = source.hash;
+      canonicalContentType = LOCAL_ARCHIVE_SERIES_TYPE;
+      canonicalFileName = 'moya-local-series.json';
+      parsed.novel.rawTextHash = source.hash;
+      parsed.novel.sourceContentHash = source.hash;
+      parsed.novel.sourceFileName = canonicalFileName;
+      parsed.novel.sourceContentType = canonicalContentType;
     }
     measurements.counts.pageCount =
       parsed.novel.format === 'image_archive' || parsed.novel.format === 'pdf' ? parsed.chapters.length : 0;
@@ -1242,14 +1373,14 @@ export async function processImportJob(
                 total_characters = excluded.total_characters,
                 total_paragraphs = excluded.total_paragraphs,
                 cover_seed = case
-                  when $19::text = 'append_image_series' then library_books.cover_seed
+                  when $19::text in ('append_image_series','append_local_archive') then library_books.cover_seed
                   else excluded.cover_seed
                 end,
                 document_section_count = excluded.document_section_count,
                 deleted_at = null,
                 deleted_by_device_id = null,
                 metadata_revision = case
-                  when $19::text = 'append_image_series' then library_books.metadata_revision
+                  when $19::text in ('append_image_series','append_local_archive') then library_books.metadata_revision
                   else library_books.metadata_revision + 1
                 end,
                 updated_at = excluded.updated_at
@@ -1301,7 +1432,7 @@ export async function processImportJob(
         [parsed.novel.id, session.user_id],
       );
       const preserveExistingCover =
-        (incrementalImageSeriesAppend && Boolean(activeCover.rows[0]?.id)) ||
+        ((incrementalImageSeriesAppend || localArchiveAppend) && Boolean(activeCover.rows[0]?.id)) ||
         activeCover.rows[0]?.provenance === 'user_supplied' ||
         activeCover.rows[0]?.provenance === 'approved_enrichment';
       const removedAssets = await client.query<{ storage_key: string }>(
@@ -1392,7 +1523,9 @@ export async function processImportJob(
           [cover.id, parsed.novel.id, session.user_id],
         );
       }
-      await replaceParsedBookContent(client, parsed.novel.id);
+      if (!localArchiveAppend) await replaceParsedBookContent(client, parsed.novel.id);
+      if (localAppendBase?.format === 'image_archive')
+        await promoteLocalComicSection(client, localAppendBase, session.user_id);
       for (const chapterBatch of chunked(parsed.chapters, SERVER_IMPORT_CHAPTER_BATCH_SIZE)) {
         await insertChapterBatch(client, chapterBatch);
       }
@@ -1417,7 +1550,8 @@ export async function processImportJob(
       }
       if (
         replacement &&
-        ((parsed.novel.format === 'image_archive' && parsed.novel.documentSectionCount) ||
+        (localArchiveAppend ||
+          (parsed.novel.format === 'image_archive' && parsed.novel.documentSectionCount) ||
           isRemoteDocumentSeriesImport(parsed))
       ) {
         await restoreExactAnchoredReaderState(client, replacement);

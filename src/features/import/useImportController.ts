@@ -109,6 +109,19 @@ function filesMatchAppendTarget(files: readonly File[], novel: Novel): boolean {
   return false;
 }
 
+function canAppendHostedArchive(service: ImportService, target: Novel | undefined, files: readonly File[]): boolean {
+  return Boolean(
+    service.supportsLocalArchiveAppend &&
+    target?.activeContentRevisionId &&
+    files.length &&
+    files.every((file) =>
+      target.format === 'epub'
+        ? /\.epub$/iu.test(file.name)
+        : target.format === 'image_archive' && /\.(zip|cbz)$/iu.test(file.name),
+    ),
+  );
+}
+
 interface PreparedImportDraft {
   readonly generation: number;
   readonly files: readonly File[];
@@ -130,6 +143,7 @@ export interface ImportFeatureController {
   documentSeriesPlan?: LocalDocumentSeriesPlan;
   seriesTargetNovelId?: string;
   seriesTargetLocked: boolean;
+  appendTargetTitle?: string;
   seriesError?: string;
   encoding: EncodingMode;
   chapterSplitMode: ChapterSplitMode;
@@ -311,6 +325,8 @@ export function useImportController(options: UseImportControllerOptions): Import
         optionsRef.current.notify('기존 작품과 같은 형식의 회차 파일을 선택해 주세요.', 'warning');
         return;
       }
+      if (canAppendHostedArchive(optionsRef.current.importService, explicitTarget, supportedFiles))
+        supportedFiles.sort((a, b) => a.name.localeCompare(b.name, 'ko', { numeric: true }));
       clearDraft();
       if (!explicitSeriesTargetRef.current) setSeriesTargetNovelId(undefined);
       setPendingFiles(supportedFiles);
@@ -328,6 +344,15 @@ export function useImportController(options: UseImportControllerOptions): Import
     setSeriesBusy(true);
     setSeriesError(undefined);
     const inspection = (async () => {
+      if (canAppendHostedArchive(optionsRef.current.importService, explicitSeriesTargetRef.current, pendingFiles)) {
+        preparedDraftRef.current = { generation, files: pendingFiles, conflicts: [] };
+        setDuplicateConflicts([]);
+        setSeriesInspection(undefined);
+        setSeriesPlan(undefined);
+        setDocumentSeriesInspection(undefined);
+        setDocumentSeriesPlan(undefined);
+        return;
+      }
       const novels = await optionsRef.current.listNovels();
       let localSeriesError: string | undefined;
       let localDocumentSeriesError: string | undefined;
@@ -456,7 +481,15 @@ export function useImportController(options: UseImportControllerOptions): Import
       queuedDocumentSeriesPlanRef.current = undefined;
       let resolution = queuedResolutionRef.current;
       queuedResolutionRef.current = undefined;
-      if (!resolution && !queuedSeriesPlan && !queuedDocumentSeriesPlan) {
+      const hostedAppendTarget = canAppendHostedArchive(
+        optionsRef.current.importService,
+        explicitSeriesTargetRef.current,
+        supportedFiles,
+      )
+        ? explicitSeriesTargetRef.current
+        : undefined;
+      if (hostedAppendTarget) supportedFiles.sort((a, b) => a.name.localeCompare(b.name, 'ko', { numeric: true }));
+      if (!resolution && !queuedSeriesPlan && !queuedDocumentSeriesPlan && !hostedAppendTarget) {
         const novels = await optionsRef.current.listNovels();
         const localSeries = await inspectLocalSeriesImport(supportedFiles, novels, {
           password: archivePassword || undefined,
@@ -482,7 +515,7 @@ export function useImportController(options: UseImportControllerOptions): Import
       const preparedFiles: Array<{
         file: File;
         clientBookId?: string;
-        importMode?: 'replace_book' | 'append_image_series';
+        importMode?: 'replace_book' | 'append_image_series' | 'append_local_archive';
         baseActiveContentRevisionId?: string;
         expectedSourceContentHash?: string;
         targetNovel?: Novel;
@@ -491,6 +524,16 @@ export function useImportController(options: UseImportControllerOptions): Import
       let openExisting = resolution?.openExisting;
       if (!queuedSeriesPlan && !queuedDocumentSeriesPlan) {
         for (const file of supportedFiles) {
+          if (hostedAppendTarget) {
+            preparedFiles.push({
+              file,
+              clientBookId: hostedAppendTarget.id,
+              targetNovel: hostedAppendTarget,
+              importMode: 'append_local_archive',
+              baseActiveContentRevisionId: hostedAppendTarget.activeContentRevisionId,
+            });
+            continue;
+          }
           const conflict = resolution?.policies.get(importFileKey(file));
           if (!conflict || conflict.policy === 'new') {
             preparedFiles.push({ file });
@@ -796,6 +839,21 @@ export function useImportController(options: UseImportControllerOptions): Import
           if (updatedPlan) setSeriesPlan(updatedPlan);
         }
 
+        if (hostedAppendTarget && outcome.failed > 0) {
+          setTasks((current) =>
+            current.map((task) =>
+              task.batchId === batchId && task.phase === 'queued'
+                ? {
+                    ...task,
+                    phase: 'failed',
+                    percent: undefined,
+                    error: '앞선 회차 추가에 실패해 중단했습니다. 다시 시도해 주세요.',
+                  }
+                : task,
+            ),
+          );
+        }
+
         if (outcome.completed > 0) {
           await optionsRef.current.onImportSettled?.().catch((error) => {
             optionsRef.current.notify(
@@ -905,7 +963,10 @@ export function useImportController(options: UseImportControllerOptions): Import
     if (!mountedRef.current) return;
     if (!lastImportFailedRef.current) {
       // The target is only retained for retry, not for the next unrelated drop.
-      if (draft.seriesPlan) {
+      if (
+        draft.seriesPlan ||
+        canAppendHostedArchive(optionsRef.current.importService, explicitSeriesTargetRef.current, files)
+      ) {
         explicitSeriesTargetRef.current = undefined;
         setSeriesTargetNovelId(undefined);
       }
@@ -1049,6 +1110,7 @@ export function useImportController(options: UseImportControllerOptions): Import
     documentSeriesPlan,
     seriesTargetNovelId,
     seriesTargetLocked: Boolean(explicitSeriesTargetRef.current),
+    appendTargetTitle: explicitSeriesTargetRef.current?.title,
     seriesError,
     encoding,
     chapterSplitMode,

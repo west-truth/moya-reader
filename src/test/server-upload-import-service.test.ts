@@ -556,68 +556,71 @@ describe('ServerUploadImportService', () => {
     );
   });
 
-  it('keeps image-series append mode and base revision isolated in upload resume metadata', async () => {
-    const file = new File(['delta'], '새 회차.cbz', { type: 'application/vnd.comicbook+zip' });
-    const store: RemoteUploadSessionStore = {
-      read: vi.fn(() => undefined),
-      write: vi.fn(),
-      remove: vi.fn(),
-    };
-    const client = {
-      initUpload: vi.fn(async () => ({ uploadId: 'upload_delta', chunkUrlTemplate: '/chunks/{chunkIndex}' })),
-      getUpload: vi.fn(async () => ({
-        uploadId: 'upload_delta',
-        fileName: file.name,
-        sizeBytes: file.size,
-        status: 'uploading',
-        totalChunks: 1,
-        expectedBytes: file.size,
-        expectedChunks: 1,
-        uploadedBytes: 0,
-        receivedChunkIndexes: [],
-        missingChunkIndexes: [0],
-        complete: false,
-        importMode: 'append_image_series' as const,
-        baseActiveContentRevisionId: 'content_revision_7',
-      })),
-      putUploadChunk: vi.fn(async () => {
-        throw new Error('stop after delta initialization');
-      }),
-    };
-    const service = new ServerUploadImportService(client as unknown as RemoteApiClient, 10, 3, store);
-
-    await expect(
-      service.importFile(
-        {
-          file,
-          encoding: 'auto',
-          clientBookId: 'book_series_1',
-          importMode: 'append_image_series',
+  it.each(['append_image_series', 'append_local_archive'] as const)(
+    'keeps %s mode and base revision isolated in upload resume metadata',
+    async (importMode) => {
+      const file = new File(['delta'], '새 회차.cbz', { type: 'application/vnd.comicbook+zip' });
+      const store: RemoteUploadSessionStore = {
+        read: vi.fn(() => undefined),
+        write: vi.fn(),
+        remove: vi.fn(),
+      };
+      const client = {
+        initUpload: vi.fn(async () => ({ uploadId: 'upload_delta', chunkUrlTemplate: '/chunks/{chunkIndex}' })),
+        getUpload: vi.fn(async () => ({
+          uploadId: 'upload_delta',
+          fileName: file.name,
+          sizeBytes: file.size,
+          status: 'uploading',
+          totalChunks: 1,
+          expectedBytes: file.size,
+          expectedChunks: 1,
+          uploadedBytes: 0,
+          receivedChunkIndexes: [],
+          missingChunkIndexes: [0],
+          complete: false,
+          importMode,
           baseActiveContentRevisionId: 'content_revision_7',
-        },
-        vi.fn(),
-      ).promise,
-    ).rejects.toThrow('stop after delta initialization');
+        })),
+        putUploadChunk: vi.fn(async () => {
+          throw new Error('stop after delta initialization');
+        }),
+      };
+      const service = new ServerUploadImportService(client as unknown as RemoteApiClient, 10, 3, store);
 
-    expect(client.initUpload).toHaveBeenCalledWith(
-      expect.objectContaining({
-        clientBookId: 'book_series_1',
-        importMode: 'append_image_series',
-        baseActiveContentRevisionId: 'content_revision_7',
-        fileName: '새 회차.cbz',
-        sourceContentHash: expect.stringMatching(/^sha256:/),
-      }),
-      expect.any(AbortSignal),
-    );
-    expect(store.write).toHaveBeenCalledWith(
-      expect.any(String),
-      expect.objectContaining({
-        uploadId: 'upload_delta',
-        importMode: 'append_image_series',
-        baseActiveContentRevisionId: 'content_revision_7',
-      }),
-    );
-  });
+      await expect(
+        service.importFile(
+          {
+            file,
+            encoding: 'auto',
+            clientBookId: 'book_series_1',
+            importMode,
+            baseActiveContentRevisionId: 'content_revision_7',
+          },
+          vi.fn(),
+        ).promise,
+      ).rejects.toThrow('stop after delta initialization');
+
+      expect(client.initUpload).toHaveBeenCalledWith(
+        expect.objectContaining({
+          clientBookId: 'book_series_1',
+          importMode,
+          baseActiveContentRevisionId: 'content_revision_7',
+          fileName: '새 회차.cbz',
+          sourceContentHash: expect.stringMatching(/^sha256:/),
+        }),
+        expect.any(AbortSignal),
+      );
+      expect(store.write).toHaveBeenCalledWith(
+        expect.any(String),
+        expect.objectContaining({
+          uploadId: 'upload_delta',
+          importMode,
+          baseActiveContentRevisionId: 'content_revision_7',
+        }),
+      );
+    },
+  );
 
   it('fails closed before uploading a delta when an older server does not echo the append contract', async () => {
     const file = new File(['delta'], '새 회차.cbz', { type: 'application/vnd.comicbook+zip' });

@@ -56,6 +56,21 @@ export async function withImportPageFixture<T>(pool: pg.Pool, run: (fixture: Imp
         response.writeHead(200).end();
         return;
       }
+      if (request.method === 'PUT' && request.headers['x-amz-copy-source']) {
+        const sourceKey = decodeURIComponent(String(request.headers['x-amz-copy-source'])).replace(/^\/?test\//, '');
+        const source = objects.get(sourceKey);
+        if (!source) {
+          response.writeHead(404).end();
+          return;
+        }
+        objects.set(key, { ...source });
+        response
+          .writeHead(200, { 'Content-Type': 'application/xml' })
+          .end(
+            '<CopyObjectResult><ETag>"fixture"</ETag><LastModified>2026-09-22T00:00:00Z</LastModified></CopyObjectResult>',
+          );
+        return;
+      }
       if (request.method === 'PUT') {
         const chunks: Buffer[] = [];
         for await (const chunk of request) chunks.push(Buffer.from(chunk));
@@ -129,10 +144,11 @@ export async function withImportPageFixture<T>(pool: pg.Pool, run: (fixture: Imp
       await mkdir(uploadDir, { recursive: true });
       const chunkPath = path.join(uploadDir, '0.part');
       await writeFile(chunkPath, bytes);
-      const base = append
-        ? (await pool.query('select active_content_revision_id from library_books where id = $1', [bookId])).rows[0]
-            ?.active_content_revision_id
-        : undefined;
+      const base =
+        append || options.localAppend
+          ? (await pool.query('select active_content_revision_id from library_books where id = $1', [bookId])).rows[0]
+              ?.active_content_revision_id
+          : undefined;
       await pool.query(
         `insert into upload_sessions (id, user_id, file_name, content_type, size_bytes, encoding, total_chunks, status, client_book_id, source_content_hash, import_mode, base_active_content_revision_id, expected_base)
         values ($1, 'user_test', $7, $8, $2, 'utf-8', 1, 'queued', $3, $4, $5, $6, $9)`,
@@ -141,8 +157,8 @@ export async function withImportPageFixture<T>(pool: pg.Pool, run: (fixture: Imp
           bytes.length,
           bookId,
           integrityHash(bytes),
-          append ? 'append_image_series' : 'replace_book',
-          base ?? null,
+          options.localAppend ? 'append_local_archive' : append ? 'append_image_series' : 'replace_book',
+          options.baseRevision ?? base ?? null,
           options.fileName ?? 'fixture.cbz',
           options.contentType ?? 'application/vnd.comicbook+zip',
           options.expectedBase ? JSON.stringify(options.expectedBase) : null,
@@ -190,7 +206,13 @@ export interface ImportPageFixture {
     bytes: Buffer,
     append?: boolean,
     bookId?: string,
-    options?: { expectedBase?: ImportExpectedBase; fileName?: string; contentType?: string },
+    options?: {
+      expectedBase?: ImportExpectedBase;
+      fileName?: string;
+      contentType?: string;
+      localAppend?: boolean;
+      baseRevision?: string;
+    },
   ): Promise<{ jobId: string; uploadId: string; durationMs: number }>;
 }
 
