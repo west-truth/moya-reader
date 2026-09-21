@@ -6,6 +6,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { Queue } from 'bullmq';
 import pg from 'pg';
 import { ServerConfig } from '../config.js';
+import * as uploadFile from '../services/upload-file.js';
 import { registerUploadRoutes } from './uploads.js';
 
 function testConfig(): ServerConfig {
@@ -40,6 +41,28 @@ function appWithUploads(pool: pg.Pool, queue: Queue) {
 }
 
 describe('upload routes', () => {
+  it('rejects insufficient temporary space before creating an upload session', async () => {
+    const space = vi
+      .spyOn(uploadFile, 'assertUploadDiskSpace')
+      .mockRejectedValueOnce(new uploadFile.UploadSpaceError());
+    const pool = { query: vi.fn() } as unknown as pg.Pool;
+    const queue = { add: vi.fn() } as unknown as Queue;
+    const app = await appWithUploads(pool, queue);
+    try {
+      const response = await app.inject({
+        method: 'POST',
+        url: '/api/uploads/init',
+        payload: { fileName: 'book.epub', sizeBytes: 2048, totalChunks: 2 },
+      });
+      expect(response.statusCode).toBe(507);
+      expect(response.json()).toMatchObject({ code: 'upload_storage_full' });
+      expect(space).toHaveBeenCalledWith(path.join(testConfig().dataDir, 'uploads'), 4096);
+      expect(pool.query).not.toHaveBeenCalled();
+      expect(queue.add).not.toHaveBeenCalled();
+    } finally {
+      await app.close();
+    }
+  });
   it.each([{ kind: 'absent' }, { kind: 'revision', contentRevisionId: 'revision_1' }] as const)(
     'stores and returns the $kind caller snapshot fence',
     async (expectedBase) => {
@@ -794,6 +817,7 @@ describe('upload routes', () => {
 });
 
 it('accepts a 4GiB EPUB chunk plan but rejects larger archives and large legacy formats at init', async () => {
+  const space = vi.spyOn(uploadFile, 'assertUploadDiskSpace').mockResolvedValue();
   const directory = await mkdtemp(path.join(os.tmpdir(), 'moya-large-upload-init-'));
   const app = Fastify();
   const config = {
@@ -813,10 +837,12 @@ it('accepts a 4GiB EPUB chunk plan but rejects larger archives and large legacy 
         payload: { fileName, sizeBytes, totalChunks: Math.ceil(sizeBytes / config.maxChunkBytes) },
       });
     expect((await init('book.epub', 4 * 1024 ** 3)).statusCode).toBe(200);
+    expect(space).toHaveBeenCalledWith(path.join(directory, 'uploads'), 8 * 1024 ** 3);
     expect((await init('book.cbz', 4 * 1024 ** 3 + 1)).statusCode).toBe(413);
     expect((await init('book.pdf', 1024 ** 3)).statusCode).toBe(413);
   } finally {
     await app.close();
     await rm(directory, { recursive: true, force: true });
+    space.mockRestore();
   }
 });

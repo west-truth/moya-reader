@@ -830,6 +830,18 @@
   padding: 0 16px;
   border-bottom: 1px solid var(--border);
 }
+.source-hub-release-row > .source-hub-state {
+  min-width: 0;
+  max-width: 112px;
+}
+.source-hub-release-row > .source-hub-state svg {
+  flex-shrink: 0;
+}
+.source-hub-state-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
 .source-hub-release-row:last-child {
   border-bottom: 0;
 }

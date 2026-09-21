@@ -39,6 +39,9 @@ export function importFailureMessage(fileName: string, error: unknown): string {
     if (error.status === 413) {
       return `"${fileName}"이 서버의 업로드 용량 한도를 넘었습니다.`;
     }
+    if (error.status === 507) {
+      return '서버의 임시 저장공간이 부족합니다. 공간을 확보한 뒤 다시 시도해 주세요.';
+    }
     if (error.status === 429) {
       return `"${fileName}" 서버가 현재 바쁩니다. 잠시 후 다시 시도하세요.`;
     }

@@ -110,6 +110,29 @@ describe('ImportDialog', () => {
     expect(markup).toContain('중단본.txt');
   });
 
+  it('shows server activity without presenting uploaded bytes as completed import progress', () => {
+    const markup = renderToStaticMarkup(
+      <ImportDialog
+        controller={controller({
+          busy: true,
+          progress: {
+            jobId: 'job',
+            status: 'writing',
+            subphase: 'server_processing',
+            bytesRead: 100,
+            totalBytes: 100,
+            chaptersDetected: 1,
+            paragraphsWritten: 0,
+            message: '이미지 저장 45개',
+          },
+        })}
+      />,
+    );
+    expect(markup).toContain('이미지 저장 45개');
+    expect(markup).not.toContain('role="progressbar"');
+    expect(markup).not.toContain('100%');
+  });
+
   it('labels failed progress as a failure instead of an active import', () => {
     const markup = renderToStaticMarkup(
       <ImportDialog

@@ -22,6 +22,12 @@ describe('importFailureMessage', () => {
     expect(message).toContain('scan.pdf');
   });
 
+  it('explains insufficient temporary space without technical details', () => {
+    expect(importFailureMessage('book.epub', new RemoteApiError('{"code":"upload_storage_full"}', 507))).toBe(
+      '서버의 임시 저장공간이 부족합니다. 공간을 확보한 뒤 다시 시도해 주세요.',
+    );
+  });
+
   it('identifies unavailable API or worker services', () => {
     expect(importFailureMessage('book.txt', new RemoteApiError('Service Unavailable', 503))).toContain('worker');
   });

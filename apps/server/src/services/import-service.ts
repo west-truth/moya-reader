@@ -201,7 +201,7 @@ async function claimImportExecution(pool: pg.Pool, jobId: string, executionId?: 
   if (!executionId) return true;
   const result = await pool.query(
     `update import_jobs
-        set status = 'processing', stage = 'reading', message = '업로드 조각을 검증하고 조립하는 중입니다.',
+        set status = 'processing', stage = 'reading', message = '파일 준비 중',
             error_message = null, updated_at = now()
       where id = $1 and status = 'queued' and active_queue_job_id = $2 and cancel_requested_at is null
       returning id`,
@@ -557,7 +557,13 @@ export async function replaceParsedBookContent(client: CommandQueryable, bookId:
   await client.query('delete from chapters where book_id = $1', [bookId]);
 }
 
-async function readUploadFile(pool: pg.Pool, config: ServerConfig, uploadId: string, signal: AbortSignal) {
+async function readUploadFile(
+  pool: pg.Pool,
+  config: ServerConfig,
+  uploadId: string,
+  signal: AbortSignal,
+  onProgress: (bytes: number, total: number) => Promise<void>,
+) {
   const sessionResult = await pool.query<UploadSessionRow>('select * from upload_sessions where id = $1', [uploadId]);
   const session = sessionResult.rows[0];
   if (!session) throw new Error(`Upload session not found: ${uploadId}`);
@@ -587,6 +593,7 @@ async function readUploadFile(pool: pg.Pool, config: ServerConfig, uploadId: str
     expectedBytes: Number(session.size_bytes),
     chunks: chunksResult.rows,
     signal,
+    onProgress,
   });
   return { session, ...file };
 }
@@ -713,7 +720,7 @@ export async function processImportJob(
     await updateImportJobProgress(pool, jobId, {
       status: 'processing',
       stage: 'reading',
-      message: '업로드 조각을 검증하고 조립하는 중입니다.',
+      message: '파일 준비 중',
       errorMessage: null,
     });
   }
@@ -741,7 +748,20 @@ export async function processImportJob(
   let appendLockBookId: string | undefined;
   try {
     await assertImportExecutionActive(pool, jobId, attempt.executionId);
-    const upload = await readUploadFile(pool, config, uploadId, importAbort.signal);
+    const upload = await readUploadFile(pool, config, uploadId, importAbort.signal, async (bytes, total) => {
+      const active = await updateImportJobProgress(
+        pool,
+        jobId,
+        {
+          stage: 'reading',
+          bytesRead: bytes,
+          totalBytes: total,
+          message: `파일 준비 ${Math.floor((bytes / total) * 100)}%`,
+        },
+        attempt.executionId,
+      );
+      if (attempt.executionId && !active) throw new ImportExecutionStoppedError('cancelled');
+    });
     disposeUploadFile = upload.dispose;
     const { session } = upload;
     let sourceBlob = upload.blob;
@@ -817,6 +837,7 @@ export async function processImportJob(
       }
       if (merged.changedSectionIds.length === 0) {
         appendNoop = true;
+        await updateImportJobProgress(pool, jobId, { message: '마무리 중' }, attempt.executionId);
         measurements.start('commit_database');
         await finalizeNoopImageSeriesAppend(appendLockClient, {
           uploadId,
@@ -879,7 +900,7 @@ export async function processImportJob(
         stage: 'decoding',
         bytesRead,
         totalBytes,
-        message: '인코딩을 해석하고 본문을 정리하는 중입니다.',
+        message: '내용 분석 중',
       },
       attempt.executionId,
     );
@@ -956,7 +977,7 @@ export async function processImportJob(
         totalBytes,
         chaptersDetected: parsed.chapters.length,
         paragraphsWritten: 0,
-        message: '화와 문단을 저장하는 중입니다.',
+        message: '원본 저장 중',
       },
       attempt.executionId,
     );
@@ -973,6 +994,8 @@ export async function processImportJob(
     await putRawBookObject(s3Client, config, storageKey, sourceBlob, canonicalContentType, importAbort.signal);
     uploadedObjectKeys.push(storageKey);
     measurements.start('write_assets');
+    if (parsed.consumeEmbeddedAssets || parsed.embeddedAssets?.length)
+      await updateImportJobProgress(pool, jobId, { message: '이미지 저장 중' }, attempt.executionId);
     const reusePage =
       incrementalImageSeriesAppend && appendLockClient
         ? await loadImportPageReuse(appendLockClient, session.user_id, parsed.novel.id, (key) =>
@@ -1035,7 +1058,7 @@ export async function processImportJob(
           {
             status: 'processing',
             stage: 'writing',
-            message: `EPUB 삽화와 표지를 저장하는 중입니다. ${completedAssets.toLocaleString()} / ${eagerAssets.length.toLocaleString()}개`,
+            message: `이미지 저장 ${completedAssets.toLocaleString()}/${eagerAssets.length.toLocaleString()}`,
           },
           attempt.executionId,
         );
@@ -1043,6 +1066,7 @@ export async function processImportJob(
     }
     if (parsed.consumeEmbeddedAssets) {
       let streamedAssets = 0;
+      const shouldReportAssets = createImportProgressUpdateThrottle();
       let assetBatch: Array<{ asset: ParsedNovelImportAsset; storageKey: string }> = [];
       const flushAssetBatch = async () => {
         if (assetBatch.length === 0) return;
@@ -1091,14 +1115,14 @@ export async function processImportJob(
             .map((outcome) => outcome.value),
         );
         streamedAssets += currentBatch.length;
-        if (streamedAssets % 8 === 0) {
+        if (shouldReportAssets()) {
           await updateImportJobProgress(
             pool,
             jobId,
             {
               status: 'processing',
               stage: 'writing',
-              message: `문서 페이지 리소스를 저장하는 중입니다. ${streamedAssets.toLocaleString()}개`,
+              message: `이미지 저장 ${streamedAssets.toLocaleString()}개`,
             },
             attempt.executionId,
           );
@@ -1111,14 +1135,14 @@ export async function processImportJob(
         if (assetBatch.length >= SERVER_IMPORT_EAGER_ASSET_CONCURRENCY) await flushAssetBatch();
       }
       await flushAssetBatch();
-      if (streamedAssets > 0 && streamedAssets % 8 !== 0) {
+      if (streamedAssets > 0) {
         await updateImportJobProgress(
           pool,
           jobId,
           {
             status: 'processing',
             stage: 'writing',
-            message: `문서 페이지 리소스를 저장하는 중입니다. ${streamedAssets.toLocaleString()}개`,
+            message: `이미지 저장 ${streamedAssets.toLocaleString()}개`,
           },
           attempt.executionId,
         );
@@ -1126,6 +1150,7 @@ export async function processImportJob(
     }
     await assertImportExecutionActive(pool, jobId, attempt.executionId);
 
+    await updateImportJobProgress(pool, jobId, { message: '마무리 중' }, attempt.executionId);
     measurements.start('commit_database');
     const client = appendLockClient ?? (await pool.connect());
     const releaseTransactionClient = client !== appendLockClient;
@@ -1357,7 +1382,7 @@ export async function processImportJob(
             stage: 'writing',
             chaptersDetected: parsed.chapters.length,
             paragraphsWritten,
-            message: `화와 문단을 저장하는 중입니다. ${paragraphsWritten.toLocaleString()} / ${parsed.novel.totalParagraphs.toLocaleString()} 문단`,
+            message: `본문 저장 ${paragraphsWritten.toLocaleString()}/${parsed.novel.totalParagraphs.toLocaleString()}`,
           },
           attempt.executionId,
         );

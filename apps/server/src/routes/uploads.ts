@@ -5,6 +5,7 @@ import { FastifyInstance } from 'fastify';
 import { Queue } from 'bullmq';
 import pg from 'pg';
 import { ServerConfig } from '../config.js';
+import { assertUploadDiskSpace, UploadSpaceError } from '../services/upload-file.js';
 import { localUploadLimit } from '../services/local-archive-policy.js';
 import { enqueueImportJob } from '../queue.js';
 import { pruneStaleUploadSessions, removeUploadDirectory, uploadDirectory } from '../services/upload-cleanup.js';
@@ -219,6 +220,14 @@ export async function registerUploadRoutes(
       }
     }
 
+    // Both uploaded chunks and the assembled source coexist during import.
+    try {
+      await assertUploadDiskSpace(path.join(config.dataDir, 'uploads'), sizeBytes * 2);
+    } catch (error) {
+      if (error instanceof UploadSpaceError)
+        return reply.code(507).send({ code: 'upload_storage_full', error: error.message });
+      throw error;
+    }
     const uploadId = `upload_${randomUUID()}`;
     const fileName = sanitizeFileName(body.fileName);
     await mkdir(uploadDirectory(config, uploadId), { recursive: true });

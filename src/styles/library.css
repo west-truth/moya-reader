@@ -2809,6 +2809,9 @@
   justify-content: space-between;
 }
 .books-grid[data-view='compact'] .card-row > strong {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
   font-size: 11px;
   white-space: nowrap;
 }

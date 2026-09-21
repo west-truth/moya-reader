@@ -27,6 +27,7 @@ export interface ImportTaskView {
   readonly total?: number;
   readonly percent?: number;
   readonly error?: string;
+  readonly activity?: string;
 }
 
 function boundedPercent(completed: number, total: number): number | undefined {
@@ -34,7 +35,7 @@ function boundedPercent(completed: number, total: number): number | undefined {
   return Math.max(0, Math.min(100, Math.round((completed / total) * 100)));
 }
 
-export function projectImportProgress(progress: ImportProgress): Pick<ImportTaskView, 'phase' | 'percent'> {
+function projectImportPhase(progress: ImportProgress): Pick<ImportTaskView, 'phase' | 'percent'> {
   if (progress.status === 'failed') return { phase: 'failed' };
   if (progress.status === 'cancelling') return { phase: 'cancelling' };
   if (progress.status === 'ready' || progress.subphase === 'complete') return { phase: 'saving', percent: 100 };
@@ -50,13 +51,32 @@ export function projectImportProgress(progress: ImportProgress): Pick<ImportTask
   }
   if (progress.status === 'writing') return { phase: 'saving' };
   if (progress.status === 'reading' && progress.subphase === 'server_processing') {
-    return { phase: 'analyzing' };
+    return { phase: 'preparing', percent: boundedPercent(progress.bytesRead, progress.totalBytes) };
   }
   if (progress.status === 'reading') return { phase: 'preparing' };
   return { phase: 'queued' };
 }
 
+export function projectImportProgress(
+  progress: ImportProgress,
+): Pick<ImportTaskView, 'phase' | 'percent' | 'activity'> {
+  const phase = projectImportPhase(progress);
+  const message = progress.message?.trim();
+  // Keep card/release labels compact; older servers can still send long descriptions.
+  const activity =
+    progress.subphase === 'server_processing' &&
+    ['reading', 'decoding', 'splitting_chapters', 'writing'].includes(progress.status) &&
+    message &&
+    message.length <= 48 &&
+    !/[\r\n<>]/u.test(message)
+      ? message
+      : undefined;
+  return { ...phase, activity };
+}
+
 export function importTaskLabel(task: ImportTaskView): string {
+  if (task.activity && ['preparing', 'analyzing', 'saving'].includes(task.phase))
+    return task.activity.replace(/^파일 준비 /u, '준비 ').replace(/^이미지 저장 /u, '저장 ');
   switch (task.phase) {
     case 'queued':
       return '대기 중';
