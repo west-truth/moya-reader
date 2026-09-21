@@ -6,6 +6,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { Queue } from 'bullmq';
 import pg from 'pg';
 import { ServerConfig } from '../config.js';
+import * as uploadFile from '../services/upload-file.js';
 import { registerUploadRoutes } from './uploads.js';
 
 function testConfig(): ServerConfig {
@@ -40,6 +41,54 @@ function appWithUploads(pool: pg.Pool, queue: Queue) {
 }
 
 describe('upload routes', () => {
+  it('stores an explicit legacy encoding and rejects unknown decoder labels before uploading', async () => {
+    const pool = { query: vi.fn(async () => ({ rows: [] })) } as unknown as pg.Pool;
+    const app = await appWithUploads(pool, { add: vi.fn() } as unknown as Queue);
+    try {
+      const response = await app.inject({
+        method: 'POST',
+        url: '/api/uploads/init',
+        payload: { fileName: 'japanese.txt', sizeBytes: 4, encoding: 'shift_jis' },
+      });
+      expect(response.statusCode).toBe(200);
+      expect(vi.mocked(pool.query).mock.calls[0]?.[1]?.[5]).toBe('shift_jis');
+      vi.mocked(pool.query).mockClear();
+      for (const encoding of ['unknown-encoding', 'constructor', {}, null]) {
+        const invalid = await app.inject({
+          method: 'POST',
+          url: '/api/uploads/init',
+          payload: { fileName: 'japanese.txt', sizeBytes: 4, encoding },
+        });
+        expect(invalid.statusCode).toBe(400);
+      }
+      expect(pool.query).not.toHaveBeenCalled();
+    } finally {
+      await app.close();
+    }
+  });
+
+  it('rejects insufficient temporary space before creating an upload session', async () => {
+    const space = vi
+      .spyOn(uploadFile, 'assertUploadDiskSpace')
+      .mockRejectedValueOnce(new uploadFile.UploadSpaceError());
+    const pool = { query: vi.fn() } as unknown as pg.Pool;
+    const queue = { add: vi.fn() } as unknown as Queue;
+    const app = await appWithUploads(pool, queue);
+    try {
+      const response = await app.inject({
+        method: 'POST',
+        url: '/api/uploads/init',
+        payload: { fileName: 'book.epub', sizeBytes: 2048, totalChunks: 2 },
+      });
+      expect(response.statusCode).toBe(507);
+      expect(response.json()).toMatchObject({ code: 'upload_storage_full' });
+      expect(space).toHaveBeenCalledWith(path.join(testConfig().dataDir, 'uploads'), 4096);
+      expect(pool.query).not.toHaveBeenCalled();
+      expect(queue.add).not.toHaveBeenCalled();
+    } finally {
+      await app.close();
+    }
+  });
   it.each([{ kind: 'absent' }, { kind: 'revision', contentRevisionId: 'revision_1' }] as const)(
     'stores and returns the $kind caller snapshot fence',
     async (expectedBase) => {
@@ -791,4 +840,45 @@ describe('upload routes', () => {
 
     await app.close();
   });
+});
+
+it('accepts a 4GiB EPUB chunk plan but rejects larger archives and large legacy formats at init', async () => {
+  const space = vi.spyOn(uploadFile, 'assertUploadDiskSpace').mockResolvedValue();
+  const directory = await mkdtemp(path.join(os.tmpdir(), 'moya-large-upload-init-'));
+  const app = Fastify();
+  const config = {
+    ...testConfig(),
+    dataDir: directory,
+    maxUploadBytes: 500 * 1024 ** 2,
+    maxArchiveUploadBytes: 4 * 1024 ** 3,
+    maxChunkBytes: 16 * 1024 ** 2,
+  };
+  const pool = { query: vi.fn(async () => ({ rows: [] })) } as unknown as pg.Pool;
+  await registerUploadRoutes(app, pool, config, { add: vi.fn() } as unknown as Queue);
+  try {
+    const init = (fileName: string, sizeBytes: number, extra: Record<string, unknown> = {}) =>
+      app.inject({
+        method: 'POST',
+        url: '/api/uploads/init',
+        payload: { fileName, sizeBytes, totalChunks: Math.ceil(sizeBytes / config.maxChunkBytes), ...extra },
+      });
+    expect((await init('book.epub', 4 * 1024 ** 3)).statusCode).toBe(200);
+    expect(space).toHaveBeenCalledWith(path.join(directory, 'uploads'), 8 * 1024 ** 3);
+    const append = {
+      importMode: 'append_local_archive',
+      clientBookId: 'book',
+      baseActiveContentRevisionId: 'revision',
+      sourceContentHash: `sha256:${'a'.repeat(64)}`,
+    };
+    expect((await init('volume.cbz', 4 * 1024 ** 3, append)).statusCode).toBe(200);
+    expect((await init('volume.epub', 1024, { ...append, baseActiveContentRevisionId: undefined })).statusCode).toBe(
+      400,
+    );
+    expect((await init('book.cbz', 4 * 1024 ** 3 + 1)).statusCode).toBe(413);
+    expect((await init('book.pdf', 1024 ** 3)).statusCode).toBe(413);
+  } finally {
+    await app.close();
+    await rm(directory, { recursive: true, force: true });
+    space.mockRestore();
+  }
 });

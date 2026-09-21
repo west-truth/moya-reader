@@ -206,3 +206,14 @@ describe('local series import', () => {
     }
   });
 });
+
+it('does not eagerly inspect or merge a multi-gigabyte archive in the browser', async () => {
+  const file = {
+    name: '만화 1권.cbz',
+    size: 2 * 1024 ** 3,
+    arrayBuffer: () => {
+      throw new Error('whole-file read');
+    },
+  } as unknown as File;
+  expect(await inspectLocalSeriesImport([file], [])).toBeUndefined();
+});

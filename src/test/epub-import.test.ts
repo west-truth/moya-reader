@@ -1,6 +1,12 @@
 import { describe, expect, it } from 'vitest';
 import { BlobWriter, TextReader, Uint8ArrayReader, ZipWriter } from '@zip.js/zip.js';
-import { EpubImportError, materializeEpubImport, parseEpub, stableEpubCoverSeed } from '@noveldesk/epub-core';
+import {
+  EpubImportError,
+  materializeEpubImport,
+  materializeStreamingEpubImport,
+  parseEpub,
+  stableEpubCoverSeed,
+} from '@noveldesk/epub-core';
 
 interface FixtureOptions {
   readonly version?: '2.0' | '3.0';
@@ -408,4 +414,82 @@ describe('EPUB import engine', () => {
     expect(document.sections[0].blocks[0].inlineMarks?.[0].href).toBe('https://example.com/');
     expect(document.resources).toHaveLength(1);
   });
+});
+
+it('streams EPUB assets with the same identities, text, cover and bytes as the existing importer', async () => {
+  const blob = await epubFixture();
+  const options = {
+    fileName: 'illustrated.epub',
+    now: '2026-09-23T00:00:00.000Z',
+    sourceBytes: new Uint8Array(await blob.arrayBuffer()),
+  };
+  const eager = materializeEpubImport(await parseEpub(blob), options);
+  const streamed = await materializeStreamingEpubImport(blob, {
+    ...options,
+    sourceContentHash: eager.novel.sourceContentHash!,
+  });
+  expect(streamed.novel).toEqual(eager.novel);
+  expect(streamed.chapters).toEqual(eager.chapters);
+  expect(streamed.consumeChapterParagraphs!()).toEqual(eager.consumeChapterParagraphs!());
+  expect(streamed.embeddedAssets).toBeUndefined();
+  const assets = [];
+  for await (const asset of streamed.consumeEmbeddedAssets!()) assets.push(asset);
+  expect(assets.sort((a, b) => a.id.localeCompare(b.id))).toEqual(
+    [...eager.embeddedAssets!].sort((a, b) => a.id.localeCompare(b.id)),
+  );
+  const repeated = [];
+  for await (const asset of streamed.consumeEmbeddedAssets!()) repeated.push(asset);
+  expect(repeated).toEqual([]);
+});
+
+it('honors streaming EPUB expansion bounds and cancellation before storing resources', async () => {
+  const blob = await epubFixture();
+  const options = { fileName: 'book.epub', sourceContentHash: 'sha256:test' };
+  await expect(materializeStreamingEpubImport(blob, { ...options, maxExpandedBytes: 1 })).rejects.toThrow('해제 크기');
+  const controller = new AbortController();
+  const parsed = await materializeStreamingEpubImport(blob, { ...options, signal: controller.signal });
+  controller.abort();
+  await expect(parsed.consumeEmbeddedAssets!()[Symbol.asyncIterator]().next()).rejects.toMatchObject({
+    name: 'AbortError',
+  });
+});
+
+it('stores EPUB resources through a single-pass sink with unchanged identities and no retained bytes', async () => {
+  const blob = await epubFixture();
+  const options = {
+    fileName: 'single.epub',
+    now: '2026-09-22T00:00:00Z',
+    sourceBytes: new Uint8Array(await blob.arrayBuffer()),
+  };
+  const eager = materializeEpubImport(await parseEpub(blob), options);
+  const assets: NonNullable<typeof eager.embeddedAssets> = [];
+  const streamed = await materializeStreamingEpubImport(blob, {
+    ...options,
+    sourceContentHash: eager.novel.sourceContentHash!,
+    onAsset: async (asset) => {
+      assets.push(asset);
+    },
+  });
+  expect(streamed.novel).toEqual(eager.novel);
+  expect(streamed.chapters).toEqual(eager.chapters);
+  expect([...(streamed.consumeChapterParagraphs() as Iterable<unknown>)]).toEqual([
+    ...(eager.consumeChapterParagraphs() as Iterable<unknown>),
+  ]);
+  expect(streamed.embeddedAssets).toBeUndefined();
+  expect(streamed.consumeEmbeddedAssets).toBeUndefined();
+  expect(assets.sort((a, b) => a.id.localeCompare(b.id))).toEqual(
+    eager.embeddedAssets!.sort((a, b) => a.id.localeCompare(b.id)),
+  );
+  let calls = 0;
+  await expect(
+    materializeStreamingEpubImport(blob, {
+      ...options,
+      sourceContentHash: eager.novel.sourceContentHash!,
+      onAsset: async () => {
+        calls++;
+        throw new Error('storage offline');
+      },
+    }),
+  ).rejects.toThrow('storage offline');
+  expect(calls).toBe(1);
 });

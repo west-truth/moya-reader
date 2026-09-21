@@ -11,7 +11,8 @@ renderer를 사용한다.
 ## 2026-08-31 만화 회차별 저장
 
 - 누적 원본 합계 1GiB 제한은 제거하고 회차 목록을 별도로 20,000페이지·2,000회차/원본·JSON 8MiB로
-  제한한다. 개별 archive 해제 1GiB/5,000페이지, 이미지 64MiB/압축률 250배 제한은 그대로다.
+  제한한다. 회차 추가의 개별 archive 해제 1GiB/5,000페이지, 이미지 64MiB/압축률 250배 제한은 그대로다.
+  Self-host 일반 ZIP·CBZ의 독립 가져오기는 원본 4GiB/해제 8GiB까지 별도로 지원한다.
 - 여러 화를 선택하면 한 화 구성·저장을 완료한 뒤 다음 화로 넘어간다. 1회 업로드 기본 500MiB를
   선택한 화 전체 합계에 적용하지 않는다. 한 화가 서버 한도를 넘으면 설정된 한도를 표시한다.
 - 실패/취소 시 완료한 회차는 남는다. 소스 link는 매 화 finalize하고 로컬 재시도는 같은 작품 ID와
@@ -86,16 +87,15 @@ EPUB은 이번 작업에서 새로 만든 기능이 아니다. 기존 `packages/
 - Scroll/page mode 모두 삽화의 intrinsic size와 비율을 유지하고 reader content width와 70vh/56rem을 공통
   ceiling으로 사용한다. Page mode는 실제 stage height를 넘을 때만 추가 축소하고 chapter heading이 함께 있는
   첫 page는 heading/margin 공간을 예약한다. 조판 measurement placeholder도 같은 ceiling을 사용한다.
-- 현재 EPUB 안전 한도는 entry 4,000개, 개별 해제 파일 32 MiB, 전체 해제 크기 128 MiB, 압축률 250배다.
-  서버의 원본 upload 기본 한도 500 MiB와는 별도이며, 이 범위를 넘는 image-heavy EPUB은 archive bomb과
-  저메모리 기기 보호를 위해 명시적으로 거부한다.
+- EPUB 안전 한도는 entry 4,000개, 개별 해제 파일 32MiB, 압축률 250배다. 브라우저 단독 가져오기는
+  전체 해제 128MiB를 유지한다. Self-host는 원본 4GiB/전체 해제 8GiB까지 지원하되 텍스트 합산은 128MiB로
+  제한한다. 파일 기반 원본에서 이미지 해시를 순차 계산한 후 저장 시 다시 읽어 자산 ID를 보존한다.
 - SVG 자체가 vector 삽화인 경우와 AVIF는 아직 보존하지 않는다. SVG를 추가할 때는 script/external reference
-  sanitization을 먼저 두고, 128 MiB보다 큰 EPUB은 모든 이미지를 동시에 materialize하지 않는 streaming
-  asset ingestion으로 확장한다.
+  sanitization을 먼저 둔다.
 - 표지는 EPUB3 manifest의 `cover-image`, EPUB2 `<meta name="cover">`, OPF guide의 cover document 순으로 찾고,
   선언이 없는 legacy 파일만 `cover*` image 관례를 보수적으로 사용한다. cover document가 XHTML/SVG wrapper면
   그 안의 첫 로컬 image manifest item을 실제 표지 asset으로 저장한다.
-- Hosted 대형 파일은 2 MiB resumable chunk를 사용한다. Worker는 eager EPUB image asset을 4개씩 저장하고,
+- Hosted 대형 파일은 2 MiB resumable chunk를 사용한다. Worker는 EPUB image asset을 순차 추출하고 최대 4개씩 저장하며,
   object-storage bucket readiness와 orphan reservation을 asset마다 반복하지 않는다. 원본 archive 보존,
   streaming archive page path와 import transaction 경계는 유지한다.
 
@@ -163,7 +163,7 @@ virtualized page window와 현재 위치 추적을 재사용하되 virtualizer g
 - 암호화 archive
 - 확장자와 실제 JPG/PNG/WebP/GIF signature가 다른 entry
 - 6,000개 초과 entry, 5,000페이지 초과 문서
-- 페이지당 64MiB, 전체 해제 1GiB 또는 압축률 250배를 넘는 archive
+- 페이지당 64MiB, 전체 해제 1GiB(Self-host 독립 ZIP·CBZ 가져오기는 8GiB) 또는 압축률 250배를 넘는 archive
 
 PDF도 1~5,000페이지 범위만 받는다. PDF.js와 이미지 page cache는 lazy load하며 화면에서 멀어진 항목을
 정리한다.

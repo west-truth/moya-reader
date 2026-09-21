@@ -16,9 +16,10 @@ ${[...readFileSync(resolve(root, 'src/main.tsx'), 'utf8').matchAll(/import '\.\/
 const noop=()=>{};
 const sources=['one','two'].map((id,i)=>({id,title:i?'두 번째 소스':'필터 소스',kind:'catalog',origin:'plugin',connection:{state:'connected'}}));
 const filters=[{id:'genre',position:0,kind:'select',label:'장르',options:['전체','액션','판타지','로맨스'],defaultValue:0},{id:'day',position:1,kind:'select',label:'요일',options:['전체','월','화','수','목','금','토','일'],defaultValue:0}];
-globalThis.calls=[];globalThis.failNext=false;
+globalThis.calls=[];globalThis.failNext=false;globalThis.failRefresh=false;
 const registry={getExternalSources:()=>sources.map(s=>({descriptor:{id:s.id,capabilities:['browse','search']}})),getExternalSourceStatus:()=>({state:'connected'}),async listExternalSource(id,context,input){
   calls.push({id,...input});await new Promise(r=>setTimeout(r,40));if(globalThis.failNext&&input.cursor){globalThis.failNext=false;throw new Error('잠시 연결이 끊겼습니다.');}
+  if(globalThis.failRefresh && id==='one' && input.browseMode==='popular' && !input.cursor){globalThis.failRefresh=false;throw new Error('새 목록 조회 실패');}
   const start=input.cursor?18:0;return {items:Array.from({length:18},(_,i)=>({key:{connectorId:id,remoteId:String(start+i)},kind:'work',title:(input.browseMode==='search'?'검색 ':'작품 ')+(start+i+1),navigationRef:String(start+i),thumbnailUrl:'data:image/svg+xml,'+encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" width="200" height="280"><rect width="200" height="280" fill="'+(i%2?'#233b56':'#4b3548')+'"/><text x="25" y="140" fill="white" font-size="28">MOYA '+(start+i+1)+'</text></svg>')})),nextCursor:input.cursor?undefined:'next',browse:{activeMode:input.browseMode,availableModes:['popular','latest','search'],filters}};
 }};
 const session=new DiscoverySession(registry,{},'pinned-smoke');
@@ -76,6 +77,20 @@ try {
     const section = page.locator('[data-discovery-section="a"]');
     await section.getByRole('button', { name: '작품 1 상세 보기', exact: true }).waitFor();
     assert.equal(await section.locator('.discovery-card').count(), 12);
+    await page.evaluate(() => {
+      globalThis.failRefresh = true;
+    });
+    await section.getByRole('button', { name: /목록 새로고침$/ }).click();
+    await section.getByRole('button', { name: /목록 다시 불러오기$/ }).waitFor();
+    assert.equal(await section.locator('.discovery-card').count(), 12);
+    assert.equal(await section.locator('.discovery-message, .discovery-inline-message').count(), 0);
+    const heading = section.locator('.discovery-section-title');
+    const titleBox = await heading.locator('h2').boundingBox();
+    const refreshBox = await heading.locator('.discovery-refresh').boundingBox();
+    assert(refreshBox.x > titleBox.x + titleBox.width);
+    assert(Math.abs(refreshBox.y + refreshBox.height / 2 - (titleBox.y + titleBox.height / 2)) < 1);
+    await section.getByRole('button', { name: /목록 다시 불러오기$/ }).click();
+    await section.getByRole('button', { name: /목록 새로고침$/ }).waitFor();
     await section.getByRole('button', { name: '펼쳐 보기', exact: true }).click();
     await page.waitForFunction(
       () => document.querySelector('[data-discovery-section="a"] .discovery-grid')?.children.length === 18,
@@ -87,7 +102,11 @@ try {
     await section.getByRole('button', { name: '접기', exact: true }).last().click();
     await page.getByRole('button', { name: '빠른 이동', exact: true }).click();
     const jump = page.getByRole('dialog', { name: '소스 빠른 이동' });
-    await jump.getByRole('button', { name: '필터 소스 탭에 고정', exact: true }).click();
+    const pinButton = jump.getByRole('button', { name: '필터 소스 탭에 고정', exact: true });
+    const pinBox = await pinButton.boundingBox();
+    const pinIconBox = await pinButton.locator('svg').boundingBox();
+    assert(Math.abs(pinBox.x + pinBox.width / 2 - (pinIconBox.x + pinIconBox.width / 2)) < 1);
+    await pinButton.click();
     await jump.getByRole('button', { name: '빠른 이동 닫기', exact: true }).click();
     assert.equal(await tabs.getByRole('button', { name: '필터 소스', exact: true }).count(), 1);
     await page.locator('.discovery-source-view').getByText('상세 필터', { exact: true }).click();
@@ -104,13 +123,24 @@ try {
       globalThis.failNext = true;
     });
     await page.getByRole('button', { name: '더 불러오기', exact: true }).click();
-    await page.getByRole('button', { name: '다시 시도', exact: true }).waitFor();
+    await page.getByRole('button', { name: /목록 다시 불러오기$/ }).waitFor();
     assert.equal(await page.locator('.discovery-grid .discovery-card').count(), 18);
-    await page.getByRole('button', { name: '다시 시도', exact: true }).click();
+    assert.equal(
+      await page
+        .locator('.discovery-source-view .discovery-message, .discovery-source-view .discovery-inline-message')
+        .count(),
+      0,
+    );
+    assert.equal(await page.locator('.discovery-section-heading .discovery-refresh').count(), 1);
+    await page.getByRole('button', { name: /목록 다시 불러오기$/ }).click();
     await page.waitForFunction(() => document.querySelector('.discovery-grid')?.children.length === 36);
     await tabs.getByRole('button', { name: '둘러보기', exact: true }).click();
     assert.equal(await page.locator('.discovery-section').count(), 3);
     await tabs.getByRole('button', { name: '필터 소스', exact: true }).click();
+    const pinnedTab = tabs.getByRole('button', { name: '필터 소스', exact: true });
+    const iconBox = await pinnedTab.locator('svg').boundingBox();
+    const labelBox = await pinnedTab.locator('span').boundingBox();
+    assert(Math.abs(iconBox.y + iconBox.height / 2 - (labelBox.y + labelBox.height / 2)) < 1);
     await page.waitForFunction(() => document.querySelector('.discovery-grid')?.children.length === 36);
     assert.equal(
       await page

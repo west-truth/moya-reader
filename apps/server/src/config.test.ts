@@ -115,6 +115,7 @@ describe('server security config', () => {
     ['MAX_CHUNK_BYTES', '-1'],
     ['MAX_CHUNK_BYTES', '1.5'],
     ['MAX_UPLOAD_BYTES', 'many'],
+    ['MAX_ARCHIVE_UPLOAD_BYTES', '-1'],
     ['STALE_UPLOAD_MAX_AGE_MS', '-1'],
   ])('rejects invalid bounded server setting %s=%s', (key, value) => {
     expect(() => loadConfig({ [key]: value })).toThrow(new RegExp(key));

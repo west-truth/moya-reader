@@ -5,9 +5,12 @@ import { FastifyInstance } from 'fastify';
 import { Queue } from 'bullmq';
 import pg from 'pg';
 import { ServerConfig } from '../config.js';
+import { assertUploadDiskSpace, UploadSpaceError } from '../services/upload-file.js';
+import { localUploadLimit } from '../services/local-archive-policy.js';
 import { enqueueImportJob } from '../queue.js';
 import { pruneStaleUploadSessions, removeUploadDirectory, uploadDirectory } from '../services/upload-cleanup.js';
-import type { ChapterSplitMode, ImportExpectedBase } from '@noveldesk/contracts';
+import { isEncodingMode } from '@noveldesk/text-core/parser';
+import type { ChapterSplitMode, EncodingMode, ImportExpectedBase } from '@noveldesk/contracts';
 import { parseImportExpectedBase } from '../services/import-expected-base.js';
 import {
   nonNegativeInteger,
@@ -23,12 +26,12 @@ interface InitUploadBody {
   fileName?: string;
   sizeBytes?: number;
   contentType?: string;
-  encoding?: 'auto' | 'utf-8' | 'euc-kr';
+  encoding?: EncodingMode;
   chapterSplitMode?: ChapterSplitMode;
   clientHashHint?: string;
   sourceContentHash?: string;
   clientBookId?: string;
-  importMode?: 'replace_book' | 'append_image_series';
+  importMode?: 'replace_book' | 'append_image_series' | 'append_local_archive';
   baseActiveContentRevisionId?: string;
   expectedBase?: ImportExpectedBase;
   totalChunks?: number;
@@ -41,7 +44,7 @@ interface UploadSessionRow {
   content_type?: string;
   encoding?: string;
   chapter_split_mode?: ChapterSplitMode;
-  import_mode?: 'replace_book' | 'append_image_series';
+  import_mode?: 'replace_book' | 'append_image_series' | 'append_local_archive';
   base_active_content_revision_id?: string | null;
   expected_base?: ImportExpectedBase | null;
   status: string;
@@ -75,9 +78,11 @@ function validClientBookId(value: unknown): string | undefined {
   return /^[A-Za-z0-9:_-]{1,160}$/.test(trimmed) ? trimmed : undefined;
 }
 
-function validImportMode(value: unknown): 'replace_book' | 'append_image_series' | undefined {
+function validImportMode(value: unknown): 'replace_book' | 'append_image_series' | 'append_local_archive' | undefined {
   if (value === undefined) return 'replace_book';
-  return value === 'replace_book' || value === 'append_image_series' ? value : undefined;
+  return value === 'replace_book' || value === 'append_image_series' || value === 'append_local_archive'
+    ? value
+    : undefined;
 }
 
 function validChapterSplitMode(value: unknown): ChapterSplitMode | undefined {
@@ -165,13 +170,16 @@ export async function registerUploadRoutes(
 ): Promise<void> {
   app.post<{ Body: InitUploadBody }>('/api/uploads/init', async (request, reply) => {
     const body = request.body ?? {};
+    if (body.encoding !== undefined && !isEncodingMode(body.encoding))
+      return reply.code(400).send({ error: '지원하지 않는 텍스트 인코딩입니다.' });
     const sizeBytes = positiveInteger(body.sizeBytes);
     if (!body.fileName || !sizeBytes) {
       return reply.code(400).send({ error: 'fileName and positive sizeBytes are required' });
     }
-    const uploadSizeError = validateUploadSize(sizeBytes, config.maxUploadBytes);
+    const maxUploadBytes = localUploadLimit(config, sanitizeFileName(body.fileName), body.importMode);
+    const uploadSizeError = validateUploadSize(sizeBytes, maxUploadBytes);
     if (uploadSizeError) {
-      return reply.code(413).send({ error: uploadSizeError, maxUploadBytes: config.maxUploadBytes });
+      return reply.code(413).send({ error: uploadSizeError, maxUploadBytes });
     }
     const totalChunks = body.totalChunks === undefined ? undefined : positiveInteger(body.totalChunks);
     if (body.totalChunks !== undefined && !totalChunks) {
@@ -206,6 +214,14 @@ export async function registerUploadRoutes(
     if (body.baseActiveContentRevisionId !== undefined && !baseActiveContentRevisionId) {
       return reply.code(400).send({ error: 'baseActiveContentRevisionId must be a safe identifier when provided' });
     }
+    if (
+      importMode === 'append_local_archive' &&
+      (!clientBookId ||
+        !sourceContentHash ||
+        !baseActiveContentRevisionId ||
+        !/\.(epub|zip|cbz)$/iu.test(body.fileName))
+    )
+      return reply.code(400).send({ error: '회차 추가에는 대상 작품과 EPUB 또는 ZIP·CBZ 원본이 필요합니다.' });
     if (importMode === 'append_image_series') {
       if (!clientBookId || !sourceContentHash || !baseActiveContentRevisionId) {
         return reply.code(400).send({
@@ -217,6 +233,14 @@ export async function registerUploadRoutes(
       }
     }
 
+    // Both uploaded chunks and the assembled source coexist during import.
+    try {
+      await assertUploadDiskSpace(path.join(config.dataDir, 'uploads'), sizeBytes * 2);
+    } catch (error) {
+      if (error instanceof UploadSpaceError)
+        return reply.code(507).send({ code: 'upload_storage_full', error: error.message });
+      throw error;
+    }
     const uploadId = `upload_${randomUUID()}`;
     const fileName = sanitizeFileName(body.fileName);
     await mkdir(uploadDirectory(config, uploadId), { recursive: true });

@@ -408,6 +408,7 @@ describe('useImportController background progress', () => {
   it('keeps an active import running after its dialog closes and does not steal the current screen on completion', async () => {
     vi.stubGlobal('window', globalThis);
     let finishImport!: (result: { novel: Novel }) => void;
+    let reportProgress!: Parameters<ImportService['importFile']>[1];
     const importedNovel: Novel = {
       id: 'background-book',
       title: '백그라운드 작품',
@@ -433,6 +434,7 @@ describe('useImportController background progress', () => {
     const onOpenRequested = vi.fn(async () => undefined);
     const notify = vi.fn();
     const importFile = vi.fn<ImportService['importFile']>((input, onProgress) => {
+      reportProgress = onProgress;
       onProgress({
         jobId: 'background-job',
         status: 'reading',
@@ -482,6 +484,22 @@ describe('useImportController background progress', () => {
     act(() => controller.close());
     expect(controller.isOpen).toBe(false);
     expect(notify).toHaveBeenCalledWith('가져오기는 계속됩니다.');
+
+    act(() =>
+      reportProgress({
+        jobId: 'background-job',
+        status: 'writing',
+        subphase: 'server_processing',
+        bytesRead: 10,
+        totalBytes: 10,
+        chaptersDetected: 1,
+        paragraphsWritten: 0,
+        message: '이미지 저장 45개',
+      }),
+    );
+    expect(controller.tasks[0]).toMatchObject({ phase: 'saving', activity: '이미지 저장 45개' });
+    expect(controller.isOpen).toBe(false);
+    expect(onOpenRequested).not.toHaveBeenCalled();
 
     finishImport({ novel: importedNovel });
     await act(async () => importPromise);

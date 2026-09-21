@@ -9,6 +9,7 @@ import { SocksClient } from 'socks';
 import { isPublicSourceAddress } from '@moya/extension-runtime/source-http';
 import { parseOutboundProxy } from './outbound-proxy.js';
 import type { SourceWebViewScope } from './source-webview.js';
+import { sourceBrowserLimits } from './source-browser-limits.js';
 
 /** CONNECT transports opaque browser TLS bytes: no origin TLS termination or Node impersonation. */
 async function tunnel(address: string, port: number, proxy: string | undefined, signal: AbortSignal): Promise<Socket> {
@@ -69,6 +70,7 @@ async function tunnel(address: string, port: number, proxy: string | undefined, 
 }
 
 export async function openSourceBrowserProxy(scope: SourceWebViewScope, signal: AbortSignal) {
+  const limits = sourceBrowserLimits(scope.purpose);
   const username = randomBytes(16).toString('hex'),
     password = randomBytes(24).toString('hex');
   const authorization = 'Basic ' + Buffer.from(username + ':' + password).toString('base64');
@@ -77,6 +79,7 @@ export async function openSourceBrowserProxy(scope: SourceWebViewScope, signal: 
     connections = 0,
     failure: string | undefined;
   const fail = (error: unknown) => {
+    if (failure === 'source_body_limit') return;
     failure = /^source_[a-z_]+$/.test((error as Error).message) ? (error as Error).message : 'source_connection_failed';
   };
   const track = (socket: Duplex) => {
@@ -85,7 +88,7 @@ export async function openSourceBrowserProxy(scope: SourceWebViewScope, signal: 
     socket.once('close', () => sockets.delete(socket));
     socket.on('data', (chunk) => {
       total += chunk.length;
-      if (total > 32 * 1024 * 1024) {
+      if (total > limits.bytes) {
         failure = 'source_body_limit';
         for (const open of sockets) open.destroy();
       }
@@ -125,7 +128,7 @@ export async function openSourceBrowserProxy(scope: SourceWebViewScope, signal: 
     }
     try {
       const { url, address, proxy } = await target(request.url ?? '');
-      if (url.protocol !== 'http:' || proxy || ++connections > 512) throw new Error('source_url_denied');
+      if (url.protocol !== 'http:' || proxy || ++connections > limits.requests) throw new Error('source_url_denied');
       const headers: import('node:http').IncomingHttpHeaders = { ...request.headers, host: url.host };
       delete headers['proxy-authorization'];
       delete headers['proxy-connection'];
@@ -173,7 +176,8 @@ export async function openSourceBrowserProxy(scope: SourceWebViewScope, signal: 
     }
     void (async () => {
       try {
-        if (++connections > 512 || !request.url || /[/@?#]/.test(request.url)) throw new Error('source_url_denied');
+        if (++connections > limits.requests || !request.url || /[/@?#]/.test(request.url))
+          throw new Error('source_url_denied');
         const { url, address, proxy } = await target('https://' + request.url);
         const remote = await tunnel(address.address, Number(url.port || 443), proxy, signal);
         if (client.destroyed || signal.aborted) {

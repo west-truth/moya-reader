@@ -37,7 +37,51 @@ describe('archive foreground image loading', () => {
     vi.spyOn(URL, 'revokeObjectURL').mockImplementation(() => {});
   });
   afterEach(() => {
+    vi.useRealTimers();
     vi.restoreAllMocks();
+  });
+
+  it('retries a stalled page without leaving the reader and ignores its late completion', async () => {
+    const h = harness();
+    h.loader.update(0, [0, 1]);
+    h.requests[1]!.resolve(page(1));
+    await settle();
+    const neighbour = h.snapshot().pages.get(1)?.url;
+    h.loader.retry(0);
+    await settle();
+    expect(h.requests[0]!.signal.aborted).toBe(true);
+    expect(h.requests.map((request) => request.index)).toEqual([0, 1, 0]);
+    h.requests[2]!.resolve(page(0));
+    await settle();
+    const retried = h.snapshot().pages.get(0)?.url;
+    h.requests[0]!.resolve(page(0));
+    await settle();
+    expect(h.snapshot().pages.get(0)?.url).toBe(retried);
+    expect(h.snapshot().pages.get(1)?.url).toBe(neighbour);
+    h.loader.dispose();
+  });
+
+  it('ends an indefinite loading state and allows retry after timeout or image decode failure', async () => {
+    vi.useFakeTimers();
+    const h = harness();
+    h.loader.update(0, [0]);
+    await vi.advanceTimersByTimeAsync(60000);
+    expect(h.snapshot().errors.get(0)).toContain('시간이 초과');
+    expect(h.requests).toHaveLength(1);
+    h.loader.retry(0);
+    h.requests[1]!.resolve(page(0));
+    await settle();
+    const oldUrl = h.snapshot().pages.get(0)!.url;
+    h.loader.reportError(0, oldUrl);
+    expect(h.snapshot().pages.has(0)).toBe(false);
+    expect(h.snapshot().errors.get(0)).toContain('표시하지 못');
+    h.loader.retry(0);
+    h.requests[2]!.resolve(page(0));
+    await settle();
+    h.loader.reportError(0, oldUrl);
+    expect(h.snapshot().pages.has(0)).toBe(true);
+    expect(h.snapshot().errors.has(0)).toBe(false);
+    h.loader.dispose();
   });
 
   it('publishes the foreground image before slow neighbours and isolates prefetch failures', async () => {
@@ -56,7 +100,7 @@ describe('archive foreground image loading', () => {
     h.loader.dispose();
   });
 
-  it('keeps at most three unresolved loads and discards all intermediate seek queues', async () => {
+  it('coalesces synchronous seeks and discards all intermediate queues', async () => {
     const h = harness();
     h.loader.update(2, [0, 1, 2, 3, 4]);
     for (let i = 1; i <= 30; i += 1) h.loader.update(i * 20, [i * 20 - 1, i * 20, i * 20 + 1]);

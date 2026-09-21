@@ -1,5 +1,3 @@
-import { bytesToHex } from '@noble/hashes/utils.js';
-import { sha256 } from '@noble/hashes/sha2.js';
 import {
   DOMParser,
   type Document as XmlDocument,
@@ -55,6 +53,8 @@ export interface EpubResource {
   readonly mediaType: string;
   readonly contentHash: string;
   readonly bytes: Uint8Array;
+  /** Present only while a streaming import defers the resource bytes. */
+  readonly archiveIndex?: number;
 }
 
 export interface EpubBlock {
@@ -92,6 +92,7 @@ interface ManifestItem {
 }
 
 interface ArchiveEntry {
+  readonly textBudget: { bytes: number; entries: Set<FileEntry> };
   readonly entry: FileEntry;
   readonly path: string;
 }
@@ -237,13 +238,14 @@ function resolvedLinkHref(base: string, href: string): string | undefined {
   return resolvedHref(base, trimmed);
 }
 
-function archiveEntries(entries: readonly Entry[]): ArchiveIndex {
+function archiveEntries(entries: readonly Entry[], maxExpandedBytes = MAX_EXPANDED_BYTES): ArchiveIndex {
   if (entries.length > MAX_ENTRY_COUNT) {
     throw new EpubImportError('EPUB archive 항목 수가 안전 한도를 초과했습니다.', 'invalid_archive');
   }
   const ordered: ArchiveEntry[] = [];
   const byPath = new Map<string, ArchiveEntry[]>();
   let expandedBytes = 0;
+  const textBudget = { bytes: 0, entries: new Set<FileEntry>() };
   for (const entry of entries) {
     if (entry.directory) continue;
     const path = normalizedArchivePath(entry.filename);
@@ -258,11 +260,11 @@ function archiveEntries(entries: readonly Entry[]): ArchiveIndex {
       throw new EpubImportError('EPUB 압축 비율이 안전 한도를 초과했습니다.', 'invalid_archive');
     }
     expandedBytes += size;
-    if (expandedBytes > MAX_EXPANDED_BYTES) {
+    if (expandedBytes > maxExpandedBytes) {
       throw new EpubImportError('EPUB 해제 크기가 안전 한도를 초과했습니다.', 'invalid_archive');
     }
     const key = path.toLowerCase();
-    const record = { entry: entry as FileEntry, path };
+    const record = { entry: entry as FileEntry, path, textBudget };
     ordered.push(record);
     const occurrences = byPath.get(key) ?? [];
     occurrences.push(record);
@@ -273,10 +275,22 @@ function archiveEntries(entries: readonly Entry[]): ArchiveIndex {
 
 async function entryBytes(record: ArchiveEntry): Promise<Uint8Array> {
   if (!record.entry.getData) throw new EpubImportError('EPUB archive 항목을 읽을 수 없습니다.', 'invalid_archive');
-  return record.entry.getData(new Uint8ArrayWriter());
+  return record.entry.getData(new Uint8ArrayWriter(), {
+    checkSignature: true,
+    onprogress: (loaded) => {
+      if (loaded > MAX_ENTRY_BYTES || loaded > record.entry.uncompressedSize)
+        throw new EpubImportError('EPUB 항목의 실제 크기가 허용 범위를 초과했습니다.', 'invalid_archive');
+    },
+  });
 }
 
 async function entryText(record: ArchiveEntry): Promise<string> {
+  if (!record.textBudget.entries.has(record.entry)) {
+    record.textBudget.entries.add(record.entry);
+    record.textBudget.bytes += record.entry.uncompressedSize;
+    if (record.textBudget.bytes > MAX_EXPANDED_BYTES)
+      throw new EpubImportError('EPUB 텍스트 크기가 안전 한도를 초과했습니다.', 'invalid_archive');
+  }
   const bytes = await entryBytes(record);
   if (bytes[0] === 0xff && bytes[1] === 0xfe) {
     return new TextDecoder('utf-16le', { fatal: false }).decode(bytes.subarray(2));
@@ -752,10 +766,22 @@ function applyDuplicateImageRecovery(
 }
 
 export async function parseEpub(blob: Blob): Promise<EpubDocument> {
+  return parseEpubDocument(blob);
+}
+
+async function parseEpubDocument(
+  blob: Blob,
+  options: {
+    deferResources?: boolean;
+    maxExpandedBytes?: number;
+    signal?: AbortSignal;
+    onResource?: (resource: EpubResource, context: { normalizedTextHash: string; coverHref?: string }) => Promise<void>;
+  } = {},
+): Promise<EpubDocument> {
   let reader: ZipReader<Blob> | undefined;
   try {
-    reader = new ZipReader(new BlobReader(blob));
-    const entries = archiveEntries(await reader.getEntries());
+    reader = new ZipReader(new BlobReader(blob), { signal: options.signal });
+    const entries = archiveEntries(await reader.getEntries(), options.maxExpandedBytes);
     const container = parseXml(await entryText(findEntry(entries, 'META-INF/container.xml')), 'container.xml');
     const rootfile = descendants(container, 'rootfile')[0];
     const opfPath = rootfile?.getAttribute('full-path');
@@ -793,15 +819,25 @@ export async function parseEpub(blob: Blob): Promise<EpubDocument> {
     const coverHref = coverBinding?.logicalHref ?? coverItem?.href;
     if (coverHref) referenced.add(coverHref);
     const resources: EpubResource[] = [];
+    const normalizedTextHash = epubNormalizedTextHash(sections);
     for (const href of referenced) {
       const recovered = imageRecovery?.byLogicalHref.get(href);
       const item = recovered?.item ?? [...manifest.values()].find((candidate) => candidate.href === href);
       if (!item || !EPUB_IMAGE_TYPES.has(item.mediaType)) continue;
-      const bytes = await entryBytes(recovered?.entry ?? findEntry(entries, href));
-      resources.push({ href, mediaType: item.mediaType, contentHash: `sha256:${bytesToHex(sha256(bytes))}`, bytes });
+      options.signal?.throwIfAborted();
+      const record = recovered?.entry ?? findEntry(entries, href);
+      const bytes = await entryBytes(record);
+      const resource = { href, mediaType: item.mediaType, contentHash: integrityHash(bytes), bytes };
+      await options.onResource?.(resource, { normalizedTextHash, coverHref });
+      resources.push({
+        ...resource,
+        bytes: options.deferResources ? new Uint8Array(0) : bytes,
+        ...(options.deferResources ? { archiveIndex: entries.ordered.indexOf(record) } : {}),
+      });
     }
     return { ...metadata, coverHref, sections, resources };
   } catch (error) {
+    if (options.signal?.aborted) throw options.signal.reason;
     if (error instanceof EpubImportError) throw error;
     throw new EpubImportError(
       error instanceof Error && error.message
@@ -820,20 +856,28 @@ function fileNameFromHref(href: string): string {
 
 export interface MaterializeEpubImportOptions {
   readonly fileName: string;
-  readonly sourceBytes: Uint8Array;
+  readonly sourceBytes?: Uint8Array;
+  readonly sourceContentHash?: string;
   readonly clientBookId?: string;
   readonly now?: string;
+}
+
+function epubNormalizedTextHash(sections: readonly EpubSection[]): string {
+  return integrityHash(
+    sections
+      .map((section) => [section.title, ...section.blocks.map((block) => block.plainText)].filter(Boolean).join('\n\n'))
+      .join('\n\n\n'),
+  );
 }
 
 export function materializeEpubImport(
   document: EpubDocument,
   options: MaterializeEpubImportOptions,
 ): ParsedNovelImport {
-  const normalizedText = document.sections
-    .map((section) => [section.title, ...section.blocks.map((block) => block.plainText)].filter(Boolean).join('\n\n'))
-    .join('\n\n\n');
-  const normalizedTextHash = integrityHash(normalizedText);
-  const sourceHash = integrityHash(options.sourceBytes);
+  const normalizedTextHash = epubNormalizedTextHash(document.sections);
+  const sourceHash =
+    options.sourceContentHash ?? (options.sourceBytes ? integrityHash(options.sourceBytes) : undefined);
+  if (!sourceHash) throw new Error('EPUB source hash is required');
   const bookId = options.clientBookId?.trim() || parsedNovelId(options.fileName, normalizedTextHash);
   const now = options.now ?? new Date().toISOString();
   const resourceIds = new Map(
@@ -963,6 +1007,77 @@ export function materializeEpubImport(
       if (consumed) return [];
       consumed = true;
       return chapterRows;
+    },
+  };
+}
+
+/** A storage sink consumes each image once; iterator callers retain the bounded two-pass path. */
+export async function materializeStreamingEpubImport(
+  blob: Blob,
+  options: Omit<MaterializeEpubImportOptions, 'sourceBytes'> & {
+    sourceContentHash: string;
+    maxExpandedBytes?: number;
+    signal?: AbortSignal;
+    onAsset?: (asset: ParsedNovelImportAsset) => Promise<void>;
+  },
+): Promise<ParsedNovelImport> {
+  const document = await parseEpubDocument(blob, {
+    ...options,
+    deferResources: true,
+    onResource: options.onAsset
+      ? async (resource, context) => {
+          const bookId = options.clientBookId?.trim() || parsedNovelId(options.fileName, context.normalizedTextHash);
+          const asset: ParsedNovelImportAsset = {
+            id: persistentId128('epub_resource', [bookId, resource.href, resource.contentHash]),
+            bookId,
+            kind: 'epub_resource',
+            provenance: 'epub_embedded',
+            fileName: fileNameFromHref(resource.href),
+            contentType: resource.mediaType,
+            contentHash: resource.contentHash,
+            bytes: resource.bytes,
+          };
+          await options.onAsset!(asset);
+          if (resource.href === context.coverHref) {
+            await options.onAsset!({
+              ...asset,
+              id: persistentId128('epub_cover', [bookId, resource.contentHash]),
+              kind: 'cover',
+            });
+          }
+        }
+      : undefined,
+  });
+  const parsed = materializeEpubImport(document, options);
+  const descriptors = parsed.embeddedAssets ?? [];
+  if (options.onAsset) return { ...parsed, embeddedAssets: undefined };
+  let consumed = false;
+  return {
+    ...parsed,
+    embeddedAssets: undefined,
+    async *consumeEmbeddedAssets() {
+      if (consumed) return;
+      consumed = true;
+      const reader = new ZipReader(new BlobReader(blob), { signal: options.signal });
+      try {
+        const entries = archiveEntries(await reader.getEntries(), options.maxExpandedBytes);
+        for (let index = 0; index < document.resources.length; index++) {
+          options.signal?.throwIfAborted();
+          const resource = document.resources[index]!;
+          const record = entries.ordered[resource.archiveIndex!];
+          if (!record) throw new EpubImportError('EPUB 이미지 항목이 누락되었습니다.', 'invalid_archive');
+          const bytes = await entryBytes(record);
+          if (integrityHash(bytes) !== resource.contentHash)
+            throw new EpubImportError('EPUB 이미지가 검사 이후 변경되었습니다.', 'invalid_archive');
+          yield { ...descriptors[index]!, bytes };
+          if (resource.href === document.coverHref) {
+            const cover = descriptors.find((asset) => asset.kind === 'cover');
+            if (cover) yield { ...cover, bytes };
+          }
+        }
+      } finally {
+        await reader.close().catch(() => undefined);
+      }
     },
   };
 }

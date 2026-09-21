@@ -1788,7 +1788,7 @@ export class RemoteApiClient {
       contentType: string;
       encoding: EncodingMode;
       chapterSplitMode?: ChapterSplitMode;
-      importMode?: 'replace_book' | 'append_image_series';
+      importMode?: 'replace_book' | 'append_image_series' | 'append_local_archive';
       baseActiveContentRevisionId?: string;
       expectedBase?: import('@noveldesk/contracts').ImportExpectedBase;
       totalChunks: number;

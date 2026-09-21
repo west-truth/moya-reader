@@ -373,7 +373,9 @@ function SourceReleaseRow({
         ) : item.readingState === 'read' || (!item.readingState && item.importState === 'imported') ? (
           <Check size={12} />
         ) : null}
-        {task ? importTaskLabel(task) : (readingStateLabel ?? importStateLabel(item.importState))}
+        <span className="source-hub-state-label" title={task ? importTaskLabel(task) : undefined}>
+          {task ? importTaskLabel(task) : (readingStateLabel ?? importStateLabel(item.importState))}
+        </span>
       </span>
       <ItemAction item={item} controller={controller} task={task} releaseList />
     </article>

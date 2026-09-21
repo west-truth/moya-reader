@@ -16,10 +16,16 @@ describe('importFailureMessage', () => {
     );
   });
 
-  it('points size failures to both server and reverse proxy limits', () => {
+  it('explains the upload size limit without exposing deployment settings', () => {
     const message = importFailureMessage('scan.pdf', new RemoteApiError('{"error":"payload too large"}', 413));
-    expect(message).toContain('MAX_UPLOAD_BYTES');
-    expect(message).toContain('client_max_body_size');
+    expect(message).toContain('업로드 용량 한도');
+    expect(message).toContain('scan.pdf');
+  });
+
+  it('explains insufficient temporary space without technical details', () => {
+    expect(importFailureMessage('book.epub', new RemoteApiError('{"code":"upload_storage_full"}', 507))).toBe(
+      '서버의 임시 저장공간이 부족합니다. 공간을 확보한 뒤 다시 시도해 주세요.',
+    );
   });
 
   it('identifies unavailable API or worker services', () => {

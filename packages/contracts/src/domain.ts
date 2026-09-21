@@ -1,4 +1,16 @@
-export type EncodingMode = 'auto' | 'utf-8' | 'euc-kr';
+export type EncodingMode =
+  | 'auto'
+  | 'utf-8'
+  | 'euc-kr'
+  | 'utf-16le'
+  | 'utf-16be'
+  | 'shift_jis'
+  | 'euc-jp'
+  | 'iso-2022-jp'
+  | 'gb18030'
+  | 'big5'
+  | 'windows-1252'
+  | 'windows-1251';
 export type ChapterSplitMode = 'auto' | 'mixed' | 'single';
 /** Caller-owned snapshot fence for a complete import package. */
 export type ImportExpectedBase =

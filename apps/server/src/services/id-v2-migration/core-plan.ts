@@ -1,6 +1,5 @@
 import { normalizeNovelText } from '@noveldesk/text-core/normalization';
-import { decodeNovelTextWithEncoding } from '@noveldesk/text-core/parser';
-import type { EncodingMode } from '@noveldesk/contracts';
+import { decodeNovelTextWithEncoding, isEncodingMode } from '@noveldesk/text-core/parser';
 import { integrityHash } from '@noveldesk/text-core/hash';
 import {
   HASH_V2_CONTRACT,
@@ -15,8 +14,6 @@ import { AliasRegistry } from './alias-registry.js';
 import { verifiedCanonicalHash } from './hash-validation.js';
 import { HashAliasRegistry } from './hash-alias-registry.js';
 import { integerValue, optionalText, record, textValue, type JsonRecord } from './safe-values.js';
-
-const validEncodings = new Set<EncodingMode>(['auto', 'utf-8', 'euc-kr']);
 
 export interface CoreMigrationPlan {
   readonly aliases: AliasRegistry;
@@ -75,7 +72,7 @@ async function loadVerifiedSource(
   }
 
   const encodingValue = optionalText(book.source_encoding) ?? 'auto';
-  const encoding = validEncodings.has(encodingValue as EncodingMode) ? (encodingValue as EncodingMode) : 'auto';
+  const encoding = isEncodingMode(encodingValue) ? encodingValue : 'auto';
   const decoded = decodeNovelTextWithEncoding(arrayBuffer(body), encoding);
   const normalizedText = normalizeNovelText(decoded.text);
   const canonicalRawTextHash = verifiedCanonicalHash(source.rawTextHash, body, 'book_object');

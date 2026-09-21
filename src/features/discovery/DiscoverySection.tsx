@@ -1,3 +1,4 @@
+import { DiscoveryHeading } from './DiscoveryHeading';
 import type { WorkView } from '../../components/work-view';
 import { DiscoveryCard, useNear } from './DiscoveryCard';
 import { DiscoverySourceView } from './DiscoverySourceView';
@@ -147,12 +148,25 @@ export function DiscoverySection({
       `${source?.title ?? '사용할 수 없는 소스'} · ${section.mode === 'popular' ? '인기' : '최신 업데이트'}`;
   return (
     <section ref={ref} className="discovery-section" data-discovery-section={section.id} aria-label={title}>
-      <div className="discovery-section-heading">
-        <div>
-          <small>{section.title ? source?.title : '작품 탐색'}</small>
-          <h2>{title}</h2>
-        </div>
-      </div>
+      {!(expanded && !unsupported && source?.connection.state === 'connected') && (
+        <DiscoveryHeading
+          title={title}
+          eyebrow={section.title ? source?.title : '작품 탐색'}
+          loading={loading}
+          failed={Boolean(error)}
+          updated={Boolean(candidate)}
+          refresh={
+            !unsupported && source?.connection.state === 'connected'
+              ? () => {
+                  if (candidate && !error) {
+                    setPage(candidate);
+                    setCandidate(undefined);
+                  } else setRetry((v) => v + 1);
+                }
+              : undefined
+          }
+        />
+      )}
       {expanded && !unsupported ? (
         <>
           <DiscoverySourceView
@@ -164,6 +178,8 @@ export function DiscoverySection({
             open={open}
             owned={owned}
             controls={false}
+            headingTitle={title}
+            headingEyebrow={section.title ? source?.title : '작품 탐색'}
             query={query}
           />
         </>
@@ -173,26 +189,10 @@ export function DiscoverySection({
         <p className="discovery-message">소스를 사용할 수 없습니다. 소스 관리에서 연결을 확인해 주세요.</p>
       ) : (
         <>
-          {error && (
-            <div className="discovery-message" role="status">
-              {page ? '이전 목록을 표시하고 있습니다. ' : ''}
+          {error && !page && (
+            <p className="discovery-inline-message" role="status">
               {error}
-              <button type="button" className="ghost-btn" disabled={loading} onClick={() => setRetry((v) => v + 1)}>
-                다시 시도
-              </button>
-            </div>
-          )}
-          {candidate && (
-            <button
-              type="button"
-              className="ghost-btn"
-              onClick={() => {
-                setPage(candidate);
-                setCandidate(undefined);
-              }}
-            >
-              새 목록 보기
-            </button>
+            </p>
           )}
           {!page && !error && (
             <div className="discovery-skeleton" aria-label="목록 불러오는 중" aria-busy="true">

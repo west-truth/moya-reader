@@ -1,4 +1,5 @@
 import { openSourceBrowserProxy } from './source-browser-proxy.js';
+import { sourceBrowserLimits } from './source-browser-limits.js';
 import { readBrowserSession, mergeBrowserSession } from './source-browser-session.js';
 import { access } from 'node:fs/promises';
 import { chromium, type Browser, type BrowserContext } from 'playwright-core';
@@ -18,6 +19,8 @@ export interface SourceWebViewScope {
   privateOrigins?: readonly string[];
   outboundProxy?: string;
   browserMode?: 'browser' | 'broker' | 'patchright';
+  /** Image discovery may load a whole chapter before its collector returns URLs. */
+  purpose?: 'image-pages';
 }
 
 /** A warm browser shared by jobs, with separate, short-lived contexts for each source invocation. */
@@ -84,6 +87,7 @@ export class SourceWebViewHost {
       return url;
     };
     const initial = permitted(input.url);
+    const limits = sourceBrowserLimits(scope.purpose);
     if (this.pending >= 64) throw new Error('execution_busy');
     this.pending++;
     const deadline = AbortSignal.any([signal, AbortSignal.timeout(input.timeoutMs ?? 60000)]);
@@ -163,7 +167,7 @@ export class SourceWebViewHost {
           try {
             const request = route.request();
             const url = permitted(request.url());
-            if (++requests > 512 || total > 32 * 1024 * 1024) throw new Error('source_body_limit');
+            if (++requests > limits.requests || total > limits.bytes) throw new Error('source_body_limit');
             const headers = await request.allHeaders();
             delete headers.host;
             delete headers['content-length'];
@@ -186,7 +190,7 @@ export class SourceWebViewHost {
               false,
             );
             total += response.bytes.length;
-            if (total > 32 * 1024 * 1024) throw new Error('source_body_limit');
+            if (total > limits.bytes) throw new Error('source_body_limit');
             const resultHeaders: Record<string, string> = {};
             for (const [key, value] of Object.entries(response.headers))
               if (value !== undefined && !/^(content-encoding|content-length|transfer-encoding|connection)$/i.test(key))

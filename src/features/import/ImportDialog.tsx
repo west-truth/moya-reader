@@ -1,3 +1,4 @@
+import { TEXT_ENCODING_LABELS } from '@noveldesk/text-core/parser';
 import { AlertTriangle, FileText, List, Trash2, Upload } from 'lucide-react';
 import { type ChangeEvent, type DragEvent, useId, useRef } from 'react';
 import type { ChapterSplitMode, EncodingMode } from '../../domain/types';
@@ -34,11 +35,14 @@ export function ImportDialog({ controller }: ImportDialogProps) {
   return (
     <Dialog
       open={controller.isOpen}
-      title="책 가져오기"
+      title={controller.seriesTargetLocked ? '회차 추가' : '책 가져오기'}
       onClose={controller.close}
       closeLabel="가져오기 닫기"
       className="import-dialog"
     >
+      {controller.appendTargetTitle && (
+        <p className="field-help">{controller.appendTargetTitle}에 순서대로 추가합니다.</p>
+      )}
       <input
         ref={fileInputRef}
         type="file"
@@ -380,9 +384,13 @@ export function ImportDialog({ controller }: ImportDialogProps) {
             onChange={(event) => controller.setEncoding(event.target.value as EncodingMode)}
           >
             <option value="auto">자동 감지</option>
-            <option value="utf-8">UTF-8</option>
-            <option value="euc-kr">CP949 / EUC-KR</option>
+            {Object.entries(TEXT_ENCODING_LABELS).map(([value, label]) => (
+              <option key={value} value={value}>
+                {label}
+              </option>
+            ))}
           </select>
+          <p className="field-help">글자가 깨지면 인코딩을 직접 선택해 주세요.</p>
           <label className="field-label" htmlFor={chapterSplitId}>
             텍스트 화 분리 방식
           </label>

@@ -240,6 +240,7 @@ export class ServerUploadImportService implements ImportService {
   readonly supportsExpectedBase = true;
   readonly supportsExpectedSourceContentHash = true;
   readonly supportsIncrementalImageSeriesAppend = true;
+  readonly supportsLocalArchiveAppend = true;
   constructor(
     private readonly client: RemoteApiClient,
     private readonly chunkBytes = DEFAULT_SERVER_UPLOAD_CHUNK_BYTES,
@@ -301,12 +302,17 @@ export class ServerUploadImportService implements ImportService {
         message: '서버 업로드를 준비하고 있습니다.',
       });
 
-      if (input.expectedBase && (!input.clientBookId || input.importMode === 'append_image_series')) {
+      if (
+        input.expectedBase &&
+        (!input.clientBookId ||
+          input.importMode === 'append_image_series' ||
+          input.importMode === 'append_local_archive')
+      ) {
         throw new Error('expectedBase requires clientBookId and replace_book');
       }
 
       if (
-        input.importMode === 'append_image_series' &&
+        (input.importMode === 'append_image_series' || input.importMode === 'append_local_archive') &&
         (!input.clientBookId?.trim() || !input.baseActiveContentRevisionId?.trim())
       ) {
         throw new Error('만화 회차 증분 업로드에 작품과 기준 본문 revision이 필요합니다.');
@@ -583,14 +589,14 @@ export class ServerUploadImportService implements ImportService {
         throw new Error('연결된 서버가 조건부 가져오기를 지원하지 않습니다. 서버를 먼저 업데이트해 주세요.');
       }
     }
-    if (input.importMode === 'append_image_series') {
+    if (input.importMode === 'append_image_series' || input.importMode === 'append_local_archive') {
       verifiedStatus = await this.client.getUpload(upload.uploadId, signal);
       if (
-        verifiedStatus.importMode !== 'append_image_series' ||
+        verifiedStatus.importMode !== input.importMode ||
         verifiedStatus.baseActiveContentRevisionId !== input.baseActiveContentRevisionId
       ) {
         await this.client.cancelUpload(upload.uploadId).catch(() => undefined);
-        throw new Error('연결된 서버가 만화 회차 증분 업로드를 지원하지 않습니다. 서버를 먼저 업데이트해 주세요.');
+        throw new Error('연결된 서버가 이 회차 추가 방식을 지원하지 않습니다. 서버를 먼저 업데이트해 주세요.');
       }
     }
     const now = new Date().toISOString();

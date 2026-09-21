@@ -228,6 +228,7 @@ it('preserves encrypted options across restart and imports original-script pages
     if (input.url.endsWith('.json')) bytes = Buffer.from(JSON.stringify([{ ...fixtureRow, version }]));
     else if (input.url.endsWith('.js')) bytes = Buffer.from(fixtureSource + `\n// version ${version}`);
     else if (input.url.endsWith('.jpg')) {
+      expect(input.options?.timeout).toBe(30);
       expect(proxy).toBe('socks5://127.0.0.1:40000');
       expect(input.headers?.Referer).toBe('https://site.example/1');
       bytes = Buffer.from([255, 216, 255, 217]);

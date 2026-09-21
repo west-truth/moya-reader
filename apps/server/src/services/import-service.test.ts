@@ -572,8 +572,12 @@ describe('server import service', () => {
     expect(libraryBookSql).not.toContain('cover_fit = excluded.cover_fit');
     expect(libraryBookSql).not.toContain('cover_position_x = excluded.cover_position_x');
     expect(libraryBookSql).not.toContain('cover_position_y = excluded.cover_position_y');
-    expect(libraryBookSql).toContain("when $19::text = 'append_image_series' then library_books.cover_seed");
-    expect(libraryBookSql).toContain("when $19::text = 'append_image_series' then library_books.metadata_revision");
+    expect(libraryBookSql).toContain(
+      "when $19::text in ('append_image_series','append_local_archive') then library_books.cover_seed",
+    );
+    expect(libraryBookSql).toContain(
+      "when $19::text in ('append_image_series','append_local_archive') then library_books.metadata_revision",
+    );
     expect(libraryBookParams?.[18]).toBe('replace_book');
     expect(objectParams?.[0]).toBe(persistentId128('object', [String(objectParams?.[1])]));
     expect(objectParams?.[1]).toBe(integrityHash(Buffer.from(text)));
@@ -1062,16 +1066,20 @@ describe('server import service', () => {
     const storedSource = vi.mocked(putRawBookObject).mock.calls.find((call) => String(call[2]).includes('/sources/'));
     expect(storedSource).toBeDefined();
     const mergedManifest = await readSeriesImageArchiveManifest(
-      new Blob([new Uint8Array(storedSource?.[3] ?? Buffer.alloc(0))], {
-        type: String(storedSource?.[4] ?? ''),
-      }),
+      storedSource?.[3] instanceof Blob
+        ? storedSource[3]
+        : new Blob([new Uint8Array(storedSource?.[3] ?? Buffer.alloc(0))]),
     );
     expect(mergedManifest?.chapters.map((chapter) => [chapter.remoteId, chapter.title])).toEqual([
       ['chapter:101', '1화 수정'],
       ['chapter:102', '2화'],
     ]);
-    expect(libraryBookSql).toContain("when $19::text = 'append_image_series' then library_books.cover_seed");
-    expect(libraryBookSql).toContain("when $19::text = 'append_image_series' then library_books.metadata_revision");
+    expect(libraryBookSql).toContain(
+      "when $19::text in ('append_image_series','append_local_archive') then library_books.cover_seed",
+    );
+    expect(libraryBookSql).toContain(
+      "when $19::text in ('append_image_series','append_local_archive') then library_books.metadata_revision",
+    );
     expect(libraryBookParams?.[18]).toBe('append_image_series');
     expect(libraryBookParams?.[11]).toBe(2);
     expect(chapterInsertParams).toHaveLength(30);
@@ -1254,9 +1262,9 @@ describe('server import service', () => {
     const storedSource = vi.mocked(putRawBookObject).mock.calls.find((call) => String(call[2]).includes('/sources/'));
     expect(storedSource).toBeDefined();
     const mergedManifest = await readSeriesImageArchiveManifest(
-      new Blob([new Uint8Array(storedSource?.[3] ?? Buffer.alloc(0))], {
-        type: String(storedSource?.[4] ?? ''),
-      }),
+      storedSource?.[3] instanceof Blob
+        ? storedSource[3]
+        : new Blob([new Uint8Array(storedSource?.[3] ?? Buffer.alloc(0))]),
     );
     expect(mergedManifest?.chapters.map((chapter) => chapter.remoteId)).toEqual(['chapter:101', 'chapter:102']);
     expect(

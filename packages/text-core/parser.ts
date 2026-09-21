@@ -13,7 +13,7 @@ export {
   mapNormalizedRangeToLegacyChapterOffsets,
 } from './parser/chapter-range-assembler';
 export { chapterId, coverSeed, hash, normalizeSourceHash, novelId } from './parser/content-contract';
-export { decodeNovelText, decodeNovelTextWithEncoding } from './parser/encoding';
+export { decodeNovelText, decodeNovelTextWithEncoding, isEncodingMode, TEXT_ENCODING_LABELS } from './parser/encoding';
 export { isLikelyChapterHeading, parseChapterHeading } from './parser/heading-detector';
 export { resolveChapterHeadings } from './parser/heading-sequence-resolver';
 export { normalizeNovelText, trimNormalizedTextRange, type NormalizedTextRange } from './normalization';

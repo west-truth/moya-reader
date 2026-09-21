@@ -2158,8 +2158,8 @@ export default function App() {
           return;
         }
         showToast(`원본 ${formatBytes(source.metadata.byteLength)}을(를) 다운로드했습니다.`, 'success');
-      } catch {
-        showToast('원본 파일을 다운로드하지 못했습니다.', 'danger');
+      } catch (error) {
+        showToast(error instanceof Error ? error.message : '원본 파일을 다운로드하지 못했습니다.', 'danger');
       }
     },
     [bookAssetRepository, documentIo, showToast],

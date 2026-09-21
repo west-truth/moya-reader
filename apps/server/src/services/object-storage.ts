@@ -1,5 +1,6 @@
 import {
   CreateBucketCommand,
+  CopyObjectCommand,
   DeleteObjectCommand,
   GetObjectCommand,
   HeadBucketCommand,
@@ -52,17 +53,20 @@ export async function putRawBookObject(
   client: S3Client,
   config: ServerConfig,
   key: string,
-  body: Buffer,
+  body: Buffer | Blob,
   contentType: string,
+  signal?: AbortSignal,
 ): Promise<void> {
   await ensureBucketForWrite(client, config.s3.bucket);
   await client.send(
     new PutObjectCommand({
       Bucket: config.s3.bucket,
       Key: key,
-      Body: body,
+      Body: body instanceof Blob ? Readable.fromWeb(body.stream() as never) : body,
+      ContentLength: body instanceof Blob ? body.size : body.length,
       ContentType: contentType,
     }),
+    { abortSignal: signal },
   );
 }
 
@@ -193,4 +197,22 @@ function objectBodyToReadable(body: unknown): Readable {
   if (body instanceof Readable) return body;
   if (body instanceof Uint8Array) return Readable.from([body]);
   throw new TypeError('Stored object body is not a readable stream.');
+}
+
+/** First adoption retains the original under an attempt-owned key without downloading it into RAM. */
+export async function copyStoredObject(
+  client: S3Client,
+  config: ServerConfig,
+  sourceKey: string,
+  targetKey: string,
+  signal?: AbortSignal,
+): Promise<void> {
+  await client.send(
+    new CopyObjectCommand({
+      Bucket: config.s3.bucket,
+      Key: targetKey,
+      CopySource: [config.s3.bucket, ...sourceKey.split('/')].map(encodeURIComponent).join('/'),
+    }),
+    { abortSignal: signal },
+  );
 }

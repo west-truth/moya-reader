@@ -148,6 +148,12 @@ export async function inspectLocalDocumentSeriesImport(
     readonly password?: string;
   },
 ): Promise<LocalDocumentSeriesInspection | undefined> {
+  // Keep large EPUBs out of the eager browser preview/series merge path.
+  if (files.some((file) => file.size > 500 * 1024 * 1024)) {
+    if (options.targetNovel) throw new Error('대용량 파일은 회차 병합 대신 별도 작품으로 가져와 주세요.');
+    return undefined;
+  }
+
   const expanded = await expandDocumentBundleFiles(files, options.password);
   if (!expanded) return undefined;
   const documentFiles = expanded.files;

@@ -9,6 +9,11 @@ import type { ContinuousImageDimensions } from './continuous-scroll';
 
 const EMPTY_SNAPSHOT: ArchivePageSnapshot = { pages: new Map(), errors: new Map() };
 
+export interface ArchivePageImages extends ArchivePageSnapshot {
+  retry(index?: number): void;
+  reportError(index: number, url: string): void;
+}
+
 function pageIdentity(chapter: Chapter | undefined, sourceRevision: string): string {
   return `${chapter?.id ?? 'missing'}:${archivePageSourceIdentity(chapter, sourceRevision)}`;
 }
@@ -24,7 +29,7 @@ export function useArchivePageImages(input: {
   readonly assets: BookAssetRepository;
   readonly retainedPages?: readonly number[];
   readonly onDimensions?: (index: number, dimensions: ContinuousImageDimensions) => void;
-}): ArchivePageSnapshot {
+}): ArchivePageImages {
   const { enabled, bookId, sourceRevision, chapters, currentPage, wantedPages, repository, assets, retainedPages } =
     input;
   const sessionKey = `${bookId}:${sourceRevision}`;
@@ -61,6 +66,15 @@ export function useArchivePageImages(input: {
     retainedPages,
   };
   const validatedSessionRef = useRef(sessionKey);
+  const retry = useCallback((index?: number) => {
+    const targets = index === undefined ? planRef.current.wanted : [index];
+    for (const target of targets) {
+      const chapter = chaptersRef.current[target];
+      if (chapter) metadataRef.current.delete(`${sessionKeyRef.current}:${chapter.id}`);
+    }
+    loaderRef.current?.retry(index);
+  }, []);
+  const reportError = useCallback((index: number, url: string) => loaderRef.current?.reportError(index, url), []);
   const resolvedIdentity = useCallback((index: number, planChapters: readonly Chapter[], revision: string) => {
     const chapter = planChapters[index];
     if (!chapter || chapter.documentSectionSourceContentHash) return pageIdentity(chapter, revision);
@@ -168,8 +182,8 @@ export function useArchivePageImages(input: {
     return () => controller.abort();
   }, [chapters, enabled, loadMetadata, resolvedIdentity, sessionKey]);
 
-  if (!enabled || state.bookId !== bookId) return EMPTY_SNAPSHOT;
-  if (state.sessionKey === sessionKey) return state.snapshot;
+  if (!enabled || state.bookId !== bookId) return { ...EMPTY_SNAPSHOT, retry, reportError };
+  if (state.sessionKey === sessionKey) return { ...state.snapshot, retry, reportError };
   // For legacy data, retain only the same page while its asset metadata is revalidated.
   // A changed immutable asset then invalidates the URL through the loader, without trusting title hashes.
   const pages = new Map(
@@ -181,6 +195,6 @@ export function useArchivePageImages(input: {
     }),
   );
   return pages.size === state.snapshot.pages.size && state.snapshot.errors.size === 0
-    ? state.snapshot
-    : { pages, errors: EMPTY_SNAPSHOT.errors };
+    ? { ...state.snapshot, retry, reportError }
+    : { pages, errors: EMPTY_SNAPSHOT.errors, retry, reportError };
 }

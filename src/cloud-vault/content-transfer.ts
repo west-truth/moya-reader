@@ -1,3 +1,4 @@
+import { LOCAL_ARCHIVE_SERIES_TYPE } from '@noveldesk/document-series-core';
 import { sha256 as sha256Digest } from '@noble/hashes/sha2.js';
 import { bytesToHex } from '@noble/hashes/utils.js';
 import type { Novel } from '../domain/types';
@@ -203,6 +204,8 @@ export class CloudVaultContentTransferService {
       if (maySupplySource) {
         try {
           const exported = await this.assets.exportSource(novel.id);
+          if (exported?.metadata.contentType === LOCAL_ARCHIVE_SERIES_TYPE)
+            throw new Error('이 합본의 Cloud Vault 원본 전송은 아직 지원하지 않습니다.');
           if (exported) {
             const nextObject = descriptor('source', exported, novel);
             const manifest =
@@ -309,6 +312,8 @@ export class CloudVaultContentTransferService {
           if (needsReplacement && this.importer.supportsExpectedNormalizedTextHash !== true) {
             throw new Error('현재 가져오기 런타임은 Cloud Vault 본문 교체의 사전 검증을 지원하지 않습니다.');
           }
+          if (book.sourceObject.contentType === LOCAL_ARCHIVE_SERIES_TYPE)
+            throw new Error('이 합본의 Cloud Vault 원본 복원은 아직 지원하지 않습니다.');
           const stored = await provider.getObject(book.sourceObject.objectKey);
           if (!stored) throw new Error('클라우드에 원본 파일이 없습니다.');
           await validateDownloadedObject(stored.blob, book.sourceObject);

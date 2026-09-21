@@ -188,6 +188,11 @@ export async function inspectLocalSeriesImport(
   options: { readonly password?: string; readonly targetNovel?: Novel } = {},
 ): Promise<LocalSeriesImportInspection | undefined> {
   if (!files.length || files.some((file) => !isArchiveFile(file))) return undefined;
+  // Large hosted imports must reach the streaming worker without browser-side merging.
+  if (files.some((file) => file.size > 500 * 1024 * 1024)) {
+    if (options.targetNovel) throw new Error('대용량 파일은 회차 병합 대신 별도 작품으로 가져와 주세요.');
+    return undefined;
+  }
   let sourceKind: LocalSeriesSourceKind = files.length > 1 ? 'selected_archives' : 'selected_archives';
   const releaseFiles: File[] = [];
   for (const file of files) {

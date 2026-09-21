@@ -104,6 +104,8 @@ export type ImageArchiveFormat = 'zip' | 'rar4' | 'rar5' | '7z';
 export interface ImageArchiveParseOptions {
   readonly fileName?: string;
   readonly password?: string;
+  /** Host-selected ZIP expansion budget; other archive backends keep their defaults. */
+  readonly maxExpandedBytes?: number;
   readonly signal?: AbortSignal;
 }
 
@@ -286,6 +288,7 @@ export function parseComicInfoXml(bytes: Uint8Array): ComicInfoMetadata {
 
 function validatedImageEntries(
   entries: readonly Entry[],
+  maxExpandedBytes = MAX_EXPANDED_BYTES,
 ): Array<{ entry: FileEntry; path: string; contentType: string }> {
   if (entries.length > MAX_ARCHIVE_ENTRIES) {
     throw new FixedDocumentImportError('이미지 ZIP 항목 수가 안전 한도를 초과했습니다.', 'too_many_pages');
@@ -310,7 +313,7 @@ function validatedImageEntries(
       throw new FixedDocumentImportError('이미지 ZIP 압축 비율이 안전 한도를 초과했습니다.', 'unsafe_archive');
     }
     expandedBytes += size;
-    if (expandedBytes > MAX_EXPANDED_BYTES) {
+    if (expandedBytes > maxExpandedBytes) {
       throw new FixedDocumentImportError('이미지 ZIP 해제 크기가 안전 한도를 초과했습니다.', 'unsafe_archive');
     }
     result.push({ entry: entry as FileEntry, path, contentType });
@@ -393,7 +396,7 @@ export async function openZipImageArchiveStream(
   try {
     reader = new ZipReader(new BlobReader(blob), { password: options.password, signal: options.signal });
     const entries = await reader.getEntries();
-    const records = validatedImageEntries(entries);
+    const records = validatedImageEntries(entries, options.maxExpandedBytes);
     const comicInfoEntry = entries.find(
       (entry) => !entry.directory && normalizedArchivePath(entry.filename).toLocaleLowerCase() === 'comicinfo.xml',
     ) as FileEntry | undefined;
@@ -435,7 +438,7 @@ export async function openZipImageArchiveStream(
         try {
           streamReader = new ZipReader(new BlobReader(blob), { password: options.password, signal: options.signal });
           const streamEntries = await streamReader.getEntries();
-          const streamRecords = validatedImageEntries(streamEntries);
+          const streamRecords = validatedImageEntries(streamEntries, options.maxExpandedBytes);
           if (
             streamRecords.length !== pages.length ||
             streamRecords.some(
@@ -451,7 +454,13 @@ export async function openZipImageArchiveStream(
               throw new FixedDocumentImportError('암호가 필요한 압축 파일입니다.', 'password_required');
             if (!record.entry.getData)
               throw new FixedDocumentImportError('이미지 페이지를 읽을 수 없습니다.', 'invalid_archive');
-            const bytes = await record.entry.getData(new Uint8ArrayWriter());
+            const bytes = await record.entry.getData(new Uint8ArrayWriter(), {
+              checkSignature: true,
+              onprogress: (loaded) => {
+                if (loaded > MAX_PAGE_BYTES || loaded > record.entry.uncompressedSize)
+                  throw new FixedDocumentImportError('이미지 실제 크기가 안전 한도를 초과했습니다.', 'unsafe_archive');
+              },
+            });
             if (!imageSignatureMatches(bytes, record.contentType)) {
               throw new FixedDocumentImportError(
                 `${record.path}의 실제 이미지 형식이 확장자와 다릅니다.`,

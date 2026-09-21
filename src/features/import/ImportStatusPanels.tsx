@@ -69,7 +69,8 @@ export function ImportPreviewPanel({ controller }: { controller: ImportFeatureCo
 export function ImportProgressPanel({ controller }: { controller: ImportFeatureController }) {
   const { batch, progress } = controller;
   if (!progress && !batch) return null;
-  const percent = progress ? importProgressPercent(progress.bytesRead, progress.totalBytes) : 0;
+  const measurable = progress && (progress.subphase !== 'server_processing' || progress.status === 'reading');
+  const percent = measurable ? importProgressPercent(progress.bytesRead, progress.totalBytes) : undefined;
 
   return (
     <div className="import-progress">
@@ -83,7 +84,7 @@ export function ImportProgressPanel({ controller }: { controller: ImportFeatureC
                 ? '취소하는 중'
                 : '가져오는 중'}
         </h3>
-        <span>{progress ? `${percent}%` : '-'}</span>
+        <span>{percent === undefined ? '' : `${percent}%`}</span>
       </div>
       {batch && (
         <div className="import-batch-summary">
@@ -97,16 +98,18 @@ export function ImportProgressPanel({ controller }: { controller: ImportFeatureC
       )}
       {progress && (
         <>
-          <div
-            className="progress-track"
-            role="progressbar"
-            aria-label="책 가져오기 진행률"
-            aria-valuemin={0}
-            aria-valuemax={100}
-            aria-valuenow={percent}
-          >
-            <span style={{ width: `${percent}%` }} />
-          </div>
+          {percent !== undefined && (
+            <div
+              className="progress-track"
+              role="progressbar"
+              aria-label={progress.subphase === 'server_processing' ? '파일 준비 진행률' : '책 가져오기 진행률'}
+              aria-valuemin={0}
+              aria-valuemax={100}
+              aria-valuenow={percent}
+            >
+              <span style={{ width: `${percent}%` }} />
+            </div>
+          )}
           <p className="muted">{progress.message}</p>
         </>
       )}
