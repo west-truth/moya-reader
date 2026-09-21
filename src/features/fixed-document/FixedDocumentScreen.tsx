@@ -26,6 +26,7 @@ import {
   Play,
   Plus,
   RotateCw,
+  RefreshCw,
   Search,
   Settings2,
   StickyNote,
@@ -2377,6 +2378,11 @@ export default function FixedDocumentScreen({
           )}
         </div>
         <div className="fixed-doc-toolbar" aria-label="문서 보기 설정">
+          {novel.format === 'image_archive' && (
+            <button type="button" title="현재 화면 다시 불러오기" onClick={() => archiveImages.retry()}>
+              <RefreshCw size={17} />
+            </button>
+          )}
           <button
             type="button"
             onClick={() => preserveFocalPoint(() => setSidebarOpen((open) => !open))}
@@ -2749,6 +2755,16 @@ export default function FixedDocumentScreen({
             <div className="fixed-doc-message">
               <strong>문서를 열지 못했습니다.</strong>
               <span>{archiveError ?? errorMessage}</span>
+              {novel.format === 'image_archive' && (
+                <button
+                  type="button"
+                  className="secondary-btn"
+                  aria-label={`${pageIndex + 1}페이지 다시 불러오기`}
+                  onClick={() => archiveImages.retry(pageIndex)}
+                >
+                  <RefreshCw size={16} /> 다시 불러오기
+                </button>
+              )}
             </div>
           ) : (
             <ComicPageFlow
@@ -2847,6 +2863,7 @@ export default function FixedDocumentScreen({
                       src={archiveImages.pages.get(index)?.url}
                       alt={`${novel.title} ${index + 1}페이지`}
                       draggable={false}
+                      onError={(event) => archiveImages.reportError(index, event.currentTarget.src)}
                       width={imageDimensions.get(sortedChapters[index]?.id ?? '')?.width}
                       height={imageDimensions.get(sortedChapters[index]?.id ?? '')?.height}
                       onLoad={(event) =>
@@ -2872,7 +2889,20 @@ export default function FixedDocumentScreen({
                       className="fixed-doc-page-loading"
                       style={seamlessContinuousView ? { height: estimateContinuousPageSize(index) } : undefined}
                     >
-                      {archiveImages.errors.get(index) ?? `${index + 1}페이지 불러오는 중`}
+                      <div className="fixed-doc-page-retry">
+                        <span role="status">{archiveImages.errors.get(index) ?? `${index + 1}페이지 불러오는 중`}</span>
+                        <button
+                          type="button"
+                          className="secondary-btn"
+                          aria-label={`${index + 1}페이지 다시 불러오기`}
+                          onClick={(event) => {
+                            event.stopPropagation();
+                            archiveImages.retry(index);
+                          }}
+                        >
+                          <RefreshCw size={16} /> 다시 불러오기
+                        </button>
+                      </div>
                     </div>
                   )}
                 </article>
@@ -2964,6 +2994,17 @@ export default function FixedDocumentScreen({
             >
               <PanelLeftOpen size={16} /> 페이지 목록
             </button>
+            {novel.format === 'image_archive' && (
+              <button
+                type="button"
+                onClick={() => {
+                  archiveImages.retry();
+                  setMobileMenuOpen(false);
+                }}
+              >
+                <RefreshCw size={16} /> 현재 화면 다시 불러오기
+              </button>
+            )}
             {novel.format !== 'image_archive' && (
               <button
                 type="button"

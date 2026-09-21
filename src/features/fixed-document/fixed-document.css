@@ -454,6 +454,16 @@
   gap: 8px;
   text-align: center;
 }
+.fixed-doc-page-retry {
+  display: grid;
+  justify-items: center;
+  gap: 12px;
+  padding: 16px;
+  text-align: center;
+}
+.fixed-doc-page-retry button {
+  min-height: 40px;
+}
 .fixed-doc-message span {
   color: #a0a5ab;
   font-size: 13px;

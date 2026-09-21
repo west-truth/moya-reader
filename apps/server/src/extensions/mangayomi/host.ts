@@ -555,7 +555,11 @@ export class MangayomiExtensionHost {
               })
             ).result;
       const response = await sourceBrowserHttp(
-        { url: String(params.imageUrl ?? params.url), headers: headers as Record<string, string> },
+        {
+          url: String(params.imageUrl ?? params.url),
+          headers: headers as Record<string, string>,
+          ...(method === 'image' ? { options: { timeout: 30 } } : {}),
+        },
         signal,
         browserScope,
         20 * 1024 * 1024,

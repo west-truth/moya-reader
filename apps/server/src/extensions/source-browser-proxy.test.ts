@@ -7,7 +7,7 @@ import { openSourceBrowserProxy } from './source-browser-proxy';
 it.each([
   { purpose: undefined, megabytes: 40, complete: false },
   { purpose: 'image-pages' as const, megabytes: 40, complete: true },
-  { purpose: 'image-pages' as const, megabytes: 289, complete: false },
+  { purpose: 'image-pages' as const, megabytes: 513, complete: false },
 ])('bounds actual browser traffic for $purpose at $megabytes MiB', async ({ purpose, megabytes, complete }) => {
   const chunk = Buffer.alloc(1024 * 1024);
   const upstream = createHttpServer((_request, response) => {

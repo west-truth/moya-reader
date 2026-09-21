@@ -88,6 +88,28 @@ export class ArchivePageLoader {
     this.identities.clear();
   }
 
+  retry(index?: number): void {
+    if (this.disposed) return;
+    for (const target of index === undefined ? this.wanted : [index]) {
+      this.inFlight.get(target)?.abort();
+      const page = this.pages.get(target);
+      if (page) URL.revokeObjectURL(page.url);
+      this.pages.delete(target);
+      this.errors.delete(target);
+      this.identities.delete(target);
+    }
+    this.publish();
+    this.pump();
+  }
+
+  reportError(index: number, url: string): void {
+    if (this.disposed || this.pages.get(index)?.url !== url) return;
+    URL.revokeObjectURL(url);
+    this.pages.delete(index);
+    this.errors.set(index, '이미지를 표시하지 못했습니다.');
+    this.publish();
+  }
+
   private prune(): void {
     for (const [index, page] of this.pages) {
       if (this.pages.size <= this.cacheSize) break;
@@ -121,8 +143,17 @@ export class ArchivePageLoader {
   }
 
   private async run(index: number, controller: AbortController): Promise<void> {
+    let cancel = () => {};
+    const cancelled = new Promise<never>((_, reject) => {
+      cancel = () => reject(controller.signal.reason);
+      controller.signal.addEventListener('abort', cancel, { once: true });
+    });
+    const timer = setTimeout(
+      () => controller.abort(new DOMException('이미지 로딩 시간이 초과됐습니다.', 'TimeoutError')),
+      60000,
+    );
     try {
-      const page = await this.load(index, controller.signal);
+      const page = await Promise.race([this.load(index, controller.signal), cancelled]);
       if (this.disposed || controller.signal.aborted || (!this.wanted.includes(index) && !this.retained.has(index)))
         return;
       if (page.identity) this.identities.set(index, page.identity);
@@ -136,13 +167,16 @@ export class ArchivePageLoader {
       this.prune();
       this.publish();
     } catch (error) {
-      if (this.disposed || controller.signal.aborted || !this.wanted.includes(index)) return;
+      if (this.disposed || !this.wanted.includes(index)) return;
+      if (controller.signal.aborted && controller.signal.reason?.name !== 'TimeoutError') return;
       this.errors.set(index, error instanceof Error ? error.message : `${index + 1}페이지 이미지를 열지 못했습니다.`);
       this.publish();
     } finally {
+      clearTimeout(timer);
+      controller.signal.removeEventListener('abort', cancel);
       this.inFlight.delete(index);
       if (!this.pages.has(index) && !this.errors.has(index)) this.identities.delete(index);
-      // Aborted work keeps its slot until the repository has actually settled.
+      // A cancelled or stalled backend cannot hold the viewport queue forever.
       this.pump();
     }
   }
