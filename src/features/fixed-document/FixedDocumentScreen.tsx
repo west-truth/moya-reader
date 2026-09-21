@@ -2129,6 +2129,11 @@ export default function FixedDocumentScreen({
     '--fixed-doc-grayscale': comicProfile.grayscale ? 1 : 0,
     '--fixed-doc-invert': comicProfile.invert ? 1 : 0,
     '--fixed-doc-gap': `${novel.format === 'image_archive' ? (comicProfile.gap ?? 8) : 32}px`,
+    '--fixed-doc-image-clip':
+      comicProfile.crop === 'off' ||
+      (comicProfile.crop === 'manual' && !Object.values(comicProfile.manualCrop ?? {}).some((value) => value > 0))
+        ? 'none'
+        : undefined,
     '--fixed-doc-crop-top': `${comicProfile.crop === 'manual' ? (comicProfile.manualCrop?.top ?? 0) * 100 : 0}%`,
     '--fixed-doc-crop-right': `${comicProfile.crop === 'manual' ? (comicProfile.manualCrop?.right ?? 0) * 100 : 0}%`,
     '--fixed-doc-crop-bottom': `${comicProfile.crop === 'manual' ? (comicProfile.manualCrop?.bottom ?? 0) * 100 : 0}%`,
@@ -2875,13 +2880,20 @@ export default function FixedDocumentScreen({
                       style={
                         comicProfile.crop === 'auto' && comicProfile.pageCrops?.[String(index)]
                           ? ({
+                              '--fixed-doc-image-clip': Object.values(comicProfile.pageCrops[String(index)]).some(
+                                (value) => value > 0,
+                              )
+                                ? undefined
+                                : 'none',
                               '--fixed-doc-crop-top': `${comicProfile.pageCrops[String(index)].top * 100}%`,
                               '--fixed-doc-crop-right': `${comicProfile.pageCrops[String(index)].right * 100}%`,
                               '--fixed-doc-crop-bottom': `${comicProfile.pageCrops[String(index)].bottom * 100}%`,
                               '--fixed-doc-crop-left': `${comicProfile.pageCrops[String(index)].left * 100}%`,
                               '--fixed-doc-crop-scale': comicCropRefitScale(comicProfile.pageCrops[String(index)], fit),
                             } as CSSProperties)
-                          : undefined
+                          : comicProfile.crop === 'auto'
+                            ? ({ '--fixed-doc-image-clip': 'none' } as CSSProperties)
+                            : undefined
                       }
                     />
                   ) : (
