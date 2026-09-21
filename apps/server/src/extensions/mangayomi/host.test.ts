@@ -26,12 +26,19 @@ it('returns lists with large source caches after reopen and applies default/cust
   const network = createSourceNetworkSettings(vault, undefined);
   network.save({ revision: 0, defaultProxy: 'socks5://default:1080' });
   const observed: (string | undefined)[] = [];
+  let overflow = false;
   const script = `class DefaultExtension extends MProvider {
     async getPopular(){
       const prefs=new SharedPreferences();
       const saved=prefs.getString('status');
-      if(!saved){prefs.setString('status','x'.repeat(91031));prefs.setString('mapping','y'.repeat(54000));}
-      await new Client().get('https://site.example/list');
+      if(!saved){
+        prefs.setString('status',String.fromCharCode(34).repeat(600000));
+        prefs.setString('mapping','y'.repeat(54000));
+        for(let i=0;i<300;i++)prefs.setString('work_'+i,'kept');
+      } else if(saved.length!==600000||prefs.getString('work_299')!=='kept')throw new Error('lost state');
+      if(prefs.getString('tooBig'))throw new Error('partial write');
+      const response=await new Client().get('https://site.example/list');
+      if(response.body==='overflow')prefs.setString('tooBig','x'.repeat(2*1024*1024));
       return {list:[{name:saved?'restored':'first',link:'/work',imageUrl:'https://site.example/cover.jpg'}],hasNextPage:false};
     }
   }`;
@@ -44,7 +51,7 @@ it('returns lists with large source caches after reopen and applies default/cust
           ? Buffer.from(script)
           : input.url.endsWith('.jpg')
             ? Buffer.from([255, 216, 255, 217])
-            : Buffer.from('{}'),
+            : Buffer.from(overflow ? 'overflow' : '{}'),
       statusCode: 200,
       headers: {},
       contentType: 'text/plain',
@@ -54,7 +61,7 @@ it('returns lists with large source caches after reopen and applies default/cust
   let host = await MangayomiExtensionHost.open(join(root, 'host'), vault, transport);
   hosts.push(host);
   const repo = 'https://repo.example/index.min.json',
-    signal = AbortSignal.timeout(10000);
+    signal = AbortSignal.timeout(15000);
   await host.refreshRepository(repo, signal);
   const entry = host.snapshot().repositories[0].entries[0];
   const review = await host.inspect(repo, entry.pkg, entry.code, signal);
@@ -81,7 +88,11 @@ it('returns lists with large source caches after reopen and applies default/cust
     await host.catalog.invoke(source, 'source.getCover', { workId: listing.result.items[0].id }, signal);
     expect(observed.at(-1)).toBe(expected);
   }
-});
+  overflow = true;
+  await expect(host.catalog.invoke(source, 'source.listWorks', {}, signal)).rejects.toThrow('source_storage_limit');
+  overflow = false;
+  expect((await host.catalog.invoke(source, 'source.listWorks', {}, signal)).result.items[0].title).toBe('restored');
+}, 20000);
 it('updates a newer repository version with identical JS bytes and preserves disabled state after reopen', async () => {
   const root = await mkdtemp(join(tmpdir(), 'moya-version-only-update-'));
   roots.push(root);

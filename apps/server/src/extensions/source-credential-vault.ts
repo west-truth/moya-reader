@@ -6,7 +6,7 @@ const hash = (value: string) => createHash('sha256').update(value).digest('hex')
 const maximumVaultBytes = (scope: string) => {
   const kind = (JSON.parse(scope) as string[])[1];
   // The nested JSON includes bounded SharedPreferences caches and escaping overhead.
-  if (kind === 'mangayomi-options') return 1024 * 1024;
+  if (kind === 'mangayomi-options') return 4 * 1024 * 1024 + 64 * 1024;
   return kind === 'browser' || kind?.startsWith('browser:') ? 2 * 1024 * 1024 : 64 * 1024;
 };
 

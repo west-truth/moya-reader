@@ -4,6 +4,8 @@ import { MAX_SOURCE_TEXT_BYTES } from './content-limits.mjs';
 export const MAX_TEXT_RPC_BYTES = MAX_SOURCE_TEXT_BYTES * 6 + 1024;
 export const MAX_FRAME_BYTES = 16 * 1024 * 1024;
 export const MAX_JSON_BYTES = 1024 * 1024;
+// Compatibility state includes up to 2MiB of preferences plus a result. Other guests retain 1MiB.
+export const invocationJsonLimit = (profile) => (profile === 'mangayomi-v1' ? 4 * MAX_JSON_BYTES : MAX_JSON_BYTES);
 export const MAX_SOURCE_BYTES = 5 * 1024 * 1024;
 export const rpcInputLimit = (method) => (method === 'asset.fromText' ? MAX_TEXT_RPC_BYTES : MAX_JSON_BYTES);
 export const rpcResultLimit = (method) =>

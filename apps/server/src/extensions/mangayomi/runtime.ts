@@ -8,6 +8,7 @@ import { mangayomiBootstrap, mangayomiDispatch } from './bootstrap.js';
 import { compatibilityHttp, type CompatibilityHttpInput } from './http.js';
 import type { SourceWebViewRequest } from '../../../../../packages/extension-contracts/source-webview.js';
 import { compatibilityHttpPolicy } from './http-options.js';
+import { validatePreferenceState } from './preferences.js';
 
 export type PreferenceValues = Record<string, string | number | boolean | string[] | null>;
 export interface MangayomiInvocation {
@@ -155,7 +156,7 @@ export async function invokeMangayomi(input: MangayomiInvocation, transport = co
     if (error?.message === 'execution_failed' && lastTransportFailure) throw new Error(lastTransportFailure);
     throw error;
   })) as { result: unknown; changes: PreferenceValues };
-  if (!value || !value.changes || typeof value.changes !== 'object' || Object.keys(value.changes).length > 256)
-    throw new Error('invalid_source_result');
+  if (!value || !value.changes || typeof value.changes !== 'object') throw new Error('invalid_source_result');
+  validatePreferenceState(value.changes);
   return value;
 }
