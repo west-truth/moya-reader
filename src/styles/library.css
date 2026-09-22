@@ -485,6 +485,7 @@
 .library-toolbar {
   min-height: 50px;
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: 12px;
   margin: 0 -28px 18px;
@@ -523,6 +524,8 @@
 .library-toolbar-actions {
   min-width: 0;
   display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
   align-items: center;
   gap: 6px;
   margin-left: auto;
@@ -577,7 +580,9 @@
 }
 
 .library-selection-controls {
+  min-width: 0;
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: 6px;
 }
