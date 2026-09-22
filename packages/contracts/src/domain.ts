@@ -899,9 +899,7 @@ export type StorageCapacity =
   | { readonly status: 'unavailable'; readonly reason: 'not_configured' | 'read_failed' };
 
 export interface StorageUsageBreakdown {
-  readonly text: number;
-  readonly ebook: number;
-  readonly comic: number;
+  readonly document: number;
   readonly image: number;
   readonly audio?: number;
   readonly other: number;

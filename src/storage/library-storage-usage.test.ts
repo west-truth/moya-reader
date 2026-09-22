@@ -59,7 +59,18 @@ it('splits real file categories without counting the same shared object twice', 
   } as BookAssetMetadata;
   const text = { ...asset(book.id, 'text', 10), kind: 'source_part', contentType: 'text/plain' } as BookAssetMetadata;
   const font = { ...asset(book.id, 'font', 20), kind: 'epub_resource', contentType: 'font/woff2' } as BookAssetMetadata;
-  const result = summarizeLibraryStorage([book], [source, source, image, text, font]);
-  expect(result.breakdown).toEqual({ text: 10, ebook: 1000, comic: 0, image: 100, audio: 0, other: 20 });
+  const archiveBook = { ...book, id: 'archive', format: 'image_archive' } as Novel;
+  const archive = {
+    ...asset('archive', 'cbz', 200),
+    kind: 'source',
+    contentType: 'application/zip',
+  } as BookAssetMetadata;
+  const page = { ...asset(book.id, 'page', 40), kind: 'document_page', contentType: 'image/png' } as BookAssetMetadata;
+  const audio = { ...asset(book.id, 'audio', 30), contentType: 'audio/mpeg' } as BookAssetMetadata;
+  const result = summarizeLibraryStorage(
+    [book, archiveBook],
+    [source, source, image, text, font, archive, page, audio],
+  );
+  expect(result.breakdown).toEqual({ document: 1010, image: 340, audio: 30, other: 20 });
   expect(Object.values(result.breakdown!).reduce((a, b) => a + b, 0)).toBe(result.totalBytes);
 });

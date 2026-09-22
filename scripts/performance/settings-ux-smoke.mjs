@@ -19,7 +19,7 @@ import {defaultSettings} from '${root}src/repositories/reader-defaults.ts';
 ${[...readFileSync(resolve(root, 'src/main.tsx'), 'utf8').matchAll(/import '\.\/styles\/([^']+)';/g)].map((match) => `import '${root}src/styles/${match[1]}';`).join('\n')}
 const noop=()=>{};
 let books=[{id:'fixture-book',title:'별빛 도서관: 잊혀진 이야기들 (1–12권)',metadataRevision:1,trashed:false,bytes:2147483648}];
-const storage={hosted:true,assets:{getStorageUsage:async()=>({books:[...books],capacity:{status:'available',totalBytes:500*1024**3,availableBytes:180*1024**3,minimumFreeBytes:268435456},breakdown:{text:0,ebook:2147483648,comic:0,image:0,audio:0,other:0},totalBytes:2147483648,libraryBytes:books[0]?.trashed?0:2147483648,trashBytes:books[0]?.trashed?2147483648:0})},management:{blocked:false,onChanged:async()=>{},catalog:{moveToTrash:async(id)=>{books=books.map(b=>({...b,trashed:true,metadataRevision:b.metadataRevision+1}));},restore:async(id)=>{books=books.map(b=>({...b,trashed:false,metadataRevision:b.metadataRevision+1}));}}}};
+const storage={hosted:true,assets:{getStorageUsage:async()=>({books:[...books],capacity:{status:'available',totalBytes:500*1024**3,availableBytes:180*1024**3,minimumFreeBytes:268435456},breakdown:{document:2147483648,image:0,audio:0,other:0},totalBytes:2147483648,libraryBytes:books[0]?.trashed?0:2147483648,trashBytes:books[0]?.trashed?2147483648:0})},management:{blocked:false,onChanged:async()=>{},catalog:{moveToTrash:async(id)=>{books=books.map(b=>({...b,trashed:true,metadataRevision:b.metadataRevision+1}));},restore:async(id)=>{books=books.map(b=>({...b,trashed:false,metadataRevision:b.metadataRevision+1}));}}}};
 
 const externalSources={sources:Array.from({length:8},(_,i)=>({id:'fixture-'+i,title:'검증용 소스 '+i,origin:'plugin',contentKind:'text',lang:'ko',description:'연결한 소스에서 작품을 탐색합니다.',connection:{state:'connected'}})),selectSource:noop,show:noop,recoverableDownloads:[],downloadRetention:{enabled:false,keep:5,busy:false,error:'',setEnabled:noop,setKeep:noop,inspect:noop,clean:noop}};
 function Fixture(){const [profile,setProfile]=useState(DEFAULT_READING_PROFILE);const [open,setOpen]=useState(true);globalThis.changes??=[];const update=p=>{changes.push(p);setProfile(x=>({...x,...p}));};
@@ -182,7 +182,7 @@ try {
       await page.locator('.storage-usage-details').evaluate((node) => node.scrollWidth <= node.clientWidth),
       true,
     );
-    await page.getByText('표지·이미지', { exact: true }).scrollIntoViewIfNeeded();
+    await page.getByText('이미지', { exact: true }).scrollIntoViewIfNeeded();
     await page.screenshot({ path: `/tmp/moya-storage-details-${width}.png` });
   }
   await page.goto(base + '?controls');

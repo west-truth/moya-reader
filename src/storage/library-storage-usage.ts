@@ -4,22 +4,21 @@ import { openReaderDb } from './reader-database';
 import { requestToPromise, transactionDone } from './indexeddb-transaction';
 
 function categoryOf(asset: BookAssetMetadata, format?: string): keyof StorageUsageBreakdown {
-  if (asset.kind === 'document_page') return 'comic';
+  if (asset.kind === 'document_page') return 'image';
   if (asset.kind === 'cover') return 'image';
   if (asset.kind === 'source' || asset.kind === 'source_part') {
-    if (asset.contentType?.startsWith('text/')) return 'text';
-    if (['application/epub+zip', 'application/pdf'].includes(asset.contentType)) return 'ebook';
+    if (asset.contentType?.startsWith('text/')) return 'document';
+    if (['application/epub+zip', 'application/pdf'].includes(asset.contentType)) return 'document';
     if (asset.kind === 'source') {
-      if (format === 'txt' || format === 'markdown') return 'text';
-      if (format === 'epub' || format === 'pdf') return 'ebook';
+      if (['txt', 'markdown', 'epub', 'pdf'].includes(format ?? '')) return 'document';
     }
-    if (format === 'image_archive') return 'comic';
+    if (format === 'image_archive') return 'image';
   }
   if (asset.contentType?.startsWith('image/')) return 'image';
   if (asset.contentType?.startsWith('audio/')) return 'audio';
   return 'other';
 }
-const categories: readonly (keyof StorageUsageBreakdown)[] = ['text', 'ebook', 'comic', 'image', 'audio', 'other'];
+const categories: readonly (keyof StorageUsageBreakdown)[] = ['document', 'image', 'audio', 'other'];
 
 export function summarizeLibraryStorage(
   books: readonly Novel[],
@@ -42,7 +41,7 @@ export function summarizeLibraryStorage(
       trashOnly: (previous?.trashOnly ?? true) && !activeBooks.has(asset.bookId),
     });
   }
-  const breakdown = { text: 0, ebook: 0, comic: 0, image: 0, audio: 0, other: 0 };
+  const breakdown = { document: 0, image: 0, audio: 0, other: 0 };
   let libraryBytes = 0;
   let trashBytes = 0;
   for (const file of files.values()) {

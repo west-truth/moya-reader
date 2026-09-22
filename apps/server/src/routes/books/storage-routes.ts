@@ -11,23 +11,21 @@ with books as (
   from library_books where user_id=$1
 ), files as (
   select b.id as book_id, o.storage_key, o.size_bytes as bytes,
-    case when b.format in ('txt','markdown') then 1
-         when b.format in ('epub','pdf') then 2
-         when b.format='image_archive' then 3 else 6 end as category
+    case when b.format in ('txt','markdown','epub','pdf') then 1
+         when b.format='image_archive' then 2 else 4 end as category
   from books b join book_objects o on o.id=b.object_id
   union all
   select a.book_id, a.storage_key, a.byte_length as bytes,
-    case when a.kind='document_page' then 3
-         when a.kind='cover' then 4
+    case when a.kind in ('document_page','cover') then 2
          when a.kind='source_part' and a.content_type like 'text/%' then 1
-         when a.kind='source_part' and a.content_type in ('application/epub+zip','application/pdf') then 2
-         when a.kind='source_part' and b.format='image_archive' then 3
-         when a.content_type like 'image/%' then 4
-         when a.content_type like 'audio/%' then 5 else 6 end as category
+         when a.kind='source_part' and a.content_type in ('application/epub+zip','application/pdf') then 1
+         when a.kind='source_part' and b.format='image_archive' then 2
+         when a.content_type like 'image/%' then 2
+         when a.content_type like 'audio/%' then 3 else 4 end as category
   from book_assets a join books b on b.id=a.book_id
   where a.user_id=$1 and a.status='active'
   union all
-  select t.book_id, t.audio_object_key, t.byte_size, 5
+  select t.book_id, t.audio_object_key, t.byte_size, 3
   from tts_audio_cache t join books b on b.id=t.book_id
   where t.byte_size is not null and t.byte_size >= 0
 ), book_files as (
@@ -42,12 +40,10 @@ with books as (
 )
 select jsonb_build_object(
   'breakdown', jsonb_build_object(
-    'text', coalesce((select sum(bytes) from unique_files where category=1),0),
-    'ebook', coalesce((select sum(bytes) from unique_files where category=2),0),
-    'comic', coalesce((select sum(bytes) from unique_files where category=3),0),
-    'image', coalesce((select sum(bytes) from unique_files where category=4),0),
-    'audio', coalesce((select sum(bytes) from unique_files where category=5),0),
-    'other', coalesce((select sum(bytes) from unique_files where category=6),0)),
+    'document', coalesce((select sum(bytes) from unique_files where category=1),0),
+    'image', coalesce((select sum(bytes) from unique_files where category=2),0),
+    'audio', coalesce((select sum(bytes) from unique_files where category=3),0),
+    'other', coalesce((select sum(bytes) from unique_files where category=4),0)),
   'unmeasuredAudioFiles', (select count(*) from tts_audio_cache t join books b on b.id=t.book_id where t.byte_size is null),
   'totalBytes', coalesce((select sum(bytes) from unique_files),0),
   'libraryBytes', coalesce((select sum(bytes) from unique_files where not trash_only),0),

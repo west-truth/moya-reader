@@ -27,13 +27,14 @@ describe('storage capacity display', () => {
           totalBytes: 2048,
           libraryBytes: 2048,
           trashBytes: 0,
-          breakdown: { text: 1024, ebook: 0, comic: 0, image: 1024, audio: 0, other: 0 },
+          breakdown: { document: 1024, image: 1024, audio: 0, other: 0 },
         }}
       />,
     );
     expect(markup).toContain('사용량 상세');
     expect(markup).toContain('1.0 KiB');
-    expect(markup).toContain('표지·이미지');
+    for (const label of ['문서', '이미지', '오디오', '기타']) expect(markup).toContain(`<dt>${label}</dt>`);
+    expect(markup).not.toContain('<dt>만화</dt>');
     expect(markup).not.toContain('기기 목록 캐시'); // Measured on expansion, not every settings visit.
   });
 });

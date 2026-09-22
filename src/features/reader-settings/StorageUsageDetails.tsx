@@ -4,12 +4,10 @@ import { readSourceMetadataCacheUsage } from '../../external-sources/local-state
 import { formatStorageBytes } from './DeviceStorageEstimate';
 
 const labels: Record<keyof StorageUsageBreakdown, string> = {
-  text: '텍스트',
-  ebook: '전자책',
-  comic: '만화',
-  image: '표지·이미지',
-  audio: '음성 파일',
-  other: '기타 파일',
+  document: '문서',
+  image: '이미지',
+  audio: '오디오',
+  other: '기타',
 };
 
 function DeviceCacheUsage() {
