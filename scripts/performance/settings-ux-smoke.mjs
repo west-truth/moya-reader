@@ -18,7 +18,7 @@ import {DEFAULT_READING_PROFILE,DEFAULT_GESTURE_BINDINGS} from '${root}src/featu
 import {defaultSettings} from '${root}src/repositories/reader-defaults.ts';
 ${[...readFileSync(resolve(root, 'src/main.tsx'), 'utf8').matchAll(/import '\.\/styles\/([^']+)';/g)].map((match) => `import '${root}src/styles/${match[1]}';`).join('\n')}
 const noop=()=>{};
-let books=[{id:'fixture-book',title:'아주 긴 제목의 로컬 합본 작품 파일',metadataRevision:1,trashed:false,bytes:2147483648}];
+let books=[{id:'fixture-book',title:'별빛 도서관: 잊혀진 이야기들 (1–12권)',metadataRevision:1,trashed:false,bytes:2147483648}];
 const storage={hosted:true,assets:{getStorageUsage:async()=>({books:[...books],totalBytes:2147483648,libraryBytes:books[0]?.trashed?0:2147483648,trashBytes:books[0]?.trashed?2147483648:0})},management:{blocked:false,onChanged:async()=>{},catalog:{moveToTrash:async(id)=>{books=books.map(b=>({...b,trashed:true,metadataRevision:b.metadataRevision+1}));},restore:async(id)=>{books=books.map(b=>({...b,trashed:false,metadataRevision:b.metadataRevision+1}));}}}};
 
 const externalSources={sources:Array.from({length:8},(_,i)=>({id:'fixture-'+i,title:'검증용 소스 '+i,origin:'plugin',contentKind:'text',lang:'ko',description:'연결한 소스에서 작품을 탐색합니다.',connection:{state:'connected'}})),selectSource:noop,show:noop,recoverableDownloads:[],downloadRetention:{enabled:false,keep:5,busy:false,error:'',setEnabled:noop,setKeep:noop,inspect:noop,clean:noop}};
@@ -156,15 +156,15 @@ try {
     await page.getByRole('tab', { name: /^저장공간/ }).click();
     await page.getByText('2.0 GB', { exact: true }).first().waitFor();
     await page.getByRole('button', { name: '작품별 관리', exact: true }).click();
-    const checkbox = page.getByRole('checkbox', { name: /아주 긴 제목/ });
+    const checkbox = page.getByRole('checkbox', { name: /별빛 도서관/ });
     await checkbox.check();
     await page.getByRole('button', { name: '휴지통 이동', exact: true }).click();
     await page.getByText('1개 휴지통 이동 완료', { exact: true }).waitFor();
-    await page.getByLabel('작품 위치').selectOption('trash');
+    await page.getByRole('button', { name: /^휴지통 \d/ }).click();
     await checkbox.check();
     await page.getByRole('button', { name: '복원', exact: true }).click();
     await page.getByText('1개 복원 완료', { exact: true }).waitFor();
-    await page.getByLabel('작품 위치').selectOption('library');
+    await page.getByRole('button', { name: /^책장 \d/ }).click();
     await checkbox.waitFor();
     assert.equal(await page.evaluate(() => document.body.scrollWidth <= innerWidth), true);
     const list = page.locator('.storage-book-list');

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { ArchiveRestore, HardDrive, RefreshCw } from 'lucide-react';
+import { ArchiveRestore, HardDrive, RefreshCw, ChevronRight, Trash2 } from 'lucide-react';
 import type { LibraryStorageUsage } from '../../domain/types';
 import type { BookAssetRepository } from '../../repositories/book-asset-repository';
 import type { ExternalSourceController } from '../external-sources/useExternalSourceController';
@@ -31,7 +31,7 @@ export function StorageSettingsPanel({
   const [usage, setUsage] = useState<LibraryStorageUsage>();
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
-  const [managing, setManaging] = useState(false);
+  const [managing, setManaging] = useState<'library' | 'trash'>();
   const [downloadOpen, setDownloadOpen] = useState(focusDownloads);
   const downloads = useRef<HTMLDetailsElement>(null);
   const generation = useRef({ value: 0 }).current;
@@ -90,14 +90,15 @@ export function StorageSettingsPanel({
           usage={usage}
           management={management}
           refresh={refresh}
-          onBack={() => setManaging(false)}
+          onBack={() => setManaging(undefined)}
+          initialTrash={managing === 'trash'}
           onBusyChange={onBusyChange}
         />
       </>
     );
   return (
     <div className="reader-settings-destination-sections storage-settings">
-      <section className="settings-section-card">
+      <section className="settings-section-card storage-usage-card">
         <div className="storage-summary-heading">
           <h3>
             <HardDrive size={18} aria-hidden="true" />
@@ -109,30 +110,59 @@ export function StorageSettingsPanel({
         {error && <p role="alert">{error}</p>}
         {usage && (
           <>
+            <span className="storage-total-label">보관 중</span>
             <strong className="storage-total">{formatStorageBytes(usage.totalBytes)}</strong>
+            <div className="storage-distribution" aria-hidden="true">
+              <span style={{ width: `${usage.totalBytes ? (usage.libraryBytes / usage.totalBytes) * 100 : 0}%` }} />
+              <span style={{ width: `${usage.totalBytes ? (usage.trashBytes / usage.totalBytes) * 100 : 0}%` }} />
+            </div>
             <dl className="storage-summary-values">
               <div>
-                <dt>책장 · {usage.books.filter((b) => !b.trashed).length}개 작품</dt>
+                <dt>
+                  <i className="storage-dot" />
+                  책장 · {usage.books.filter((b) => !b.trashed).length}개 작품
+                </dt>
                 <dd>{formatStorageBytes(usage.libraryBytes)}</dd>
               </div>
               <div>
-                <dt>휴지통 · {usage.books.filter((b) => b.trashed).length}개 작품</dt>
+                <dt>
+                  <button
+                    type="button"
+                    className="storage-stat-link"
+                    aria-label="휴지통 관리"
+                    onClick={() => setManaging('trash')}
+                  >
+                    <i className="storage-dot is-trash" />
+                    휴지통 · {usage.books.filter((b) => b.trashed).length}개 작품{' '}
+                    <ChevronRight size={13} aria-hidden="true" />
+                  </button>
+                </dt>
                 <dd>{formatStorageBytes(usage.trashBytes)}</dd>
               </div>
             </dl>
-            <button type="button" className="ghost-btn" onClick={() => setManaging(true)}>
-              작품별 관리
+            <button type="button" className="ghost-btn storage-manage-link" onClick={() => setManaging('library')}>
+              작품별 관리 <ChevronRight size={17} aria-hidden="true" />
             </button>
           </>
         )}
-        <p className="field-help">현재 보관한 원본·회차·이미지 용량입니다. DB·캐시·임시 파일은 제외됩니다.</p>
+        <details className="storage-measurement-note">
+          <summary>용량 기준</summary>
+          <p>
+            원본·회차·이미지를 포함하며 공유 파일은 한 번만 셉니다. DB·캐시·임시 파일은 제외됩니다. 작품별 용량은 공유
+            파일 때문에 합계와 다를 수 있습니다.
+          </p>
+        </details>
       </section>
-      <section className="settings-section-card">
+      <details className="storage-device-details">
+        <summary>이 기기 사용량</summary>
         <DeviceStorageEstimate />
-      </section>
+      </details>
       {retention && (
-        <section className="settings-section-card">
-          <h3>읽은 다운로드 정리</h3>
+        <section className="settings-section-card storage-cleanup-card">
+          <div className="settings-section-heading">
+            <Trash2 size={18} aria-hidden="true" />
+            <h3>다운로드 정리</h3>
+          </div>
           <p className="field-help">원본 파일·즐겨찾기·미독 회차는 보존합니다.</p>
           <div className="storage-book-actions">
             <button
@@ -182,15 +212,14 @@ export function StorageSettingsPanel({
           {retention.error && <p role="alert">{retention.error}</p>}
         </section>
       )}
-      <section className="settings-section-card">
-        <div className="settings-section-heading">
-          <ArchiveRestore size={18} aria-hidden="true" />
-          <h3>백업과 복원</h3>
-        </div>
-        <button type="button" className="ghost-btn" onClick={openBackup}>
-          백업과 복원 열기
-        </button>
-      </section>
+      <button type="button" className="storage-destination" aria-label="백업과 복원 열기" onClick={openBackup}>
+        <ArchiveRestore size={22} aria-hidden="true" />
+        <span>
+          <strong>백업과 복원</strong>
+          <small>책장과 독서 기록 보관</small>
+        </span>
+        <ChevronRight size={18} aria-hidden="true" />
+      </button>
       <details
         ref={downloads}
         className="storage-download-options"

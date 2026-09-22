@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { ArrowLeft, RefreshCw } from 'lucide-react';
+import { ArrowLeft, RefreshCw, Search, BookOpen, Trash2 } from 'lucide-react';
 import type { LibraryStorageUsage } from '../../domain/types';
 import type { LibraryCatalogRepository } from '../../repositories/library-catalog-repository';
 import { formatStorageBytes } from './DeviceStorageEstimate';
@@ -16,12 +16,14 @@ export function StorageBookManager({
   refresh,
   onBack,
   onBusyChange,
+  initialTrash = false,
 }: {
   usage: LibraryStorageUsage;
   management?: StorageManagement;
   refresh(): Promise<void>;
   onBack(): void;
   onBusyChange?(busy: boolean): void;
+  initialTrash?: boolean;
 }) {
   const heading = useRef<HTMLHeadingElement>(null);
   useEffect(() => {
@@ -29,7 +31,7 @@ export function StorageBookManager({
     const content = heading.current?.closest('.reader-settings-content');
     if (content) content.scrollTop = 0;
   }, []);
-  const [trash, setTrash] = useState(false);
+  const [trash, setTrash] = useState(initialTrash);
   const [query, setQuery] = useState('');
   const [sort, setSort] = useState('size');
   const [limit, setLimit] = useState(50);
@@ -94,10 +96,10 @@ export function StorageBookManager({
   }
   return (
     <div className="storage-book-manager" aria-busy={busy}>
-      <button type="button" className="ghost-btn" onClick={onBack} disabled={busy}>
-        <ArrowLeft size={16} /> 사용량 요약
-      </button>
-      <div className="storage-summary-heading">
+      <div className="storage-summary-heading storage-manager-heading">
+        <button type="button" className="icon-btn" aria-label="사용량 요약" onClick={onBack} disabled={busy}>
+          <ArrowLeft size={18} />
+        </button>
         <h3 ref={heading} tabIndex={-1}>
           작품별 관리
         </h3>
@@ -114,24 +116,28 @@ export function StorageBookManager({
           <RefreshCw size={18} />
         </button>
       </div>
-      <div className="storage-book-controls">
-        <label>
-          <span className="sr-only">작품 위치</span>
-          <select
-            value={trash ? 'trash' : 'library'}
+      <div className="storage-location-switch" role="group" aria-label="작품 위치">
+        {[false, true].map((value) => (
+          <button
+            key={String(value)}
+            type="button"
+            aria-pressed={trash === value}
             disabled={busy}
-            onChange={(e) => {
-              setTrash(e.target.value === 'trash');
+            onClick={() => {
+              setTrash(value);
               setSelected(new Set());
               setLimit(50);
               setMessage('');
             }}
           >
-            <option value="library">책장</option>
-            <option value="trash">휴지통</option>
-          </select>
-        </label>
-        <label>
+            {value ? <Trash2 size={16} aria-hidden="true" /> : <BookOpen size={16} aria-hidden="true" />}
+            {value ? '휴지통' : '책장'} <span>{usage.books.filter((b) => b.trashed === value).length}</span>
+          </button>
+        ))}
+      </div>
+      <div className="storage-book-controls">
+        <label className="storage-book-search">
+          <Search size={17} aria-hidden="true" />
           <span className="sr-only">작품 검색</span>
           <input
             type="search"
@@ -153,35 +159,14 @@ export function StorageBookManager({
           </select>
         </label>
       </div>
-      <p className="muted">{books.length}개 작품 · 공유 파일은 작품마다 표시됩니다.</p>
+      <p className="storage-list-caption">
+        {books.length}개 작품{trash ? ' · 영구 삭제하면 복구할 수 없습니다.' : ' · 정리할 작품을 선택하세요.'}
+      </p>
       {management?.blocked && <p role="status">독서·다운로드·가져오기를 마친 뒤 정리할 수 있습니다.</p>}
       {busy ? <p role="status">처리 중…</p> : message && <p role="status">{message}</p>}
-      <div className="storage-book-actions">
-        <span>
-          {targets.length}개 선택 · {formatStorageBytes(targets.reduce((sum, b) => sum + b.bytes, 0))}
-        </span>
-        <button
-          type="button"
-          className="ghost-btn"
-          disabled={disabled || !targets.length}
-          onClick={() => void mutate(trash ? 'restore' : 'moveToTrash')}
-        >
-          {trash ? '복원' : '휴지통 이동'}
-        </button>
-        {trash && (
-          <button
-            type="button"
-            className="ghost-btn"
-            disabled={disabled || !targets.length}
-            onClick={() => void mutate('purge')}
-          >
-            영구 삭제
-          </button>
-        )}
-      </div>
       <ul className="storage-book-list">
         {books.slice(0, limit).map((book) => (
-          <li key={book.id}>
+          <li key={book.id} data-selected={selected.has(book.id) || undefined}>
             <label>
               <input
                 type="checkbox"
@@ -202,7 +187,37 @@ export function StorageBookManager({
           </li>
         ))}
       </ul>
-      {!books.length && <p>해당 작품이 없습니다.</p>}
+      {(targets.length > 0 || busy) && (
+        <div className="storage-book-actions storage-selection-bar">
+          <span>
+            {targets.length}개 선택 · {formatStorageBytes(targets.reduce((sum, b) => sum + b.bytes, 0))}
+          </span>
+          <button
+            type="button"
+            className="ghost-btn"
+            disabled={disabled || !targets.length}
+            onClick={() => void mutate(trash ? 'restore' : 'moveToTrash')}
+          >
+            {trash ? '복원' : '휴지통 이동'}
+          </button>
+          {trash && (
+            <button
+              type="button"
+              className="ghost-btn"
+              disabled={disabled || !targets.length}
+              onClick={() => void mutate('purge')}
+            >
+              영구 삭제
+            </button>
+          )}
+        </div>
+      )}
+      {!books.length && (
+        <div className="storage-empty">
+          <BookOpen size={28} aria-hidden="true" />
+          <p>{query ? '검색 결과가 없습니다.' : trash ? '휴지통이 비어 있습니다.' : '저장된 작품이 없습니다.'}</p>
+        </div>
+      )}
       {books.length > limit && (
         <button type="button" className="ghost-btn" onClick={() => setLimit((n) => n + 50)}>
           더 보기

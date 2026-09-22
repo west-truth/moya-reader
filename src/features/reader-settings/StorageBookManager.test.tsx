@@ -59,10 +59,10 @@ describe('storage work management', () => {
     const { catalog } = setup();
     act(() => root.root.findAllByProps({ type: 'checkbox' })[0].props.onChange({ target: { checked: true } }));
     act(() => root.root.findByProps({ type: 'search' }).props.onChange({ target: { value: 'A' } }));
-    expect(button('휴지통 이동').props.disabled).toBe(true);
+    expect(button('휴지통 이동')).toBeUndefined();
     act(() => {
       root.root.findByProps({ type: 'search' }).props.onChange({ target: { value: '' } });
-      root.root.findAllByType('select')[0].props.onChange({ target: { value: 'trash' } });
+      button('휴지통').props.onClick();
     });
     act(() => root.root.findAllByProps({ type: 'checkbox' })[0].props.onChange({ target: { checked: true } }));
     vi.mocked(window.confirm).mockReturnValueOnce(false);
