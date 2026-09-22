@@ -7,7 +7,7 @@ const storage = vi.hoisted(() => ({
 }));
 
 vi.mock('../../services/object-storage.js', () => ({
-  createS3Client: vi.fn(() => ({})),
+  createS3Client: vi.fn(() => ({ destroy: vi.fn() })),
   deleteObject: vi.fn(async () => undefined),
   getObjectBuffer: vi.fn(),
   getObjectRangeBuffer: vi.fn(),
