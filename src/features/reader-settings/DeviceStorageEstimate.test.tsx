@@ -14,7 +14,7 @@ describe('DeviceStorageEstimate', () => {
       root = create(<DeviceStorageEstimate />);
     });
     const text = JSON.stringify(root.toJSON());
-    expect(text).toContain('5.0 MB / 100 MB');
+    expect(text).toContain('5.0 MiB / 100 MiB');
     expect(text).toContain('서버 책장 용량은 포함하지 않습니다');
     act(() => root.unmount());
   });

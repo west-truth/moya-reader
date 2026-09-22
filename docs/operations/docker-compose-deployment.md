@@ -342,3 +342,13 @@ and uploads changes. Mounting a host novel directory into the server container d
 
 - <https://github.com/myshell-ai/MeloTTS>
 - <https://huggingface.co/myshell-ai/MeloTTS-Korean>
+
+### Storage capacity and low-space checks
+
+The storage settings card separates current Moya file usage from the total/available space of the filesystem holding the object store. Compose mounts `minio-data` read-only at `/data/storage-capacity` in api/worker. Only filesystem statistics are read through this mount; object access still uses S3.
+
+`STORAGE_CAPACITY_PATH=auto` probes this mount only when `S3_ENDPOINT` names the bundled `minio` service. External S3 endpoints have no inferred local capacity. To monitor a separately mounted object filesystem, mount the relevant path read-only and set `STORAGE_CAPACITY_PATH` to that **container** path. Set the variable to an empty string to disable probing. Do not point it at the API root filesystem or temporary directory when the object store lives elsewhere.
+
+`STORAGE_MIN_FREE_BYTES` defaults to 256 MiB. Raw assets, imported/restored files, TTS audio and object copies check the available space before writing when the actual storage filesystem is configured. A failed configured probe stops the write rather than assuming sufficient space. The existing temporary-upload space check remains separate. This is an advisory check, not an atomic reservation: other services and simultaneous writers can consume capacity after the check. It does not enforce a Moya quota or replace the filesystem's own limits.
+
+The usage breakdown deduplicates object keys and groups current files into text, ebooks, comics, images, audio and other files. Retained TTS files with known sizes are included; missing legacy audio size records are reported as unmeasured. Browser catalog-cache payload size is shown separately from server disk usage, and excludes browser HTTP cache overhead and in-memory covers. Byte displays use IEC units (MiB/GiB).

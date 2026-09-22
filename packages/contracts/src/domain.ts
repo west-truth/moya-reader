@@ -879,9 +879,30 @@ export interface LibraryStorageBook {
   readonly bytes: number;
 }
 export interface LibraryStorageUsage {
+  readonly capacity?: StorageCapacity;
+  readonly unmeasuredAudioFiles?: number;
+  readonly breakdown?: StorageUsageBreakdown;
   readonly books: readonly LibraryStorageBook[];
   readonly totalBytes: number;
   readonly libraryBytes: number;
   /** Files referenced only by trashed books, not a guaranteed reclaimable amount. */
   readonly trashBytes: number;
+}
+
+export type StorageCapacity =
+  | {
+      readonly status: 'available';
+      readonly totalBytes: number;
+      readonly availableBytes: number;
+      readonly minimumFreeBytes: number;
+    }
+  | { readonly status: 'unavailable'; readonly reason: 'not_configured' | 'read_failed' };
+
+export interface StorageUsageBreakdown {
+  readonly text: number;
+  readonly ebook: number;
+  readonly comic: number;
+  readonly image: number;
+  readonly audio?: number;
+  readonly other: number;
 }

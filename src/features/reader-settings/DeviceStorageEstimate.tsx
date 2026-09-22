@@ -9,8 +9,9 @@ interface StorageEstimateView {
 }
 
 export function formatStorageBytes(value?: number): string {
-  if (!value || value < 1) return '0 MB';
-  const units = ['B', 'KB', 'MB', 'GB', 'TB'];
+  if (value === undefined || !Number.isFinite(value) || value < 0) return '—';
+  if (value === 0) return '0 B';
+  const units = ['B', 'KiB', 'MiB', 'GiB', 'TiB'];
   const index = Math.min(Math.floor(Math.log(value) / Math.log(1024)), units.length - 1);
   const amount = value / 1024 ** index;
   return `${amount >= 10 || index === 0 ? amount.toFixed(0) : amount.toFixed(1)} ${units[index]}`;

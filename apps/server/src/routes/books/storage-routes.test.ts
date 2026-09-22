@@ -22,7 +22,7 @@ it('requires authentication, scopes the query to this account, and never caches 
     expect(response.statusCode).toBe(200);
     expect(query).toHaveBeenCalledWith(expect.stringContaining('user_id=$1'), ['user_test']);
     expect(response.headers['cache-control']).toBe('no-store');
-    expect(response.json()).toEqual(usage);
+    expect(response.json()).toEqual({ ...usage, capacity: { status: 'unavailable', reason: 'not_configured' } });
   } finally {
     await app.close();
   }

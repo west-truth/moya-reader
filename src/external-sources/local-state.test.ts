@@ -13,6 +13,7 @@ import {
   externalSourceSubscriptionId,
   ExternalSourceLocalStateStore,
   resetExternalSourceLocalStateForTests,
+  readSourceMetadataCacheUsage,
 } from './local-state';
 
 const connectorId = 'moya.external.fixture.files';
@@ -111,6 +112,10 @@ describe('ExternalSourceLocalStateStore', () => {
 
     await store.saveCredential(credential);
     await store.saveCachePage(cache);
+    expect(await readSourceMetadataCacheUsage()).toEqual({
+      entries: 1,
+      bytes: new TextEncoder().encode(JSON.stringify(cache)).length,
+    });
     await store.saveLink(link);
     await store.saveDefaultFolder(defaultFolder);
     await store.saveCatalogPreference(catalogPreference);

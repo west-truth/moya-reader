@@ -1,3 +1,5 @@
+import { StorageCapacityCard } from './StorageCapacityCard';
+import { StorageUsageDetails } from './StorageUsageDetails';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { ArchiveRestore, HardDrive, RefreshCw, ChevronRight, Trash2 } from 'lucide-react';
 import type { LibraryStorageUsage } from '../../domain/types';
@@ -102,19 +104,18 @@ export function StorageSettingsPanel({
         <div className="storage-summary-heading">
           <h3>
             <HardDrive size={18} aria-hidden="true" />
-            {hosted ? '서버의 보관 파일' : '이 기기의 작품 파일'}
+            {hosted ? '서버 저장공간' : '이 기기의 작품 파일'}
           </h3>
           {refreshButton}
         </div>
         {loading && !usage && <p role="status">사용량 확인 중…</p>}
         {error && <p role="alert">{error}</p>}
+        {hosted && usage && <StorageCapacityCard capacity={usage.capacity} />}
         {usage && (
           <>
-            <span className="storage-total-label">보관 중</span>
-            <strong className="storage-total">{formatStorageBytes(usage.totalBytes)}</strong>
-            <div className="storage-distribution" aria-hidden="true">
-              <span style={{ width: `${usage.totalBytes ? (usage.libraryBytes / usage.totalBytes) * 100 : 0}%` }} />
-              <span style={{ width: `${usage.totalBytes ? (usage.trashBytes / usage.totalBytes) * 100 : 0}%` }} />
+            <div className="storage-file-total">
+              <span className="storage-total-label">{hosted ? 'Moya 파일 사용량' : '작품 파일 사용량'}</span>
+              <strong className="storage-total">{formatStorageBytes(usage.totalBytes)}</strong>
             </div>
             <dl className="storage-summary-values">
               <div>
@@ -145,13 +146,7 @@ export function StorageSettingsPanel({
             </button>
           </>
         )}
-        <details className="storage-measurement-note">
-          <summary>용량 기준</summary>
-          <p>
-            원본·회차·이미지를 포함하며 공유 파일은 한 번만 셉니다. DB·캐시·임시 파일은 제외됩니다. 작품별 용량은 공유
-            파일 때문에 합계와 다를 수 있습니다.
-          </p>
-        </details>
+        {usage && <StorageUsageDetails usage={usage} />}
       </section>
       <details className="storage-device-details">
         <summary>이 기기 사용량</summary>

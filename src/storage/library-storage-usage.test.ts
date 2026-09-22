@@ -44,3 +44,22 @@ describe('library storage usage', () => {
     expect(await readLibraryStorageUsage()).toEqual(summarizeLibraryStorage(books, assets));
   });
 });
+
+it('splits real file categories without counting the same shared object twice', () => {
+  const book = { ...books[0], format: 'epub' } as Novel;
+  const source = {
+    ...asset(book.id, 'epub', 1000),
+    kind: 'source',
+    contentType: 'application/epub+zip',
+  } as BookAssetMetadata;
+  const image = {
+    ...asset(book.id, 'image', 100),
+    kind: 'epub_resource',
+    contentType: 'image/jpeg',
+  } as BookAssetMetadata;
+  const text = { ...asset(book.id, 'text', 10), kind: 'source_part', contentType: 'text/plain' } as BookAssetMetadata;
+  const font = { ...asset(book.id, 'font', 20), kind: 'epub_resource', contentType: 'font/woff2' } as BookAssetMetadata;
+  const result = summarizeLibraryStorage([book], [source, source, image, text, font]);
+  expect(result.breakdown).toEqual({ text: 10, ebook: 1000, comic: 0, image: 100, audio: 0, other: 20 });
+  expect(Object.values(result.breakdown!).reduce((a, b) => a + b, 0)).toBe(result.totalBytes);
+});

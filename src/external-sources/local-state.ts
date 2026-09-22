@@ -762,3 +762,19 @@ export async function clearSourceMetadataCache(): Promise<void> {
   tx.objectStore('cachePages').clear();
   await transactionDone(tx);
 }
+
+/** Serialized payload estimate only, not IndexedDB overhead or the browser HTTP cache. */
+export async function readSourceMetadataCacheUsage(): Promise<{ bytes: number; entries: number }> {
+  const db = await openExternalSourceDb();
+  const tx = db.transaction('cachePages', 'readonly');
+  const done = transactionDone(tx);
+  const pages = await requestToPromise<ExternalCatalogCachePage[]>(tx.objectStore('cachePages').getAll());
+  await done;
+  return {
+    bytes: pages.reduce(
+      (sum, page) => sum + (page.byteLength ?? new TextEncoder().encode(JSON.stringify(page)).length),
+      0,
+    ),
+    entries: pages.length,
+  };
+}
