@@ -1,3 +1,4 @@
+import { readLibraryStorageUsage } from '../storage/library-storage-usage';
 import type { BookAssetRepository } from './book-asset-repository';
 import { cleanupRemovedDownloads } from '../storage/removed-download-cleanup';
 import {
@@ -16,6 +17,9 @@ import {
 } from '../storage/book-asset-store';
 
 export class IndexedDbBookAssetRepository implements BookAssetRepository {
+  getStorageUsage() {
+    return readLibraryStorageUsage();
+  }
   cleanupRemovedDownloads(bookId: string, expectedRevision: string) {
     return cleanupRemovedDownloads(bookId, expectedRevision);
   }

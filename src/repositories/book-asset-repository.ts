@@ -1,5 +1,5 @@
 import type { BookAssetMetadata, EncodingMode } from '../domain/types';
-import type { OriginalFileEntry } from '@noveldesk/contracts';
+import type { OriginalFileEntry, LibraryStorageUsage } from '@noveldesk/contracts';
 
 export interface OriginalSourceAssetInput {
   readonly bookId: string;
@@ -88,6 +88,7 @@ export class OriginalSourceMismatchError extends Error {
 }
 
 export interface BookAssetRepository {
+  getStorageUsage?(signal?: AbortSignal): Promise<LibraryStorageUsage>;
   /** null uses the legacy reconstructed export; available only on a supporting server. */
   listOriginalFiles?(bookId: string, signal?: AbortSignal): Promise<readonly OriginalFileEntry[] | null>;
   createOriginalFileDownload?(bookId: string, fileId: string): Promise<string>;

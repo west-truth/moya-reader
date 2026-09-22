@@ -5,6 +5,7 @@ import {
   Cloud,
   Download,
   Info,
+  HardDrive,
   Keyboard,
   LayoutPanelTop,
   Palette,
@@ -28,17 +29,17 @@ import { WebNovelMetadataExtensionSettings } from '../extensions/WebNovelMetadat
 import { ExternalSourceSettingsPanel } from '../external-sources/ExternalSourceSettingsPanel';
 import type { ExternalSourceController } from '../external-sources/useExternalSourceController';
 import { ApplicationInfoSettings } from './ApplicationInfoSettings';
-import { DownloadSettingsPanel } from './DownloadSettingsPanel';
+import { StorageSettingsPanel, type StorageSettingsProps } from './StorageSettingsPanel';
 import { ReaderGestureSettings } from './ReaderGestureSettings';
 import { ReaderSettingsAppearance } from './ReaderSettingsAppearance';
 import { ReaderSettingsLayout } from './ReaderSettingsLayout';
-import { SyncAndBackupSettings } from './SyncAndBackupSettings';
+import { SyncSettings } from './SyncSettings';
 import { resolveReaderThemeColors } from './reader-theme-colors';
 import type { ReaderSettingsController } from './useReaderSettingsDraft';
 import './reader-settings-panel.css';
 
 export type SettingsTab =
-  'appearance' | 'layout' | 'gesture' | 'sources' | 'extensions' | 'downloads' | 'sync' | 'application';
+  'appearance' | 'layout' | 'gesture' | 'sources' | 'extensions' | 'storage' | 'downloads' | 'sync' | 'application';
 
 interface SettingsSection {
   readonly id: SettingsTab;
@@ -78,10 +79,11 @@ const SETTINGS_SECTIONS: readonly SettingsSection[] = [
     detail: '부가 기능, 권한',
     icon: Puzzle,
   },
+  { id: 'storage', label: '저장공간', detail: '사용량, 백업, 다운로드', icon: HardDrive },
   {
     id: 'sync',
     label: '동기화',
-    detail: '연결, 상태, 백업',
+    detail: '연결, 동기화 상태',
     icon: Cloud,
   },
   {
@@ -109,6 +111,7 @@ export interface ReaderSettingsPanelProps {
   readonly webNovelMetadataCollector?: WebNovelMetadataCollectorBroker;
   readonly bookEnrichmentAutomation?: BookEnrichmentAutomationController;
   readonly libraryCount?: number;
+  readonly storage?: StorageSettingsProps;
   readonly initialTab?: SettingsTab;
   readonly openSync: () => void;
   readonly openBackup: () => void;
@@ -129,11 +132,17 @@ function saveStatusLabel(controller: ReaderSettingsController): string {
 
 export default function ReaderSettingsPanel(props: ReaderSettingsPanelProps) {
   const { controller, profile } = props;
-  const [tab, setTab] = useState<SettingsTab>(props.initialTab ?? 'appearance');
+  const [tab, setTab] = useState<SettingsTab>(
+    props.initialTab === 'downloads' ? 'storage' : (props.initialTab ?? 'appearance'),
+  );
   const [mobileDetail, setMobileDetail] = useState(Boolean(props.initialTab));
+  const [storageBusy, setStorageBusy] = useState(false);
+  const [focusDownloads, setFocusDownloads] = useState(props.initialTab === 'downloads');
   const titleRef = useRef<HTMLHeadingElement>(null);
   const selectTab = (next: SettingsTab) => {
-    setTab(next);
+    if (storageBusy) return;
+    setFocusDownloads(next === 'downloads');
+    setTab(next === 'downloads' ? 'storage' : next);
     setMobileDetail(true);
     requestAnimationFrame(() => {
       titleRef.current?.focus({ preventScroll: true });
@@ -142,17 +151,10 @@ export default function ReaderSettingsPanel(props: ReaderSettingsPanelProps) {
     });
   };
   const backToCategories = () => {
-    if (tab === 'downloads') {
-      selectTab('sources');
-      return;
-    }
     setMobileDetail(false);
     requestAnimationFrame(() => document.getElementById(`reader-settings-tab-${tab}`)?.focus());
   };
-  const current =
-    tab === 'downloads'
-      ? { label: '다운로드' }
-      : (SETTINGS_SECTIONS.find((section) => section.id === tab) ?? SETTINGS_SECTIONS[0]);
+  const current = SETTINGS_SECTIONS.find((section) => section.id === tab) ?? SETTINGS_SECTIONS[0];
   const readerThemeColors = resolveReaderThemeColors(profile);
   const readingTab = tab === 'appearance' || tab === 'layout' || tab === 'gesture';
   const showReadingFooter = tab === 'layout';
@@ -162,6 +164,7 @@ export default function ReaderSettingsPanel(props: ReaderSettingsPanelProps) {
   };
 
   const navigateTabs = (event: KeyboardEvent<HTMLButtonElement>, index: number) => {
+    if (storageBusy) return;
     if (!['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 'Home', 'End'].includes(event.key)) return;
     event.preventDefault();
     const nextIndex =
@@ -173,6 +176,7 @@ export default function ReaderSettingsPanel(props: ReaderSettingsPanelProps) {
             SETTINGS_SECTIONS.length;
     const next = SETTINGS_SECTIONS[nextIndex];
     if (!next) return;
+    setFocusDownloads(false);
     setTab(next.id);
     event.currentTarget.parentElement?.querySelectorAll<HTMLButtonElement>('[role="tab"]')[nextIndex]?.focus();
   };
@@ -194,15 +198,17 @@ export default function ReaderSettingsPanel(props: ReaderSettingsPanelProps) {
       className="reader-settings-dialog"
       backdropClassName="reader-settings-backdrop"
       closeLabel="설정 닫기"
+      closeDisabled={storageBusy}
     >
       <div className="reader-settings-body" data-mobile-detail={mobileDetail}>
         <nav className="reader-settings-tabs" role="tablist" aria-label="설정 분류">
           {SETTINGS_SECTIONS.map((section, index) => {
             const Icon = section.icon;
-            const selected = section.id === tab || (section.id === 'sources' && tab === 'downloads');
+            const selected = section.id === tab;
             return (
               <button
                 key={section.id}
+                disabled={storageBusy}
                 type="button"
                 role="tab"
                 id={`reader-settings-tab-${section.id}`}
@@ -233,11 +239,12 @@ export default function ReaderSettingsPanel(props: ReaderSettingsPanelProps) {
             <header className="reader-settings-page-title">
               <button
                 type="button"
-                className={`ghost-btn reader-settings-mobile-back${tab === 'downloads' ? ' is-subpage' : ''}`}
+                className="ghost-btn reader-settings-mobile-back"
+                disabled={storageBusy}
                 onClick={backToCategories}
               >
                 <ArrowLeft size={18} />
-                {tab === 'downloads' ? '콘텐츠 소스' : '설정 목록'}
+                설정 목록
               </button>
               <h2 ref={titleRef} tabIndex={-1}>
                 {current.label}
@@ -247,9 +254,9 @@ export default function ReaderSettingsPanel(props: ReaderSettingsPanelProps) {
               </small>
             </header>
             <div
-              id={`reader-settings-panel-${tab === 'downloads' ? 'sources' : tab}`}
+              id={`reader-settings-panel-${tab}`}
               role="tabpanel"
-              aria-labelledby={`reader-settings-tab-${tab === 'downloads' ? 'sources' : tab}`}
+              aria-labelledby={`reader-settings-tab-${tab}`}
               className="reader-settings-panel"
             >
               {tab === 'appearance' && (
@@ -315,7 +322,7 @@ export default function ReaderSettingsPanel(props: ReaderSettingsPanelProps) {
                     </span>
                   </section>
                   <button type="button" className="ghost-btn" onClick={() => selectTab('downloads')}>
-                    <Download size={18} aria-hidden="true" /> 다운로드 및 저장공간
+                    <Download size={18} aria-hidden="true" /> 다운로드 · 자동 정리
                   </button>
                   {props.installedPackages}
                   <ExternalSourceSettingsPanel
@@ -324,13 +331,16 @@ export default function ReaderSettingsPanel(props: ReaderSettingsPanelProps) {
                   />
                 </div>
               )}
-              {tab === 'downloads' && <DownloadSettingsPanel controller={props.externalSources} />}
-              {tab === 'sync' && (
-                <SyncAndBackupSettings
-                  openSync={() => openDestination(props.openSync)}
+              {tab === 'storage' && (
+                <StorageSettingsPanel
+                  {...props.storage}
+                  controller={props.externalSources}
                   openBackup={() => openDestination(props.openBackup)}
+                  focusDownloads={focusDownloads}
+                  onBusyChange={setStorageBusy}
                 />
               )}
+              {tab === 'sync' && <SyncSettings openSync={() => openDestination(props.openSync)} />}
               {tab === 'application' && (
                 <ApplicationInfoSettings
                   platformRuntime={props.platformRuntime}

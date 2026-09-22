@@ -869,3 +869,19 @@ export interface OriginalFileEntry {
   readonly byteLength: number;
   readonly contentHash: string;
 }
+
+/** Current book files only; excludes database, cache and inactive revision storage. */
+export interface LibraryStorageBook {
+  readonly id: string;
+  readonly title: string;
+  readonly metadataRevision: number;
+  readonly trashed: boolean;
+  readonly bytes: number;
+}
+export interface LibraryStorageUsage {
+  readonly books: readonly LibraryStorageBook[];
+  readonly totalBytes: number;
+  readonly libraryBytes: number;
+  /** Files referenced only by trashed books, not a guaranteed reclaimable amount. */
+  readonly trashBytes: number;
+}

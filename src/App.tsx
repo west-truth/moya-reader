@@ -6553,6 +6553,22 @@ export default function App() {
             webNovelMetadataCollector={webNovelMetadataCollector}
             bookEnrichmentAutomation={bookEnrichmentAutomation}
             libraryCount={novels.length}
+            storage={{
+              assets: bookAssetRepository,
+              hosted: readerRuntime.mode === 'remote',
+              management: {
+                catalog: libraryCatalogRepository,
+                blocked:
+                  productWorkBusy ||
+                  libraryManagement.busy ||
+                  serverAttachBusy ||
+                  view === 'reader' ||
+                  view === 'document',
+                onChanged: async () => {
+                  await Promise.all([refreshNovels(), refreshAfterLocalMutation(), libraryManagement.refresh()]);
+                },
+              },
+            }}
             initialTab={settingsInitialTab}
             openSync={() => setSyncPanelOpen(true)}
             openBackup={backupFeature.openPanel}

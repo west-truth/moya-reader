@@ -1,3 +1,4 @@
+import { registerStorageRoutes } from './books/storage-routes.js';
 import type { FastifyInstance } from 'fastify';
 import pg from 'pg';
 import type { ServerConfig } from '../config.js';
@@ -15,6 +16,7 @@ import { registerDocumentTextRoutes } from './books/document-text-routes.js';
 import { registerOriginalFileRoutes } from './books/original-file-routes.js';
 
 export async function registerBookRoutes(app: FastifyInstance, pool: pg.Pool, config: ServerConfig): Promise<void> {
+  await registerStorageRoutes(app, pool, config);
   await registerBookCatalogRoutes(app, pool, config);
   await registerOriginalFileRoutes(app, pool, config);
   await registerBookContentRoutes(app, pool, config);
