@@ -120,6 +120,9 @@ store의 `device-reader-settings:v1:<scope>` 레코드를 관리합니다. 스�
   database at repeatable-read, streams ZIP entries without assembling the final archive in the browser, and restore
   applies skip/replace/copy in one PostgreSQL transaction. Provider secrets, request/job logs, generated audio and
   derived indexes remain excluded.
+- Hosted browser backup downloads use short-lived single-use URLs after authenticated issuance. Restore uploads and
+  binary extraction use request-owned disk files rather than archive-sized RAM buffers; inspected files are retained
+  for 30 minutes and reused for restore. See the [resource limits and verification](../operations/2026-09-22-large-backup-plan.md).
 - Legacy local books can bind a byte-identical user-reselected original after raw hash verification. If the original is
   unavailable, a UTF-8 `canonical_reconstruction` is generated from the active revision's chapter/paragraph pages and
   never represented as an original source.

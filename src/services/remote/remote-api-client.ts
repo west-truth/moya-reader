@@ -968,6 +968,32 @@ export class RemoteApiClient {
     return this.requestBlob('/backups/export');
   }
 
+  async createBackupDownload(): Promise<string> {
+    const { ticket } = await this.request<{ ticket: string }>('/backups/download', { method: 'POST' });
+    if (!/^[A-Za-z0-9_-]{43}$/.test(ticket)) throw new Error('다운로드 주소를 확인하지 못했습니다.');
+    return `${this.baseUrl}/backups/download/${ticket}`;
+  }
+
+  discardBackupInspection(id: string): Promise<void> {
+    return this.request(`/backups/staged/${encodeURIComponent(id)}`, { method: 'DELETE' });
+  }
+
+  restoreInspectedBackup(id: string, options: BackupRestoreOptions): Promise<BackupRestoreResult> {
+    return this.request(
+      `/backups/staged/${encodeURIComponent(id)}/restore`,
+      {
+        method: 'POST',
+        headers: {
+          'X-Backup-Default-Resolution': options.defaultConflictResolution,
+          ...(options.conflictResolutions
+            ? { 'X-Backup-Conflict-Resolutions': JSON.stringify(options.conflictResolutions) }
+            : {}),
+        },
+      },
+      60 * 60_000,
+    );
+  }
+
   inspectBackup(archive: Blob): Promise<BackupInspection> {
     return this.request(
       '/backups/inspect',
@@ -976,7 +1002,7 @@ export class RemoteApiClient {
         body: archive,
         headers: { 'Content-Type': 'application/zip' },
       },
-      DEFAULT_REMOTE_LARGE_UPLOAD_TIMEOUT_MS,
+      60 * 60_000,
     );
   }
 
@@ -994,7 +1020,7 @@ export class RemoteApiClient {
             : {}),
         },
       },
-      DEFAULT_REMOTE_LARGE_UPLOAD_TIMEOUT_MS,
+      60 * 60_000,
     );
   }
 

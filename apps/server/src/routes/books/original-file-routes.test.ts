@@ -2,6 +2,7 @@ import Fastify from 'fastify';
 import type pg from 'pg';
 import { Readable } from 'node:stream';
 import { createHash } from 'node:crypto';
+import { ZipReader, Uint8ArrayReader, TextWriter } from '@zip.js/zip.js';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { LOCAL_ARCHIVE_SERIES_TYPE } from '@noveldesk/document-series-core';
 import { registerAuthHook } from '../../auth.js';
@@ -29,7 +30,7 @@ afterEach(async () => {
   vi.restoreAllMocks();
 });
 
-async function setup() {
+async function setup(parts = [part, { ...part, id: 'part-2', fileName: '한글 10권.epub' }]) {
   let source: typeof part | undefined = { ...part, id: 'index', contentType: LOCAL_ARCHIVE_SERIES_TYPE };
   const query = vi.fn(async (sql: string, values: unknown[]) => {
     expect(values[1]).toBe('user_test');
@@ -39,7 +40,7 @@ async function setup() {
       expect(sql).toContain("a.kind='source_part' and a.status='active'");
       expect(sql).toContain('order by a.page_index');
       expect(values[2]).toBe('index');
-      return { rows: [part, { ...part, id: 'part-2', fileName: '한글 10권.epub' }] };
+      return { rows: parts };
     }
     return { rows: source ? [source] : [] };
   });
@@ -67,6 +68,24 @@ async function setup() {
 }
 
 describe('original file downloads', () => {
+  it('streams all local originals in an ordered ZIP64 without merging or modifying the originals', async () => {
+    const digest = `sha256:${createHash('sha256').update('abc').digest('hex')}`;
+    const { app, issue } = await setup([
+      { ...part, byteLength: '3', contentHash: digest },
+      { ...part, id: 'part-2', fileName: '한글 10권.epub', byteLength: '3', contentHash: digest },
+    ]);
+    vi.mocked(getObjectStream).mockImplementation(async () => ({ body: Readable.from([Buffer.from('abc')]) }));
+    const response = await app.inject(await issue('__all__'));
+    expect(response.statusCode).toBe(200);
+    const reader = new ZipReader(new Uint8ArrayReader(response.rawPayload));
+    try {
+      const entries = (await reader.getEntries()).filter((e) => !e.directory);
+      expect(entries.map((e) => e.filename)).toEqual(['0001/한글 2권.epub', '0002/한글 10권.epub']);
+      for (const entry of entries) expect(await entry.getData!(new TextWriter())).toBe('abc');
+    } finally {
+      await reader.close();
+    }
+  });
   it('lists multi-GB originals in order without reading object bodies or exposing storage keys', async () => {
     const { app } = await setup();
     vi.mocked(getObjectStream).mockClear();

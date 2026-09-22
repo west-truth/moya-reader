@@ -1,13 +1,21 @@
-import { randomBytes } from 'node:crypto';
+import { createHash, randomBytes } from 'node:crypto';
+import { Readable } from 'node:stream';
 import type { FastifyInstance } from 'fastify';
 import type pg from 'pg';
 import { LOCAL_ARCHIVE_SERIES_TYPE } from '@noveldesk/document-series-core';
 import type { OriginalFileEntry } from '@noveldesk/contracts';
 import type { ServerConfig } from '../../config.js';
 import { createS3Client, getObjectStream } from '../../services/object-storage.js';
+import { originalZipStream } from '../../services/original-zip-stream.js';
 
 interface StoredOriginal extends OriginalFileEntry {
   storageKey: string;
+}
+
+function originalsHash(files: readonly OriginalFileEntry[]) {
+  return createHash('sha256')
+    .update(JSON.stringify(files.map((f) => [f.id, f.contentHash, f.fileName, f.byteLength])))
+    .digest('hex');
 }
 
 function attachmentName(name: string): string {
@@ -78,16 +86,17 @@ export async function registerOriginalFileRoutes(app: FastifyInstance, pool: pg.
     async (request, reply) => {
       reply.header('Cache-Control', 'no-store');
       const files = await originals(request.params.bookId);
+      const all = request.params.fileId === '__all__' && files && files.length > 1;
       const file = files?.find((item) => item.id === request.params.fileId);
-      if (!file) return reply.code(404).send({ error: '보관된 원본이 없습니다. 목록을 다시 열어 주세요.' });
+      if (!file && !all) return reply.code(404).send({ error: '보관된 원본이 없습니다. 목록을 다시 열어 주세요.' });
       const now = Date.now();
       for (const [key, ticket] of tickets) if (ticket.expires <= now) tickets.delete(key);
       if (tickets.size >= 128) return reply.code(429).send({ error: '잠시 후 다시 시도해 주세요.' });
       const ticket = randomBytes(32).toString('base64url');
       tickets.set(ticket, {
         bookId: request.params.bookId,
-        fileId: file.id,
-        hash: file.contentHash,
+        fileId: all ? '__all__' : file!.id,
+        hash: all ? originalsHash(files) : file!.contentHash,
         expires: now + 60_000,
       });
       return { ticket };
@@ -102,6 +111,25 @@ export async function registerOriginalFileRoutes(app: FastifyInstance, pool: pg.
     if (!ticket || ticket.expires <= Date.now())
       return reply.code(410).send({ error: '다운로드 주소가 만료되었습니다. 원본 목록에서 다시 눌러 주세요.' });
     const files = await originals(ticket.bookId);
+    if (ticket.fileId === '__all__') {
+      if (!files || originalsHash(files) !== ticket.hash)
+        return reply.code(404).send({ error: '보관된 원본이 변경되거나 삭제되었습니다.' });
+      const abort = new AbortController();
+      reply.raw.once('close', () => abort.abort());
+      const byId = new Map(files.map((f) => [f.id, f]));
+      const zip = originalZipStream(
+        files,
+        async (f) => (await getObjectStream(s3, config, byId.get(f.id)!.storageKey)).body,
+        abort.signal,
+      );
+      void zip.completion.catch((error) => app.log.error({ error }, 'original ZIP download failed'));
+      return reply
+        .header('Content-Type', 'application/zip')
+        .header('Content-Disposition', 'attachment; filename="original-files.zip"')
+        .header('X-Accel-Buffering', 'no')
+        .header('X-Content-Type-Options', 'nosniff')
+        .send(Readable.fromWeb(zip.readable as never));
+    }
     const file = files?.find((item) => item.id === ticket.fileId && item.contentHash === ticket.hash);
     if (!file) return reply.code(404).send({ error: '보관된 원본이 변경되거나 삭제되었습니다.' });
     const stored = await getObjectStream(s3, config, file.storageKey);

@@ -7,7 +7,7 @@ import type {
 } from './backup-repository';
 import type { RemoteApiClient } from '../services/remote/remote-api-client';
 
-const MAX_EXPORTED_MANIFEST_BYTES = 8 * 1024 * 1024;
+const MAX_EXPORTED_MANIFEST_BYTES = 16 * 1024 * 1024;
 
 function exportedManifest(value: unknown): BackupManifestV1 {
   if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('Backup manifest is invalid');
@@ -46,18 +46,39 @@ async function readExportedManifest(archive: Blob): Promise<BackupManifestV1> {
 }
 
 export class RemoteBackupRepository implements BackupRepository {
+  private staged?: { archive: Blob; id: string };
   constructor(private readonly client: RemoteApiClient) {}
+
+  createDownload(): Promise<string> {
+    return this.client.createBackupDownload();
+  }
+
+  async discardInspection(): Promise<void> {
+    const staged = this.staged;
+    this.staged = undefined;
+    if (staged) await this.client.discardBackupInspection(staged.id);
+  }
 
   async exportBackup(): Promise<{ blob: Blob; manifest: BackupManifestV1 }> {
     const { blob } = await this.client.exportBackup();
     return { blob, manifest: await readExportedManifest(blob) };
   }
 
-  inspectBackup(archive: Blob): Promise<BackupInspection> {
-    return this.client.inspectBackup(archive);
+  async inspectBackup(archive: Blob): Promise<BackupInspection> {
+    await this.discardInspection();
+    const inspection = await this.client.inspectBackup(archive);
+    if (inspection.stagedId) this.staged = { archive, id: inspection.stagedId };
+    return inspection;
   }
 
   restoreBackup(archive: Blob, options: BackupRestoreOptions): Promise<BackupRestoreResult> {
+    if (this.staged?.archive === archive) {
+      const id = this.staged.id;
+      return this.client.restoreInspectedBackup(id, options).then((result) => {
+        if (this.staged?.id === id) this.staged = undefined;
+        return result;
+      });
+    }
     return this.client.restoreBackup(archive, options);
   }
 }

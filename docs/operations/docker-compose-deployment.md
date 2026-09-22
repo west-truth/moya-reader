@@ -282,9 +282,20 @@ new schema.
 Redis AOF is useful for short outages but is not a substitute for PostgreSQL/MinIO backup. The local model cache can
 be downloaded again and is optional in disaster recovery.
 
-Normal API requests remain limited to 32 MiB, while `/api/backups/*` accepts the server archive limit of 512 MiB and
-disables nginx request buffering. Backup restore is not yet a streaming parser and can temporarily use substantial API
-memory; the default API limit is 2 GiB. Test a representative restore before relying on the backup.
+Normal API requests remain limited to 32 MiB. Hosted browser backups download directly as a ZIP64 stream;
+`/api/backups/*` accepts up to 257 GiB of ZIP input without nginx buffering. Restore stages the ZIP and extracted
+binary assets on disk, validates actual sizes and SHA-256, then writes file-backed assets to object storage.
+Limits are 256 GiB expanded, 100,000 archive entries and 5 GiB per object; metadata limits (16 MiB manifest,
+64 MiB per table, 256 MiB total JSON) may be reached earlier. They are resource bounds, not tested maximum capacities.
+Allow temporary free space for the uploaded ZIP plus extracted originals. Completed inspections retain only extracted
+assets for 30 minutes; restore, explicit dismissal, expiry and handled errors remove their temporary files.
+At most two upload/inspection/restore slots, one running restore and one export are active per API process.
+Upload/inspection and restore each have a one-hour budget; SQL statements also have a one-hour timeout. Staging is process-local;
+restart requires reselecting a file, and files left by a forced process termination require operator cleanup under
+`DATA_DIR/backup-staging` while the API is stopped. Do not delete active staging directories.
+Native/legacy buffered export retains its small-archive guard; use the self-host web UI for large backup downloads.
+Test a representative restore before relying on the backup; this is not a replacement for the full server recovery
+set above. See [large backup implementation](2026-09-22-large-backup-plan.md) for measured coverage.
 
 Hosted standalone EPUB/ZIP/CBZ imports use attempt-owned temporary files, streaming original-object writes and bounded
 image batches. `MAX_ARCHIVE_UPLOAD_BYTES` defaults to 4 GiB (and cannot exceed 4 GiB); expanded archive contents are

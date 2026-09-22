@@ -13,6 +13,8 @@ const suites = [
   'test:settings-ux',
 ];
 const extraFilters = [
+  'apps/server/src/routes/backups.test.ts',
+  'apps/server/src/services/backup-staging.test.ts',
   'apps/server/src/routes/books/original-file-routes.test.ts',
   'src/features/library/OriginalFilesDialog.test.tsx',
   'src/repositories/original-file-download.test.ts',

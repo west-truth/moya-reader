@@ -77,7 +77,7 @@ export function OriginalFilesDialog({
   return (
     <Dialog open title="원본 다운로드" onClose={onClose} className="original-files-dialog">
       <p className="original-files-title">{book.title}</p>
-      <p className="muted">파일별로 저장합니다. 읽기 기록은 포함되지 않습니다.</p>
+      <p className="muted">원본 파일을 저장합니다. 읽기 기록은 백업에 포함됩니다.</p>
       {files === undefined && !error && <p role="status">원본 목록을 불러오는 중…</p>}
       {error && (
         <div className="original-files-error" role="alert">
@@ -96,6 +96,24 @@ export function OriginalFilesDialog({
       )}
       {files && (
         <>
+          {files.length > 1 && (
+            <button
+              className="ghost-btn"
+              type="button"
+              disabled={pending !== undefined}
+              onClick={() =>
+                void download({
+                  id: '__all__',
+                  fileName: 'original-files.zip',
+                  contentType: 'application/zip',
+                  byteLength: 0,
+                  contentHash: '',
+                })
+              }
+            >
+              <Download size={18} aria-hidden="true" /> 전체 원본 ZIP 저장
+            </button>
+          )}
           <ul className="original-files-list">
             {files.slice(0, visible).map((file) => (
               <li key={file.id}>

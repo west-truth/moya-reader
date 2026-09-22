@@ -23,6 +23,7 @@ function isPublicRequest(method: string, url: string): boolean {
   const path = url.split('?', 1)[0];
   return (
     (method.toUpperCase() === 'GET' && /^\/api\/original-downloads\/[A-Za-z0-9_-]{43}$/.test(path)) ||
+    (method.toUpperCase() === 'GET' && /^\/api\/backups\/download\/[A-Za-z0-9_-]{43}$/.test(path)) ||
     path === '/health' ||
     path === '/api/health' ||
     path === '/ready' ||

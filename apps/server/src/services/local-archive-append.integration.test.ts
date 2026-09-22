@@ -1,4 +1,8 @@
 import { afterAll, describe, expect, test } from 'vitest';
+import { Readable } from 'node:stream';
+import path from 'node:path';
+import { readdir } from 'node:fs/promises';
+import { BackupStaging } from './backup-staging.js';
 import { BlobWriter, TextReader, Uint8ArrayReader, ZipWriter } from '@zip.js/zip.js';
 import { LOCAL_ARCHIVE_SERIES_TYPE, isLocalArchiveSeries } from '@noveldesk/document-series-core';
 import { startPostgresIntegrationHarness, withPostgresSchema } from './id-v2-migration/postgres-integration-harness.js';
@@ -205,11 +209,28 @@ describe.skipIf(!harness)('hosted raw archive append', () => {
             beforeCancel,
           );
           const backup = await exportHostedBackup(pool, fixture.config);
-          const backupBytes = new Uint8Array(
-            await new Response(backup.readable as ReadableStream<Uint8Array<ArrayBuffer>>).arrayBuffer(),
-          );
-          await backup.completion;
-          await restoreHostedBackup(pool, fixture.config, backupBytes, { defaultConflictResolution: 'replace' });
+          const beforeBackupPosition = (await pool.query('select * from reading_positions')).rows;
+          const beforeBackupBookmarks = (await pool.query('select * from bookmarks')).rows;
+          const stagingPath = path.join(fixture.config.dataDir, 'backup-staging');
+          const staging = new BackupStaging(stagingPath);
+          try {
+            const [received] = await Promise.all([
+              staging.receive(Readable.fromWeb(backup.readable as never)),
+              backup.completion,
+            ]);
+            const stage = staging.take(received.id);
+            try {
+              expect([...stage.parsed.assetBlobs.values()].every((value) => value instanceof Blob)).toBe(true);
+              await restoreHostedBackup(pool, fixture.config, stage.parsed, { defaultConflictResolution: 'replace' });
+            } finally {
+              await stage.dispose();
+            }
+          } finally {
+            await staging.close();
+          }
+          expect(await readdir(stagingPath)).toEqual([]);
+          expect((await pool.query('select * from reading_positions')).rows).toEqual(beforeBackupPosition);
+          expect((await pool.query('select * from bookmarks')).rows).toEqual(beforeBackupBookmarks);
           expect(
             (await pool.query("select total_chapters from library_books where id='book_fixture'")).rows[0]
               .total_chapters,
