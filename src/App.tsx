@@ -44,6 +44,7 @@ import { useAppRuntime } from './app/runtime/RuntimeProvider';
 import { useOptionalSelfHostAuth } from './features/auth/SelfHostAccountGate';
 import { useAnnotationsController } from './features/annotations/useAnnotationsController';
 import { BookWorkspaceScreens } from './features/book-workspace/BookWorkspaceScreens';
+import { OriginalFilesDialog } from './features/library/OriginalFilesDialog';
 import { BookWorkspaceStatsPanel } from './features/book-workspace/book-workspace-lazy-panels';
 import type {
   BookWorkspaceAdjacentFeaturePort,
@@ -2135,7 +2136,8 @@ export default function App() {
     showToast('샘플 책을 추가했습니다.', 'success');
   };
 
-  const exportBookSource = useCallback(
+  const [originalDownloadBook, setOriginalDownloadBook] = useState<Novel>();
+  const exportBookSourceLegacy = useCallback(
     async (novel: Novel) => {
       if (!bookAssetRepository) {
         showToast('이 실행 환경에서는 원본 다운로드를 지원하지 않습니다.', 'warning');
@@ -2163,6 +2165,21 @@ export default function App() {
       }
     },
     [bookAssetRepository, documentIo, showToast],
+  );
+
+  const exportBookSource = useCallback(
+    (novel: Novel) => {
+      if (
+        platformRuntime.kind === 'browser' &&
+        bookAssetRepository?.listOriginalFiles &&
+        bookAssetRepository.createOriginalFileDownload
+      ) {
+        setOriginalDownloadBook(novel);
+        return;
+      }
+      return exportBookSourceLegacy(novel);
+    },
+    [platformRuntime.kind, bookAssetRepository, exportBookSourceLegacy],
   );
 
   const reselectBookSource = useCallback(
@@ -6141,6 +6158,17 @@ export default function App() {
     cloudVault.activity === 'disconnecting';
   return (
     <div className="app-shell" style={styleVars}>
+      {originalDownloadBook && bookAssetRepository && (
+        <OriginalFilesDialog
+          book={originalDownloadBook}
+          repository={bookAssetRepository}
+          onClose={() => setOriginalDownloadBook(undefined)}
+          onLegacyExport={() => {
+            setOriginalDownloadBook(undefined);
+            void exportBookSourceLegacy(originalDownloadBook);
+          }}
+        />
+      )}
       {ProductLifecycle && <ProductLifecycle busy={productWorkBusy} reading={view === 'reader'} />}
       <BookWorkspaceScreens
         libraryNotice={

@@ -861,3 +861,11 @@ export interface UserCorrection {
   sourceReviewArtifactId?: string;
   createdAt: string;
 }
+/** A retained original file, without storage keys or download credentials. */
+export interface OriginalFileEntry {
+  readonly id: string;
+  readonly fileName: string;
+  readonly contentType: string;
+  readonly byteLength: number;
+  readonly contentHash: string;
+}

@@ -12,9 +12,11 @@ import { registerLibraryManagementRoutes } from './books/library-management-rout
 import { registerReaderPersonalizationRoutes } from './books/personalization-routes.js';
 import { registerEpubResourceRoutes } from './books/epub-resource-routes.js';
 import { registerDocumentTextRoutes } from './books/document-text-routes.js';
+import { registerOriginalFileRoutes } from './books/original-file-routes.js';
 
 export async function registerBookRoutes(app: FastifyInstance, pool: pg.Pool, config: ServerConfig): Promise<void> {
   await registerBookCatalogRoutes(app, pool, config);
+  await registerOriginalFileRoutes(app, pool, config);
   await registerBookContentRoutes(app, pool, config);
   await registerBookSearchRoutes(app, pool, config);
   await registerReaderStateRoutes(app, pool, config);

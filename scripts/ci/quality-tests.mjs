@@ -13,6 +13,9 @@ const suites = [
   'test:settings-ux',
 ];
 const extraFilters = [
+  'apps/server/src/routes/books/original-file-routes.test.ts',
+  'src/features/library/OriginalFilesDialog.test.tsx',
+  'src/repositories/original-file-download.test.ts',
   'src/features/fixed-document/ComicPageFlow.test.ts',
   'src/features/fixed-document/archive-page-loader.test.ts',
   'src/features/fixed-document/use-archive-page-images.test.tsx',

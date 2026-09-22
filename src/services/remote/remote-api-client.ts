@@ -1,3 +1,4 @@
+import type { OriginalFileEntry } from '@noveldesk/contracts';
 import type { DiscoveryConfig, DiscoverySettings } from '../../integration-settings/discovery-settings';
 import {
   Bookmark,
@@ -781,6 +782,19 @@ export class RemoteApiClient {
 
   getBookSourceMetadata(bookId: string): Promise<{ source: JsonRecord }> {
     return this.request(`/books/${encodeURIComponent(bookId)}/source/metadata`);
+  }
+
+  listOriginalFiles(bookId: string, signal?: AbortSignal): Promise<{ files: OriginalFileEntry[] | null }> {
+    return this.request(`/books/${encodeURIComponent(bookId)}/original-files`, { signal });
+  }
+
+  async createOriginalFileDownload(bookId: string, fileId: string): Promise<string> {
+    const { ticket } = await this.request<{ ticket: string }>(
+      `/books/${encodeURIComponent(bookId)}/original-files/${encodeURIComponent(fileId)}/download`,
+      { method: 'POST' },
+    );
+    if (!/^[A-Za-z0-9_-]{43}$/.test(ticket)) throw new Error('다운로드 주소를 확인하지 못했습니다.');
+    return `${this.baseUrl}/original-downloads/${ticket}`;
   }
 
   getBookSource(bookId: string): Promise<{ blob: Blob; headers: Headers; status: number }> {

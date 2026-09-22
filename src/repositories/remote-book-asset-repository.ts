@@ -129,6 +129,14 @@ function assertValidRangeResponse(
 export class RemoteBookAssetRepository implements BookAssetRepository {
   constructor(private readonly client: RemoteApiClient) {}
 
+  async listOriginalFiles(bookId: string, signal?: AbortSignal) {
+    return (await this.client.listOriginalFiles(bookId, signal)).files;
+  }
+
+  createOriginalFileDownload(bookId: string, fileId: string) {
+    return this.client.createOriginalFileDownload(bookId, fileId);
+  }
+
   async getActiveSource(bookId: string) {
     return sourceMetadata((await this.client.getBookSourceMetadata(bookId)).source);
   }

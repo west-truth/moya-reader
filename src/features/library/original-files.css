@@ -1,0 +1,40 @@
+.original-files-dialog .original-files-title {
+  margin-top: 16px;
+  overflow-wrap: anywhere;
+  font-weight: 600;
+}
+
+.original-files-list {
+  list-style: none;
+  padding: 0;
+  margin: 16px 0;
+}
+
+.original-files-list li {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 0;
+  border-bottom: 1px solid var(--app-line);
+}
+
+.original-files-list li > div {
+  flex: 1;
+  min-width: 0;
+  display: grid;
+  gap: 4px;
+}
+
+.original-files-name {
+  overflow-wrap: anywhere;
+}
+
+.original-files-list .icon-btn {
+  flex: 0 0 44px;
+  min-height: 44px;
+}
+
+.original-files-error {
+  display: grid;
+  gap: 12px;
+}
