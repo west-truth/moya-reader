@@ -680,7 +680,7 @@ export function PaginatedReaderViewport(
         const overlay = autoOverlayRef.current;
         const current = viewRef.current;
         if (
-          !autoMode.startsWith('blind-') ||
+          (!autoMode.startsWith('blind-') && autoMode !== 'page-turn') ||
           !isActive ||
           preparing ||
           !root ||
@@ -690,8 +690,11 @@ export function PaginatedReaderViewport(
           autoTurning.current
         )
           return 'waiting';
-        if ([...root.querySelectorAll('.is-current img')].some((image) => !(image as HTMLImageElement).complete))
-          return 'waiting';
+        if (root.querySelector('.is-current .reader-image-placeholder:not(.is-loading)')) return 'failed';
+        if (root.querySelector('.is-current .reader-image-placeholder.is-loading')) return 'waiting';
+        const images = [...root.querySelectorAll<HTMLImageElement>('.is-current img')];
+        if (images.some((image) => image.complete && image.naturalWidth === 0)) return 'failed';
+        if (images.some((image) => !image.complete)) return 'waiting';
         const edge = (current.secondaryBoundary ?? current.boundary).end;
         const key = JSON.stringify(edge);
         if (autoNeighbor.current?.key !== key) {
@@ -713,7 +716,26 @@ export function PaginatedReaderViewport(
         if (next.loading) return 'waiting';
         if (next.failed) {
           onPaginationFailure();
-          return 'waiting';
+          return 'failed';
+        }
+        if (autoMode === 'page-turn') {
+          if (!next.boundary) return 'end';
+          if (amount > 0) {
+            const generation = autoGeneration.current;
+            const navigation = navigationRef.current;
+            autoTurning.current = true;
+            void commitPage(next.boundary, navigation, 1)
+              .catch(() => {
+                if (generation === autoGeneration.current) {
+                  next.failed = true;
+                  onPaginationFailure();
+                }
+              })
+              .finally(() => {
+                if (generation === autoGeneration.current) autoTurning.current = false;
+              });
+          }
+          return 'moving';
         }
         const bounds = root.getBoundingClientRect();
         const style = getComputedStyle(root);

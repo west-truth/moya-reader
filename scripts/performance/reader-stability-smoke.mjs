@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { verifyComicAutoReading } from './comic-auto-reading-smoke.mjs';
 import { build } from 'vite';
 import { chromium } from 'playwright-core';
 
@@ -372,6 +373,10 @@ try {
   }, original);
   evidence.push({ legacyAppendPreserved: append, replacementReloaded: true });
   await legacy.close();
+  await verifyComicAutoReading(newPage);
+  evidence.push({
+    comicAutomaticReading: 'scroll, page/spread RTL, episode boundary, interruption; fractional seam pixels passed',
+  });
   assert.deepEqual(errors, []);
   console.log(JSON.stringify(evidence, null, 2));
   await context.close();

@@ -379,9 +379,13 @@
   transform: rotate(var(--fixed-doc-rotation)) scale(var(--fixed-doc-crop-scale, 1))
     scale(var(--fixed-doc-original-scale, 1));
   transform-origin: center;
-  clip-path: inset(
-    var(--fixed-doc-crop-top, 0) var(--fixed-doc-crop-right, 0) var(--fixed-doc-crop-bottom, 0)
-      var(--fixed-doc-crop-left, 0)
+  /* Even inset(0) clips fractional image edges and exposes a dark seam in Chromium. */
+  clip-path: var(
+    --fixed-doc-image-clip,
+    inset(
+      var(--fixed-doc-crop-top, 0) var(--fixed-doc-crop-right, 0) var(--fixed-doc-crop-bottom, 0)
+        var(--fixed-doc-crop-left, 0)
+    )
   );
   filter: brightness(var(--fixed-doc-brightness, 1)) contrast(var(--fixed-doc-contrast, 1))
     saturate(var(--fixed-doc-saturation, 1)) grayscale(var(--fixed-doc-grayscale, 0)) invert(var(--fixed-doc-invert, 0));
