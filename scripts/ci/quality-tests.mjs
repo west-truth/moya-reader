@@ -13,6 +13,9 @@ const suites = [
   'test:settings-ux',
 ];
 const extraFilters = [
+  'apps/server/src/services/storage-capacity.test.ts',
+  'apps/server/src/routes/books/storage-routes.test.ts',
+  'src/storage/library-storage-usage.test.ts',
   'apps/server/src/routes/backups.test.ts',
   'apps/server/src/services/backup-staging.test.ts',
   'apps/server/src/routes/books/original-file-routes.test.ts',

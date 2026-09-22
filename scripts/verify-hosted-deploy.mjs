@@ -579,7 +579,10 @@ check('nginx proxies /api to api service', includes(files.nginx, 'proxy_pass htt
 check('nginx proxies /health', includes(files.nginx, 'proxy_pass http://api:8787/health;'));
 check('nginx proxies /ready', includes(files.nginx, 'proxy_pass http://api:8787/ready;'));
 check('nginx serves SPA fallback', includes(files.nginx, 'try_files $uri $uri/ /index.html;'));
-check('nginx gives backups a separate 512 MiB request boundary', includes(files.nginx, 'client_max_body_size 512m;'));
+check(
+  'nginx gives streamed backups their separate 257 GiB request boundary',
+  includes(blockAfter(files.nginx, '  location /api/backups/ {'), 'client_max_body_size 257g;'),
+);
 check('nginx streams backup request bodies upstream', includes(files.nginx, 'proxy_request_buffering off;'));
 check(
   'nginx streams ordinary API uploads upstream',
@@ -604,7 +607,7 @@ check(
 );
 check(
   'host nginx example permits backup archives separately',
-  includes(files.hostNginxExample, 'client_max_body_size 512m;'),
+  includes(blockAfter(files.hostNginxExample, '  location ^~ /api/backups/ {'), 'client_max_body_size 257g;'),
 );
 check(
   'host nginx example streams upload requests',

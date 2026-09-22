@@ -237,7 +237,7 @@ receive a 30-day `HttpOnly; Secure; SameSite=Strict` session cookie, so the reco
 Create the owner account before exposing a new DNS name beyond loopback or the private WireGuard boundary.
 
 The Ubuntu host nginx reference is [`deploy/host-nginx.example.conf`](../../deploy/host-nginx.example.conf). It proxies
-only to `127.0.0.1:8080`, allows 32 MiB ordinary requests and 512 MiB backup archives, disables request buffering for
+only to `127.0.0.1:8080`, allows 32 MiB ordinary requests and 257 GiB streamed backup archives, disables request buffering for
 uploads/backups, and preserves the public scheme. Replace its domain and certificate paths, validate with `nginx -t`,
 then reload nginx. Moya browser uploads use 2 MiB resumable chunks, so the committed 32 MiB ordinary-request limit is
 required; nginx's usual 1 MiB default is not sufficient.
