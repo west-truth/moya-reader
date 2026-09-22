@@ -1,11 +1,22 @@
 import { createHash } from 'node:crypto';
-import { TextReader, TextWriter, Uint8ArrayReader, Uint8ArrayWriter, ZipReader, ZipWriter } from '@zip.js/zip.js';
+import { BlobReader, TextReader, Uint8ArrayReader, ZipReader, ZipWriter } from '@zip.js/zip.js';
+import { openAsBlob } from 'node:fs';
+import { open } from 'node:fs/promises';
+import path from 'node:path';
+import { verifiedBackupStream, hashBackupBlob } from './backup-streams.js';
+import { assertUploadDiskSpace } from './upload-file.js';
 import { hasSecretLikeKey } from '../providers/server-provider-settings.js';
 
 export const HOSTED_BACKUP_FORMAT = 'noveldesk-backup' as const;
 export const HOSTED_BACKUP_VERSION = 1 as const;
-export const MAX_HOSTED_BACKUP_ENTRIES = 1_000;
-export const MAX_HOSTED_BACKUP_UNCOMPRESSED_BYTES = 512 * 1024 * 1024;
+export const MAX_HOSTED_BACKUP_ENTRIES = 100_000;
+export const MAX_HOSTED_BACKUP_UNCOMPRESSED_BYTES = 256 * 1024 ** 3;
+
+export const MAX_HOSTED_BACKUP_ARCHIVE_BYTES = 257 * 1024 ** 3;
+export const MAX_BACKUP_OBJECT_BYTES = 5 * 1024 ** 3;
+const MAX_JSON_BYTES = 64 * 1024 ** 2;
+const MAX_METADATA_BYTES = 256 * 1024 ** 2;
+const MAX_MANIFEST_BYTES = 16 * 1024 ** 2;
 
 export const HOSTED_BACKUP_BOOK_TABLES = [
   'library_books',
@@ -123,7 +134,7 @@ export interface ParsedHostedBackupArchive {
   readonly manifest: HostedBackupManifestV1;
   readonly tables: ReadonlyMap<HostedBackupTableName, Record<string, unknown>[]>;
   readonly objects: readonly HostedBookObjectRow[];
-  readonly assetBlobs: ReadonlyMap<string, Buffer>;
+  readonly assetBlobs: ReadonlyMap<string, Buffer | Blob>;
   readonly archiveHash: string;
   readonly totalUncompressedBytes: number;
 }
@@ -197,7 +208,8 @@ function serializedEntry(path: string, value: unknown): { entry: HostedBackupEnt
 
 export function createHostedBackupStream(
   snapshot: HostedBackupSnapshot,
-  loadObject: (object: HostedBookObjectRow) => Promise<Buffer>,
+  loadObject: (object: HostedBookObjectRow) => Promise<Buffer | ReadableStream<Uint8Array>>,
+  signal?: AbortSignal,
 ): HostedBackupStreamResult {
   if (!snapshot.tables.has('library_books') || !snapshot.tables.has('reader_settings')) {
     throw new Error('Hosted backup export requires the catalog and reader settings tables');
@@ -205,6 +217,8 @@ export function createHostedBackupStream(
   for (const [table, rows] of snapshot.tables) assertSafeHostedTableRows(table, rows);
   const jsonEntries = Array.from(snapshot.tables, ([table, rows]) => serializedEntry(tablePath(table), rows));
   jsonEntries.push(serializedEntry(objectTablePath(), snapshot.objects));
+  if (jsonEntries.length + snapshot.objects.length + 1 > MAX_HOSTED_BACKUP_ENTRIES)
+    throw new Error('Hosted backup export entry count is outside the supported range');
   const assetBlobs = snapshot.objects.map(
     (object) =>
       ({
@@ -236,6 +250,13 @@ export function createHostedBackupStream(
     backend: 'hosted',
   };
   const manifestText = JSON.stringify(manifest, null, 2);
+  if (
+    Buffer.byteLength(manifestText) > MAX_MANIFEST_BYTES ||
+    jsonEntries.some(({ entry }) => entry.byteLength > MAX_JSON_BYTES) ||
+    jsonEntries.reduce((n, { entry }) => n + entry.byteLength, 0) > MAX_METADATA_BYTES
+  )
+    throw new Error('Backup metadata is too large');
+
   const paths = new Set<string>();
   let totalUncompressedBytes = Buffer.byteLength(manifestText);
   for (const entry of entries) {
@@ -257,6 +278,8 @@ export function createHostedBackupStream(
   if (totalUncompressedBytes > MAX_HOSTED_BACKUP_UNCOMPRESSED_BYTES) {
     throw new Error('Hosted backup export is too large to restore');
   }
+  if (assetBlobs.some((asset) => asset.byteLength > MAX_BACKUP_OBJECT_BYTES))
+    throw new Error('Backup individual object exceeds 5GiB');
 
   let streamController: TransformStreamDefaultController<Uint8Array> | undefined;
   const stream = new TransformStream<Uint8Array, Uint8Array>({
@@ -265,16 +288,29 @@ export function createHostedBackupStream(
     },
   });
   const completion = (async () => {
-    const zip = new ZipWriter(stream.writable, { bufferedWrite: false, zip64: true });
+    const zip = new ZipWriter(stream.writable, {
+      bufferedWrite: false,
+      zip64: true,
+      level: 0,
+      useWebWorkers: false,
+      signal,
+    });
     try {
       for (const { entry, text } of jsonEntries) await zip.add(entry.path, new TextReader(text));
       for (const [index, object] of snapshot.objects.entries()) {
-        const bytes = await loadObject(object);
+        signal?.throwIfAborted();
+        const input = await loadObject(object);
         const metadata = assetBlobs[index];
-        if (bytes.byteLength !== metadata.byteLength || taggedSha256(bytes) !== metadata.contentHash) {
-          throw new Error(`Hosted asset integrity check failed: ${object.id}`);
-        }
-        await zip.add(metadata.path, new Uint8ArrayReader(bytes));
+        const body =
+          input instanceof Uint8Array
+            ? new ReadableStream<Uint8Array>({
+                start(controller) {
+                  controller.enqueue(input);
+                  controller.close();
+                },
+              })
+            : input;
+        await zip.add(metadata.path, verifiedBackupStream(body, metadata));
       }
       await zip.add('manifest.json', new TextReader(manifestText));
       await zip.close();
@@ -286,79 +322,160 @@ export function createHostedBackupStream(
   return { manifest, readable: stream.readable, completion };
 }
 
-export async function parseHostedBackupArchive(archive: Uint8Array): Promise<ParsedHostedBackupArchive> {
-  const reader = new ZipReader(new Uint8ArrayReader(archive));
+export async function parseHostedBackupArchive(
+  archive: Uint8Array | Blob,
+  options: { assetDirectory?: string; signal?: AbortSignal; archiveHash?: string } = {},
+): Promise<ParsedHostedBackupArchive> {
+  const reader = new ZipReader(archive instanceof Blob ? new BlobReader(archive) : new Uint8ArrayReader(archive), {
+    useWebWorkers: false,
+    signal: options.signal,
+  });
   try {
-    const entries = (await reader.getEntries()).filter((entry) => !entry.directory);
-    if (entries.length === 0 || entries.length > MAX_HOSTED_BACKUP_ENTRIES) {
-      throw new Error('Backup archive entry count is outside the supported range');
+    const listed: Awaited<ReturnType<typeof reader.getEntries>> = [];
+    for await (const entry of reader.getEntriesGenerator()) {
+      if (listed.length >= MAX_HOSTED_BACKUP_ENTRIES)
+        throw new Error('Backup archive entry count is outside the supported range');
+      listed.push(entry);
     }
+    const entries = listed.filter((entry) => !entry.directory);
+    if (entries.length === 0 || entries.length > MAX_HOSTED_BACKUP_ENTRIES)
+      throw new Error('Backup archive entry count is outside the supported range');
     const paths = new Set<string>();
     let totalUncompressedBytes = 0;
     for (const entry of entries) {
-      if (!safeArchivePath(entry.filename) || paths.has(entry.filename)) {
+      if (!safeArchivePath(entry.filename) || paths.has(entry.filename))
         throw new Error(`Unsafe or duplicate backup path: ${entry.filename}`);
-      }
+      if (!Number.isSafeInteger(entry.uncompressedSize) || entry.uncompressedSize < 0)
+        throw new Error('Backup entry size is invalid');
       paths.add(entry.filename);
-      totalUncompressedBytes += Number(entry.uncompressedSize ?? 0);
+      totalUncompressedBytes += entry.uncompressedSize;
     }
-    if (totalUncompressedBytes > MAX_HOSTED_BACKUP_UNCOMPRESSED_BYTES) {
+    if (totalUncompressedBytes > MAX_HOSTED_BACKUP_UNCOMPRESSED_BYTES)
       throw new Error('Backup archive is too large after extraction');
-    }
+    if (!options.assetDirectory && totalUncompressedBytes > 512 * 1024 ** 2)
+      throw new Error('Large backup restore requires disk staging');
+    if (options.assetDirectory) await assertUploadDiskSpace(options.assetDirectory, totalUncompressedBytes);
 
+    // Metadata stays bounded in memory; binary assets use independent generated disk names.
+    async function extract(
+      entry: (typeof entries)[number],
+      limit: number,
+      expected?: HostedBackupEntry,
+      file?: string,
+    ) {
+      if (!entry.getData || entry.uncompressedSize > limit) throw new Error('Backup entry is too large');
+      const chunks: Uint8Array[] = [];
+      let length = 0;
+      const hash = createHash('sha256');
+      const handle = file ? await open(file, 'wx', 0o600) : undefined;
+      try {
+        await entry.getData(
+          new WritableStream<Uint8Array>({
+            async write(chunk) {
+              length += chunk.byteLength;
+              if (length > limit || length > entry.uncompressedSize)
+                throw new Error('Backup entry exceeds its declared size');
+              hash.update(chunk);
+              if (handle) {
+                let offset = 0;
+                while (offset < chunk.byteLength) {
+                  const { bytesWritten } = await handle.write(chunk, offset, chunk.byteLength - offset);
+                  if (!bytesWritten) throw new Error('Backup disk write failed');
+                  offset += bytesWritten;
+                }
+              } else chunks.push(chunk);
+            },
+          }),
+          { checkSignature: true, signal: options.signal },
+        );
+        const digest = `sha256:${hash.digest('hex')}`;
+        if (
+          length !== entry.uncompressedSize ||
+          (expected && (length !== expected.byteLength || digest !== expected.contentHash))
+        )
+          throw new Error(`Backup entry integrity check failed: ${entry.filename}`);
+      } finally {
+        await handle?.close();
+      }
+      return file ? await openAsBlob(file) : Buffer.concat(chunks, length);
+    }
     const manifestEntry = entries.find((entry) => entry.filename === 'manifest.json');
-    if (!manifestEntry?.getData) throw new Error('Backup manifest is missing');
-    const manifest = validateManifest(JSON.parse(await manifestEntry.getData(new TextWriter())));
+    if (!manifestEntry) throw new Error('Backup manifest is missing');
+    const manifestBytes = (await extract(manifestEntry, MAX_MANIFEST_BYTES)) as Buffer;
+    const manifest = validateManifest(JSON.parse(manifestBytes.toString('utf8')));
     const expectedByPath = new Map(manifest.entries.map((entry) => [entry.path, entry]));
-    if (expectedByPath.size !== manifest.entries.length || manifest.entries.length !== entries.length - 1) {
+    if (expectedByPath.size !== manifest.entries.length || manifest.entries.length !== entries.length - 1)
       throw new Error('Backup manifest entry list does not match the archive');
-    }
-
-    const tables = new Map<HostedBackupTableName, Record<string, unknown>[]>();
     const assetsByPath = new Map(manifest.assetBlobs.map((asset) => [asset.path, asset]));
-    const assetBlobs = new Map<string, Buffer>();
+    if (
+      assetsByPath.size !== manifest.assetBlobs.length ||
+      new Set(manifest.assetBlobs.map((a) => a.storageKey)).size !== manifest.assetBlobs.length
+    )
+      throw new Error('Backup asset identities are duplicated');
+    const tables = new Map<HostedBackupTableName, Record<string, unknown>[]>();
+    const assetBlobs = new Map<string, Buffer | Blob>();
     let objects: HostedBookObjectRow[] = [];
+    let metadataBytes = 0;
     for (const entry of entries) {
+      options.signal?.throwIfAborted();
       if (entry.filename === 'manifest.json') continue;
       const expected = expectedByPath.get(entry.filename);
-      if (!expected || !entry.getData) throw new Error(`Unlisted backup entry: ${entry.filename}`);
-      const bytes = Buffer.from(await entry.getData(new Uint8ArrayWriter()));
-      if (bytes.byteLength !== expected.byteLength || taggedSha256(bytes) !== expected.contentHash) {
-        throw new Error(`Backup entry integrity check failed: ${entry.filename}`);
+      if (
+        !expected ||
+        expected.byteLength !== entry.uncompressedSize ||
+        !Number.isSafeInteger(expected.byteLength) ||
+        expected.byteLength < 0 ||
+        !/^sha256:[0-9a-f]{64}$/.test(expected.contentHash)
+      )
+        throw new Error(`Unlisted or invalid backup entry: ${entry.filename}`);
+      const asset = assetsByPath.get(entry.filename);
+      if (asset) {
+        if (asset.contentHash !== expected.contentHash || asset.byteLength !== expected.byteLength)
+          throw new Error(`Backup asset metadata mismatch: ${entry.filename}`);
+        const file = options.assetDirectory ? path.join(options.assetDirectory, `asset-${assetBlobs.size}`) : undefined;
+        assetBlobs.set(asset.storageKey, await extract(entry, MAX_BACKUP_OBJECT_BYTES, expected, file));
+        continue;
       }
+      metadataBytes += entry.uncompressedSize;
+      if (metadataBytes > MAX_METADATA_BYTES) throw new Error('Backup metadata is too large');
+      const bytes = (await extract(entry, MAX_JSON_BYTES, expected)) as Buffer;
       if (entry.filename === objectTablePath()) {
         objects = recordArray(JSON.parse(bytes.toString('utf8')), 'Hosted book object table') as HostedBookObjectRow[];
-        continue;
-      }
-      if (entry.filename.startsWith('hosted/tables/') && entry.filename.endsWith('.json')) {
-        const name = entry.filename.slice('hosted/tables/'.length, -'.json'.length);
-        if (!HOSTED_BACKUP_TABLES.includes(name as HostedBackupTableName)) {
+      } else if (entry.filename.startsWith('hosted/tables/') && entry.filename.endsWith('.json')) {
+        const name = entry.filename.slice('hosted/tables/'.length, -'.json'.length) as HostedBackupTableName;
+        if (!HOSTED_BACKUP_TABLES.includes(name))
           throw new Error(`Backup contains an unsupported hosted table: ${name}`);
-        }
-        const table = name as HostedBackupTableName;
         const rows = recordArray(JSON.parse(bytes.toString('utf8')), `Hosted table ${name}`);
-        assertSafeHostedTableRows(table, rows);
-        tables.set(table, rows);
-        continue;
-      }
-      const asset = assetsByPath.get(entry.filename);
-      if (!asset || asset.contentHash !== expected.contentHash || asset.byteLength !== expected.byteLength) {
-        throw new Error(`Backup asset metadata mismatch: ${entry.filename}`);
-      }
-      assetBlobs.set(asset.storageKey, bytes);
+        assertSafeHostedTableRows(name, rows);
+        tables.set(name, rows);
+      } else throw new Error(`Unlisted backup entry: ${entry.filename}`);
     }
-    if (!tables.has('library_books') || !tables.has('reader_settings')) {
+    if (!tables.has('library_books') || !tables.has('reader_settings'))
       throw new Error('Hosted backup catalog or settings are missing');
-    }
-    if (assetBlobs.size !== manifest.assetBlobs.length || objects.length !== manifest.assetBlobs.length) {
+    if (
+      assetBlobs.size !== manifest.assetBlobs.length ||
+      objects.length !== manifest.assetBlobs.length ||
+      new Set(objects.map((o) => o.id)).size !== objects.length
+    )
       throw new Error('Hosted backup source asset list is incomplete');
+    const assetsById = new Map(manifest.assetBlobs.map((a) => [a.storageKey, a]));
+    for (const object of objects) {
+      const asset = assetsById.get(object.id);
+      if (
+        !asset ||
+        normalizedSha256(object.raw_text_hash) !== asset.contentHash ||
+        Number(object.size_bytes) !== asset.byteLength
+      )
+        throw new Error('Hosted backup object metadata mismatch');
     }
     return {
       manifest,
       tables,
       objects,
       assetBlobs,
-      archiveHash: taggedSha256(archive),
+      archiveHash:
+        options.archiveHash ??
+        (archive instanceof Blob ? await hashBackupBlob(archive, options.signal) : taggedSha256(archive)),
       totalUncompressedBytes,
     };
   } finally {

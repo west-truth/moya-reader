@@ -13,6 +13,14 @@ const suites = [
   'test:settings-ux',
 ];
 const extraFilters = [
+  'apps/server/src/services/storage-capacity.test.ts',
+  'apps/server/src/routes/books/storage-routes.test.ts',
+  'src/storage/library-storage-usage.test.ts',
+  'apps/server/src/routes/backups.test.ts',
+  'apps/server/src/services/backup-staging.test.ts',
+  'apps/server/src/routes/books/original-file-routes.test.ts',
+  'src/features/library/OriginalFilesDialog.test.tsx',
+  'src/repositories/original-file-download.test.ts',
   'src/features/fixed-document/ComicPageFlow.test.ts',
   'src/features/fixed-document/archive-page-loader.test.ts',
   'src/features/fixed-document/use-archive-page-images.test.tsx',

@@ -3,7 +3,7 @@ import pg from 'pg';
 import type { ServerConfig } from '../../config.js';
 import { registerBookRoutes } from '../books.js';
 
-function testConfig(): ServerConfig {
+export function testConfig(): ServerConfig {
   return {
     host: '127.0.0.1',
     port: 0,

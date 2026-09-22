@@ -19,6 +19,8 @@ x-server-common-environment: &server-common-environment
   S3_SECRET_ACCESS_KEY: ${S3_SECRET_ACCESS_KEY:-${MINIO_ROOT_PASSWORD:-minio-password}}
   S3_FORCE_PATH_STYLE: ${S3_FORCE_PATH_STYLE:-true}
   SERVER_DATA_DIR: /data/server
+  STORAGE_CAPACITY_PATH: ${STORAGE_CAPACITY_PATH-auto}
+  STORAGE_MIN_FREE_BYTES: ${STORAGE_MIN_FREE_BYTES:-268435456}
   DEFAULT_USER_ID: ${DEFAULT_USER_ID:-user_dev}
   PROVIDER_SECRET_ENCRYPTION_KEY: ${PROVIDER_SECRET_ENCRYPTION_KEY:-}
   AI_PROVIDER_DEFAULT: ${AI_PROVIDER_DEFAULT:-mock}
@@ -106,6 +108,7 @@ x-server-common-environment: &server-common-environment
 
 x-server-volumes: &server-volumes
   - server-data:/data/server
+  - minio-data:/data/storage-capacity:ro
   - type: bind
     source: ${VERTEX_CREDENTIALS_HOST_DIR:-./secrets/vertex}
     target: /run/secrets/vertex

@@ -1,8 +1,9 @@
 import { randomUUID } from 'node:crypto';
 import pg from 'pg';
+import { Readable } from 'node:stream';
 import type { ServerConfig } from '../config.js';
 import { createEmptyVoiceCastingState } from '../../../../src/providers/voice-casting/state';
-import { createS3Client, getObjectBuffer, putRawBookObject } from './object-storage.js';
+import { createS3Client, getObjectStream, putRawBookObject } from './object-storage.js';
 import {
   enqueueObjectDeletions,
   releaseObjectDeletionReservations,
@@ -19,6 +20,7 @@ import {
   type HostedBackupTableName,
   type HostedBookObjectRow,
   parseHostedBackupArchive,
+  type ParsedHostedBackupArchive,
 } from './hosted-backup-archive.js';
 import { rebuildParagraphSearchFromStoredPages } from './paragraph-search-persistence.js';
 
@@ -258,21 +260,48 @@ async function snapshotHostedData(pool: pg.Pool, userId: string) {
   }
 }
 
-export async function exportHostedBackup(pool: pg.Pool, config: ServerConfig): Promise<HostedBackupStreamResult> {
+export async function exportHostedBackup(
+  pool: pg.Pool,
+  config: ServerConfig,
+  signal?: AbortSignal,
+  bufferedClient = false,
+): Promise<HostedBackupStreamResult> {
   const snapshot = await snapshotHostedData(pool, config.defaultUserId);
+  if (bufferedClient && snapshot.objects.reduce((n, o) => n + Number(o.size_bytes), 0) > 512 * 1024 ** 2)
+    throw new Error('대용량 백업은 Self-host 웹에서 다운로드해 주세요.');
   const s3 = createS3Client(config);
-  return createHostedBackupStream(snapshot, async (object) => {
-    const stored = await getObjectBuffer(s3, config, object.storage_key);
-    return stored.body;
-  });
+  try {
+    const result = createHostedBackupStream(
+      snapshot,
+      async (object) => {
+        signal?.throwIfAborted();
+        const stored = await getObjectStream(s3, config, object.storage_key);
+        const stop = () => stored.body.destroy(new Error('Backup download cancelled'));
+        signal?.addEventListener('abort', stop, { once: true });
+        stored.body.once('close', () => signal?.removeEventListener('abort', stop));
+        if (signal?.aborted) {
+          stored.body.destroy();
+          signal.throwIfAborted();
+        }
+        return Readable.toWeb(stored.body) as ReadableStream<Uint8Array>;
+      },
+      signal,
+    );
+    void result.completion.finally(() => s3.destroy()).catch(() => undefined);
+    return result;
+  } catch (error) {
+    s3.destroy();
+    throw error;
+  }
 }
 
 export async function inspectHostedBackup(
   pool: pg.Pool,
   config: ServerConfig,
-  archive: Uint8Array,
+  archive: Uint8Array | ParsedHostedBackupArchive,
+  archiveByteLength?: number,
 ): Promise<HostedBackupInspection> {
-  const parsed = await parseHostedBackupArchive(archive);
+  const parsed = archive instanceof Uint8Array ? await parseHostedBackupArchive(archive) : archive;
   const books = bookRows(parsed);
   const ids = books.map((row) => String(row.id));
   const existing = await existingBookTitles(pool, config.defaultUserId, ids);
@@ -282,7 +311,7 @@ export async function inspectHostedBackup(
       const existingTitle = existing.get(book.id);
       return existingTitle ? [{ bookId: book.id, title: book.title, existingTitle }] : [];
     }),
-    archiveByteLength: archive.byteLength,
+    archiveByteLength: archiveByteLength ?? (archive instanceof Uint8Array ? archive.byteLength : 0),
     totalUncompressedBytes: parsed.totalUncompressedBytes,
     warnings: [],
   };
@@ -343,52 +372,61 @@ async function restoreSourceObjects(
   restorePrefix: string,
   stagedKeys: string[],
   publishedKeys: string[],
+  signal: AbortSignal,
 ): Promise<ReadonlyMap<string, string>> {
   const sourceObjects = sourceObjectsById(parsed.objects);
+  const assetMetadata = new Map(parsed.manifest.assetBlobs.map((asset) => [asset.storageKey, asset]));
   const objectIdMap = new Map<string, string>();
   const s3 = createS3Client(config);
-  for (const archivedObjectId of requiredObjectIds) {
-    const object = sourceObjects.get(archivedObjectId);
-    const bytes = parsed.assetBlobs.get(archivedObjectId);
-    const asset = parsed.manifest.assetBlobs.find((item) => item.storageKey === archivedObjectId);
-    if (!object || !bytes || !asset || normalizedHash(object.raw_text_hash) !== asset.contentHash) {
-      throw new Error(`Backup source object is incomplete: ${archivedObjectId}`);
-    }
-    const existing = await client.query('select id from book_objects where raw_text_hash = $1', [object.raw_text_hash]);
-    if (existing.rows[0]) {
-      objectIdMap.set(archivedObjectId, String(existing.rows[0].id));
-      continue;
-    }
-    const idConflict = await client.query('select 1 from book_objects where id = $1', [archivedObjectId]);
-    const targetObjectId = idConflict.rows[0] ? `book_object_${randomUUID().replaceAll('-', '')}` : archivedObjectId;
-    const storageKey = `${restorePrefix}/sources/${targetObjectId}/${object.file_name}`;
-    await reserveObjectDeletions(pool, [storageKey], 'backup_restore_staging');
-    stagedKeys.push(storageKey);
-    await putRawBookObject(s3, config, storageKey, bytes, object.content_type);
-    const inserted = await client.query(
-      `insert into book_objects (id, raw_text_hash, storage_key, file_name, content_type, size_bytes, created_at)
+  try {
+    for (const archivedObjectId of requiredObjectIds) {
+      signal.throwIfAborted();
+      const object = sourceObjects.get(archivedObjectId);
+      const bytes = parsed.assetBlobs.get(archivedObjectId);
+      const asset = assetMetadata.get(archivedObjectId);
+      if (!object || !bytes || !asset || normalizedHash(object.raw_text_hash) !== asset.contentHash) {
+        throw new Error(`Backup source object is incomplete: ${archivedObjectId}`);
+      }
+      const existing = await client.query('select id from book_objects where raw_text_hash = $1', [
+        object.raw_text_hash,
+      ]);
+      if (existing.rows[0]) {
+        objectIdMap.set(archivedObjectId, String(existing.rows[0].id));
+        continue;
+      }
+      const idConflict = await client.query('select 1 from book_objects where id = $1', [archivedObjectId]);
+      const targetObjectId = idConflict.rows[0] ? `book_object_${randomUUID().replaceAll('-', '')}` : archivedObjectId;
+      const storageKey = `${restorePrefix}/sources/${targetObjectId}/${object.file_name}`;
+      await reserveObjectDeletions(pool, [storageKey], 'backup_restore_staging');
+      stagedKeys.push(storageKey);
+      await putRawBookObject(s3, config, storageKey, bytes, object.content_type, signal);
+      const inserted = await client.query(
+        `insert into book_objects (id, raw_text_hash, storage_key, file_name, content_type, size_bytes, created_at)
        values ($1, $2, $3, $4, $5, $6, $7)
        on conflict (raw_text_hash) do update set raw_text_hash = excluded.raw_text_hash
        returning id, storage_key`,
-      [
-        targetObjectId,
-        object.raw_text_hash,
-        storageKey,
-        object.file_name,
-        object.content_type,
-        Number(object.size_bytes),
-        object.created_at,
-      ],
-    );
-    const actualId = String(inserted.rows[0].id);
-    objectIdMap.set(archivedObjectId, actualId);
-    if (String(inserted.rows[0].storage_key) !== storageKey) {
-      await enqueueObjectDeletions(pool, [storageKey], 'backup_restore_deduplicated');
-    } else {
-      publishedKeys.push(storageKey);
+        [
+          targetObjectId,
+          object.raw_text_hash,
+          storageKey,
+          object.file_name,
+          object.content_type,
+          Number(object.size_bytes),
+          object.created_at,
+        ],
+      );
+      const actualId = String(inserted.rows[0].id);
+      objectIdMap.set(archivedObjectId, actualId);
+      if (String(inserted.rows[0].storage_key) !== storageKey) {
+        await enqueueObjectDeletions(pool, [storageKey], 'backup_restore_deduplicated');
+      } else {
+        publishedKeys.push(storageKey);
+      }
     }
+    return objectIdMap;
+  } finally {
+    s3.destroy?.();
   }
-  return objectIdMap;
 }
 
 async function restoreEmbeddedBookObjects(
@@ -400,39 +438,45 @@ async function restoreEmbeddedBookObjects(
   restorePrefix: string,
   stagedKeys: string[],
   publishedKeys: string[],
+  signal: AbortSignal,
 ): Promise<ReadonlyMap<string, string>> {
   const objects = sourceObjectsById(parsed.objects);
   const storageKeys = new Map<string, string>();
   const s3 = createS3Client(config);
-  for (const row of parsed.tables.get('book_assets') ?? []) {
-    if (
-      (row.kind !== 'cover' &&
-        row.kind !== 'epub_resource' &&
-        row.kind !== 'document_page' &&
-        row.kind !== 'source_part') ||
-      row.status !== 'active'
-    )
-      continue;
-    const archivedAssetId = String(row.id);
-    const archivedBookId = String(row.book_id);
-    if (resolutions.get(archivedBookId) === 'skip') continue;
-    const object = objects.get(archivedAssetId);
-    const bytes = parsed.assetBlobs.get(archivedAssetId);
-    if (!object || object.asset_kind !== row.kind || !bytes) {
-      throw new Error(`Backup embedded book asset is incomplete: ${archivedAssetId}`);
+  try {
+    for (const row of parsed.tables.get('book_assets') ?? []) {
+      signal.throwIfAborted();
+      if (
+        (row.kind !== 'cover' &&
+          row.kind !== 'epub_resource' &&
+          row.kind !== 'document_page' &&
+          row.kind !== 'source_part') ||
+        row.status !== 'active'
+      )
+        continue;
+      const archivedAssetId = String(row.id);
+      const archivedBookId = String(row.book_id);
+      if (resolutions.get(archivedBookId) === 'skip') continue;
+      const object = objects.get(archivedAssetId);
+      const bytes = parsed.assetBlobs.get(archivedAssetId);
+      if (!object || object.asset_kind !== row.kind || !bytes) {
+        throw new Error(`Backup embedded book asset is incomplete: ${archivedAssetId}`);
+      }
+      const copyMap = copyMaps.get(archivedBookId);
+      const targetBookId = copyMap?.get(archivedBookId) ?? archivedBookId;
+      const targetAssetId = copyMap?.get(archivedAssetId) ?? archivedAssetId;
+      const folder = row.kind === 'cover' ? 'covers' : row.kind === 'document_page' ? 'pages' : 'epub';
+      const storageKey = `${restorePrefix}/books/${targetBookId}/${folder}/${targetAssetId}/${object.file_name}`;
+      await reserveObjectDeletions(pool, [storageKey], 'backup_restore_staging');
+      stagedKeys.push(storageKey);
+      await putRawBookObject(s3, config, storageKey, bytes, object.content_type, signal);
+      publishedKeys.push(storageKey);
+      storageKeys.set(archivedAssetId, storageKey);
     }
-    const copyMap = copyMaps.get(archivedBookId);
-    const targetBookId = copyMap?.get(archivedBookId) ?? archivedBookId;
-    const targetAssetId = copyMap?.get(archivedAssetId) ?? archivedAssetId;
-    const folder = row.kind === 'cover' ? 'covers' : row.kind === 'document_page' ? 'pages' : 'epub';
-    const storageKey = `${restorePrefix}/books/${targetBookId}/${folder}/${targetAssetId}/${object.file_name}`;
-    await reserveObjectDeletions(pool, [storageKey], 'backup_restore_staging');
-    stagedKeys.push(storageKey);
-    await putRawBookObject(s3, config, storageKey, bytes, object.content_type);
-    publishedKeys.push(storageKey);
-    storageKeys.set(archivedAssetId, storageKey);
+    return storageKeys;
+  } finally {
+    s3.destroy?.();
   }
-  return storageKeys;
 }
 
 async function restoreUserFontObjects(
@@ -442,25 +486,31 @@ async function restoreUserFontObjects(
   restorePrefix: string,
   stagedKeys: string[],
   publishedKeys: string[],
+  signal: AbortSignal,
 ): Promise<ReadonlyMap<string, string>> {
   const objects = sourceObjectsById(parsed.objects);
   const storageKeys = new Map<string, string>();
   const s3 = createS3Client(config);
-  for (const row of parsed.tables.get('user_fonts') ?? []) {
-    const id = String(row.id);
-    const object = objects.get(id);
-    const bytes = parsed.assetBlobs.get(id);
-    if (!object || object.asset_kind !== 'user_font' || !bytes) {
-      throw new Error(`Backup user font is incomplete: ${id}`);
+  try {
+    for (const row of parsed.tables.get('user_fonts') ?? []) {
+      signal.throwIfAborted();
+      const id = String(row.id);
+      const object = objects.get(id);
+      const bytes = parsed.assetBlobs.get(id);
+      if (!object || object.asset_kind !== 'user_font' || !bytes) {
+        throw new Error(`Backup user font is incomplete: ${id}`);
+      }
+      const storageKey = `${restorePrefix}/fonts/${id}/${object.file_name}`;
+      await reserveObjectDeletions(pool, [storageKey], 'backup_restore_staging');
+      stagedKeys.push(storageKey);
+      await putRawBookObject(s3, config, storageKey, bytes, object.content_type, signal);
+      publishedKeys.push(storageKey);
+      storageKeys.set(id, storageKey);
     }
-    const storageKey = `${restorePrefix}/fonts/${id}/${object.file_name}`;
-    await reserveObjectDeletions(pool, [storageKey], 'backup_restore_staging');
-    stagedKeys.push(storageKey);
-    await putRawBookObject(s3, config, storageKey, bytes, object.content_type);
-    publishedKeys.push(storageKey);
-    storageKeys.set(id, storageKey);
+    return storageKeys;
+  } finally {
+    s3.destroy?.();
   }
-  return storageKeys;
 }
 
 async function collectSupersededRestoreObjects(
@@ -547,10 +597,11 @@ async function finalizeRestoreReservations(client: pg.PoolClient, publishedKeys:
 export async function restoreHostedBackup(
   pool: pg.Pool,
   config: ServerConfig,
-  archive: Uint8Array,
+  archive: Uint8Array | ParsedHostedBackupArchive,
   options: HostedBackupRestoreOptions,
+  signal: AbortSignal = AbortSignal.timeout(60 * 60_000),
 ): Promise<HostedBackupRestoreResult> {
-  const parsed = await parseHostedBackupArchive(archive);
+  const parsed = archive instanceof Uint8Array ? await parseHostedBackupArchive(archive) : archive;
   const books = bookRows(parsed);
   const bookIds = books.map((row) => String(row.id));
   const client = await pool.connect();
@@ -558,7 +609,9 @@ export async function restoreHostedBackup(
   const publishedKeys: string[] = [];
   const restorePrefix = `${config.defaultUserId}/backup-restores/${randomUUID().replaceAll('-', '')}`;
   try {
+    signal.throwIfAborted();
     await client.query('begin');
+    await client.query("set local statement_timeout = '1h'");
     const existing = await existingBookTitles(client, config.defaultUserId, bookIds);
     const conflicts = new Set(existing.keys());
     const resolutions = new Map(bookIds.map((bookId) => [bookId, resolutionFor(bookId, conflicts, options)] as const));
@@ -595,6 +648,7 @@ export async function restoreHostedBackup(
       restorePrefix,
       stagedKeys,
       publishedKeys,
+      signal,
     );
     const embeddedStorageKeys = await restoreEmbeddedBookObjects(
       pool,
@@ -605,6 +659,7 @@ export async function restoreHostedBackup(
       restorePrefix,
       stagedKeys,
       publishedKeys,
+      signal,
     );
     const fontStorageKeys = await restoreUserFontObjects(
       pool,
@@ -613,6 +668,7 @@ export async function restoreHostedBackup(
       restorePrefix,
       stagedKeys,
       publishedKeys,
+      signal,
     );
     const activeContentRevisions = new Map<string, string>();
     const activeCoverAssets = new Map<string, string>();
@@ -622,6 +678,7 @@ export async function restoreHostedBackup(
     for (const table of HOSTED_BACKUP_TABLES) {
       const rows = parsed.tables.get(table) ?? [];
       for (const original of rows) {
+        signal.throwIfAborted();
         const archivedBookId = rowBookId(table, original);
         if (archivedBookId && resolutions.get(archivedBookId) === 'skip') continue;
         // Superseded assets are not reachable through the hosted reader and
@@ -700,6 +757,7 @@ export async function restoreHostedBackup(
     }
     await enqueueSupersededRestoreObjects(client, supersededObjects);
     await finalizeRestoreReservations(client, publishedKeys);
+    signal.throwIfAborted();
     await client.query('commit');
 
     const skippedBooks = Array.from(resolutions.values()).filter((value) => value === 'skip').length;

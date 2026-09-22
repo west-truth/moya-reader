@@ -12,6 +12,29 @@ async function exportedArchive(manifest: BackupManifestV1): Promise<Blob> {
 }
 
 describe('RemoteBackupRepository', () => {
+  it('uses the inspected server file for restore and discards abandoned inspections', async () => {
+    const archive = new Blob(['zip']);
+    const client = {
+      inspectBackup: vi.fn(async () => ({ stagedId: 'stage-1' })),
+      restoreInspectedBackup: vi.fn(async () => ({ restoredBooks: 1 })),
+      restoreBackup: vi.fn(),
+      discardBackupInspection: vi.fn(async () => undefined),
+      createBackupDownload: vi.fn(async () => '/api/backups/download/ticket'),
+    } as unknown as RemoteApiClient;
+    const repository = new RemoteBackupRepository(client);
+    expect(await repository.createDownload()).toBe('/api/backups/download/ticket');
+    await repository.inspectBackup(archive);
+    vi.mocked(client.restoreInspectedBackup).mockRejectedValueOnce(new Error('network interrupted'));
+    await expect(repository.restoreBackup(archive, { defaultConflictResolution: 'skip' })).rejects.toThrow(
+      'network interrupted',
+    );
+    await repository.restoreBackup(archive, { defaultConflictResolution: 'skip' });
+    expect(client.restoreInspectedBackup).toHaveBeenCalledWith('stage-1', { defaultConflictResolution: 'skip' });
+    expect(client.restoreBackup).not.toHaveBeenCalled();
+    await repository.inspectBackup(archive);
+    await repository.discardInspection();
+    expect(client.discardBackupInspection).toHaveBeenCalledWith('stage-1');
+  });
   it('reads the exported manifest locally without uploading the ZIP for inspection', async () => {
     const manifest: BackupManifestV1 = {
       format: 'noveldesk-backup',

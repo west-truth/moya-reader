@@ -1,15 +1,8 @@
 import { act, create } from 'react-test-renderer';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import type { ExternalSourceController } from '../external-sources/useExternalSourceController';
-import { DownloadSettingsPanel } from './DownloadSettingsPanel';
+import { DeviceStorageEstimate } from './DeviceStorageEstimate';
 
-const controller = {
-  autoDownloadNext: false,
-  autoDownloadNextCount: 1,
-  recoverableDownloads: [],
-} as unknown as ExternalSourceController;
-
-describe('DownloadSettingsPanel', () => {
+describe('DeviceStorageEstimate', () => {
   afterEach(() => vi.unstubAllGlobals());
 
   it('shows the browser estimate separately from server storage', async () => {
@@ -18,12 +11,11 @@ describe('DownloadSettingsPanel', () => {
     });
     let root!: ReturnType<typeof create>;
     await act(async () => {
-      root = create(<DownloadSettingsPanel controller={controller} />);
+      root = create(<DeviceStorageEstimate />);
     });
     const text = JSON.stringify(root.toJSON());
-    expect(text).toContain('5.0 MB / 100 MB');
+    expect(text).toContain('5.0 MiB / 100 MiB');
     expect(text).toContain('서버 책장 용량은 포함하지 않습니다');
-    expect(text).toContain('다음 접속에서 복구 가능');
     act(() => root.unmount());
   });
 });

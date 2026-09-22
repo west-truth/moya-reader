@@ -5,6 +5,41 @@ import { useBackupController, type BackupFeatureController } from './useBackupCo
 import type { PlatformDocumentIo } from '../../platform/document-io';
 
 describe('backup conflict defaults', () => {
+  it('starts a native browser download without buffering ZIP or reporting a completed backup', async () => {
+    const anchor = { href: '', download: '', target: '', rel: '', click: vi.fn(), remove: vi.fn() };
+    vi.stubGlobal('document', { createElement: () => anchor, body: { append: vi.fn() } });
+    const onExported = vi.fn();
+    const exportBackup = vi.fn();
+    const notify = vi.fn();
+    let controller!: BackupFeatureController;
+    let renderer!: ReactTestRenderer;
+    function Harness() {
+      controller = useBackupController({
+        repository: {
+          createDownload: async () => '/api/backups/download/ticket',
+          exportBackup,
+        } as unknown as BackupRepository,
+        refreshLibrary: async () => {},
+        notify,
+        onExported,
+      });
+      return null;
+    }
+    try {
+      await act(async () => {
+        renderer = create(<Harness />);
+      });
+      await act(async () => controller.exportBackup());
+      expect(anchor.href).toBe('/api/backups/download/ticket');
+      expect(anchor.click).toHaveBeenCalledOnce();
+      expect(exportBackup).not.toHaveBeenCalled();
+      expect(onExported).not.toHaveBeenCalled();
+      expect(notify).toHaveBeenCalledWith(expect.stringContaining('완료 여부'), 'info');
+    } finally {
+      await act(async () => renderer.unmount());
+      vi.unstubAllGlobals();
+    }
+  });
   it.each(['saved', 'cancelled', 'failed'] as const)(
     'records a backup only after export and a non-cancelled save: %s',
     async (outcome) => {

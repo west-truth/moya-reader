@@ -1,3 +1,4 @@
+import type { LibraryStorageUsage } from '@noveldesk/contracts';
 import type { BookAssetMetadata, BookAssetProvenance, EncodingMode } from '../domain/types';
 import type { RemoteApiClient } from '../services/remote/remote-api-client';
 import { RemoteApiError } from '../services/remote/remote-api-contracts';
@@ -128,6 +129,18 @@ function assertValidRangeResponse(
 
 export class RemoteBookAssetRepository implements BookAssetRepository {
   constructor(private readonly client: RemoteApiClient) {}
+
+  getStorageUsage(signal?: AbortSignal) {
+    return this.client.request<LibraryStorageUsage>('/storage/usage', { signal });
+  }
+
+  async listOriginalFiles(bookId: string, signal?: AbortSignal) {
+    return (await this.client.listOriginalFiles(bookId, signal)).files;
+  }
+
+  createOriginalFileDownload(bookId: string, fileId: string) {
+    return this.client.createOriginalFileDownload(bookId, fileId);
+  }
 
   async getActiveSource(bookId: string) {
     return sourceMetadata((await this.client.getBookSourceMetadata(bookId)).source);

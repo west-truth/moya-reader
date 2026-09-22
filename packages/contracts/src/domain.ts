@@ -861,3 +861,46 @@ export interface UserCorrection {
   sourceReviewArtifactId?: string;
   createdAt: string;
 }
+/** A retained original file, without storage keys or download credentials. */
+export interface OriginalFileEntry {
+  readonly id: string;
+  readonly fileName: string;
+  readonly contentType: string;
+  readonly byteLength: number;
+  readonly contentHash: string;
+}
+
+/** Current book files only; excludes database, cache and inactive revision storage. */
+export interface LibraryStorageBook {
+  readonly id: string;
+  readonly title: string;
+  readonly metadataRevision: number;
+  readonly trashed: boolean;
+  readonly bytes: number;
+}
+export interface LibraryStorageUsage {
+  readonly capacity?: StorageCapacity;
+  readonly unmeasuredAudioFiles?: number;
+  readonly breakdown?: StorageUsageBreakdown;
+  readonly books: readonly LibraryStorageBook[];
+  readonly totalBytes: number;
+  readonly libraryBytes: number;
+  /** Files referenced only by trashed books, not a guaranteed reclaimable amount. */
+  readonly trashBytes: number;
+}
+
+export type StorageCapacity =
+  | {
+      readonly status: 'available';
+      readonly totalBytes: number;
+      readonly availableBytes: number;
+      readonly minimumFreeBytes: number;
+    }
+  | { readonly status: 'unavailable'; readonly reason: 'not_configured' | 'read_failed' };
+
+export interface StorageUsageBreakdown {
+  readonly document: number;
+  readonly image: number;
+  readonly audio?: number;
+  readonly other: number;
+}

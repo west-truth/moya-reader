@@ -51,6 +51,9 @@ export function useBackupController(options: UseBackupControllerOptions): Backup
   const openPanel = useCallback(() => setOpen(true), []);
   const closePanel = useCallback(() => {
     if (busy) return;
+    void optionsRef.current.repository?.discardInspection?.().catch(() => undefined);
+    archiveRef.current = undefined;
+    setInspection(undefined);
     setOpen(false);
   }, [busy]);
 
@@ -59,6 +62,20 @@ export function useBackupController(options: UseBackupControllerOptions): Backup
     if (!repository || busy) return;
     setBusy(true);
     try {
+      if (repository.createDownload && !optionsRef.current.documentIo?.usesNativeSave) {
+        const url = await repository.createDownload();
+        const anchor = document.createElement('a');
+        anchor.href = url;
+        anchor.download = 'moya-backup.zip';
+        anchor.target = '_blank';
+        anchor.rel = 'noopener noreferrer';
+        document.body.append(anchor);
+        anchor.click();
+        anchor.remove();
+        optionsRef.current.notify('백업 다운로드를 시작했습니다. 브라우저에서 완료 여부를 확인하세요.', 'info');
+        // A started browser download is not proof of a completed backup.
+        return;
+      }
       const exported = await repository.exportBackup();
       const fileName = backupFileName(exported.manifest.exportedAt);
       const documentIo = optionsRef.current.documentIo;

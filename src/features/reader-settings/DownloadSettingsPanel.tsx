@@ -1,80 +1,6 @@
-import { useCallback, useEffect, useState } from 'react';
-import { Download, HardDrive, RefreshCw, Server } from 'lucide-react';
+import { Download, HardDrive, Server } from 'lucide-react';
 import { SourceDownloadRecovery } from '../external-sources/SourceDownloadRecovery';
 import type { ExternalSourceController } from '../external-sources/useExternalSourceController';
-
-interface StorageEstimateView {
-  readonly usage?: number;
-  readonly quota?: number;
-  readonly loading: boolean;
-  readonly unavailable: boolean;
-}
-
-function formatStorageBytes(value?: number): string {
-  if (!value || value < 1) return '0 MB';
-  const units = ['B', 'KB', 'MB', 'GB', 'TB'];
-  const index = Math.min(Math.floor(Math.log(value) / Math.log(1024)), units.length - 1);
-  const amount = value / 1024 ** index;
-  return `${amount >= 10 || index === 0 ? amount.toFixed(0) : amount.toFixed(1)} ${units[index]}`;
-}
-
-function DeviceStorageEstimate() {
-  const [estimate, setEstimate] = useState<StorageEstimateView>({ loading: true, unavailable: false });
-  const refresh = useCallback(async () => {
-    const read = globalThis.navigator?.storage?.estimate;
-    if (!read) {
-      setEstimate({ loading: false, unavailable: true });
-      return;
-    }
-    setEstimate((current) => ({ ...current, loading: true }));
-    try {
-      const next = await read.call(globalThis.navigator.storage);
-      setEstimate({ usage: next.usage, quota: next.quota, loading: false, unavailable: false });
-    } catch {
-      setEstimate({ loading: false, unavailable: true });
-    }
-  }, []);
-  useEffect(() => {
-    void refresh();
-  }, [refresh]);
-  const ratio =
-    estimate.usage !== undefined && estimate.quota
-      ? Math.min(100, Math.max(0, (estimate.usage / estimate.quota) * 100))
-      : undefined;
-  return (
-    <div className="download-storage-estimate" aria-live="polite">
-      <div>
-        <strong>이 브라우저의 사이트 저장공간</strong>
-        <span>
-          {estimate.loading
-            ? '확인 중…'
-            : estimate.unavailable
-              ? '이 브라우저에서는 사용량을 확인할 수 없습니다.'
-              : `${formatStorageBytes(estimate.usage)} / ${formatStorageBytes(estimate.quota)}`}
-        </span>
-      </div>
-      {ratio !== undefined && (
-        <div
-          className="download-storage-meter"
-          role="meter"
-          aria-label="브라우저 저장공간 사용률"
-          aria-valuenow={ratio}
-          aria-valuemin={0}
-          aria-valuemax={100}
-        >
-          <span style={{ width: `${ratio}%` }} />
-        </div>
-      )}
-      <button type="button" onClick={() => void refresh()} disabled={estimate.loading}>
-        <RefreshCw size={15} aria-hidden="true" />
-        다시 확인
-      </button>
-      <small>
-        Moya의 기기 설정·오프라인 데이터와 브라우저 캐시를 합친 추정치입니다. 서버 책장 용량은 포함하지 않습니다.
-      </small>
-    </div>
-  );
-}
 
 export function DownloadSettingsPanel({ controller }: { readonly controller: ExternalSourceController }) {
   const autoDownload = controller.autoDownloadNext ?? false;
@@ -162,45 +88,6 @@ export function DownloadSettingsPanel({ controller }: { readonly controller: Ext
             이어볼 회차·미독 회차·즐겨찾기·가져온 파일은 보존합니다. 독서·다운로드 중에는 정리하지 않습니다. 삭제 후
             다시 받지 못할 수 있습니다.
           </p>
-          <div className="installed-extension-actions">
-            <button type="button" disabled={retention.busy || controller.busy} onClick={() => void retention.inspect()}>
-              {retention.busy ? '처리 중…' : '정리 대상 미리보기'}
-            </button>
-            {Boolean(retention.preview?.length) && (
-              <button
-                type="button"
-                disabled={retention.busy || controller.busy || retention.readerActive}
-                onClick={() => void retention.clean()}
-              >
-                확인 후 지금 정리
-              </button>
-            )}
-          </div>
-          {retention.preview && (
-            <div role="status">
-              {retention.preview.length ? (
-                <>
-                  <p>
-                    {retention.preview.length}개 작품 · {retention.preview.reduce((n, p) => n + p.sections.length, 0)}회
-                    정리 가능
-                  </p>
-                  <details>
-                    <summary>작품별 대상 보기</summary>
-                    <ul>
-                      {retention.preview.map((p) => (
-                        <li key={p.bookId}>
-                          {p.title} · {p.sections.length}회
-                        </li>
-                      ))}
-                    </ul>
-                  </details>
-                </>
-              ) : (
-                <p>지금 정리할 회차가 없습니다.</p>
-              )}
-            </div>
-          )}
-          {retention.error && <p role="alert">{retention.error}</p>}
         </section>
       )}
 
@@ -227,17 +114,6 @@ export function DownloadSettingsPanel({ controller }: { readonly controller: Ext
           </div>
         </dl>
         <p className="field-help">회차 대기열에 적용됩니다. 미리 받기·파일 가져오기는 제외됩니다.</p>
-      </section>
-
-      <section className="settings-section-card">
-        <div className="settings-section-heading">
-          <HardDrive size={18} aria-hidden="true" />
-          <div>
-            <h3>이 기기와 파일 저장</h3>
-            <p>서버와 별도로 이 기기에 저장한 데이터입니다.</p>
-          </div>
-        </div>
-        <DeviceStorageEstimate />
       </section>
     </div>
   );

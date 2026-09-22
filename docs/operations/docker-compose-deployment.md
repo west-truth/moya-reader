@@ -237,7 +237,7 @@ receive a 30-day `HttpOnly; Secure; SameSite=Strict` session cookie, so the reco
 Create the owner account before exposing a new DNS name beyond loopback or the private WireGuard boundary.
 
 The Ubuntu host nginx reference is [`deploy/host-nginx.example.conf`](../../deploy/host-nginx.example.conf). It proxies
-only to `127.0.0.1:8080`, allows 32 MiB ordinary requests and 512 MiB backup archives, disables request buffering for
+only to `127.0.0.1:8080`, allows 32 MiB ordinary requests and 257 GiB streamed backup archives, disables request buffering for
 uploads/backups, and preserves the public scheme. Replace its domain and certificate paths, validate with `nginx -t`,
 then reload nginx. Moya browser uploads use 2 MiB resumable chunks, so the committed 32 MiB ordinary-request limit is
 required; nginx's usual 1 MiB default is not sufficient.
@@ -282,9 +282,20 @@ new schema.
 Redis AOF is useful for short outages but is not a substitute for PostgreSQL/MinIO backup. The local model cache can
 be downloaded again and is optional in disaster recovery.
 
-Normal API requests remain limited to 32 MiB, while `/api/backups/*` accepts the server archive limit of 512 MiB and
-disables nginx request buffering. Backup restore is not yet a streaming parser and can temporarily use substantial API
-memory; the default API limit is 2 GiB. Test a representative restore before relying on the backup.
+Normal API requests remain limited to 32 MiB. Hosted browser backups download directly as a ZIP64 stream;
+`/api/backups/*` accepts up to 257 GiB of ZIP input without nginx buffering. Restore stages the ZIP and extracted
+binary assets on disk, validates actual sizes and SHA-256, then writes file-backed assets to object storage.
+Limits are 256 GiB expanded, 100,000 archive entries and 5 GiB per object; metadata limits (16 MiB manifest,
+64 MiB per table, 256 MiB total JSON) may be reached earlier. They are resource bounds, not tested maximum capacities.
+Allow temporary free space for the uploaded ZIP plus extracted originals. Completed inspections retain only extracted
+assets for 30 minutes; restore, explicit dismissal, expiry and handled errors remove their temporary files.
+At most two upload/inspection/restore slots, one running restore and one export are active per API process.
+Upload/inspection and restore each have a one-hour budget; SQL statements also have a one-hour timeout. Staging is process-local;
+restart requires reselecting a file, and files left by a forced process termination require operator cleanup under
+`DATA_DIR/backup-staging` while the API is stopped. Do not delete active staging directories.
+Native/legacy buffered export retains its small-archive guard; use the self-host web UI for large backup downloads.
+Test a representative restore before relying on the backup; this is not a replacement for the full server recovery
+set above. See [large backup implementation](2026-09-22-large-backup-plan.md) for measured coverage.
 
 Hosted standalone EPUB/ZIP/CBZ imports use attempt-owned temporary files, streaming original-object writes and bounded
 image batches. `MAX_ARCHIVE_UPLOAD_BYTES` defaults to 4 GiB (and cannot exceed 4 GiB); expanded archive contents are
@@ -331,3 +342,13 @@ and uploads changes. Mounting a host novel directory into the server container d
 
 - <https://github.com/myshell-ai/MeloTTS>
 - <https://huggingface.co/myshell-ai/MeloTTS-Korean>
+
+### Storage capacity and low-space checks
+
+The storage settings card separates current Moya file usage from the total/available space of the filesystem holding the object store. Compose mounts `minio-data` read-only at `/data/storage-capacity` in api/worker. Only filesystem statistics are read through this mount; object access still uses S3.
+
+`STORAGE_CAPACITY_PATH=auto` probes this mount only when `S3_ENDPOINT` names the bundled `minio` service. External S3 endpoints have no inferred local capacity. To monitor a separately mounted object filesystem, mount the relevant path read-only and set `STORAGE_CAPACITY_PATH` to that **container** path. Set the variable to an empty string to disable probing. Do not point it at the API root filesystem or temporary directory when the object store lives elsewhere.
+
+`STORAGE_MIN_FREE_BYTES` defaults to 256 MiB. Raw assets, imported/restored files, TTS audio and object copies check the available space before writing when the actual storage filesystem is configured. A failed configured probe stops the write rather than assuming sufficient space. The existing temporary-upload space check remains separate. This is an advisory check, not an atomic reservation: other services and simultaneous writers can consume capacity after the check. It does not enforce a Moya quota or replace the filesystem's own limits.
+
+The usage breakdown deduplicates object keys and groups current files into documents (TXT/EPUB/PDF), images (including comic archives, pages and covers), audio and other files. Classification follows stored file types rather than the content genre; embedded EPUB content is not separately estimated. Retained TTS files with known sizes are included; missing legacy audio size records are reported as unmeasured. Browser catalog-cache payload size is shown separately from server disk usage, and excludes browser HTTP cache overhead and in-memory covers. Byte displays use IEC units (MiB/GiB).

@@ -40,6 +40,7 @@ export interface BackupConflict {
 }
 
 export interface BackupInspection {
+  readonly stagedId?: string;
   readonly manifest: BackupManifestV1;
   readonly conflicts: BackupConflict[];
   readonly archiveByteLength: number;
@@ -60,6 +61,8 @@ export interface BackupRestoreResult {
 }
 
 export interface BackupRepository {
+  createDownload?(): Promise<string>;
+  discardInspection?(): Promise<void>;
   exportBackup(): Promise<{ blob: Blob; manifest: BackupManifestV1 }>;
   inspectBackup(archive: Blob): Promise<BackupInspection>;
   restoreBackup(archive: Blob, options: BackupRestoreOptions): Promise<BackupRestoreResult>;

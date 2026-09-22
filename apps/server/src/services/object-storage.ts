@@ -1,3 +1,4 @@
+import { assertObjectStorageSpace, storageCapacityPath } from './storage-capacity.js';
 import {
   CreateBucketCommand,
   CopyObjectCommand,
@@ -57,6 +58,7 @@ export async function putRawBookObject(
   contentType: string,
   signal?: AbortSignal,
 ): Promise<void> {
+  await assertObjectStorageSpace(config, body instanceof Blob ? body.size : body.length);
   await ensureBucketForWrite(client, config.s3.bucket);
   await client.send(
     new PutObjectCommand({
@@ -77,6 +79,7 @@ export async function putTtsAudioObject(
   body: Buffer,
   contentType: string,
 ): Promise<void> {
+  await assertObjectStorageSpace(config, body.length);
   await ensureBucketForWrite(client, config.s3.bucket);
   await client.send(
     new PutObjectCommand({
@@ -207,6 +210,11 @@ export async function copyStoredObject(
   targetKey: string,
   signal?: AbortSignal,
 ): Promise<void> {
+  if (storageCapacityPath(config)) {
+    const source = await inspectStoredObject(client, config, sourceKey);
+    if (source?.byteLength === undefined) throw new Error('복사할 원본 파일의 용량을 확인하지 못했습니다.');
+    await assertObjectStorageSpace(config, source.byteLength);
+  }
   await client.send(
     new CopyObjectCommand({
       Bucket: config.s3.bucket,

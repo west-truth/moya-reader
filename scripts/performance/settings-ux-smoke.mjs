@@ -18,12 +18,15 @@ import {DEFAULT_READING_PROFILE,DEFAULT_GESTURE_BINDINGS} from '${root}src/featu
 import {defaultSettings} from '${root}src/repositories/reader-defaults.ts';
 ${[...readFileSync(resolve(root, 'src/main.tsx'), 'utf8').matchAll(/import '\.\/styles\/([^']+)';/g)].map((match) => `import '${root}src/styles/${match[1]}';`).join('\n')}
 const noop=()=>{};
+let books=[{id:'fixture-book',title:'별빛 도서관: 잊혀진 이야기들 (1–12권)',metadataRevision:1,trashed:false,bytes:2147483648}];
+const storage={hosted:true,assets:{getStorageUsage:async()=>({books:[...books],capacity:{status:'available',totalBytes:500*1024**3,availableBytes:180*1024**3,minimumFreeBytes:268435456},breakdown:{document:2147483648,image:0,audio:0,other:0},totalBytes:2147483648,libraryBytes:books[0]?.trashed?0:2147483648,trashBytes:books[0]?.trashed?2147483648:0})},management:{blocked:false,onChanged:async()=>{},catalog:{moveToTrash:async(id)=>{books=books.map(b=>({...b,trashed:true,metadataRevision:b.metadataRevision+1}));},restore:async(id)=>{books=books.map(b=>({...b,trashed:false,metadataRevision:b.metadataRevision+1}));}}}};
+
 const externalSources={sources:Array.from({length:8},(_,i)=>({id:'fixture-'+i,title:'검증용 소스 '+i,origin:'plugin',contentKind:'text',lang:'ko',description:'연결한 소스에서 작품을 탐색합니다.',connection:{state:'connected'}})),selectSource:noop,show:noop,recoverableDownloads:[],downloadRetention:{enabled:false,keep:5,busy:false,error:'',setEnabled:noop,setKeep:noop,inspect:noop,clean:noop}};
 function Fixture(){const [profile,setProfile]=useState(DEFAULT_READING_PROFILE);const [open,setOpen]=useState(true);globalThis.changes??=[];const update=p=>{changes.push(p);setProfile(x=>({...x,...p}));};
 if(new URLSearchParams(location.search).has('controls')) return React.createElement('div',{},
 React.createElement('div',{className:'fixed-doc-comic-settings',style:{width:280}},React.createElement('fieldset',{},React.createElement(SettingsSlider,{label:'만화 밝기',min:40,max:180,step:1,value:100,onChange:noop}))),
 React.createElement('div',{className:'tts-playback-setting-grid',style:{width:260}},React.createElement(SettingsSlider,{label:'듣기 속도',min:0.6,max:1.8,step:0.1,value:1,onChange:noop})));
-return new URLSearchParams(location.search).has('full')?React.createElement(ReaderSettingsPanel,{controller:{open,settings:defaultSettings,closePanel:()=>setOpen(false),saveStatus:'idle',updateSettings:noop},profile,bookOverrideEnabled:false,contrastWarning:false,gestureBindings:DEFAULT_GESTURE_BINDINGS,platformRuntime:{kind:'browser',hasTauri:false},providerExecutionRuntime:'none',extensions:[],externalSources,openSync:noop,openBackup:noop,updateProfile:update,setBookOverrideEnabled:noop,resetProfile:noop,updateGestureBindings:noop,setExtensionEnabled:noop}):React.createElement(ReaderQuickViewDialog,{open,profile,readingFlow:'paginated',bookOverrideEnabled:false,onClose:()=>setOpen(false),onUpdate:update,onSetBookOverride:noop,onOpenAllSettings:noop});}
+return new URLSearchParams(location.search).has('full')?React.createElement(ReaderSettingsPanel,{controller:{open,settings:defaultSettings,closePanel:()=>setOpen(false),saveStatus:'idle',updateSettings:noop},profile,bookOverrideEnabled:false,contrastWarning:false,gestureBindings:DEFAULT_GESTURE_BINDINGS,platformRuntime:{kind:'browser',hasTauri:false},providerExecutionRuntime:'none',extensions:[],externalSources,storage,openSync:noop,openBackup:noop,updateProfile:update,setBookOverrideEnabled:noop,resetProfile:noop,updateGestureBindings:noop,setExtensionEnabled:noop}):React.createElement(ReaderQuickViewDialog,{open,profile,readingFlow:'paginated',bookOverrideEnabled:false,onClose:()=>setOpen(false),onUpdate:update,onSetBookOverride:noop,onOpenAllSettings:noop});}
 createRoot(document.getElementById('root')).render(React.createElement(Fixture));
 `;
 const result = await build({
@@ -106,12 +109,9 @@ try {
       assert.equal(await page.getByRole('dialog').count(), 0);
     } else {
       await page.getByRole('tab', { name: /^콘텐츠 소스/ }).click();
-      await page.getByRole('button', { name: '다운로드 및 저장공간' }).click();
-      const back = page.getByRole('button', { name: '콘텐츠 소스', exact: true });
-      await back.scrollIntoViewIfNeeded();
-      const backBox = await back.boundingBox();
-      const title = await page.locator('.reader-settings-page-title h2').boundingBox();
-      assert(title.y - backBox.y - backBox.height >= 20, `Desktop back button crowds the title at ${width}`);
+      await page.getByRole('button', { name: '다운로드 · 자동 정리' }).click();
+      await page.getByRole('heading', { name: '저장공간', exact: true }).waitFor();
+      assert.equal(await page.locator('.storage-download-options').getAttribute('open'), '');
       await page.screenshot({ path: `/tmp/moya-settings-layout-${width}.png` });
     }
   }
@@ -138,12 +138,52 @@ try {
       { label: '검증용 소스 0 즐겨찾기', pressed: nextPressed },
     );
     await page.screenshot({ path: `/tmp/moya-settings-sources-${theme}.png` });
-    await page.getByRole('button', { name: '다운로드 및 저장공간' }).click();
+    await page.getByRole('button', { name: '다운로드 · 자동 정리' }).click();
     await page.getByRole('heading', { name: '읽은 회차 정리', exact: true }).waitFor();
     assert.equal(await page.getByRole('checkbox', { name: /리더를 나온 뒤 자동 정리/ }).isChecked(), false);
     await page.screenshot({ path: `/tmp/moya-settings-downloads-${theme}.png` });
-    await page.getByRole('button', { name: '콘텐츠 소스', exact: true }).click();
-    await page.getByRole('button', { name: '다운로드 및 저장공간' }).waitFor();
+    await page.getByRole('button', { name: '설정 목록', exact: true }).click();
+    await page.getByRole('tab', { name: /^콘텐츠 소스/ }).click();
+    await page.getByRole('button', { name: '다운로드 · 자동 정리' }).waitFor();
+  }
+  page.on('dialog', (dialog) => dialog.accept());
+  for (const width of [360, 390, 1366]) {
+    await page.setViewportSize({ width, height: 844 });
+    await page.goto(base + '?full');
+    await page.evaluate((dark) => {
+      document.documentElement.dataset.theme = dark ? 'dark' : 'light';
+    }, width === 390);
+    await page.getByRole('tab', { name: /^저장공간/ }).click();
+    await page.getByText('2.0 GiB', { exact: true }).first().waitFor();
+    const capacity = page.getByRole('meter', { name: '서버 저장공간 사용량' });
+    assert.equal(await capacity.getAttribute('aria-valuenow'), String(320 * 1024 ** 3));
+    await page.getByText('180 GiB', { exact: true }).waitFor();
+    await page.getByRole('button', { name: '작품별 관리', exact: true }).click();
+    const checkbox = page.getByRole('checkbox', { name: /별빛 도서관/ });
+    await checkbox.check();
+    await page.getByRole('button', { name: '휴지통 이동', exact: true }).click();
+    await page.getByText('1개 휴지통 이동 완료', { exact: true }).waitFor();
+    await page.getByRole('button', { name: /^휴지통 \d/ }).click();
+    await checkbox.check();
+    await page.getByRole('button', { name: '복원', exact: true }).click();
+    await page.getByText('1개 복원 완료', { exact: true }).waitFor();
+    await page.getByRole('button', { name: /^책장 \d/ }).click();
+    await checkbox.waitFor();
+    assert.equal(await page.evaluate(() => document.body.scrollWidth <= innerWidth), true);
+    const list = page.locator('.storage-book-list');
+    assert.equal(await list.evaluate((node) => node.scrollWidth <= node.clientWidth), true);
+    await page.screenshot({ path: `/tmp/moya-storage-books-${width}.png` });
+    await page.getByRole('button', { name: '사용량 요약' }).click();
+    await page.screenshot({ path: `/tmp/moya-storage-summary-${width}.png` });
+    await page.getByText('사용량 상세', { exact: true }).click();
+    await page.getByText('기기 목록 캐시', { exact: true }).waitFor();
+    await page.locator('.storage-cache-detail strong').filter({ hasText: '0 B' }).waitFor();
+    assert.equal(
+      await page.locator('.storage-usage-details').evaluate((node) => node.scrollWidth <= node.clientWidth),
+      true,
+    );
+    await page.getByText('이미지', { exact: true }).scrollIntoViewIfNeeded();
+    await page.screenshot({ path: `/tmp/moya-storage-details-${width}.png` });
   }
   await page.goto(base + '?controls');
   await page.getByRole('slider', { name: '만화 밝기' }).waitFor();
@@ -153,7 +193,7 @@ try {
   }
   assert.deepEqual(errors, []);
   console.log(
-    'Settings UX passed: 360/390/768/1366px, desktop/mobile back spacing, quick-view scroll/AX/empty input, mobile categories/back/focus/scope.',
+    'Settings UX passed: 360/390/768/1366px, desktop/mobile back spacing, quick-view scroll/AX/empty input, mobile categories/back/focus/scope; storage summary/trash/restore at 360/390/1366px.',
   );
 } finally {
   await browser?.close();

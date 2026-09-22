@@ -33,6 +33,9 @@ export interface ServerConfig {
   databaseUrl: string;
   redisUrl: string;
   dataDir: string;
+  /** Filesystem containing the actual object store; empty disables capacity probing. */
+  storageCapacityPath?: string;
+  storageMinimumFreeBytes?: number;
   maxChunkBytes: number;
   maxUploadBytes: number;
   maxArchiveUploadBytes?: number;
@@ -239,6 +242,13 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): ServerConfig {
     databaseUrl: databaseUrlFromEnv(env),
     redisUrl: env.REDIS_URL ?? 'redis://127.0.0.1:6379',
     dataDir: path.resolve(env.SERVER_DATA_DIR ?? '.server-data'),
+    storageCapacityPath:
+      env.STORAGE_CAPACITY_PATH === undefined || env.STORAGE_CAPACITY_PATH === 'auto'
+        ? undefined
+        : env.STORAGE_CAPACITY_PATH.trim()
+          ? path.resolve(env.STORAGE_CAPACITY_PATH)
+          : '',
+    storageMinimumFreeBytes: nonNegativeIntegerFromEnv(env, 'STORAGE_MIN_FREE_BYTES', 256 * 1024 ** 2),
     maxChunkBytes: positiveIntegerFromEnv(env, 'MAX_CHUNK_BYTES', 16 * 1024 * 1024),
     maxUploadBytes: positiveIntegerFromEnv(env, 'MAX_UPLOAD_BYTES', 500 * 1024 * 1024),
     maxArchiveUploadBytes: positiveIntegerFromEnv(env, 'MAX_ARCHIVE_UPLOAD_BYTES', 4 * 1024 ** 3),
