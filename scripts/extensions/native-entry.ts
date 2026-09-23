@@ -1,5 +1,8 @@
 import { startNativeExtensionHost } from './native-host';
-import { EncryptedSourceCredentialVault } from '../../apps/server/src/extensions/source-credential-vault';
+import {
+  EncryptedSourceCredentialVault,
+  SessionSourceCredentialVault,
+} from '../../apps/server/src/extensions/source-credential-vault';
 import { ApkExtensionHost } from '../../apps/server/src/extensions/apk-extension-host';
 import { MangayomiExtensionHost } from '../../apps/server/src/extensions/mangayomi/host';
 import { access } from 'node:fs/promises';
@@ -26,10 +29,11 @@ process.stdin.on('data', (chunk: string) => {
   void (async () => {
     const { token, origin, vaultDirectory, vaultKey } = JSON.parse(buffered);
     buffered = '';
-    const vault =
+    const persistentVault =
       typeof vaultDirectory === 'string' && typeof vaultKey === 'string'
         ? new EncryptedSourceCredentialVault(vaultDirectory, Buffer.from(vaultKey, 'hex'))
         : undefined;
+    const vault = persistentVault ?? new SessionSourceCredentialVault();
     const apkBuild = fileURLToPath(new URL('./apk-runtime/', import.meta.url));
     let apk: ApkExtensionHost | undefined;
     if (
@@ -46,14 +50,19 @@ process.stdin.on('data', (chunk: string) => {
       ).catch(() => undefined);
     }
     const mangayomi =
-      vault && typeof vaultDirectory === 'string'
+      typeof vaultDirectory === 'string'
         ? await MangayomiExtensionHost.open(join(dirname(vaultDirectory), 'mangayomi-extensions'), vault).catch(
             () => undefined,
           )
         : undefined;
     const host = await startNativeExtensionHost(token, origin, { vault, apk, mangayomi });
     close = host.close;
-    process.stdout.write(JSON.stringify({ endpoint: host.endpoint }) + '\n');
+    process.stdout.write(
+      JSON.stringify({
+        endpoint: host.endpoint,
+        features: { credentialVault: Boolean(persistentVault), mangayomi: Boolean(mangayomi), apk: Boolean(apk) },
+      }) + '\n',
+    );
   })().catch(() => process.exit(1));
 });
 process.stdin.on('end', quit);

@@ -9,6 +9,7 @@ struct ManagedProcess {
     child: Child,
     token: String,
     endpoint: String,
+    features: Option<RuntimeFeatures>,
 }
 impl Drop for ManagedProcess {
     fn drop(&mut self) {
@@ -51,6 +52,15 @@ impl ExtensionRuntimeManager {
 #[derive(Clone, Serialize, Deserialize)]
 pub(crate) struct ExtensionRuntimeConnection {
     endpoint: String,
+    #[serde(default)]
+    features: Option<RuntimeFeatures>,
+}
+#[derive(Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct RuntimeFeatures {
+    credential_vault: bool,
+    mangayomi: bool,
+    apk: bool,
 }
 fn valid_token(token: &str) -> bool {
     (43..=128).contains(&token.len())
@@ -129,6 +139,7 @@ pub(crate) async fn desktop_extension_runtime_start(
             if running.token == session_token && matches!(running.child.try_wait(), Ok(None)) {
                 return Ok(ExtensionRuntimeConnection {
                     endpoint: running.endpoint.clone(),
+                    features: running.features.clone(),
                 });
             }
         }
@@ -163,6 +174,7 @@ pub(crate) async fn desktop_extension_runtime_start(
             child,
             token: session_token.clone(),
             endpoint: String::new(),
+            features: None,
         };
         // The protected key travels only over the inherited pipe, never through WebView IPC or command arguments.
         // A locked credential store does not prevent unauthenticated sources from running.
@@ -210,6 +222,7 @@ pub(crate) async fn desktop_extension_runtime_start(
             return Err("native_runtime_invalid_endpoint".into());
         }
         running.endpoint = ready.endpoint.clone();
+        running.features = ready.features.clone();
         *process = Some(running);
         Ok(ready)
     })

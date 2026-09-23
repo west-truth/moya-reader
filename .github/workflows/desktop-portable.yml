@@ -2,6 +2,9 @@ name: Windows portable candidate
 
 on:
   workflow_dispatch:
+  push:
+    branches:
+      - feat/desktop-portable-release
 
 permissions:
   contents: read

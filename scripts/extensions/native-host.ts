@@ -14,6 +14,7 @@ import type { ApkExtensionHost } from '../../apps/server/src/extensions/apk-exte
 import type { MangayomiExtensionHost } from '../../apps/server/src/extensions/mangayomi/host';
 import { dispatchApkCommand } from '../../apps/server/src/extensions/apk-command';
 import { SOURCE_DOWNLOAD_TIMEOUT_MS } from '../../packages/extension-runtime/content-limits.mjs';
+import { createSourceNetworkSettings } from '../../apps/server/src/extensions/source-network-settings.js';
 
 const MAX_ARCHIVE = 10 * 1024 * 1024;
 const MAX_METADATA = 2 * 1024 * 1024;
@@ -74,6 +75,8 @@ const SAFE_ERRORS = new Set([
   'unsupported_package_runtime',
   'unsupported_package_capability',
   'source_manifest_mismatch',
+  'source_network_conflict',
+  'source_network_unavailable',
 ]);
 async function body(request: IncomingMessage, maximum: number): Promise<Buffer> {
   const parts: Buffer[] = [];
@@ -142,7 +145,8 @@ export async function startNativeExtensionHost(
   )
     throw new Error('invalid_native_configuration');
   const expected = Buffer.from(`Bearer ${token}`);
-  const execution = createNodePackageExecution('tauri-native', options);
+  const network = createSourceNetworkSettings(options.vault);
+  const execution = createNodePackageExecution('tauri-native', { ...options, network });
   const prepared = new Map<string, VerifiedMoyaPackage>();
   const active = new Set<AbortController>();
   const completions = new Set<Promise<void>>();
@@ -184,6 +188,7 @@ export async function startNativeExtensionHost(
         '/authentication',
         '/content-connection',
         '/preferences',
+        '/network-settings',
         '/credentials-retain',
         '/update',
         '/repository-list',
@@ -274,6 +279,11 @@ export async function startNativeExtensionHost(
           throw new Error('invalid_source_authentication');
         await execution.retainAuthentication?.(value.packageId, value.epoch);
         json(reply, 200, { retained: true });
+      } else if (request.url === '/network-settings') {
+        const value = JSON.parse((await body(request, 4096)).toString('utf8'));
+        if (!value || typeof value !== 'object' || Array.isArray(value))
+          throw new Error('compatibility_preferences_invalid');
+        json(reply, 200, Object.hasOwn(value, 'request') ? network.save(value.request) : network.read());
       } else if (request.url === '/preferences') {
         const value = JSON.parse((await body(request, 64 * 1024)).toString('utf8'));
         const { validSourcePreferencesRequest } =

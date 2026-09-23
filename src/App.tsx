@@ -382,14 +382,23 @@ export default function App() {
     readerRuntime,
   } = useAppRuntime();
   const localStatic = product?.kind === 'local-static';
+  const [desktopSourceTarget, setDesktopSourceTarget] = useState<'device' | 'server'>(() => {
+    try {
+      return globalThis.localStorage?.getItem('moya.desktopSourceTarget.v1') === 'server' ? 'server' : 'device';
+    } catch {
+      return 'device';
+    }
+  });
+  const canChooseDesktopSourceTarget =
+    platformRuntime.kind === 'tauri-desktop' && readerRuntime.mode === 'local' && Boolean(providerApiClient);
   const installedExtensions = useMemo<InstalledExtensionManager | undefined>(
     () =>
-      providerApiClient
+      providerApiClient && (!canChooseDesktopSourceTarget || desktopSourceTarget === 'server')
         ? new RemoteInstalledExtensions(providerApiClient)
         : platformRuntime.kind === 'tauri-desktop'
           ? new LocalInstalledExtensions(new NativePackageExecution())
           : undefined,
-    [providerApiClient, platformRuntime.kind],
+    [providerApiClient, platformRuntime.kind, canChooseDesktopSourceTarget, desktopSourceTarget],
   );
   const installedSnapshot = useSyncExternalStore(
     installedExtensions?.subscribe ?? (() => () => {}),
@@ -6541,7 +6550,21 @@ export default function App() {
             installedPackages={
               installedExtensions ? (
                 <InstalledExtensionsPanel
+                  key={installedExtensions.target}
                   manager={installedExtensions}
+                  sourceTarget={canChooseDesktopSourceTarget ? desktopSourceTarget : undefined}
+                  onSourceTargetChange={
+                    canChooseDesktopSourceTarget
+                      ? (target) => {
+                          setDesktopSourceTarget(target);
+                          try {
+                            globalThis.localStorage?.setItem('moya.desktopSourceTarget.v1', target);
+                          } catch {
+                            // The current session still uses the selected target.
+                          }
+                        }
+                      : undefined
+                  }
                   suwayomi={
                     externalSourceFeature.sources.find((source) => source.id === SUWAYOMI_EXTERNAL_SOURCE_ID)
                       ?.extensionManager

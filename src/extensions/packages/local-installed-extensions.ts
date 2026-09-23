@@ -16,8 +16,13 @@ import type {
 
 /** Device installation is separate from server inventory and ordinary library backups. */
 export class LocalInstalledExtensions extends InstalledPackageSourceRegistry implements InstalledExtensionManager {
-  readonly apk?: import('./apk-extension-manager').ApkExtensionManager;
-  readonly mangayomi?: import('./apk-extension-manager').ApkExtensionManager;
+  private features?: { credentialVault: boolean; mangayomi: boolean; apk: boolean };
+  get apk(): import('./apk-extension-manager').ApkExtensionManager | undefined {
+    return this.features?.apk === false ? undefined : this.apkCatalog?.manager;
+  }
+  get mangayomi(): import('./apk-extension-manager').ApkExtensionManager | undefined {
+    return this.features?.mangayomi === false ? undefined : this.mgCatalog?.manager;
+  }
   private mgCatalog?: NativeApkCatalog;
   private mgSources?: InstalledPackageSourceRegistry<NativeApkCatalog>;
   private apkCatalog?: NativeApkCatalog;
@@ -36,6 +41,10 @@ export class LocalInstalledExtensions extends InstalledPackageSourceRegistry imp
   constructor(
     private readonly execution: PackageExecutionPort & {
       ready?(): Promise<unknown>;
+      networkSettings?: (
+        request?: import('../../../packages/extension-contracts/source-network-settings').SourceNetworkSettingsRequest,
+        signal?: AbortSignal,
+      ) => Promise<import('../../../packages/extension-contracts/source-network-settings').SourceNetworkSettings>;
       apk?: NativeApkTransport;
       mangayomi?: NativeApkTransport;
     },
@@ -46,15 +55,20 @@ export class LocalInstalledExtensions extends InstalledPackageSourceRegistry imp
     if (execution.mangayomi) {
       this.mgCatalog = new NativeApkCatalog(execution.mangayomi, () => this.refresh());
       this.mgSources = new InstalledPackageSourceRegistry(this.mgCatalog);
-      this.mangayomi = this.mgCatalog.manager;
     }
     if (execution.apk) {
       this.apkCatalog = new NativeApkCatalog(execution.apk, () => this.refresh());
       this.apkSources = new InstalledPackageSourceRegistry(this.apkCatalog);
-      this.apk = this.apkCatalog.manager;
     }
   }
   getSnapshot = () => this.snapshot;
+  networkSettings = (
+    request?: import('../../../packages/extension-contracts/source-network-settings').SourceNetworkSettingsRequest,
+    signal?: AbortSignal,
+  ) => {
+    if (!this.execution.networkSettings) return Promise.reject(new Error('source_network_unavailable'));
+    return this.execution.networkSettings(request, signal);
+  };
   listRepositories = () => this.repositories.list();
   refreshRepository = (url: string, signal?: AbortSignal) => this.repositories.refresh(url, signal);
   removeRepository = (url: string, revision: number) => this.repositories.remove(url, revision);
@@ -94,15 +108,23 @@ export class LocalInstalledExtensions extends InstalledPackageSourceRegistry imp
     if (this.pending) return this.pending;
     this.pending = (async () => {
       try {
-        await this.execution.ready?.();
+        const connection = await this.execution.ready?.();
+        this.features =
+          connection && typeof connection === 'object' && 'features' in connection
+            ? (connection.features as typeof this.features)
+            : undefined;
         await this.catalog.refresh();
-        await this.apkCatalog?.refresh().catch(() => undefined);
-        await this.mgCatalog?.refresh().catch(() => undefined);
+        if (this.apk) await this.apkCatalog?.refresh().catch(() => undefined);
+        if (this.mangayomi) await this.mgCatalog?.refresh().catch(() => undefined);
         const value = {
           available: true,
           packages: await this.store.list(),
           sources: this.getExternalSources(),
           errors: this.catalog.getErrors(),
+          error:
+            this.features?.credentialVault === false
+              ? '보안 저장소를 열지 못했습니다. 로그인과 소스 설정은 앱을 닫으면 사라집니다.'
+              : undefined,
         };
         const { revision, ...previous } = this.snapshot;
         if (JSON.stringify(value) === JSON.stringify(previous)) return;

@@ -26,6 +26,16 @@ describe('native extension host and device manager', () => {
     const manager = new LocalInstalledExtensions(execution, store);
     const id = 'org.example.catalog.source';
     try {
+      const network = await manager.networkSettings();
+      const configured = await manager.networkSettings({
+        revision: network.revision,
+        defaultProxy: 'socks5://127.0.0.1:1080',
+      });
+      expect(configured.defaultProxy).toBe('socks5://127.0.0.1:1080');
+      expect(configured.origin).toBe('settings');
+      await expect(manager.networkSettings({ revision: network.revision, defaultProxy: '' })).rejects.toThrow(
+        'source_network_conflict',
+      );
       const manifest = {
         ...examplePackageManifest(),
         preferences: [

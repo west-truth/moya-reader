@@ -16,6 +16,24 @@ export interface SourceCredentialVault {
   retain?(packageId: string, epoch: string | undefined): void;
 }
 
+/** Keeps public native sources available while the device credential store is locked. */
+export class SessionSourceCredentialVault implements SourceCredentialVault {
+  private readonly values = new Map<string, SourceAuthenticationInput>();
+  read(scope: string): SourceAuthenticationInput | undefined {
+    return this.values.get(scope);
+  }
+  write(scope: string, value: SourceAuthenticationInput | undefined): void {
+    if (value) this.values.set(scope, value);
+    else this.values.delete(scope);
+  }
+  retain(packageId: string, epoch: string | undefined): void {
+    for (const scope of this.values.keys()) {
+      const [owner, , savedEpoch] = JSON.parse(scope) as string[];
+      if (owner === packageId && (!epoch || savedEpoch !== epoch)) this.values.delete(scope);
+    }
+  }
+}
+
 /** Separate from settings/backups. The host supplies the owner directory and a protected 256-bit key. */
 export class EncryptedSourceCredentialVault implements SourceCredentialVault {
   constructor(

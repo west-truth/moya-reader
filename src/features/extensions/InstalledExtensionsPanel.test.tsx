@@ -44,10 +44,15 @@ it('finishes repository installation and publisher acknowledgement inside the ch
     ],
     selectRepositoryPackage: async () => ({ file, plan }),
   } as unknown as InstalledExtensionManager;
-  const renderer = create(<InstalledExtensionsPanel manager={manager} />);
+  const changeTarget = vi.fn();
+  const renderer = create(
+    <InstalledExtensionsPanel manager={manager} sourceTarget="server" onSourceTargetChange={changeTarget} />,
+  );
   const button = (label: string) =>
     renderer.root.findAllByType('button').find((node) => node.props.children === label)!;
   expect(button('사용 중').props['aria-pressed']).toBe(true);
+  await act(async () => button('이 PC').props.onClick());
+  expect(changeTarget).toHaveBeenCalledWith('device');
   await act(async () => button('저장소').props.onClick());
   expect(button('사용 중').props['aria-pressed']).toBe(false);
   await act(async () => button('설치').props.onClick());
