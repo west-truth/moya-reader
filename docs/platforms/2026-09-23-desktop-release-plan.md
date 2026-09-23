@@ -159,17 +159,14 @@ flowchart TB
 
 ### 배포와 첫 실행
 
-사용자가 내려받는 파일은 **`Moya.exe` 하나**다. `setup.exe`나 ZIP 압축 해제를 기본 사용법으로 요구하지 않는다. 실행 후에는 다음처럼 필요한 파일이 생긴다.
+사용자가 내려받는 파일은 **`Moya.exe` 하나**다. `setup.exe`나 ZIP 압축 해제를 기본 사용법으로 요구하지 않는다. 현재 후보 구현에서 첫 실행 후 만드는 최상위 구조는 다음과 같다. 파일 기반 서재와 별도 캐시 폴더는 P2 과제이며 아직 만들어진 것으로 표시하지 않는다.
 
 ```text
 Moya.exe
 MoyaData/
-  library/     # 원본과 회차
-  profile/     # WebView 데이터·서재 메타데이터·설정
-  extensions/  # 설치한 소스와 설정
-  runtime/     # 내장 실행기를 버전별로 풀어 둔 파일
-  cache/       # 다시 만들 수 있는 캐시
-  temp/        # 진행 중인 파일 처리
+  data/                    # 네이티브 작업 기록·확장 실행 상태·암호 보관소
+  webview/                 # WebView 데이터·로컬 서재·설정
+  runtime/                 # 동봉한 실행기를 버전별로 해제
 ```
 
 - “배포 EXE 하나”와 “실행 후 디스크에 파일을 전혀 만들지 않음”은 다르다. Node·수집기·모듈은 기존 `bundle.resources`를 지정하는 것만으로 EXE 내부에 들어가지 않으므로, 압축 payload를 EXE에 포함하고 첫 사용 시 해제하는 작은 부트스트랩을 추가한다. Tauri의 일반 리소스 번들과 별도 작업이다. [Tauri resources](https://v2.tauri.app/develop/resources/).
