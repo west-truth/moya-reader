@@ -598,11 +598,6 @@ export default function SourceHubScreen({
                 </small>
               </span>
             </div>
-            {controller.detail && (
-              <div className="source-hub-detail-context">
-                <BookOpen size={16} /> 선택한 작품의 회차를 보고 있습니다.
-              </div>
-            )}
             <div className="source-hub-topbar-actions">
               {(seriesNovel || controller.busy) && (
                 <button className="ghost-btn" type="button" onClick={controller.close}>

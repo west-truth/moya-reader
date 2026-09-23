@@ -425,7 +425,7 @@
   overflow: hidden;
 }
 
-.reader-quick-view-dialog > header {
+.modal.reader-quick-view-dialog > header {
   flex-shrink: 0;
   min-height: 54px;
   margin: 0;

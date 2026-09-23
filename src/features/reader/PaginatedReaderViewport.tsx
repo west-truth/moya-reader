@@ -26,7 +26,7 @@ import {
 import { ReaderPageWindow } from './reader-page-window';
 import { measureAdjacentPage } from './pagination-measurement';
 
-const PAGINATION_RENDERER_VERSION = 'reader-pagination-v9-spread';
+const PAGINATION_RENDERER_VERSION = 'reader-pagination-v10-opening';
 const PAGE_MAP_CACHE_LIMIT = 24;
 const PAGE_TURN_DURATION_MS = 240;
 const SHARED_PARAGRAPH_PAGE_CACHE_LIMIT = 64;

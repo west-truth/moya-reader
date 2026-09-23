@@ -14,6 +14,32 @@ const page = (start: number, end: number): ReaderPageBoundary => ({ index: 0, st
 const paragraph = (index: number) => ({ id: `p${index}`, index: index + 1, text: '앞뒤 페이지의 원문' }) as Paragraph;
 
 describe('source-addressed page window', () => {
+  it('reflows the opening forward when a reverse fit strands a character beside the chapter heading', async () => {
+    const opening = page(0, 6);
+    const measure = vi.fn(async (edge: ReaderAnchor, direction: -1 | 1) =>
+      direction < 0 ? { index: 0, start: anchor(0, 1), end: edge } : opening,
+    );
+    const window = new ReaderPageWindow(measure, async (index) => paragraph(index), new AbortController().signal);
+    expect(await window.adjacent(anchor(7), -1)).toEqual(opening);
+    expect(measure.mock.calls).toEqual([
+      [anchor(7), -1],
+      [anchor(0), 1],
+    ]);
+    expect(window.snapshot()).toEqual([opening]);
+    expect(await window.adjacent(anchor(6), -1)).toEqual(opening);
+    expect(measure).toHaveBeenCalledTimes(2);
+  });
+
+  it('keeps a deep previous page inside a single oversized paragraph', async () => {
+    const opening = { index: 0, start: anchor(0), end: anchor(0, 600) };
+    const previous = { index: 0, start: anchor(0, 5000), end: anchor(0, 5600) };
+    const measure = vi.fn(async (_edge: ReaderAnchor, direction: -1 | 1) => (direction < 0 ? previous : opening));
+    const window = new ReaderPageWindow(measure, async (index) => paragraph(index), new AbortController().signal);
+    expect(await window.adjacent(anchor(0, 5600), -1)).toEqual(previous);
+    expect(await window.adjacent(anchor(0, 5600), -1)).toEqual(previous);
+    expect(measure).toHaveBeenCalledTimes(2);
+  });
+
   it('measures around a deep resume without scanning the chapter prefix, and reverses exactly', async () => {
     const measure = vi.fn(async (edge: ReaderAnchor, direction: -1 | 1) =>
       direction > 0 ? page(edge.blockIndex!, edge.blockIndex! + 3) : page(edge.blockIndex! - 4, edge.blockIndex!),
