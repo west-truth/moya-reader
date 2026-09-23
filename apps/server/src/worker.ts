@@ -214,4 +214,5 @@ if (process.env.MOYA_MANAGED_SERVER === '1') {
     if (message === 'shutdown') managedShutdown();
   });
   process.once('disconnect', managedShutdown);
+  if (!process.connected) managedShutdown();
 }

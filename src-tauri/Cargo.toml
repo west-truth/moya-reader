@@ -6,6 +6,7 @@ authors = ["Moya Contributors"]
 license = "Apache-2.0"
 repository = "https://github.com/west-truth/moya-reader"
 edition = "2021"
+default-run = "noveldesk-reader"
 
 [lib]
 name = "noveldesk_reader_lib"

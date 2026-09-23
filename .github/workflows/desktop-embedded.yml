@@ -9,6 +9,7 @@ on:
       - 'scripts/desktop/*embedded*'
       - 'apps/server/src/**'
       - 'src-tauri/src/embedded_server.rs'
+      - 'src-tauri/src/bin/moya-server-guard.rs'
       - 'src-tauri/src/app.rs'
       - 'src/platform/EmbeddedServer*.tsx'
       - 'src/main.tsx'
@@ -47,6 +48,8 @@ jobs:
           key: embedded-win-node22.23.2-pg16.15-redis7.2.16-cloudflared2026.9.1
       - run: node scripts/desktop/build-embedded-runtime.mjs
       - run: node scripts/desktop/build-embedded-app.mjs
+      - name: Recover the same profile after killing its launcher
+        run: node scripts/desktop/smoke-embedded-recovery.mjs ".tmp/Moya app 한글/embedded-server/runtime.json"
       - run: node node_modules/playwright-core/cli.js install chromium
       - name: Open native window, connect automatically, share, revoke and restart
         timeout-minutes: 5

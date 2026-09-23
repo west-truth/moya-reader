@@ -17,6 +17,7 @@ interface ServerStatus extends EmbeddedSharingStatus {
 
 const phases: Record<string, string> = {
   preparing: '서재 서버를 준비하고 있습니다.',
+  recovering: '이전 실행을 정리하고 저장된 서재를 복구하고 있습니다.',
   initializing: '처음 사용할 서재를 만들고 있습니다. 잠시 기다려 주세요.',
   database: '저장된 서재를 열고 있습니다.',
   queue: '작업 목록을 준비하고 있습니다.',

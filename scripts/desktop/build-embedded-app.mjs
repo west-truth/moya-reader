@@ -11,6 +11,16 @@ function run(args) {
   if (result.error || result.status !== 0) throw new Error('Embedded app build failed');
 }
 run(['node_modules/vite/bin/vite.js', 'build']);
+const guardBuild = spawnSync(
+  'cargo',
+  ['build', '--manifest-path', 'src-tauri/Cargo.toml', '--bin', 'moya-server-guard'],
+  { cwd: root, env, stdio: 'inherit' },
+);
+if (guardBuild.error || guardBuild.status !== 0) throw new Error('Profile guard build failed');
+await cp(
+  path.join(root, 'src-tauri/target/debug/moya-server-guard.exe'),
+  path.join(root, '.tmp/embedded-windows/moya-server-guard.exe'),
+);
 run([
   'node_modules/@tauri-apps/cli/tauri.js',
   'build',

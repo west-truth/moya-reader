@@ -26,6 +26,7 @@ if (process.env.MOYA_MANAGED_SERVER === '1') {
     if (message === 'shutdown') void shutdown('SIGTERM');
   });
   process.once('disconnect', () => void shutdown('SIGTERM'));
+  if (!process.connected) await shutdown('SIGTERM');
 }
 
 try {

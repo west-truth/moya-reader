@@ -124,11 +124,18 @@ impl EmbeddedServerManager {
         let error_log = log_options
             .open(profile.join("launcher.log"))
             .map_err(|_| "서버 실행 로그를 열지 못했습니다.")?;
-        let mut command = Command::new(node);
+        let guard = directory.join(
+            manifest["profileGuard"]
+                .as_str()
+                .ok_or("서재 복구 실행 파일이 없습니다.")?,
+        );
+        let mut command = Command::new(guard);
         command
             // Node's entrypoint realpath fails on the verbatim Windows path from
             // resource_dir (\\?\D:\...). A relative entrypoint avoids that conversion.
             .current_dir(directory)
+            .arg(&profile)
+            .arg(node)
             .arg("embedded-server.mjs")
             .arg(&runtime)
             .arg(&profile)

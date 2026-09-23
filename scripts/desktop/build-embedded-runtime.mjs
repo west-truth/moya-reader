@@ -176,7 +176,7 @@ run(
     VITE_API_BASE_URL: '/api',
   },
 );
-for (const script of ['embedded-server.mjs', 'embedded-sharing.mjs', 'embedded-tunnel.mjs']) {
+for (const script of ['embedded-server.mjs', 'embedded-sharing.mjs', 'embedded-tunnel.mjs', 'embedded-recovery.mjs']) {
   await cp(path.join(root, 'scripts/desktop', script), path.join(output, script));
 }
 await cp(path.join(root, 'third_party/licenses/cloudflared/LICENSE'), path.join(output, 'cloudflared/LICENSE'));
@@ -190,6 +190,7 @@ await writeFile(
       postgresMajor: 16,
       cloudflared: 'cloudflared/cloudflared.exe',
       node: 'node/node.exe',
+      profileGuard: 'moya-server-guard.exe',
       postgresBin: 'postgres/bin',
       redisServer: 'redis/redis-server.exe',
       redisCli: 'redis/redis-cli.exe',

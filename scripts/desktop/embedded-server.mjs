@@ -8,6 +8,7 @@ import { pathToFileURL } from 'node:url';
 import { createInterface } from 'node:readline';
 import { sharingInterfaces, startSharing } from './embedded-sharing.mjs';
 import { startCloudflareSharing } from './embedded-tunnel.mjs';
+import { recoverEmbeddedProfile } from './embedded-recovery.mjs';
 
 async function unusedPort() {
   const server = createServer();
@@ -65,8 +66,12 @@ export async function startEmbeddedServer({ runtimeFile, profileDir, signal, onP
   );
   await mkdir(profileDir, { recursive: true, mode: 0o700 });
   const lockPath = path.join(profileDir, 'server.lock');
-  const lock = await open(lockPath, 'wx', 0o600).catch(() => {
-    throw new Error('This server profile is already open or needs recovery; server.lock was preserved');
+  const lock = await open(lockPath, 'wx', 0o600).catch(async (error) => {
+    if (error.code !== 'EEXIST') throw error;
+    if (process.env.MOYA_PROFILE_GUARDED !== '1')
+      throw new Error('This server profile is already open or needs recovery; server.lock was preserved');
+    await recoverEmbeddedProfile({ profileDir, postgresBin, redisCli, onPhase });
+    return open(lockPath, 'wx', 0o600);
   });
   const children = [];
   const logs = [];
@@ -80,6 +85,14 @@ export async function startEmbeddedServer({ runtimeFile, profileDir, signal, onP
   let worker;
   let credentials;
   let unexpectedExit;
+  const owner = { pid: process.pid, startedAt: new Date().toISOString(), children: [] };
+  async function recordChild(label, child) {
+    if (!child.pid) return;
+    owner.children.push({ label, pid: child.pid });
+    const stage = `${lockPath}.${randomUUID()}.tmp`;
+    await writeFile(stage, JSON.stringify(owner), { mode: 0o600 });
+    await rename(stage, lockPath);
+  }
   const postgresExited = () => {
     if (!controlledPostgresPid) return false;
     try {
@@ -143,6 +156,7 @@ export async function startEmbeddedServer({ runtimeFile, profileDir, signal, onP
     child.once('exit', (code) => {
       if (!stopping) unexpectedExit?.(new Error(`${label} stopped unexpectedly (${code})`));
     });
+    await recordChild(label, child);
     return child;
   }
 
@@ -188,7 +202,7 @@ export async function startEmbeddedServer({ runtimeFile, profileDir, signal, onP
   }
 
   try {
-    await lock.writeFile(JSON.stringify({ pid: process.pid, startedAt: new Date().toISOString() }));
+    await lock.writeFile(JSON.stringify(owner));
     const credentialsPath = path.join(profileDir, 'server-credentials.json');
     credentials = await readFile(credentialsPath, 'utf8')
       .then(JSON.parse)
