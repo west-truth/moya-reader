@@ -1,6 +1,13 @@
+html:has(.desktop-window-shell),
+body:has(.desktop-window-shell) {
+  /* Keep boundary gestures inside the desktop window, not the outer WebView. */
+  overscroll-behavior: none;
+}
+
 .desktop-window-shell {
   --desktop-titlebar-height: 34px;
-  position: relative;
+  position: fixed;
+  inset: 0;
   height: 100dvh;
   min-height: 0;
   overflow: hidden;
