@@ -36,8 +36,13 @@ $first = $null
 $second = $null
 $moved = $null
 try {
+  $env:MOYA_PORTABLE_FORCE_FIXED_WEBVIEW2 = '1'
   $first = Start-Process (Join-Path $firstFolder 'Moya.exe') -PassThru
+  Remove-Item Env:MOYA_PORTABLE_FORCE_FIXED_WEBVIEW2
   Wait-ForRuntime $first $firstFolder
+  $fixed = Get-ChildItem (Join-Path $firstFolder 'MoyaData/runtime') -Filter 'msedgewebview2.exe' -Recurse -ErrorAction SilentlyContinue |
+    Where-Object { $_.FullName -like '*webview2-fixed*' } | Select-Object -First 1
+  if (!$fixed) { throw 'The embedded fixed WebView2 runtime was not extracted.' }
   Start-Sleep -Seconds 5
   $first.Refresh()
   if ($first.HasExited) { throw 'Moya.exe exited after portable runtime preparation.' }
@@ -57,6 +62,7 @@ try {
   if ($moved.HasExited) { throw 'Moya.exe exited after moving the entire portable folder.' }
   Write-Host 'Portable first launch, second launch, and folder move passed.'
 } finally {
+  Remove-Item Env:MOYA_PORTABLE_FORCE_FIXED_WEBVIEW2 -ErrorAction SilentlyContinue
   Stop-Moya $second
   Stop-Moya $first
   Stop-Moya $moved

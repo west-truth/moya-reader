@@ -83,17 +83,12 @@ pub(crate) fn prepare() -> Result<PortableProfile, String> {
                             .ok_or("포터블 실행기 파일 경로가 올바르지 않습니다.")?;
                         if !relative.starts_with("extension-sidecar")
                             && !relative.starts_with("collector-sidecar")
-                            && relative != std::path::Path::new("webview2-fixed.cab")
                         {
                             return Err("포터블 실행기에 예상하지 못한 파일이 있습니다.".into());
                         }
                         total = total.saturating_add(file.size());
                         if total > 2 * 1024 * 1024 * 1024 {
                             return Err("포터블 실행기 크기가 허용 범위를 넘었습니다.".into());
-                        }
-                        // The CAB stays compressed until a PC actually needs the fallback WebView2 runtime.
-                        if relative == std::path::Path::new("webview2-fixed.cab") {
-                            continue;
                         }
                         let target = stage.join(relative);
                         if file.is_dir() {
@@ -137,6 +132,9 @@ fn installed_webview2() -> bool {
     use winreg::enums::{HKEY_CURRENT_USER, HKEY_LOCAL_MACHINE, KEY_READ, KEY_WOW64_32KEY};
     use winreg::RegKey;
 
+    if std::env::var_os("MOYA_PORTABLE_FORCE_FIXED_WEBVIEW2").is_some() {
+        return false;
+    }
     const CLIENT: &str =
         r"SOFTWARE\Microsoft\EdgeUpdate\Clients\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}";
     [
@@ -158,8 +156,12 @@ fn installed_webview2() -> bool {
 #[cfg(all(moya_portable, target_os = "windows"))]
 pub(crate) fn ensure_webview2() -> Result<(), String> {
     use sha2::{Digest, Sha256};
-    use std::io::{Cursor, Read, Write};
+    use std::io::{Read, Seek, SeekFrom, Write};
     use std::os::windows::process::CommandExt;
+
+    const MAGIC: &[u8; 16] = b"MOYA_WV2_CAB_V1!";
+    const CAB_SIZE: u64 = 308_509_880;
+    const CAB_SHA256: &str = "11e8240cb0bc56dcd3e4498907203c251346f65107fe35a3a13e152c7d51c79e";
 
     if installed_webview2() {
         return Ok(());
@@ -183,27 +185,45 @@ pub(crate) fn ensure_webview2() -> Result<(), String> {
             .join(format!(".webview2-{}-{nanos}", std::process::id()));
         std::fs::create_dir(&stage).map_err(|_| "WebView2 임시 폴더를 만들 수 없습니다.")?;
         let result = (|| -> Result<(), String> {
-            let payload = PORTABLE_PAYLOAD;
-            let mut archive = zip::ZipArchive::new(Cursor::new(payload))
-                .map_err(|_| "포터블 실행 파일을 읽을 수 없습니다.")?;
-            let mut cab = archive
-                .by_name("webview2-fixed.cab")
-                .map_err(|_| "포터블 EXE에 WebView2 실행기가 없습니다.")?;
-            if cab.size() != 308_509_880 {
+            let exe =
+                std::env::current_exe().map_err(|_| "포터블 실행 파일을 찾을 수 없습니다.")?;
+            let mut cab =
+                std::fs::File::open(exe).map_err(|_| "포터블 실행 파일을 읽을 수 없습니다.")?;
+            let length = cab
+                .metadata()
+                .map_err(|_| "포터블 실행 파일 크기를 확인할 수 없습니다.")?
+                .len();
+            if length < CAB_SIZE + 56 {
                 return Err("포터블 WebView2 실행기 크기가 올바르지 않습니다.".into());
             }
+            cab.seek(SeekFrom::End(-56))
+                .map_err(|_| "포터블 WebView2 정보를 찾을 수 없습니다.")?;
+            let mut footer = [0u8; 56];
+            cab.read_exact(&mut footer)
+                .map_err(|_| "포터블 WebView2 정보를 읽을 수 없습니다.")?;
+            let mut size_bytes = [0u8; 8];
+            size_bytes.copy_from_slice(&footer[16..24]);
+            if &footer[..16] != MAGIC || u64::from_le_bytes(size_bytes) != CAB_SIZE {
+                return Err("포터블 WebView2 실행기 정보가 올바르지 않습니다.".into());
+            }
+            cab.seek(SeekFrom::Start(length - 56 - CAB_SIZE))
+                .map_err(|_| "포터블 WebView2 실행기를 찾을 수 없습니다.")?;
             let cab_path = stage.join("webview2-fixed.cab");
             let mut output = std::fs::File::create(&cab_path)
                 .map_err(|_| "WebView2 실행기를 디스크에 쓸 수 없습니다.")?;
             let mut hasher = Sha256::new();
             let mut buffer = [0u8; 1024 * 1024];
-            loop {
+            let mut remaining = CAB_SIZE;
+            while remaining > 0 {
                 let read = cab
+                    .by_ref()
+                    .take(remaining.min(buffer.len() as u64))
                     .read(&mut buffer)
                     .map_err(|_| "WebView2 실행기를 읽을 수 없습니다.")?;
                 if read == 0 {
-                    break;
+                    return Err("포터블 WebView2 실행기가 잘렸습니다.".into());
                 }
+                remaining -= read as u64;
                 hasher.update(&buffer[..read]);
                 output
                     .write_all(&buffer[..read])
@@ -212,9 +232,8 @@ pub(crate) fn ensure_webview2() -> Result<(), String> {
             output
                 .sync_all()
                 .map_err(|_| "WebView2 실행기를 저장하지 못했습니다.")?;
-            if format!("{:x}", hasher.finalize())
-                != "11e8240cb0bc56dcd3e4498907203c251346f65107fe35a3a13e152c7d51c79e"
-            {
+            let actual = hasher.finalize();
+            if actual.as_slice() != &footer[24..56] || format!("{actual:x}") != CAB_SHA256 {
                 return Err("포터블 WebView2 실행기 해시가 올바르지 않습니다.".into());
             }
             let expanded = stage.join("expanded");

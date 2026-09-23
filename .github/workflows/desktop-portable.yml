@@ -37,7 +37,7 @@ jobs:
         run: |
           if (!(Test-Path release/Moya.exe)) { throw "Moya.exe is missing" }
           $size = (Get-Item release/Moya.exe).Length
-          if ($size -lt 10000000) { throw "Portable executable is unexpectedly small" }
+          if ($size -lt 400000000) { throw "Portable executable is missing its bundled WebView2 runtime" }
           Get-FileHash release/Moya.exe -Algorithm SHA256
       - name: Smoke portable launch and folder move
         shell: pwsh

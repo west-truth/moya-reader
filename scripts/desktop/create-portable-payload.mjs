@@ -81,10 +81,6 @@ try {
       });
     }
   }
-  await writer.add('webview2-fixed.cab', Readable.toWeb(createReadStream(webviewCab)), {
-    level: 0,
-    lastModDate: new Date('2020-01-01T00:00:00Z'),
-  });
   await writer.close();
 } catch (error) {
   stream.destroy();
