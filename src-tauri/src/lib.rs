@@ -10,6 +10,8 @@ mod google_service_account;
 mod metadata_collector;
 mod native_identity;
 mod portable;
+#[cfg(moya_portable)]
+mod portable_activation;
 mod portable_vault;
 #[cfg(moya_portable)]
 mod portable_window;

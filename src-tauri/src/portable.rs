@@ -34,8 +34,12 @@ pub(crate) fn prepare() -> Result<PortableProfile, String> {
                 .truncate(false)
                 .open(root.join(".moya-running.lock"))
                 .map_err(|_| "MoyaData 폴더를 잠글 수 없습니다.")?;
-            lock.try_lock()
-                .map_err(|_| "이 MoyaData 폴더를 사용하는 Moya가 이미 실행 중입니다.")?;
+            if lock.try_lock().is_err() {
+                if crate::portable_activation::activate_existing(&root) {
+                    return Err("moya_existing_focused".into());
+                }
+                return Err("이 MoyaData 폴더를 사용하는 Moya가 이미 실행 중입니다.".into());
+            }
             let payload = include_bytes!(concat!(env!("OUT_DIR"), "/portable-payload.zip"));
             let digest = format!("{:x}", Sha256::digest(payload));
             let runtime = root.join("runtime").join(&digest[..20]);

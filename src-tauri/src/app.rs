@@ -4,6 +4,9 @@ use tauri::Manager;
 pub fn run() {
     #[cfg(moya_portable)]
     if let Err(error) = crate::portable::prepare() {
+        if error == "moya_existing_focused" {
+            return;
+        }
         #[cfg(target_os = "windows")]
         crate::portable::show_error(&error);
         eprintln!("{error}");
@@ -80,6 +83,8 @@ pub fn run() {
                 }
                 let webview = builder.build()?;
                 crate::portable_window::track(&webview, bounds_path, saved);
+                crate::portable_activation::listen(webview, &profile.root)
+                    .map_err(std::io::Error::other)?;
             }
             app.manage(crate::metadata_collector::MetadataCollectorManager::default());
             app.manage(crate::extension_runtime::ExtensionRuntimeManager::default());
