@@ -82,7 +82,7 @@ export function detectPlatformCapabilities(
     orientationLock: typeof target?.screen?.orientation?.lock === 'function',
     brightnessControl: false,
     volumeKeyNavigation: false,
-    nativeFileSave: runtime.hasTauri,
+    nativeFileSave: runtime.kind === 'tauri-mobile',
   };
 }
 

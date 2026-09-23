@@ -185,7 +185,7 @@ describe('platform capability detection', () => {
       backgroundAudio: false,
       brightnessControl: false,
       volumeKeyNavigation: false,
-      nativeFileSave: true,
+      nativeFileSave: false,
     });
   });
 
