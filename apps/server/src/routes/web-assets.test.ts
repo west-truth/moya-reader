@@ -15,11 +15,13 @@ it('serves the login UI without making API routes or files outside the web bundl
     await writeFile(path.join(root, 'index.html'), '<html>Reader</html>');
     await writeFile(outside, 'private');
     await writeFile(path.join(root, 'main.js'), 'export {}');
+    await writeFile(path.join(root, 'pdf.worker.mjs'), 'export {}');
     await registerAuthHook(app, loadConfig({ SERVER_WEB_ROOT: root, READER_AUTH_TOKEN: 'test-token' }));
     await registerWebAssets(app, root);
     app.get('/api/books', async () => ({ books: [] }));
     expect((await app.inject('/')).body).toBe('<html>Reader</html>');
     expect((await app.inject('/main.js')).headers['content-type']).toContain('text/javascript');
+    expect((await app.inject('/pdf.worker.mjs')).headers['content-type']).toContain('text/javascript');
     expect((await app.inject('/api/books')).statusCode).toBe(401);
     expect((await app.inject('/api/missing')).statusCode).toBe(401);
     expect((await app.inject({ url: '/api/books', headers: { authorization: 'Bearer test-token' } })).statusCode).toBe(

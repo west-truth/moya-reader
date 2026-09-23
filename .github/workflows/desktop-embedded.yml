@@ -65,6 +65,8 @@ jobs:
         run: |
           node scripts/desktop/smoke-embedded-server.mjs ".tmp/Moya app 한글/embedded-server/runtime.json"
           if ($LASTEXITCODE -ne 0) { throw 'Embedded server smoke failed' }
+      - name: Read EPUB and PDF using the packaged server
+        run: node scripts/desktop/smoke-embedded-formats.mjs ".tmp/Moya app 한글/embedded-server/runtime.json"
       - name: Build the release installer candidate
         id: installer
         if: ${{ !cancelled() && inputs.build_installer }}

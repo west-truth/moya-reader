@@ -35,7 +35,11 @@ async function samePostgres(pid, executable, db, startedAt) {
     const info = JSON.parse(stdout);
     if (!info.exe || !(await samePath(info.exe, executable)))
       throw new Error('기존 DB 실행 파일의 소유권을 확인하지 못했습니다. 기존 자료를 보존했습니다.');
-    if (Math.abs(info.started - startedAt) > 2)
+    if (
+      !Number.isSafeInteger(info.started) ||
+      !Number.isSafeInteger(startedAt) ||
+      Math.abs(info.started - startedAt) > 2
+    )
       throw new Error('기존 DB 시작 시각이 기록과 다릅니다. 기존 자료를 보존했습니다.');
     return true;
   }

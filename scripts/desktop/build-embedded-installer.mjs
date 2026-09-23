@@ -26,7 +26,7 @@ const verify = spawnSync(
     '-NoProfile',
     '-NonInteractive',
     '-Command',
-    "$s=Get-AuthenticodeSignature -LiteralPath $env:MOYA_VC_INSTALLER; if($s.Status -ne 'Valid' -or $s.SignerCertificate.Subject -notmatch 'O=Microsoft Corporation'){exit 1}",
+    "$ErrorActionPreference='Stop'; $env:PSModulePath=Join-Path $PSHOME 'Modules'; Import-Module Microsoft.PowerShell.Security; $s=Get-AuthenticodeSignature -LiteralPath $env:MOYA_VC_INSTALLER; if($s.Status -ne 'Valid' -or $s.SignerCertificate.Subject -notmatch 'O=Microsoft Corporation'){exit 1}",
   ],
   { env: { ...process.env, MOYA_VC_INSTALLER: installer }, stdio: 'inherit' },
 );
