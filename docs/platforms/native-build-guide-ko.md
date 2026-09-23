@@ -49,6 +49,7 @@ Windows x64에서 단일 파일 후보를 만들려면 `pnpm desktop:portable:wi
 `release/Moya.exe`입니다. 설치 프로그램은 생성하지 않습니다. 첫 실행 시 EXE 옆에
 `MoyaData/`가 생기며 WebView 데이터, 네이티브 작업 기록과 동봉한 Node·메타데이터 실행기가 이곳에 놓입니다.
 EXE를 교체할 때는 앱을 종료하고 `MoyaData/`는 그대로 둡니다.
+Windows 후보 workflow는 `scripts/desktop/smoke-portable-windows.ps1`로 첫 실행과 전체 폴더 이동 후 재실행을 확인합니다. 이는 실제 사용자 PC의 소스 로그인, 대용량 서재, WebView2 미설치 환경을 대신하지 않습니다.
 
 이 명령은 Python 수집기와 Windows Node 런타임을 빌드 중에 묶습니다. 기본 빌드는 JS 소스를 대상으로 하며
 APK/Java 실행기 포함은 `MOYA_BUNDLE_APK=1`로 별도 선택합니다. Microsoft의 x64 WebView2 고정 버전

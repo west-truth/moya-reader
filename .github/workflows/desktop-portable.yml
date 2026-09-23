@@ -30,6 +30,9 @@ jobs:
       - run: pnpm desktop:portable:win
       - name: Verify packaged JS source runtime
         run: pnpm exec tsx scripts/extensions/mangayomi-native-smoke.ts
+      - name: Smoke portable launch and folder move
+        shell: pwsh
+        run: ./scripts/desktop/smoke-portable-windows.ps1
       - name: Verify standalone artifact
         shell: pwsh
         run: |

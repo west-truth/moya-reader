@@ -237,6 +237,7 @@ MoyaData/
 - [x] Windows 후보 빌드 [Actions #35814004473](https://github.com/west-truth/moya-reader/actions/runs/35814004473): clean Windows runner에서 단일 `Moya.exe` 생성·아티팩트 업로드 성공. 다운로드한 EXE는 x86-64 Windows GUI PE, 크기 약 118MiB, SHA-256 `130bebf27edf4ff341ef0e30bf54146b20ad0650975388aebdb7b0b0d05d7401`. 실행·데이터 이동 검증은 아직 하지 않았다. 이 후보에는 뒤따른 EPUB 스트리밍·포터블 암호 보관소 커밋이 포함되지 않았다.
 - [x] P3 부분 구현: 동일 `MoyaData` 폴더의 동시 실행을 파일 잠금으로 차단하고, 두 번째 실행에서는 기존 창에 포커스를 요청한다. 창 크기·위치를 포터블 데이터 폴더에 기록하며 이전 모니터가 사라지면 현재 표시 영역으로 옮긴다. 다운로드/절전/종료 UX는 아직 남아 있다. 포터블 Rust clippy와 localhost 활성화 회귀 검사 통과, Windows 실기기 검사 전이다.
 - [x] P0 런타임 준비 부분 구현: Microsoft WebView2 fixed runtime 153.0.4234.48 x64 CAB를 빌드에서 SHA-256으로 검증해 EXE에 포함하고, 시스템 런타임이 없는 PC에서만 `MoyaData/runtime`에 푼다. Windows 실기기에서 시스템 런타임 있음/없음 두 경우의 실행 확인이 아직 필요하다.
+- [x] P0 검증 보강: Windows 후보 workflow에 EXE 첫 실행, 한글/공백 경로의 포터블 실행기 준비, 두 번째 실행, 앱 종료 후 폴더 이동·재실행 smoke를 추가했다. 실제 통과 여부는 다음 Windows run 결과로 기록한다. 이 검사는 사이트 소스/대용량 백업이나 WebView2 미설치 PC를 검증하지 않는다.
 - [ ] P0: 깨끗한 Windows 포터블 EXE 기준선.
 - [ ] P1: 서버 없는 확장·네트워크·실행 대상 완성.
 - [ ] P2: 로컬 파일 저장·대용량·백업 완성.
