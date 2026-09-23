@@ -42,6 +42,13 @@ function Wait-ForFixedWebView($process, $folder) {
     if ($fixed) { return }
     Start-Sleep -Seconds 2
   } while ((Get-Date) -lt $deadline)
+  Write-Host 'Fixed WebView2 extraction diagnostics:'
+  Get-ChildItem (Join-Path $folder 'MoyaData/runtime') -Recurse -Depth 2 -ErrorAction SilentlyContinue |
+    Select-Object -First 80 FullName, Length | Format-Table -AutoSize
+  Get-CimInstance Win32_Process -Filter "name = 'Moya.exe' or name = 'expand.exe'" |
+    Select-Object ProcessId, ParentProcessId, Name, CommandLine | Format-Table -Wrap
+  $stderr = Join-Path $folder 'moya-fixed-stderr.txt'
+  if (Test-Path $stderr) { Get-Content $stderr -Tail 30 }
   throw 'The embedded fixed WebView2 runtime was not extracted.'
 }
 
