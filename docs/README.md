@@ -14,6 +14,7 @@
 
 ## 데스크톱과 Android
 
+- [데스크톱 포터블 단독 실행과 공개 릴리즈 계획](platforms/2026-09-23-desktop-release-plan.md)
 - [Windows·Android 네이티브 빌드 가이드](platforms/native-build-guide-ko.md)
 - [Tauri v2 Android shell 결정](decisions/2026-08-01-tauri-v2-android-shell.md)
 - [웹 우선 공통 제품 구조 결정](decisions/2026-07-04-web-first-platform.md)
