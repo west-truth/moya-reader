@@ -51,9 +51,13 @@ Windows x64에서 단일 파일 후보를 만들려면 `pnpm desktop:portable:wi
 EXE를 교체할 때는 앱을 종료하고 `MoyaData/`는 그대로 둡니다.
 
 이 명령은 Python 수집기와 Windows Node 런타임을 빌드 중에 묶습니다. 기본 빌드는 JS 소스를 대상으로 하며
-APK/Java 실행기 포함은 `MOYA_BUNDLE_APK=1`로 별도 선택합니다. WebView2 Runtime은 Windows에
-필요합니다. 현재 포터블 후보는 Windows에서 실제 실행·업그레이드 검증을 거치기 전이므로 릴리즈 완성으로
-표시하지 않습니다.
+APK/Java 실행기 포함은 `MOYA_BUNDLE_APK=1`로 별도 선택합니다. Microsoft의 x64 WebView2 고정 버전
+`153.0.4234.48` CAB를 빌드 시 받아 SHA-256
+`11e8240cb0bc56dcd3e4498907203c251346f65107fe35a3a13e152c7d51c79e`와 비교합니다. PC에
+시스템 WebView2가 없을 때만 CAB를 `MoyaData/runtime`에 풀어 사용합니다. 첫 해제에는 약 700MB의 데이터
+공간이 더 필요하고, 관리자 권한·전역 설치·첫 실행 다운로드는 필요하지 않습니다. 고정 버전의 보안 업데이트는
+앱 새 버전에서 반영해야 합니다. 현재 포터블 후보는 Windows 실기기 실행·업그레이드 검증 전이므로
+릴리즈 완성으로 표시하지 않습니다.
 
 ## Android
 

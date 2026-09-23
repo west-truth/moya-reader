@@ -9,6 +9,12 @@ pub fn run() {
         eprintln!("{error}");
         return;
     }
+    #[cfg(all(moya_portable, target_os = "windows"))]
+    if let Err(error) = crate::portable::ensure_webview2() {
+        crate::portable::show_error(&error);
+        eprintln!("{error}");
+        return;
+    }
     let builder = tauri::Builder::default();
     #[cfg(target_os = "windows")]
     let builder = builder.on_page_load(|webview, payload| {

@@ -105,6 +105,13 @@ Their npm license texts are included with the packaged dependencies. Windows use
 the self-host image uses Debian's Chromium and CJK font packages, whose notices remain in the image's package inventory.
 No Mangayomi application source or private extension code is redistributed as part of this adapter.
 
+The Windows portable executable also contains Microsoft Edge WebView2 Fixed Version Runtime
+153.0.4234.48 (x64) as a fallback when the system runtime is missing. It is fetched from
+Microsoft's distribution endpoint and verified against a pinned SHA-256 during the build.
+The extracted runtime retains its included third-party notices and licenses. See
+<https://learn.microsoft.com/microsoft-edge/webview2/concepts/distribution> for Microsoft's
+Fixed Version redistribution guidance.
+
 ## Source cover thumbnails
 
 Hosted source-cover thumbnails use `sharp@0.34.5` (Apache-2.0) and its platform-specific libvips 8.17.3

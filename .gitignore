@@ -10,6 +10,7 @@ apps/server/dist/
 # Native build output
 src-tauri/target/
 src-tauri/portable-payload.zip
+src-tauri/webview2-fixed.cab
 release/Moya.exe
 
 # Local runtime/cache files

@@ -177,7 +177,7 @@ MoyaData/
 - 데이터 루트는 현재 작업 디렉터리가 아니라 EXE가 있는 경로를 기준으로 한다. 쓰기 불가능한 폴더에서는 이동 안내를 하고, 조용히 AppData에 다른 서재를 만들지 않는다.
 - 이 경로 정책을 WebView뿐 아니라 확장 host·메타데이터 수집기·native AI 작업 기록·TTS 캐시에도 적용한다. 한 기능이라도 기존 `app_data_dir()`를 그대로 사용해 데이터가 빠지지 않도록 경로를 한 곳에서 결정한다.
 - `Moya.exe`와 `MoyaData/`를 함께 옮겨야 서재가 이동한다. EXE만 바꾸는 것은 앱 업데이트이며 데이터 폴더는 유지된다. 앱 실행 중 폴더를 복사하는 것을 일관된 백업으로 보장하지 않는다.
-- WebView2가 있는 PC는 시스템 runtime을 사용한다. 없는 PC에서는 전역 설치 대신 검증한 fixed runtime을 데이터 폴더에 준비해 실행하는 경로를 P0에서 검증한다. 기본 EXE 용량을 줄이기 위해 이 경우에만 최초 다운로드를 허용하며, 완전 오프라인 첫 실행은 이번 기본 배포의 보장 범위가 아니다. [Tauri WebView2 배포 옵션](https://v2.tauri.app/distribute/windows-installer/).
+- WebView2가 있는 PC는 시스템 runtime을 사용한다. 없는 PC에서는 전역 설치 대신 해시를 고정한 Microsoft fixed runtime을 EXE에 포함하고 데이터 폴더에 풀어 실행한다. 단일 EXE의 용량은 커지지만 첫 실행 네트워크/관리자 권한 없이 시작할 수 있다. 고정 버전은 앱 업데이트 때 보안 패치를 반영해야 한다. [Microsoft WebView2 배포](https://learn.microsoft.com/microsoft-edge/webview2/concepts/distribution), [Tauri WebView2 옵션](https://v2.tauri.app/distribute/windows-installer/).
 - 소스용 시스템 Edge가 없는 경우에는 별도 Chromium 준비가 필요할 수 있다. WebView2만 있으면 Playwright 소스가 모두 실행된다고 간주하지 않는다. 검증한 브라우저를 로컬 폴더에 준비하고 짧은 진행·취소 UI를 제공하는 수준으로 제한한다. 범용 구성요소 스토어는 만들지 않는다.
 - 앱 ID·origin은 WebView/저장소 호환성을 위해 안정적으로 유지한다. 기존 개발판의 AppData를 가져올 때만 명시적으로 선택하고 검증해 복사한다. 첫 실행에서 기존 데이터를 옮기거나 지우지 않는다.
 
@@ -236,6 +236,7 @@ MoyaData/
 - [x] P1 보안 저장소 부분 구현: 포터블 폴더의 소스 로그인 정보를 사용자 암호(Argon2id로 키 유도, AES-256-GCM으로 확인)로 잠금 해제한다. 암호화 키는 실행 중 메모리에만 보관하고 소스 실행기에는 기존 보호 파이프로 전달한다. 잠겨 있을 때 공개 소스는 세션 저장소로 실행한다. 기존 PC의 OS keyring 값은 자동 복사하지 않는다. AI/API 키와 브라우저 로그인까지 포터블화한 것은 아니다. 포터블 암호 재열기·오입력 테스트 1개, 웹 타입 검사, 포터블/일반 Rust clippy 통과. Windows 실기기 검사 전이다.
 - [x] Windows 후보 빌드 [Actions #35814004473](https://github.com/west-truth/moya-reader/actions/runs/35814004473): clean Windows runner에서 단일 `Moya.exe` 생성·아티팩트 업로드 성공. 다운로드한 EXE는 x86-64 Windows GUI PE, 크기 약 118MiB, SHA-256 `130bebf27edf4ff341ef0e30bf54146b20ad0650975388aebdb7b0b0d05d7401`. 실행·데이터 이동 검증은 아직 하지 않았다. 이 후보에는 뒤따른 EPUB 스트리밍·포터블 암호 보관소 커밋이 포함되지 않았다.
 - [x] P3 부분 구현: 동일 `MoyaData` 폴더의 동시 실행을 파일 잠금으로 차단하고, 창 크기·위치를 포터블 데이터 폴더에 기록한다. 이전 모니터가 사라지면 현재 모니터의 표시 영역으로 옮긴다. 기존 창으로 포커스를 전달하는 기능과 다운로드/절전/종료 UX는 아직 남아 있다. 포터블 Rust clippy 통과, Windows 실기기 검사 전이다.
+- [x] P0 런타임 준비 부분 구현: Microsoft WebView2 fixed runtime 153.0.4234.48 x64 CAB를 빌드에서 SHA-256으로 검증해 EXE에 포함하고, 시스템 런타임이 없는 PC에서만 `MoyaData/runtime`에 푼다. Windows 실기기에서 시스템 런타임 있음/없음 두 경우의 실행 확인이 아직 필요하다.
 - [ ] P0: 깨끗한 Windows 포터블 EXE 기준선.
 - [ ] P1: 서버 없는 확장·네트워크·실행 대상 완성.
 - [ ] P2: 로컬 파일 저장·대용량·백업 완성.
