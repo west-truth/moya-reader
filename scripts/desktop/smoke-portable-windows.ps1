@@ -68,21 +68,22 @@ $forced = $null
 $moved = $null
 try {
   $first = Start-Process (Join-Path $firstFolder 'Moya.exe') -PassThru -RedirectStandardError (Join-Path $firstFolder 'moya-stderr.txt')
+  Write-Host "Normal Moya process: $($first.Id)"
   Wait-ForRuntime $first $firstFolder 'moya-stderr.txt'
   Start-Sleep -Seconds 5
   $first.Refresh()
   if ($first.HasExited) { throw 'Moya.exe exited after portable runtime preparation.' }
 
   $second = Start-Process (Join-Path $firstFolder 'Moya.exe') -PassThru
+  Write-Host "Second Moya process: $($second.Id)"
   if (!$second.WaitForExit(15000)) { throw 'A second Moya.exe did not focus or reject the running profile.' }
   $first.Refresh()
   if ($first.HasExited) { throw 'A second launch closed the running Moya.exe.' }
 
   Stop-Moya $first
   $first = $null
-  $env:MOYA_PORTABLE_FORCE_FIXED_WEBVIEW2 = '1'
-  $forced = Start-Process (Join-Path $firstFolder 'Moya.exe') -PassThru -RedirectStandardError (Join-Path $firstFolder 'moya-fixed-stderr.txt')
-  Remove-Item Env:MOYA_PORTABLE_FORCE_FIXED_WEBVIEW2
+  $forced = Start-Process (Join-Path $firstFolder 'Moya.exe') -PassThru -Environment @{ MOYA_PORTABLE_FORCE_FIXED_WEBVIEW2 = '1' } -RedirectStandardError (Join-Path $firstFolder 'moya-fixed-stderr.txt')
+  Write-Host "Fixed WebView2 Moya process: $($forced.Id)"
   Wait-ForFixedWebView $forced $firstFolder
   Stop-Moya $forced
   $forced = $null
