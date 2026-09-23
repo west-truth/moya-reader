@@ -27,11 +27,9 @@ jobs:
           run-id: ${{ inputs.artifact_run }}
           github-token: ${{ github.token }}
       - uses: pnpm/action-setup@v6
-        if: inputs.artifact_run == ''
         with:
           version: 11.7.0
       - uses: actions/setup-node@v7
-        if: inputs.artifact_run == ''
         with:
           node-version: 22
           cache: pnpm
@@ -42,7 +40,6 @@ jobs:
         with:
           python-version: '3.12'
       - run: pnpm install --frozen-lockfile
-        if: inputs.artifact_run == ''
       - run: pnpm desktop:portable:win
         if: inputs.artifact_run == ''
       - name: Verify standalone artifact
@@ -51,12 +48,12 @@ jobs:
           if (!(Test-Path release/Moya.exe)) { throw "Moya.exe is missing" }
           $size = (Get-Item release/Moya.exe).Length
           if ($size -lt 50000000) { throw "Portable executable is missing its bundled source runtime" }
+          Write-Host "Moya.exe: $size bytes ($([math]::Round($size / 1MB, 2)) MiB)"
           Get-FileHash release/Moya.exe -Algorithm SHA256
       - name: Smoke portable launch and folder move
         shell: pwsh
         run: ./scripts/desktop/smoke-portable-windows.ps1
       - name: Verify extracted JS source runtime
-        if: inputs.artifact_run == ''
         shell: pwsh
         run: |
           $runtime = Get-ChildItem (Join-Path $env:RUNNER_TEMP 'Moya portable moved path/MoyaData/runtime') -Filter 'native-entry.mjs' -Recurse |

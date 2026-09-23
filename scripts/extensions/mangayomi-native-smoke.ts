@@ -53,24 +53,35 @@ const child = spawn(resolve(directory, 'node.exe'), [resolve(directory, 'native-
   windowsHide: true,
   stdio: ['pipe', 'pipe', 'pipe'],
 });
+child.stderr.on('data', (chunk) => process.stderr.write(chunk));
 const exited = once(child, 'exit');
 const deadline = setTimeout(() => child.kill(), 25000);
 const lines = createInterface({ input: child.stdout });
+async function nextLine() {
+  const [line] = await Promise.race([
+    once(lines, 'line'),
+    exited.then(([code, signal]) => {
+      throw new Error(`Packaged host exited before replying: ${code}, ${signal}`);
+    }),
+  ]);
+  return line as string;
+}
 let connection: Promise<{ endpoint: string }> | undefined;
 const execution = new NativePackageExecution(async <T>(_command: string, args?: Record<string, unknown>) => {
   connection ??= (async () => {
-    const ready = once(lines, 'line');
+    const ready = nextLine();
+    console.log('Starting packaged native host');
     child.stdin.write(
       JSON.stringify({ token: args?.sessionToken, origin: 'http://tauri.localhost', vaultDirectory }) + '\n',
     );
-    return JSON.parse((await ready)[0]) as { endpoint: string };
+    return JSON.parse(await ready) as { endpoint: string };
   })();
   return (await connection) as T;
 });
 async function changeVault(key: string | null) {
-  const response = once(lines, 'line');
+  const response = nextLine();
   child.stdin.write(JSON.stringify({ command: 'vault', key }) + '\n');
-  return JSON.parse((await response)[0]) as { ok?: boolean; error?: string };
+  return JSON.parse(await response) as { ok?: boolean; error?: string };
 }
 const original = 'Original\r\n\r\n  Untouched bytes.\n';
 const pkg = await verifyMoyaExtension(
