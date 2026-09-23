@@ -68,12 +68,24 @@ export async function startEmbeddedServer({ runtimeFile, profileDir }) {
   let stopping = false;
   let stopPromise;
   let pgChild;
+  let controlledPostgresPid;
+  let processMonitor;
   let redisChild;
   let api;
   let worker;
   let credentials;
   let unexpectedExit;
+  const postgresExited = () => {
+    if (!controlledPostgresPid) return false;
+    try {
+      process.kill(controlledPostgresPid, 0);
+      return false;
+    } catch (error) {
+      return error.code === 'ESRCH';
+    }
+  };
   const failed = () =>
+    postgresExited() ||
     children.some((child) => child.exitCode !== null || child.signalCode !== null || child.spawnFailed);
   const db = path.join(profileDir, 'postgres');
   const queue = path.join(profileDir, 'queue');
@@ -134,6 +146,7 @@ export async function startEmbeddedServer({ runtimeFile, profileDir }) {
   function stop() {
     return (stopPromise ??= (async () => {
       stopping = true;
+      clearInterval(processMonitor);
       // Close admission first; the worker can still commit its current jobs.
       await stopNode(api);
       await stopNode(worker);
@@ -148,11 +161,14 @@ export async function startEmbeddedServer({ runtimeFile, profileDir }) {
         );
         await redisChild.closed;
       }
-      if (pgChild && pgChild.exitCode === null && !pgChild.spawnFailed) {
+      if (
+        (controlledPostgresPid && !postgresExited()) ||
+        (pgChild && pgChild.exitCode === null && !pgChild.spawnFailed)
+      ) {
         await command('postgres-stop', pg('pg_ctl'), ['-D', 'postgres', '-m', 'fast', '-w', '-t', '30', 'stop'], {
           cwd: profileDir,
         });
-        await pgChild.closed;
+        await pgChild?.closed;
       }
       await Promise.all(logs.map((log) => log.close()));
       await lock.close();
@@ -230,25 +246,53 @@ export async function startEmbeddedServer({ runtimeFile, profileDir }) {
       }
     }
     const databaseUrl = `postgres://moya:${credentials.postgresPassword}@127.0.0.1:${credentials.ports.postgres}/postgres`;
-    pgChild = await launch(
-      'postgres',
-      pg('postgres'),
-      [
-        '-D',
+    if (process.platform === 'win32') {
+      // pg_ctl uses PostgreSQL's restricted token when the parent is elevated.
+      await command(
+        'postgres-start',
+        pg('pg_ctl'),
+        [
+          '-D',
+          'postgres',
+          '-l',
+          'postgres.log',
+          '-w',
+          '-t',
+          '30',
+          '-o',
+          `-h 127.0.0.1 -p ${credentials.ports.postgres} -c shared_buffers=32MB -c max_connections=50`,
+          'start',
+        ],
+        { cwd: profileDir },
+      );
+      controlledPostgresPid = Number((await readFile(path.join(db, 'postmaster.pid'), 'utf8')).split(/\r?\n/)[0]);
+      if (!Number.isSafeInteger(controlledPostgresPid) || controlledPostgresPid <= 0)
+        throw new Error('Invalid PostgreSQL process identity');
+      processMonitor = setInterval(() => {
+        if (!stopping && postgresExited()) unexpectedExit?.(new Error('PostgreSQL stopped unexpectedly'));
+      }, 1000);
+      processMonitor.unref();
+    } else {
+      pgChild = await launch(
         'postgres',
-        '-h',
-        '127.0.0.1',
-        '-p',
-        String(credentials.ports.postgres),
-        '-c',
-        'unix_socket_directories=',
-        '-c',
-        'shared_buffers=32MB',
-        '-c',
-        'max_connections=50',
-      ],
-      { cwd: profileDir },
-    );
+        pg('postgres'),
+        [
+          '-D',
+          'postgres',
+          '-h',
+          '127.0.0.1',
+          '-p',
+          String(credentials.ports.postgres),
+          '-c',
+          'unix_socket_directories=',
+          '-c',
+          'shared_buffers=32MB',
+          '-c',
+          'max_connections=50',
+        ],
+        { cwd: profileDir },
+      );
+    }
     await waitUntil(
       async () => {
         await command('postgres-ready', pg('pg_isready'), [
@@ -323,7 +367,7 @@ export async function startEmbeddedServer({ runtimeFile, profileDir }) {
       authToken: credentials.authToken,
       profileDir,
       stop,
-      processIds: children.map((child) => child.pid),
+      processIds: [...(controlledPostgresPid ? [controlledPostgresPid] : []), ...children.map((child) => child.pid)],
       onUnexpectedExit(handler) {
         unexpectedExit = handler;
         if (failed()) handler(new Error('A managed process stopped'));
