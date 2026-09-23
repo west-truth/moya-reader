@@ -67,8 +67,8 @@ EDB 원본 ZIP에는 pgAdmin 등이 포함되어 332,441,502바이트지만, 후
 ## 다음 완료 조건
 
 - [x] Windows payload의 같은 사용 흐름과 구성요소별 크기·관리 프로세스 메모리 기록. 전체 앱 메모리는 후속 측정.
-- [ ] Tauri 앱의 자동 실행·연결·상태 표시, 사용자에게 setup token 수동 입력을 요구하지 않는 로컬 bootstrap.
-- [ ] 실제 배포물의 설치/폴더 이동 후 Node 의존성 해결 확인. 현재 proof는 최종 staging 위치에 `pnpm deploy`한 구조이며 Windows junction을 그대로 옮겨 배포할 수 있다고 가정하지 않는다.
+- [x] Tauri 앱의 자동 실행·연결·상태 표시, 사용자에게 setup token 수동 입력을 요구하지 않는 로컬 bootstrap. Windows 후보 앱에서 검증.
+- [x] Windows 후보 폴더 이동 후 Node 의존성 해결 확인. hoisted deploy한 runtime을 다른 한글 폴더로 옮기고 원래 위치가 없는 상태에서 앱과 서버 검증 통과. 최종 설치 프로그램 검증은 별도다.
 - [ ] 다른 실제 기기 접속: 공유 설정·인증·HTTP/HTTPS와 세션 정책 검증.
 - [ ] 강제 종료 후 lock/자식 프로세스 복구와 업데이트, 트레이/종료 UX. 현재 P0는 비정상 종료로 남은 lock을 자동 삭제하지 않는다.
 - [ ] 원형 숫자 퍼센트 UI를 보관 브랜치에서 선별 연결하고 서버 처리량으로 표시.
@@ -85,7 +85,7 @@ Windows proof payload는 실행 구성을 검증하는 산출물이다. 라이�
 - 사용자 추가 요청에 따라 QR·주소 복사를 공통 `ServerAccessLink`로 만들어 데스크톱과 self-host 웹 설정에서 재사용한다. QR에는 주소만 들어가고 native 소유자 토큰은 들어가지 않는다. 이후 Cloudflare 기본 접속 방식을 아래와 같이 추가했다.
 - 배포는 lockfile을 사용하는 hoisted production deploy로 바꾸어 절대 경로 junction에 의존하지 않도록 했다. native Windows 후보는 실제로 다른 한글 폴더로 이동해 검사한다.
 - Linux: Rust check/프런트 타입 검사·관련 25 tests 통과. 실제 서버를 사용한 native pipe readiness, 중복 실행 차단, 부모 종료 EOF 정리, 초기화 도중 취소 검증 통과.
-- Windows native 창/공유/종료/재시작은 새 CI에서 검증 중이다. P1 전체 완료나 최종 배포물로 취급하지 않는다. VC runtime/WebView2의 자동 준비, 재배포 고지·source, 전원 종료 후 복구, 실제 별도 기기 검증은 남아 있다.
+- Windows native 창/공유/종료/재시작은 아래 후속 CI에서 통과했다. P1 전체 완료나 최종 배포물로 취급하지 않는다. VC runtime/WebView2의 자동 준비, 재배포 고지·source, 전원 종료 후 복구, 실제 별도 기기 검증은 남아 있다.
 
 ### 사설망 브라우저 경로에서 발견한 공통 UI 수정
 
@@ -98,4 +98,12 @@ Windows proof payload는 실행 구성을 검증하는 산출물이다. 라이�
 - 앱 소유자 API 앞에 외부 로그인용 gateway를 두고, loopback에서만 터널 연결을 받는다. 공개 Host/Origin을 확인하고 소유자 bearer와 계정 초기화/복구 경로는 전달하지 않는다. HTTPS 로그인 쿠키에는 Secure를 설정한다.
 - 임시 주소 생성·취소·해제와 앱 종료 시 터널 정리를 연결했다. 고정 터널의 목적지 포트는 프로필에 보존하고, 토큰은 private native pipe와 자식 환경으로만 전달한다. 사용자 Cloudflare 설정 파일을 수정하지 않는다.
 - `smoke-embedded-tunnel.mjs`로 새 빈 검증 서재를 생성하여 실제 Quick Tunnel의 HTTPS 웹 응답, 계정 로그인, 세션 쿠키, 소유자 토큰 차단, 해제 뒤 접근 중단과 로컬 사용 유지를 Linux에서 통과했다. 실제 Cloudflare 계정/도메인이 필요한 고정 터널의 종단 검증은 미실시다.
-- Windows run `35884785547`에서 이동된 서버 payload와 웹 검사는 통과했다. native WebView 자동화 연결도 확인했으나 Node entrypoint의 Windows 경로 처리에서 `EISDIR lstat D:`가 발생했다. native 경로를 일반 Windows 경로로 정리하고 작업 디렉터리 기준 entrypoint로 시작하도록 수정했으며 Windows 재검증이 필요하다.
+- Windows run `35884785547`에서 이동된 서버 payload와 웹 검사는 통과했다. native WebView 자동화 연결도 확인했으나 Node entrypoint의 Windows 경로 처리에서 `EISDIR lstat D:`가 발생했다. native 경로를 일반 Windows 경로로 정리하고 작업 디렉터리 기준 entrypoint로 시작하도록 수정했다.
+
+### Windows 앱 검증 통과 (`aa36f2c`)
+
+[Windows 실행 35885884320](https://github.com/west-truth/moya-reader/actions/runs/35885884320)에서 한글 폴더로 이동한 앱의 자동 서버 시작, native 공통 리더의 TXT 읽기, 계정 생성, QR·주소 표시, LAN 로그인/해제, 종료·재시작, 트레이 유지 중 서버 사용을 통과했다. 접속 방식의 초기값이 Cloudflare인 것도 UI에서 확인했다. Windows 자동 검사는 실제 연결 방식으로 LAN을 선택했고, Quick Tunnel의 실제 HTTPS 종단 검증은 Linux에서 수행했다. Windows의 실제 Cloudflare 연결과 고정 도메인 연결을 검증한 것으로 해석하지 않는다.
+
+같은 실행의 독립 서버·웹 검사도 TXT 가져오기/보존/재시작, 별도 브라우저 로그인, HTTP 리더와 읽던 위치 변경/공유 해제를 통과했다. 서버 첫 시작 26,473ms, 재시작 2,217ms이며, 네 관리 프로세스 Working Set은 244,928,512바이트다. 최종 앱 전체 메모리가 아니다. cloudflared를 포함한 서버 payload는 514,464,353바이트(약 490.6MiB)이며 native EXE·WebView2·VC runtime을 모두 포함한 설치 크기는 아니다.
+
+로컬 추가 검사: 공유 UI/gate 5 tests, HTTPS gateway/주소 검증 2 tests, TypeScript·Rust check·변경 파일 lint, native pipe/중복 시작/부모 EOF 정리/시작 취소를 통과했다. 개인 계정이나 운영 서재를 외부에 공개하지 않고 새 검증 프로필만 사용했다.
