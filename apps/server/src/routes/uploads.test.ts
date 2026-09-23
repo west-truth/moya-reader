@@ -41,6 +41,43 @@ function appWithUploads(pool: pg.Pool, queue: Queue) {
 }
 
 describe('upload routes', () => {
+  it.each([
+    ['book.cbz', 200],
+    ['book.pdf', 413],
+  ])('keeps the accepted format limit for later chunks of %s', async (fileName, status) => {
+    const directory = await mkdtemp(path.join(os.tmpdir(), 'moya-chunk-limit-'));
+    const session = { id: 'upload_1', file_name: fileName, size_bytes: '20', status: 'uploading', total_chunks: 3 };
+    const client = {
+      query: vi.fn(async (sql: string) => {
+        if (sql.includes('from upload_sessions')) return { rows: [session] };
+        if (sql.includes('accepted_bytes')) return { rows: [{ accepted_bytes: '10' }] };
+        return { rows: [] };
+      }),
+      release: vi.fn(),
+    };
+    const app = Fastify();
+    app.addContentTypeParser('application/octet-stream', { parseAs: 'buffer' }, (_request, body, done) =>
+      done(null, body),
+    );
+    await registerUploadRoutes(
+      app,
+      { connect: async () => client } as unknown as pg.Pool,
+      { ...testConfig(), dataDir: directory, maxUploadBytes: 10, maxArchiveUploadBytes: 100 },
+      { add: vi.fn() } as unknown as Queue,
+    );
+    try {
+      const response = await app.inject({
+        method: 'PUT',
+        url: '/api/uploads/upload_1/chunks/1',
+        headers: { 'content-type': 'application/octet-stream' },
+        payload: Buffer.from([1]),
+      });
+      expect(response.statusCode).toBe(status);
+    } finally {
+      await app.close();
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
   it('stores an explicit legacy encoding and rejects unknown decoder labels before uploading', async () => {
     const pool = { query: vi.fn(async () => ({ rows: [] })) } as unknown as pg.Pool;
     const app = await appWithUploads(pool, { add: vi.fn() } as unknown as Queue);

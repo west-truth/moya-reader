@@ -203,6 +203,10 @@ export async function startEmbeddedServer({ runtimeFile, profileDir, signal, onP
 
   try {
     await lock.writeFile(JSON.stringify(owner));
+    await lock.sync();
+    // The persistent marker and native OS guard provide exclusivity. Windows
+    // cannot atomically replace the journal while this initial handle is open.
+    await lock.close();
     const credentialsPath = path.join(profileDir, 'server-credentials.json');
     credentials = await readFile(credentialsPath, 'utf8')
       .then(JSON.parse)

@@ -101,8 +101,15 @@ function importProgressFromJob(localJobId: string, fileSize: number, job: Remote
     jobId: localJobId,
     status,
     subphase: status === 'ready' ? 'complete' : 'server_processing',
-    bytesRead: numberValue(job.bytes_read, fileSize),
-    totalBytes: numberValue(job.total_bytes, fileSize),
+    bytesRead: numberValue(job.bytes_read, status === 'ready' ? fileSize : 0),
+    totalBytes: numberValue(job.total_bytes, status === 'ready' ? fileSize : 0),
+    ...(job.progress_unit === 'images' && job.progress_total != null && job.progress_completed != null
+      ? {
+          progressUnit: 'images' as const,
+          completedUnits: numberValue(job.progress_completed),
+          totalUnits: numberValue(job.progress_total),
+        }
+      : {}),
     chaptersDetected: numberValue(job.chapters_detected),
     paragraphsWritten: numberValue(job.paragraphs_written),
     message: job.message || job.error_message || '서버에서 책을 분석하고 있습니다.',

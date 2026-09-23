@@ -147,6 +147,9 @@ interface ImportJobProgressPatch {
   message?: string | null;
   bookId?: string;
   errorMessage?: string | null;
+  progressCompleted?: number;
+  progressTotal?: number;
+  progressUnit?: 'images' | null;
 }
 
 export interface ImportExecutionAttempt {
@@ -179,6 +182,11 @@ async function updateImportJobProgress(
 
   if (patch.status !== undefined) setValue('status', patch.status);
   if (patch.stage !== undefined) setValue('stage', patch.stage);
+  if (patch.stage !== undefined || patch.progressUnit !== undefined) {
+    setValue('progress_completed', patch.progressCompleted ?? null);
+    setValue('progress_total', patch.progressTotal ?? null);
+    setValue('progress_unit', patch.progressUnit ?? null);
+  }
   if (patch.bytesRead !== undefined) setValue('bytes_read', Math.max(0, Math.round(patch.bytesRead)));
   if (patch.totalBytes !== undefined) setValue('total_bytes', Math.max(0, Math.round(patch.totalBytes)));
   if (patch.chaptersDetected !== undefined)
@@ -1217,6 +1225,9 @@ export async function processImportJob(
             status: 'processing',
             stage: 'writing',
             message: `이미지 저장 ${completedAssets.toLocaleString()}/${eagerAssets.length.toLocaleString()}`,
+            progressCompleted: completedAssets,
+            progressTotal: eagerAssets.length,
+            progressUnit: 'images',
           },
           attempt.executionId,
         );
@@ -1308,7 +1319,7 @@ export async function processImportJob(
     }
     await assertImportExecutionActive(pool, jobId, attempt.executionId);
 
-    await updateImportJobProgress(pool, jobId, { message: '마무리 중' }, attempt.executionId);
+    await updateImportJobProgress(pool, jobId, { message: '마무리 중', progressUnit: null }, attempt.executionId);
     measurements.start('commit_database');
     const client = appendLockClient ?? (await pool.connect());
     const releaseTransactionClient = client !== appendLockClient;

@@ -2,6 +2,23 @@ import { describe, expect, it } from 'vitest';
 import { importTaskIsActive, importTaskLabel, projectImportProgress } from './import-task-projection';
 
 describe('import task projection', () => {
+  it('shows confirmed image saves and does not round unfinished work to 100%', () => {
+    const progress = {
+      jobId: 'images',
+      status: 'writing' as const,
+      subphase: 'server_processing' as const,
+      bytesRead: 100,
+      totalBytes: 100,
+      chaptersDetected: 0,
+      paragraphsWritten: 0,
+      progressUnit: 'images' as const,
+      completedUnits: 999,
+      totalUnits: 1000,
+    };
+    expect(projectImportProgress(progress)).toMatchObject({ phase: 'saving', percent: 99 });
+    expect(projectImportProgress({ ...progress, totalUnits: 0 }).percent).toBeUndefined();
+    expect(projectImportProgress({ ...progress, progressUnit: undefined }).percent).toBeUndefined();
+  });
   it('does not treat completed upload bytes as whole-job progress', () => {
     expect(
       projectImportProgress({

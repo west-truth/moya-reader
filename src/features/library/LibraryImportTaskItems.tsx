@@ -1,4 +1,5 @@
-import { LoaderCircle, RotateCcw, X } from 'lucide-react';
+import { TaskProgressRing } from '../../components/TaskProgressRing';
+import { RotateCcw, X } from 'lucide-react';
 import { importTaskIsActive, importTaskLabel, type ImportTaskView } from '../import/import-task-projection';
 import type { LibraryScreenProps } from './library-screen-contract';
 
@@ -16,7 +17,11 @@ export function LibraryImportTaskOverlay({
       role="status"
       aria-label={importTaskLabel(task)}
     >
-      {active ? <LoaderCircle size={24} className="spin" /> : <span aria-hidden="true">!</span>}
+      {active ? (
+        <TaskProgressRing percent={task.percent} label={importTaskLabel(task)} />
+      ) : (
+        <span aria-hidden="true">!</span>
+      )}
       <strong>{importTaskLabel(task)}</strong>
       {task.total && task.total > 1 && (
         <small>

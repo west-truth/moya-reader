@@ -200,6 +200,9 @@ export interface RemoteImportJob {
   total_bytes?: number | string;
   chapters_detected?: number;
   paragraphs_written?: number;
+  progress_completed?: number | string | null;
+  progress_total?: number | string | null;
+  progress_unit?: 'images' | null;
   message?: string;
   book_id?: string;
   error_message?: string;

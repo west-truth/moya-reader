@@ -2,6 +2,11 @@ name: Desktop embedded server proof
 
 on:
   workflow_dispatch:
+    inputs:
+      build_installer:
+        description: Build and install the release candidate, including runtime prerequisites
+        type: boolean
+        default: false
   push:
     branches: [feat/desktop-embedded-selfhost]
     paths:
@@ -60,6 +65,12 @@ jobs:
         run: |
           node scripts/desktop/smoke-embedded-server.mjs ".tmp/Moya app 한글/embedded-server/runtime.json"
           if ($LASTEXITCODE -ne 0) { throw 'Embedded server smoke failed' }
+      - name: Build the release installer candidate
+        if: ${{ inputs.build_installer }}
+        run: node scripts/desktop/build-embedded-installer.mjs
+      - name: Install and start with developer tools removed from PATH
+        if: ${{ inputs.build_installer }}
+        run: ./scripts/desktop/smoke-embedded-installer.ps1
       - name: Collect evidence without credentials or server data
         if: always()
         shell: pwsh

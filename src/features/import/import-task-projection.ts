@@ -32,13 +32,16 @@ export interface ImportTaskView {
 
 function boundedPercent(completed: number, total: number): number | undefined {
   if (!Number.isFinite(completed) || !Number.isFinite(total) || total <= 0) return undefined;
-  return Math.max(0, Math.min(100, Math.round((completed / total) * 100)));
+  return Math.max(0, Math.min(100, Math.floor((completed / total) * 100)));
 }
 
 function projectImportPhase(progress: ImportProgress): Pick<ImportTaskView, 'phase' | 'percent'> {
   if (progress.status === 'failed') return { phase: 'failed' };
   if (progress.status === 'cancelling') return { phase: 'cancelling' };
   if (progress.status === 'ready' || progress.subphase === 'complete') return { phase: 'saving', percent: 100 };
+  if (progress.status === 'writing' && progress.progressUnit === 'images') {
+    return { phase: 'saving', percent: boundedPercent(progress.completedUnits ?? 0, progress.totalUnits ?? 0) };
+  }
 
   if (progress.subphase === 'uploading_chunks') {
     return { phase: 'uploading', percent: boundedPercent(progress.bytesRead, progress.totalBytes) };

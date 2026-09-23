@@ -1,3 +1,4 @@
+import { TaskProgressRing } from '../../components/TaskProgressRing';
 import { WorkViewControl } from '../../components/WorkViewControl';
 import {
   AlertTriangle,
@@ -367,7 +368,7 @@ function SourceReleaseRow({
       <span className="source-hub-release-updated">{updatedLabel(item.updatedAt) ?? '—'}</span>
       <span className={`source-hub-state is-${task?.phase ?? item.readingState ?? item.importState}`}>
         {task && importTaskIsActive(task) ? (
-          <LoaderCircle size={12} className="spin" />
+          <TaskProgressRing percent={task.percent} label={importTaskLabel(task)} />
         ) : item.readingState === 'current' ? (
           <Play size={11} fill="currentColor" />
         ) : item.readingState === 'read' || (!item.readingState && item.importState === 'imported') ? (
