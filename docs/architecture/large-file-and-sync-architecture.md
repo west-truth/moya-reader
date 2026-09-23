@@ -1,5 +1,7 @@
 # 대용량 파일 처리와 크로스 디바이스 동기화 설계
 
+> 2026-09-23: 데스크톱의 현재 목표·순서는 [내장 self-host 계획](../platforms/2026-09-23-desktop-embedded-selfhost-plan.md)이 정한다. 아래의 “로컬 대용량 구조를 먼저 완성” 권고는 당시 설계 기록이며 새 데스크톱의 선행 조건이 아니다. 서버 처리·클라이언트 cache·동기화의 기술 배경만 현재 코드와 대조해 참고한다.
+
 Status: partially implemented living design
 Last verified: 2026-07-06
 

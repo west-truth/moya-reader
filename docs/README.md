@@ -14,6 +14,8 @@
 
 ## 데스크톱과 Android
 
+- [현재 데스크톱 구현 계획: 앱에 포함된 self-host와 다른 기기 접속](platforms/2026-09-23-desktop-embedded-selfhost-plan.md)
+- [이전 IndexedDB 확장 작업의 브랜치 보관 기록](platforms/2026-09-23-desktop-indexeddb-archive.md)
 - [데스크톱 포터블 단독 실행과 공개 릴리즈 계획](platforms/2026-09-23-desktop-release-plan.md)
 - [Windows·Android 네이티브 빌드 가이드](platforms/native-build-guide-ko.md)
 - [Tauri v2 Android shell 결정](decisions/2026-08-01-tauri-v2-android-shell.md)
