@@ -287,3 +287,11 @@ Windows 수정 후보 [35821423837](https://github.com/west-truth/moya-reader/ac
 - Linux: 집중 회귀 6개, 앱·스크립트 타입 검사, 변경 파일 lint, 포터블 Rust 컴파일, 실제 stdin 제어 파이프 검사 통과.
 
 이번 검토의 배포 용량·보관소 전환·오류 표시 수정은 검증 완료다. 전체 데스크톱 릴리즈 완료와는 구분한다. P2 파일 기반 대용량 서재/백업, 절전 후 다운로드 복구, 실제 사용자 사이트 전체 흐름, 이전 runtime의 명시적 정리 UX는 남아 있다. 실제 다른 PC·Windows 10에서의 사용도 이 Windows runner 검사만으로 보장하지 않는다.
+
+### 사용자 오류 후속: 소스 브라우저·회차 페이지 조작
+
+- `source_browser_unavailable`: Rust가 Node 실행 시 환경을 지우면서 Playwright의 Windows 브라우저 탐색에 필요한 `LOCALAPPDATA`, `PROGRAMFILES`, `PROGRAMFILES(X86)`까지 제외했다. 설치 경로·사용자 홈 관련 변수만 허용 목록에 추가한다. `NODE_OPTIONS` 등 임의 실행 설정은 계속 전달하지 않는다.
+- 시스템 Edge 실행 실패 시 Chrome을 시도한다. 명시적으로 지정한 브라우저 경로는 그대로 존중한다. WebView2만 설치된 PC에는 Edge 또는 Chrome이 별도로 필요하다.
+- 이전 Windows 검사는 JS host/Python driver 구동을 확인했지만 실제 사이트 브라우저를 실행하지 않았다. 후보 검사에 EXE에서 추출한 Playwright·Patchright와 동일한 제한 환경으로 설치 브라우저를 실행하고 페이지 JavaScript를 처리하는 검사를 추가했다. 외부 사이트의 상태에 의존하지 않는다.
+- 로컬 회차와 확장 소스 회차의 페이지 변경에서 제목으로 강제 초점 이동·`scrollIntoView`를 제거했다. 페이지 버튼으로 연속 조작할 수 있으며 웹·데스크톱에 공통 적용된다. 마지막 페이지가 짧아지면 브라우저의 자연스러운 스크롤 범위 보정은 발생할 수 있다.
+- 집중 검사: 브라우저 선택 3개 + 기존 회차 화면 19개 = 22개 통과. Windows 후보의 실제 브라우저 실행 결과는 아래에 추가한다.

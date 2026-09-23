@@ -20,6 +20,49 @@ const directory = process.env.MOYA_PACKAGED_SIDECAR_DIR
   ? resolve(process.env.MOYA_PACKAGED_SIDECAR_DIR)
   : resolve(root, 'src-tauri/extension-sidecar');
 assert.equal(process.platform, 'win32', 'This packaged runtime gate currently targets Windows x64');
+// Match the desktop sidecar environment allowlist, including installed browser roots.
+const env = Object.fromEntries(
+  [
+    'SystemRoot',
+    'WINDIR',
+    'TMP',
+    'TEMP',
+    'LOCALAPPDATA',
+    'PROGRAMFILES',
+    'PROGRAMFILES(X86)',
+    'USERPROFILE',
+    'HOMEDRIVE',
+  ].flatMap((key) => (process.env[key] ? [[key, process.env[key]!]] : [])),
+);
+const browserCheck = spawnSync(
+  resolve(directory, 'node.exe'),
+  [
+    '-e',
+    `
+  (async () => {
+    for (const engine of ['playwright-core', 'patchright']) {
+      const { chromium } = require(engine);
+      let browser;
+      const errors = [];
+      for (const channel of ['msedge', 'chrome']) {
+        try { browser = await chromium.launch({ channel, headless: true }); break; }
+        catch (error) { errors.push(error); }
+      }
+      if (!browser) throw new AggregateError(errors, 'No installed source browser');
+      try {
+        const page = await browser.newPage();
+        await page.setContent('<main id="result"></main><script>document.querySelector("#result").textContent="browser ready"</script>');
+        if (await page.textContent('#result') !== 'browser ready') throw new Error('Site script did not execute');
+        console.log(engine + ': installed browser launch and page script passed');
+      } finally { await browser.close(); }
+    }
+  })().catch(error => { console.error(error); process.exitCode = 1; });
+`,
+  ],
+  { cwd: directory, env, encoding: 'utf8', timeout: 90000, windowsHide: true },
+);
+process.stdout.write(browserCheck.stdout ?? '');
+assert.equal(browserCheck.status, 0, `Packaged source browser failed: ${browserCheck.stderr}`);
 const codec = spawnSync(
   resolve(directory, 'node.exe'),
   [
@@ -54,9 +97,7 @@ const review = await installed.inspect(
 );
 await installed.install(review.id, review.revision, new AbortController().signal);
 installed.close();
-const env = Object.fromEntries(
-  ['SystemRoot', 'WINDIR', 'TMP', 'TEMP'].flatMap((key) => (process.env[key] ? [[key, process.env[key]!]] : [])),
-);
+
 const child = spawn(resolve(directory, 'node.exe'), [resolve(directory, 'native-entry.mjs')], {
   cwd: directory,
   env,

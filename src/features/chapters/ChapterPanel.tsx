@@ -101,8 +101,6 @@ export function ChapterPanel({ model, actions }: ChaptersScreenProps) {
     bookId: model.book.novel.id,
     value: `${model.query}\0${model.readFilter}\0${model.sort}`,
   });
-  const panelRef = useRef<HTMLElement>(null);
-  const headingRef = useRef<HTMLHeadingElement>(null);
   const pageModel = paginateChapterRows(rows, requestedPage);
 
   useEffect(() => {
@@ -113,28 +111,16 @@ export function ChapterPanel({ model, actions }: ChaptersScreenProps) {
     previousControls.current = { bookId: model.book.novel.id, value: controls };
   }, [model.book.novel.id, model.query, model.readFilter, model.sort, setRequestedPage]);
 
-  const moveToPage = (page: number) => {
-    setRequestedPage(page);
-    if (typeof window === 'undefined') return;
-    window.requestAnimationFrame(() => {
-      headingRef.current?.focus({ preventScroll: true });
-      const panel = panelRef.current;
-      if (panel && panel.getBoundingClientRect().top < 0) panel.scrollIntoView({ block: 'start', behavior: 'smooth' });
-    });
-  };
-
   const resetPageAnd = (action: () => void) => {
     setRequestedPage(1);
     action();
   };
 
   return (
-    <section ref={panelRef} className="chapter-panel" aria-labelledby="chapter-panel-title">
+    <section className="chapter-panel" aria-labelledby="chapter-panel-title">
       <header className="chapter-panel-heading">
         <div>
-          <h2 id="chapter-panel-title" ref={headingRef} tabIndex={-1}>
-            회차
-          </h2>
+          <h2 id="chapter-panel-title">회차</h2>
           <span>{formatCount(rows.length)}</span>
         </div>
       </header>
@@ -215,7 +201,7 @@ export function ChapterPanel({ model, actions }: ChaptersScreenProps) {
         <span>
           {pageModel.rangeStart}–{pageModel.rangeEnd} / {formatCount(pageModel.resultCount)}화
         </span>
-        <ChapterPagination page={pageModel.page} pageCount={pageModel.pageCount} onPage={moveToPage} />
+        <ChapterPagination page={pageModel.page} pageCount={pageModel.pageCount} onPage={setRequestedPage} />
         <span>페이지당 {pageModel.pageSize}화</span>
       </footer>
     </section>

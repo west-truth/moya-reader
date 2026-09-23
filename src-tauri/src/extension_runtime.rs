@@ -222,7 +222,12 @@ pub(crate) async fn desktop_extension_runtime_start(
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::null());
-        for key in ["SystemRoot", "WINDIR", "TMP", "TEMP"] {
+        // Playwright locates installed Edge/Chrome from these Windows directories.
+        // Keep the allowlist: arbitrary host environment (e.g. NODE_OPTIONS) stays excluded.
+        for key in [
+            "SystemRoot", "WINDIR", "TMP", "TEMP", "LOCALAPPDATA", "PROGRAMFILES",
+            "PROGRAMFILES(X86)", "USERPROFILE", "HOMEDRIVE",
+        ] {
             if let Some(value) = std::env::var_os(key) {
                 command.env(key, value);
             }
