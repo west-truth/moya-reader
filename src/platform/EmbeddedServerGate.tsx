@@ -29,6 +29,7 @@ const phases: Record<string, string> = {
 export function EmbeddedServerGate({ children }: { children: (connection: EmbeddedServerConnection) => ReactNode }) {
   const [status, setStatus] = useState<ServerStatus>({ phase: 'preparing', running: false });
   const [error, setError] = useState('');
+  const [connectionError, setConnectionError] = useState('');
   const [closeRequested, setCloseRequested] = useState(false);
   const [showSharing, setShowSharing] = useState(false);
   const [attempt, setAttempt] = useState(0);
@@ -42,10 +43,14 @@ export function EmbeddedServerGate({ children }: { children: (connection: Embedd
           start ? 'desktop_embedded_server_start' : 'desktop_embedded_server_status',
         );
         if (disposed) return;
+        setConnectionError('');
         setStatus(next);
         if (next.running) timer = setTimeout(() => void update(false), 500);
       } catch (failure) {
-        if (!disposed) setError(String(failure));
+        if (!disposed) {
+          setConnectionError(String(failure));
+          if (!start) timer = setTimeout(() => void update(false), 500);
+        }
       }
     };
     void update(true);
@@ -79,7 +84,7 @@ export function EmbeddedServerGate({ children }: { children: (connection: Embedd
     () => (status.url && status.authToken ? children({ url: status.url, authToken: status.authToken }) : undefined),
     [children, status.url, status.authToken],
   );
-  const failure = error || status.error;
+  const failure = error || connectionError || status.error;
   return (
     <>
       {status.phase === 'ready' && !failure ? (
@@ -98,6 +103,7 @@ export function EmbeddedServerGate({ children }: { children: (connection: Embedd
                 className="primary-btn"
                 onClick={() => {
                   setError('');
+                  setConnectionError('');
                   setStatus({ phase: 'preparing', running: false });
                   setAttempt((value) => value + 1);
                 }}

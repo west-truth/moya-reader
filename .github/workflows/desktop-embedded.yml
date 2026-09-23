@@ -35,6 +35,12 @@ jobs:
           workspaces: src-tauri
           cache-on-failure: true
       - run: pnpm install --frozen-lockfile
+      - name: Check sharing lifecycle and native status recovery
+        run: |
+          node --test scripts/desktop/embedded-sharing.test.mjs scripts/desktop/embedded-tunnel.test.mjs
+          if ($LASTEXITCODE -ne 0) { throw 'Sharing lifecycle tests failed' }
+          node node_modules/vitest/vitest.mjs run src/platform/EmbeddedServerGate.test.tsx src/platform/EmbeddedServerSharing.test.tsx
+          if ($LASTEXITCODE -ne 0) { throw 'Native status recovery tests failed' }
       - uses: actions/cache@v4
         with:
           path: .tmp/embedded-downloads

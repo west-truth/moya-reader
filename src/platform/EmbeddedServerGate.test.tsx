@@ -13,6 +13,7 @@ afterEach(async () => {
   await act(async () => renderer?.unmount());
   vi.clearAllMocks();
   vi.unstubAllGlobals();
+  vi.useRealTimers();
 });
 
 it('keeps the library unmounted until native server readiness', async () => {
@@ -43,4 +44,23 @@ it('shows startup failure and retry without creating a local library', async () 
   expect(JSON.stringify(renderer.toJSON())).toContain('서버 실행 실패');
   expect(JSON.stringify(renderer.toJSON())).toContain('다시 시도');
   expect(reader).not.toHaveBeenCalled();
+});
+
+it('recovers status polling after a temporary native transport failure', async () => {
+  vi.useFakeTimers();
+  const ready = { phase: 'ready', running: true, url: 'http://127.0.0.1:43127', authToken: 'secret' };
+  invoke.mockResolvedValue(ready).mockResolvedValueOnce(ready).mockRejectedValueOnce('일시적인 연결 오류');
+  await act(async () => {
+    renderer = create(<EmbeddedServerGate>{() => <main>내장 서재</main>}</EmbeddedServerGate>);
+  });
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(500);
+  });
+  expect(JSON.stringify(renderer.toJSON())).toContain('일시적인 연결 오류');
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(500);
+  });
+  expect(invoke).toHaveBeenCalledTimes(3);
+  expect(JSON.stringify(renderer.toJSON())).toContain('내장 서재');
+  expect(JSON.stringify(renderer.toJSON())).not.toContain('일시적인 연결 오류');
 });
