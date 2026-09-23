@@ -174,14 +174,14 @@ MoyaData/
 - 데이터 루트는 현재 작업 디렉터리가 아니라 EXE가 있는 경로를 기준으로 한다. 쓰기 불가능한 폴더에서는 이동 안내를 하고, 조용히 AppData에 다른 서재를 만들지 않는다.
 - 이 경로 정책을 WebView뿐 아니라 확장 host·메타데이터 수집기·native AI 작업 기록·TTS 캐시에도 적용한다. 한 기능이라도 기존 `app_data_dir()`를 그대로 사용해 데이터가 빠지지 않도록 경로를 한 곳에서 결정한다.
 - `Moya.exe`와 `MoyaData/`를 함께 옮겨야 서재가 이동한다. EXE만 바꾸는 것은 앱 업데이트이며 데이터 폴더는 유지된다. 앱 실행 중 폴더를 복사하는 것을 일관된 백업으로 보장하지 않는다.
-- WebView2가 있는 PC는 시스템 runtime을 사용한다. 없는 PC에서는 전역 설치 대신 해시를 고정한 Microsoft fixed runtime을 EXE에 포함하고 데이터 폴더에 풀어 실행한다. 단일 EXE의 용량은 커지지만 첫 실행 네트워크/관리자 권한 없이 시작할 수 있다. 고정 버전은 앱 업데이트 때 보안 패치를 반영해야 한다. [Microsoft WebView2 배포](https://learn.microsoft.com/microsoft-edge/webview2/concepts/distribution), [Tauri WebView2 옵션](https://v2.tauri.app/distribute/windows-installer/).
+- WebView2가 있는 PC는 시스템 Evergreen Runtime을 사용한다. 없으면 공식 설치 안내를 제공한다. 사용자 확인에 따라 최초 오프라인 실행 보장은 제외하며, Fixed Runtime 동봉은 하지 않는다. [Microsoft WebView2 배포](https://learn.microsoft.com/microsoft-edge/webview2/concepts/distribution), [Tauri WebView2 옵션](https://v2.tauri.app/distribute/windows-installer/).
 - 소스용 시스템 Edge가 없는 경우에는 별도 Chromium 준비가 필요할 수 있다. WebView2만 있으면 Playwright 소스가 모두 실행된다고 간주하지 않는다. 검증한 브라우저를 로컬 폴더에 준비하고 짧은 진행·취소 UI를 제공하는 수준으로 제한한다. 범용 구성요소 스토어는 만들지 않는다.
 - 앱 ID·origin은 WebView/저장소 호환성을 위해 안정적으로 유지한다. 기존 개발판의 AppData를 가져올 때만 명시적으로 선택하고 검증해 복사한다. 첫 실행에서 기존 데이터를 옮기거나 지우지 않는다.
 
 ### 로그인·API 키
 
 - 현재 OS keyring에 의존하는 vault key는 다른 PC로 복사되지 않는다. 포터블화는 폴더 경로 변경만으로 완료되지 않는다.
-- 기본은 이번 실행 동안 자격 증명을 사용하고, `이 폴더에 안전하게 저장`을 선택하면 사용자가 정한 암호로 보호하는 포터블 vault를 제공한다. 기존 암호화 vault에 검토된 라이브러리의 키 유도/잠금 adapter를 연결하고 새 암호 알고리즘을 만들지 않는다. 잠겨 있거나 저장을 원치 않아도 공개 소스 탐색은 가능해야 한다.
+- 기본은 이번 실행 동안 자격 증명을 사용하고, `이 폴더에 안전하게 저장`을 선택하면 사용자가 정한 암호로 보호하는 포터블 vault를 제공한다. 기존 암호화 vault에 검토된 라이브러리의 키 유도/잠금 adapter를 연결하고 새 암호 알고리즘을 만들지 않는다. 보관소를 만들지 않은 상태에서는 세션 설정으로 공개 소스를 사용할 수 있다. 보관소를 만든 뒤 잠긴 상태에서는 저장한 프록시를 무시하고 직접 연결하지 않으며, 필요한 요청에 잠금 해제를 안내한다.
 - 평문 키를 EXE 옆 설정 JSON에 저장하거나 Windows keyring 값을 자동 반출하지 않는다. OS keyring을 사용한다면 명시적인 `이 PC에서만` 옵션으로 한정하며 첫 버전 필수 기능은 아니다.
 - 브라우저 프로필의 OS 암호화와 사이트의 기기별 세션 제한 때문에, 다른 PC에서 일부 로그인은 다시 필요할 수 있다. 서재·소스 설정 이동과 로그인 세션 이동을 같은 보장으로 묶지 않는다.
 
@@ -265,3 +265,5 @@ MoyaData/
 검증 결과는 아래에 기록한다. Windows 실행 확인 전에는 정식 릴리즈 완료로 표시하지 않는다.
 
 검증(수정 후 Linux): native host·vault 통합 검사 2파일/5개 통과, 앱/스크립트 TypeScript 검사, 변경 파일 ESLint, 포터블 cfg Rust `cargo check --lib` 통과. Python entry 구문 검사 통과. 이 결과는 Windows EXE 실행 성공을 뜻하지 않는다. Windows 후보를 한 번 빌드해 새 배포 구성·실행기 공유를 확인한다.
+
+추가 회귀 확인: 호환 소스 목록 갱신 실패 → 오래된 소스 제외·오류 안내 → 재시도 복구 검사 통과(native host 파일 4개). vault 2개를 합쳐 이번 변경의 집중 검사는 총 6개다.

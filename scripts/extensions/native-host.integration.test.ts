@@ -1,5 +1,5 @@
 import 'fake-indexeddb/auto';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { startNativeExtensionHost } from './native-host';
 import { NativePackageExecution, decodeNativeAssets } from '../../src/platform/tauri/native-package-execution';
 import { LocalInstalledExtensions } from '../../src/extensions/packages/local-installed-extensions';
@@ -8,6 +8,43 @@ import { buildMoyaExtension } from '../../src/extensions/packages/package-builde
 import { examplePackageManifest } from '../../src/test/extension-package-fixture';
 
 describe('native extension host and device manager', () => {
+  it('reports a failed compatibility refresh and hides stale sources until recovery', async () => {
+    const execution = new NativePackageExecution(
+      async <T>() =>
+        ({
+          endpoint: 'http://127.0.0.1:1',
+          features: { mangayomi: true, apk: false, credentialVault: true },
+        }) as T,
+    );
+    const inventory = {
+      available: true,
+      sources: [
+        {
+          packageId: 'org.example.compat',
+          generation: 'one',
+          descriptor: { id: 'org.example.compat.source', title: 'Example' },
+        },
+      ],
+    };
+    const request = vi.spyOn(execution.mangayomi, 'request').mockResolvedValue(inventory);
+    const store = new IndexedDbPackageInstallStore(`native-refresh-${crypto.randomUUID()}`);
+    const manager = new LocalInstalledExtensions(execution, store);
+    try {
+      await manager.refresh();
+      expect(manager.getExternalSources()).toHaveLength(1);
+      request.mockRejectedValueOnce(new Error('read failed'));
+      await manager.refresh();
+      expect(manager.getSnapshot().error).toContain('Mangayomi');
+      expect(manager.getExternalSources()).toEqual([]);
+      expect(manager.getExternalSourceStatus('org.example.compat.source').state).toBe('unavailable');
+      await manager.refresh();
+      expect(manager.getSnapshot().error).toBeUndefined();
+      expect(manager.getExternalSources()).toHaveLength(1);
+    } finally {
+      manager.dispose();
+      await store.close();
+    }
+  });
   it('round-trips source options through the native manager and masks secrets while guest reads saved values', async () => {
     let host: Awaited<ReturnType<typeof startNativeExtensionHost>> | undefined;
     const secrets = new Map<string, { secret: string }>();
