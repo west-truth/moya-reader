@@ -10,6 +10,7 @@ import { validateRepositoryIndex, type RepositoryEntry } from '../../extensions/
 import { packageOperationMessage } from '../../extensions/packages/package-operation-error';
 import { NativeRequestQueue } from './native-request-queue';
 import type { SourceAuthenticationRequest, SourceAuthenticationStatus } from '@noveldesk/extension-contracts/package';
+import type { PortableVaultStatus } from '../../extensions/packages/installed-extension-manager';
 
 type Connection = {
   endpoint: string;
@@ -72,6 +73,14 @@ export class NativePackageExecution implements PackageExecutionPort {
     const invoke = this.invokeImpl ?? (await import('@tauri-apps/api/core')).invoke;
     return invoke<Connection>('desktop_extension_runtime_start', { sessionToken: this.token });
   }
+  private async portableVaultCommand(command: string, args?: Record<string, unknown>) {
+    const invoke = this.invokeImpl ?? (await import('@tauri-apps/api/core')).invoke;
+    return invoke<PortableVaultStatus>(command, args);
+  }
+  portableVaultStatus = () => this.portableVaultCommand('desktop_portable_vault_status');
+  portableVaultUnlock = (passphrase: string) =>
+    this.portableVaultCommand('desktop_portable_vault_unlock', { passphrase });
+  portableVaultLock = () => this.portableVaultCommand('desktop_portable_vault_lock');
   async networkSettings(
     request?: import('../../../packages/extension-contracts/source-network-settings').SourceNetworkSettingsRequest,
     signal?: AbortSignal,

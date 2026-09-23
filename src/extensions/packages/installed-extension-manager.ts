@@ -26,7 +26,16 @@ export interface InstalledExtensionsSnapshot {
   error?: string;
 }
 
+export interface PortableVaultStatus {
+  supported: boolean;
+  configured: boolean;
+  unlocked: boolean;
+}
+
 export interface InstalledExtensionManager extends ExternalSourceProviderRegistryPort {
+  portableVaultStatus?(): Promise<PortableVaultStatus>;
+  portableVaultUnlock?(passphrase: string): Promise<PortableVaultStatus>;
+  portableVaultLock?(): Promise<PortableVaultStatus>;
   networkSettings?(
     request?: import('../../../packages/extension-contracts/source-network-settings').SourceNetworkSettingsRequest,
     signal?: AbortSignal,

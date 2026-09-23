@@ -79,7 +79,11 @@ fn hide(command: &mut Command) {
         let _ = command;
     }
 }
-#[cfg(not(any(target_os = "android", target_os = "ios")))]
+#[cfg(moya_portable)]
+fn credential_key() -> Result<String, String> {
+    crate::portable_vault::key_hex()
+}
+#[cfg(all(not(moya_portable), not(any(target_os = "android", target_os = "ios"))))]
 fn credential_key() -> Result<String, String> {
     let entry = keyring::Entry::new("Moya Extension Credentials", "vault-master-v1")
         .map_err(|_| "source_vault_unavailable")?;
@@ -100,7 +104,7 @@ fn credential_key() -> Result<String, String> {
     }
     Ok(bytes.iter().map(|byte| format!("{byte:02x}")).collect())
 }
-#[cfg(any(target_os = "android", target_os = "ios"))]
+#[cfg(all(not(moya_portable), any(target_os = "android", target_os = "ios")))]
 fn credential_key() -> Result<String, String> {
     Err("source_vault_unavailable".into())
 }

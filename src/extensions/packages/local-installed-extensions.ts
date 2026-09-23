@@ -41,6 +41,11 @@ export class LocalInstalledExtensions extends InstalledPackageSourceRegistry imp
   constructor(
     private readonly execution: PackageExecutionPort & {
       ready?(): Promise<unknown>;
+      portableVaultStatus?: () => Promise<import('./installed-extension-manager').PortableVaultStatus>;
+      portableVaultUnlock?: (
+        passphrase: string,
+      ) => Promise<import('./installed-extension-manager').PortableVaultStatus>;
+      portableVaultLock?: () => Promise<import('./installed-extension-manager').PortableVaultStatus>;
       networkSettings?: (
         request?: import('../../../packages/extension-contracts/source-network-settings').SourceNetworkSettingsRequest,
         signal?: AbortSignal,
@@ -62,6 +67,17 @@ export class LocalInstalledExtensions extends InstalledPackageSourceRegistry imp
     }
   }
   getSnapshot = () => this.snapshot;
+  portableVaultStatus = () => this.execution.portableVaultStatus?.() ?? Promise.reject(new Error('unsupported'));
+  portableVaultUnlock = async (passphrase: string) => {
+    const status = await (this.execution.portableVaultUnlock?.(passphrase) ?? Promise.reject(new Error('unsupported')));
+    await this.refresh();
+    return status;
+  };
+  portableVaultLock = async () => {
+    const status = await (this.execution.portableVaultLock?.() ?? Promise.reject(new Error('unsupported')));
+    await this.refresh();
+    return status;
+  };
   networkSettings = (
     request?: import('../../../packages/extension-contracts/source-network-settings').SourceNetworkSettingsRequest,
     signal?: AbortSignal,

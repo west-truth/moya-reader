@@ -12,6 +12,7 @@ import { ExtensionRepositoryBrowser } from './ExtensionRepositoryBrowser';
 import { SourceExtensionManagerPanel } from './SourceExtensionManagerPanel';
 import { ApkExtensionsPanel } from './ApkExtensionsPanel';
 import type { SourceExtensionManager } from '../../external-sources/extension-management';
+import { PortableSourceVault } from './PortableSourceVault';
 
 export function InstalledExtensionsPanel({
   manager,
@@ -323,6 +324,7 @@ export function InstalledExtensionsPanel({
           }}
         />
       </div>
+      <PortableSourceVault manager={manager} />
       <SourceNetworkSettingsPanel manager={manager} />
       {showUpdates && <ExtensionUpdatesPanel manager={manager} suwayomi={suwayomi} />}
       {showSuwayomi && suwayomi && <SourceExtensionManagerPanel manager={suwayomi} initialRepository={apkRepository} />}
