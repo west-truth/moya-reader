@@ -5,6 +5,9 @@ use tauri::Manager;
 
 #[cfg(moya_portable)]
 static PORTABLE_PAYLOAD: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/portable-payload.zip"));
+#[cfg(moya_portable)]
+const WEBVIEW2_CAB_SHA256: &str =
+    "11e8240cb0bc56dcd3e4498907203c251346f65107fe35a3a13e152c7d51c79e";
 
 #[cfg(moya_portable)]
 #[derive(Clone)]
@@ -44,7 +47,10 @@ pub(crate) fn prepare() -> Result<PortableProfile, String> {
                 return Err("이 MoyaData 폴더를 사용하는 Moya가 이미 실행 중입니다.".into());
             }
             let payload = PORTABLE_PAYLOAD;
-            let digest = format!("{:x}", Sha256::digest(payload));
+            let mut hasher = Sha256::new();
+            hasher.update(payload);
+            hasher.update(WEBVIEW2_CAB_SHA256.as_bytes());
+            let digest = format!("{:x}", hasher.finalize());
             let runtime = root.join("runtime").join(&digest[..20]);
             let marker = runtime.join(".moya-payload-sha256");
             let ready = || {
@@ -161,7 +167,6 @@ pub(crate) fn ensure_webview2() -> Result<(), String> {
 
     const MAGIC: &[u8; 16] = b"MOYA_WV2_CAB_V1!";
     const CAB_SIZE: u64 = 308_509_880;
-    const CAB_SHA256: &str = "11e8240cb0bc56dcd3e4498907203c251346f65107fe35a3a13e152c7d51c79e";
 
     if installed_webview2() {
         return Ok(());
@@ -233,7 +238,8 @@ pub(crate) fn ensure_webview2() -> Result<(), String> {
                 .sync_all()
                 .map_err(|_| "WebView2 실행기를 저장하지 못했습니다.")?;
             let actual = hasher.finalize();
-            if actual.as_slice() != &footer[24..56] || format!("{actual:x}") != CAB_SHA256 {
+            if actual.as_slice() != &footer[24..56] || format!("{actual:x}") != WEBVIEW2_CAB_SHA256
+            {
                 return Err("포터블 WebView2 실행기 해시가 올바르지 않습니다.".into());
             }
             let expanded = stage.join("expanded");
