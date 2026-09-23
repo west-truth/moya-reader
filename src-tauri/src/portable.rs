@@ -220,10 +220,9 @@ pub(crate) fn ensure_webview2() -> Result<(), String> {
             let mut buffer = [0u8; 1024 * 1024];
             let mut remaining = CAB_SIZE;
             while remaining > 0 {
+                let limit = remaining.min(buffer.len() as u64) as usize;
                 let read = cab
-                    .by_ref()
-                    .take(remaining.min(buffer.len() as u64))
-                    .read(&mut buffer)
+                    .read(&mut buffer[..limit])
                     .map_err(|_| "WebView2 실행기를 읽을 수 없습니다.")?;
                 if read == 0 {
                     return Err("포터블 WebView2 실행기가 잘렸습니다.".into());
