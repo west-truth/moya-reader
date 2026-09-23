@@ -273,3 +273,17 @@ Windows 수정 후보 [35821423837](https://github.com/west-truth/moya-reader/ac
 추적 결과 기존 native 번들에서 `sharp`를 esbuild 안에 묶어 `Dynamic require of node:util is not supported`로 시작 직후 종료했다. `sharp`를 external로 두고 Windows x64 네이티브 DLL 패키지를 함께 복사하도록 수정했다([공식 sharp 번들링 지침](https://sharp.pixelplumbing.com/install/#esbuild)). 별도 새 프레임워크나 썸네일 기능 제거 없이 패키징만 보완한다.
 
 수정 번들의 Linux 진단에서 실제 host 시작·세션 설정 이관·잠금/재열기·Mangayomi 원본 JS/DOM·원문 바이트·취소·종료 통과. Windows 동봉 Node/DLL·수집기는 수정 후보에서 다시 확인한다. 검사 실패 시 host 종료를 즉시 포착하도록 smoke를 수정했으며, 기존 EXE 재검사에서도 소스 실행 검사를 생략하지 않는다.
+
+### 수정 후보 최종 검증
+
+- 제품 커밋: `997e8d0` (이후 검증 문서 커밋은 제품 코드 변경 없음).
+- [Windows 후보 35822464017](https://github.com/west-truth/moya-reader/actions/runs/35822464017) **성공**.
+- `Moya.exe`: **98,263,040바이트 = 93.71MiB**. GitHub artifact ZIP은 87,186,831바이트이며 EXE 크기와 구분한다. 기존 WebView2 동봉 약 412MiB 후보 대비 크게 감소했다.
+- EXE SHA-256: `a552fa32cfdfe5710f92e1733ec49e957d5f77432e37025ceb88e8346229af19`.
+- [Windows x64 시험용 EXE 아티팩트](https://github.com/west-truth/moya-reader/actions/runs/35822464017/artifacts/10733704679).
+- Windows에서 실제 React 화면 준비, 한글·공백 폴더, 중복 실행 차단, 종료 후 폴더 이동과 WebView 설정 값 보존 확인.
+- EXE에서 해제한 Node로 네이티브 표지 codec 로드·WebP 생성, Mangayomi 합성 원본 JS·DOM, 세션 설정 암호화 이관·잠금/재열기, 원문 바이트, 캐시 복구, 실행 중 잠금 거절, 요청 취소와 정상 종료 확인.
+- EXE에서 해제한 수집기와 공유 Node의 Python Playwright driver 연결 확인(`--check-runtime`, 브라우저 설치/실제 사이트 로그인 검사는 아님).
+- Linux: 집중 회귀 6개, 앱·스크립트 타입 검사, 변경 파일 lint, 포터블 Rust 컴파일, 실제 stdin 제어 파이프 검사 통과.
+
+이번 검토의 배포 용량·보관소 전환·오류 표시 수정은 검증 완료다. 전체 데스크톱 릴리즈 완료와는 구분한다. P2 파일 기반 대용량 서재/백업, 절전 후 다운로드 복구, 실제 사용자 사이트 전체 흐름, 이전 runtime의 명시적 정리 UX는 남아 있다. 실제 다른 PC·Windows 10에서의 사용도 이 Windows runner 검사만으로 보장하지 않는다.
