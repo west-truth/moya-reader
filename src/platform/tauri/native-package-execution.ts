@@ -144,6 +144,7 @@ export class NativePackageExecution implements PackageExecutionPort {
       });
       if (!response.ok) {
         const error = await response.json().catch(() => ({ error: 'native_execution_failed' }));
+        if (error?.error === 'source_vault_locked') throw new Error('소스 보관소의 잠금을 먼저 해제해 주세요.');
         if (
           path === '/network-settings' &&
           ['source_network_conflict', 'source_network_unavailable', 'compatibility_preferences_invalid'].includes(

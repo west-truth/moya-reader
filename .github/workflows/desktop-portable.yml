@@ -8,9 +8,6 @@ on:
         type: string
         required: false
         default: ''
-  push:
-    branches:
-      - feat/desktop-portable-release
 
 permissions:
   contents: read
@@ -46,11 +43,6 @@ jobs:
           python-version: '3.12'
       - run: pnpm install --frozen-lockfile
         if: inputs.artifact_run == ''
-      - uses: actions/cache@v4
-        if: inputs.artifact_run == ''
-        with:
-          path: src-tauri/webview2-fixed.cab
-          key: webview2-fixed-153.0.4234.48-x64-11e8240c
       - run: pnpm desktop:portable:win
         if: inputs.artifact_run == ''
       - name: Verify standalone artifact
@@ -58,7 +50,7 @@ jobs:
         run: |
           if (!(Test-Path release/Moya.exe)) { throw "Moya.exe is missing" }
           $size = (Get-Item release/Moya.exe).Length
-          if ($size -lt 400000000) { throw "Portable executable is missing its bundled WebView2 runtime" }
+          if ($size -lt 50000000) { throw "Portable executable is missing its bundled source runtime" }
           Get-FileHash release/Moya.exe -Algorithm SHA256
       - name: Smoke portable launch and folder move
         shell: pwsh
@@ -72,6 +64,12 @@ jobs:
           if (!$runtime) { throw 'Extracted source runtime is missing.' }
           $env:MOYA_PACKAGED_SIDECAR_DIR = $runtime.Directory.FullName
           pnpm --dir apps/server exec tsx ../../scripts/extensions/mangayomi-native-smoke.ts
+          if ($LASTEXITCODE -ne 0) { throw 'Packaged JS source smoke failed.' }
+          $env:PLAYWRIGHT_NODEJS_PATH = Join-Path $runtime.Directory.FullName 'node.exe'
+          $collector = Join-Path $runtime.Directory.Parent.FullName 'collector-sidecar/webnovel-metadata-collector.exe'
+          $check = Start-Process $collector -ArgumentList '--check-runtime' -PassThru
+          if (!$check.WaitForExit(30000)) { Stop-Process -Id $check.Id -Force; throw 'Collector driver timed out.' }
+          if ($check.ExitCode -ne 0) { throw 'Collector/shared Node driver failed.' }
       - uses: actions/upload-artifact@v4
         if: always() && inputs.artifact_run == ''
         with:

@@ -22,9 +22,16 @@ def main() -> None:
     _ensure_background_streams()
     parser = argparse.ArgumentParser(description="Moya bundled webnovel metadata collector")
     parser.add_argument("--host", default="127.0.0.1")
-    parser.add_argument("--port", required=True, type=int)
+    parser.add_argument("--port", type=int)
+    parser.add_argument("--check-runtime", action="store_true")
     arguments = parser.parse_args()
-    if arguments.host != "127.0.0.1" or not 1 <= arguments.port <= 65535:
+    if arguments.check_runtime:
+        from playwright.sync_api import sync_playwright
+        with sync_playwright() as runtime:
+            if not runtime.chromium.executable_path:
+                raise RuntimeError("Browser driver did not initialize")
+        return
+    if arguments.host != "127.0.0.1" or arguments.port is None or not 1 <= arguments.port <= 65535:
         parser.error("the bundled collector must use a valid IPv4 loopback port")
     uvicorn.run(
         app,

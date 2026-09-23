@@ -10,6 +10,21 @@ export function SourceNetworkSettingsPanel({ manager }: { manager: InstalledExte
   const [error, setError] = useState('');
   const operation = useRef<AbortController>();
   useEffect(() => () => operation.current?.abort(), []);
+  useEffect(() => {
+    let previous = manager.getSnapshot().error;
+    return manager.subscribe(() => {
+      const current = manager.getSnapshot().error;
+      if (current === previous) return;
+      previous = current;
+      operation.current?.abort();
+      operation.current = undefined;
+      setBusy(false);
+      setSnapshot(undefined);
+      setAddress('');
+      setMessage('');
+      setError('');
+    });
+  }, [manager]);
   async function load() {
     if (!manager.networkSettings || snapshot || operation.current) return;
     const controller = new AbortController();
@@ -22,8 +37,13 @@ export function SourceNetworkSettingsPanel({ manager }: { manager: InstalledExte
         setSnapshot(result);
         setAddress(result.defaultProxy);
       }
-    } catch {
-      if (!controller.signal.aborted) setError('연결 설정을 불러오지 못했습니다. 다시 시도해 주세요.');
+    } catch (cause) {
+      if (!controller.signal.aborted)
+        setError(
+          cause instanceof Error && cause.message === '소스 보관소의 잠금을 먼저 해제해 주세요.'
+            ? cause.message
+            : '연결 설정을 불러오지 못했습니다. 다시 시도해 주세요.',
+        );
     } finally {
       if (operation.current === controller) {
         operation.current = undefined;

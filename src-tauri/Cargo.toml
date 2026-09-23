@@ -28,7 +28,6 @@ httpdate = "1"
 zip = { version = "0.6", default-features = false, features = ["deflate"] }
 argon2 = "0.5"
 aes-gcm = "0.10"
-fs2 = "0.4"
 
 [target.'cfg(any(target_os = "macos", target_os = "ios"))'.dependencies]
 keyring = { version = "3", features = ["apple-native"] }

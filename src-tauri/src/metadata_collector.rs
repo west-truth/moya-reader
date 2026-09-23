@@ -120,6 +120,11 @@ fn collector_command(app: &AppHandle, port: u16) -> Result<Command, String> {
         }
         Command::new(executable)
     };
+    #[cfg(moya_portable)]
+    command.env(
+        "PLAYWRIGHT_NODEJS_PATH",
+        crate::portable::runtime_dir(app)?.join("extension-sidecar/node.exe"),
+    );
     command
         .arg("--host")
         .arg("127.0.0.1")

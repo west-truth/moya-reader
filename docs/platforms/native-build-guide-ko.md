@@ -50,21 +50,21 @@ Windows x64에서 단일 파일 후보를 만들려면 `pnpm desktop:portable:wi
 `MoyaData/`가 생기며 WebView 데이터, 네이티브 작업 기록과 동봉한 Node·메타데이터 실행기가 이곳에 놓입니다.
 포터블 빌드의 앱 식별자는 `app.moya.reader`입니다. 이전 내부 시험용 EXE와 데이터 호환성은 보장하지 않습니다.
 EXE를 교체할 때는 앱을 종료하고 `MoyaData/`는 그대로 둡니다.
-Windows 후보 workflow는 `scripts/desktop/smoke-portable-windows.ps1`로 고정 버전 WebView2 강제 해제·첫 실행과 전체 폴더 이동 후 재실행을 확인하고, EXE에서 해제한 Node 실행기로 합성 JS 소스를 검사합니다. 이는 실제 사용자 PC의 소스 로그인, 대용량 서재, WebView2 미설치 환경을 대신하지 않습니다.
+Windows 후보 workflow는 수동 실행합니다. 매 push마다 전체 Windows 빌드를 반복하지 않습니다.
+`artifact_run`을 주면 기존 후보를 다시 빌드하지 않고 실행 검사만 합니다. 오래된 후보에는 새 smoke 준비 신호가 없으므로 현재 형식의 후보를 지정해야 합니다.
+검사는 실제 WebView의 React 화면 준비, 중복 실행 차단, 전체 폴더 이동 뒤 작은 설정 값 보존을 확인합니다.
+이는 전체 서재 이동이나 실제 사이트 로그인을 대신하지 않습니다.
 
 이 명령은 Python 수집기와 Windows Node 런타임을 빌드 중에 묶습니다. 기본 빌드는 JS 소스를 대상으로 하며
-APK/Java 실행기 포함은 `MOYA_BUNDLE_APK=1`로 별도 선택합니다. Microsoft의 x64 WebView2 고정 버전
-`153.0.4234.48` CAB를 빌드 시 받아 SHA-256
-`11e8240cb0bc56dcd3e4498907203c251346f65107fe35a3a13e152c7d51c79e`와 비교합니다. PC에
-시스템 WebView2가 없을 때만 CAB를 `MoyaData/runtime`에 풀어 사용합니다. 첫 해제에는 약 700MB의 데이터
-공간이 더 필요하고, 관리자 권한·전역 설치·첫 실행 다운로드는 필요하지 않습니다. 고정 버전의 보안 업데이트는
-앱 새 버전에서 반영해야 합니다. 현재 포터블 후보는 Windows 실기기 실행·업그레이드 검증 전이므로
-릴리즈 완성으로 표시하지 않습니다.
+APK/Java 실행기 포함은 `MOYA_BUNDLE_APK=1`로 별도 선택합니다.
+WebView2는 EXE에 넣지 않고 PC에 설치된 Evergreen Runtime을 사용합니다. 없으면 공식 설치 안내를 표시합니다.
+CAB 다운로드·EXE 뒤 부착·자체 WebView2 해제 경로는 제거했습니다.
 
-CAB는 Rust 컴파일 과정에 포함하지 않습니다. 빌드가 끝난 EXE 뒤에 원본 CAB와 길이·SHA-256 footer를 붙이고,
-시스템 WebView2가 없는 PC에서만 해당 영역을 읽어 다시 검증합니다. 이는 Windows 후보 빌드에서 정적 바이트
-포함으로 rustc/LLVM 메모리가 부족해진 문제를 피하기 위한 포터블 배포 형식입니다. EXE를 다시 압축하거나
-뒤쪽 데이터를 자르는 도구를 통과시키면 이 실행기는 동작하지 않습니다.
+포터블 수집기는 내부적으로 PyInstaller `--onedir`를 사용하여 실행할 때마다 Python을 임시 폴더에 다시 풀지 않습니다.
+배포물은 여전히 단일 Moya.exe입니다. Python Playwright의 중복 Node를 제거하고 `PLAYWRIGHT_NODEJS_PATH`로
+동봉 소스 실행기의 Node를 공유합니다. 후보 검사에서 실제 수집기 EXE의 `--check-runtime`으로 이 연결을 확인합니다.
+기존 설치형 수집기는 `--onefile`을 유지합니다.
+[Playwright 실행기 선택](https://github.com/microsoft/playwright-python/blob/main/playwright/_impl/_driver.py).
 
 ## Android
 

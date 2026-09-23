@@ -7,15 +7,15 @@ pub fn run() {
         if error == "moya_existing_focused" {
             return;
         }
+        eprintln!("{error}");
         #[cfg(target_os = "windows")]
         crate::portable::show_error(&error);
-        eprintln!("{error}");
         return;
     }
     #[cfg(all(moya_portable, target_os = "windows"))]
     if let Err(error) = crate::portable::ensure_webview2() {
-        crate::portable::show_error(&error);
         eprintln!("{error}");
+        crate::portable::show_error(&error);
         return;
     }
     let builder = tauri::Builder::default();
@@ -23,6 +23,25 @@ pub fn run() {
     let builder = builder.on_page_load(|webview, payload| {
         if payload.event() != tauri::webview::PageLoadEvent::Finished {
             return;
+        }
+        #[cfg(moya_portable)]
+        if let Ok(token) = std::env::var("MOYA_PORTABLE_SMOKE_TOKEN") {
+            if token.len() == 32 && token.bytes().all(|value| value.is_ascii_hexdigit()) {
+                let script = r#"
+                  (() => {
+                    const key = 'moya.portable-smoke';
+                    const timer = setInterval(() => {
+                      if (!document.querySelector('#root button')) return;
+                      clearInterval(timer);
+                      const persisted = localStorage.getItem(key) === '__TOKEN__';
+                      localStorage.setItem(key, '__TOKEN__');
+                      window.__TAURI_INTERNALS__.invoke('desktop_portable_smoke_ready', { persisted });
+                    }, 100);
+                    setTimeout(() => clearInterval(timer), 60000);
+                  })();
+                "#.replace("__TOKEN__", &token);
+                let _ = webview.eval(&script);
+            }
         }
         let _ = webview.eval(
             r#"
@@ -110,6 +129,7 @@ pub fn run() {
             crate::metadata_collector::desktop_metadata_collector_start,
             crate::extension_runtime::desktop_extension_runtime_start,
             crate::portable_vault::desktop_portable_vault_status,
+            crate::portable::desktop_portable_smoke_ready,
             crate::portable_vault::desktop_portable_vault_unlock,
             crate::portable_vault::desktop_portable_vault_lock,
             crate::metadata_collector::desktop_metadata_collector_stop,

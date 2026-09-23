@@ -61,12 +61,17 @@ const execution = new NativePackageExecution(async <T>(_command: string, args?: 
   connection ??= (async () => {
     const ready = once(lines, 'line');
     child.stdin.write(
-      JSON.stringify({ token: args?.sessionToken, origin: 'http://tauri.localhost', vaultDirectory, vaultKey }) + '\n',
+      JSON.stringify({ token: args?.sessionToken, origin: 'http://tauri.localhost', vaultDirectory }) + '\n',
     );
     return JSON.parse((await ready)[0]) as { endpoint: string };
   })();
   return (await connection) as T;
 });
+async function changeVault(key: string | null) {
+  const response = once(lines, 'line');
+  child.stdin.write(JSON.stringify({ command: 'vault', key }) + '\n');
+  return JSON.parse((await response)[0]) as { ok?: boolean; error?: string };
+}
 const original = 'Original\r\n\r\n  Untouched bytes.\n';
 const pkg = await verifyMoyaExtension(
   await buildMoyaExtension({
@@ -82,6 +87,16 @@ const pkg = await verifyMoyaExtension(
 );
 const sourceId = 'org.example.catalog.source';
 try {
+  await execution.ready();
+  const settings = await execution.networkSettings();
+  const saved = await execution.networkSettings({ revision: settings.revision, defaultProxy: '' });
+  assert.deepEqual(await changeVault(vaultKey), { ok: true });
+  assert.deepEqual(await execution.networkSettings(), saved, 'Session network settings must survive unlock');
+  assert.deepEqual(await changeVault(null), { ok: true });
+  await assert.rejects(execution.networkSettings(), 'A locked profile must not silently fall back to direct');
+  assert.deepEqual(await changeVault(vaultKey), { ok: true });
+  assert.deepEqual(await execution.networkSettings(), saved);
+  console.log('Packaged vault transfer, lock and reopen passed');
   const inventory = (await execution.mangayomi.request({ action: 'list' })) as {
     available: boolean;
     sources: { descriptor: { id: string } }[];
@@ -109,6 +124,7 @@ try {
   const loop = execution.invoke(pkg, 'source.listWorks', { sourceId, query: 'loop' }, abort.signal);
   const rejected = assert.rejects(loop);
   await new Promise((resolve) => setTimeout(resolve, 350));
+  assert.deepEqual(await changeVault(null), { error: 'source_vault_busy' });
   const cancelledAt = Date.now();
   abort.abort();
   await rejected;

@@ -1,6 +1,7 @@
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
+$env:MOYA_PORTABLE_SMOKE_TOKEN = [guid]::NewGuid().ToString('N')
 $source = Join-Path (Get-Location) 'release/Moya.exe'
 if (!(Test-Path $source)) { throw 'Portable executable is missing.' }
 
@@ -9,7 +10,7 @@ $movedFolder = Join-Path $env:RUNNER_TEMP 'Moya portable moved path'
 New-Item -ItemType Directory -Path $firstFolder -Force | Out-Null
 Copy-Item $source (Join-Path $firstFolder 'Moya.exe') -Force
 
-function Wait-ForRuntime($process, $folder, $stderrName) {
+function Wait-ForRuntime($process, $folder, $stderrName, $expectPersisted = $false) {
   $deadline = (Get-Date).AddSeconds(150)
   do {
     $process.Refresh()
@@ -22,49 +23,28 @@ function Wait-ForRuntime($process, $folder, $stderrName) {
     }
     $sidecar = Get-ChildItem (Join-Path $folder 'MoyaData/runtime') -Filter 'node.exe' -Recurse -ErrorAction SilentlyContinue |
       Where-Object { $_.FullName -like '*extension-sidecar*' } | Select-Object -First 1
-    if ($sidecar -and (Test-Path (Join-Path $folder 'MoyaData/webview'))) { return }
+    $marker = Join-Path $folder "MoyaData/.smoke-$env:MOYA_PORTABLE_SMOKE_TOKEN.json"
+    if ($sidecar -and (Test-Path $marker)) {
+      $ready = Get-Content $marker -Raw | ConvertFrom-Json
+      if ($ready.pid -eq $process.Id -and (!$expectPersisted -or $ready.persisted)) { return }
+    }
     Start-Sleep -Seconds 2
   } while ((Get-Date) -lt $deadline)
   throw 'Moya.exe did not prepare its portable runtime and WebView data.'
-}
-
-function Wait-ForFixedWebView($process, $folder) {
-  $deadline = (Get-Date).AddSeconds(150)
-  do {
-    $process.Refresh()
-    if ($process.HasExited) {
-      $stderr = Join-Path $folder 'moya-fixed-stderr.txt'
-      if (Test-Path $stderr) { Get-Content $stderr -Tail 30 }
-      throw "Moya.exe exited while preparing fixed WebView2 (code $($process.ExitCode))."
-    }
-    $fixed = Get-ChildItem (Join-Path $folder 'MoyaData/runtime') -Filter 'msedgewebview2.exe' -Recurse -ErrorAction SilentlyContinue |
-      Where-Object { $_.FullName -like '*webview2-fixed*' } | Select-Object -First 1
-    if ($fixed) { return }
-    Start-Sleep -Seconds 2
-  } while ((Get-Date) -lt $deadline)
-  Write-Host 'Fixed WebView2 extraction diagnostics:'
-  Get-ChildItem (Join-Path $folder 'MoyaData/runtime') -Recurse -Depth 2 -ErrorAction SilentlyContinue |
-    Select-Object -First 80 FullName, Length | Format-Table -AutoSize
-  Get-CimInstance Win32_Process -Filter "name = 'Moya.exe' or name = 'expand.exe'" |
-    Select-Object ProcessId, ParentProcessId, Name, CommandLine | Format-Table -Wrap
-  $stderr = Join-Path $folder 'moya-fixed-stderr.txt'
-  if (Test-Path $stderr) { Get-Content $stderr -Tail 30 }
-  throw 'The embedded fixed WebView2 runtime was not extracted.'
 }
 
 function Stop-Moya($process) {
   if ($process) {
     $process.Refresh()
     if (!$process.HasExited) {
-      Stop-Process -Id $process.Id -Force
-      $process.WaitForExit(10000) | Out-Null
+      $null = $process.CloseMainWindow()
+      if (!$process.WaitForExit(10000)) { Stop-Process -Id $process.Id -Force; $process.WaitForExit(10000) | Out-Null }
     }
   }
 }
 
 $first = $null
 $second = $null
-$forced = $null
 $moved = $null
 try {
   $first = Start-Process (Join-Path $firstFolder 'Moya.exe') -PassThru -RedirectStandardError (Join-Path $firstFolder 'moya-stderr.txt')
@@ -82,22 +62,16 @@ try {
 
   Stop-Moya $first
   $first = $null
-  $forced = Start-Process (Join-Path $firstFolder 'Moya.exe') -PassThru -Environment @{ MOYA_PORTABLE_FORCE_FIXED_WEBVIEW2 = '1' } -RedirectStandardError (Join-Path $firstFolder 'moya-fixed-stderr.txt')
-  Write-Host "Fixed WebView2 Moya process: $($forced.Id)"
-  Wait-ForFixedWebView $forced $firstFolder
-  Stop-Moya $forced
-  $forced = $null
   Move-Item $firstFolder $movedFolder
   $moved = Start-Process (Join-Path $movedFolder 'Moya.exe') -PassThru -RedirectStandardError (Join-Path $movedFolder 'moya-moved-stderr.txt')
-  Wait-ForRuntime $moved $movedFolder 'moya-moved-stderr.txt'
+  Wait-ForRuntime $moved $movedFolder 'moya-moved-stderr.txt' $true
   Start-Sleep -Seconds 5
   $moved.Refresh()
   if ($moved.HasExited) { throw 'Moya.exe exited after moving the entire portable folder.' }
-  Write-Host 'Portable first launch, second launch, and folder move passed.'
+  Write-Host 'Portable UI mount, second launch exclusion, and setting preservation after folder move passed.'
 } finally {
-  Remove-Item Env:MOYA_PORTABLE_FORCE_FIXED_WEBVIEW2 -ErrorAction SilentlyContinue
+  Remove-Item Env:MOYA_PORTABLE_SMOKE_TOKEN -ErrorAction SilentlyContinue
   Stop-Moya $second
   Stop-Moya $first
-  Stop-Moya $forced
   Stop-Moya $moved
 }

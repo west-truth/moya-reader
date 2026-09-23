@@ -23,6 +23,8 @@ export class LocalInstalledExtensions extends InstalledPackageSourceRegistry imp
   get mangayomi(): import('./apk-extension-manager').ApkExtensionManager | undefined {
     return this.features?.mangayomi === false ? undefined : this.mgCatalog?.manager;
   }
+  private apkReady = false;
+  private mgReady = false;
   private mgCatalog?: NativeApkCatalog;
   private mgSources?: InstalledPackageSourceRegistry<NativeApkCatalog>;
   private apkCatalog?: NativeApkCatalog;
@@ -130,26 +132,47 @@ export class LocalInstalledExtensions extends InstalledPackageSourceRegistry imp
             ? (connection.features as typeof this.features)
             : undefined;
         await this.catalog.refresh();
-        if (this.apk) await this.apkCatalog?.refresh().catch(() => undefined);
-        if (this.mangayomi) await this.mgCatalog?.refresh().catch(() => undefined);
+        const failures: string[] = [];
+        this.apkReady = false;
+        this.mgReady = false;
+        if (this.apk) {
+          try {
+            await this.apkCatalog?.refresh();
+            this.apkReady = true;
+          } catch {
+            failures.push('APK 확장 정보를 불러오지 못했습니다.');
+          }
+        }
+        if (this.mangayomi) {
+          try {
+            await this.mgCatalog?.refresh();
+            this.mgReady = true;
+          } catch {
+            failures.push('Mangayomi 확장 정보를 불러오지 못했습니다.');
+          }
+        }
         const value = {
           available: true,
           packages: await this.store.list(),
           sources: this.getExternalSources(),
           errors: this.catalog.getErrors(),
-          error:
-            this.features?.credentialVault === false
-              ? '보안 저장소를 열지 못했습니다. 로그인과 소스 설정은 앱을 닫으면 사라집니다.'
+          error: failures.length
+            ? `${failures.join(' ')} 다시 불러와 주세요.`
+            : this.features?.credentialVault === false
+              ? '소스 보관소를 열어 설정과 로그인을 저장하세요.'
               : undefined,
         };
         const { revision, ...previous } = this.snapshot;
         if (JSON.stringify(value) === JSON.stringify(previous)) return;
         this.snapshot = { ...value, revision: revision + 1 };
       } catch (error) {
+        this.apkReady = false;
+        this.mgReady = false;
         this.snapshot = {
           ...this.snapshot,
           revision: this.snapshot.revision + 1,
           available: false,
+          sources: [],
           error:
             typeof error === 'string' && /[가-힣]/.test(error)
               ? error
@@ -203,8 +226,8 @@ export class LocalInstalledExtensions extends InstalledPackageSourceRegistry imp
   override getExternalSources() {
     return [
       ...super.getExternalSources(),
-      ...(this.apkSources?.getExternalSources() ?? []),
-      ...(this.mgSources?.getExternalSources() ?? []),
+      ...(this.apkReady && this.apk ? (this.apkSources?.getExternalSources() ?? []) : []),
+      ...(this.mgReady && this.mangayomi ? (this.mgSources?.getExternalSources() ?? []) : []),
     ];
   }
   override getExternalSourceStatus(id: string) {
@@ -231,9 +254,9 @@ export class LocalInstalledExtensions extends InstalledPackageSourceRegistry imp
       : super.resolveExternalSourceCover(...args);
   }
   private compatible(id: string) {
-    return this.apkCatalog?.getSource(id)
+    return this.apkReady && this.apk && this.apkCatalog?.getSource(id)
       ? this.apkSources
-      : this.mgCatalog?.getSource(id)
+      : this.mgReady && this.mangayomi && this.mgCatalog?.getSource(id)
         ? this.mgSources
         : undefined;
   }

@@ -43,16 +43,16 @@ export function PortableSourceVault({ manager }: { manager: InstalledExtensionMa
     }
   };
   return (
-    <section className="settings-section-card" aria-label="소스 로그인 보관소">
+    <section className="settings-section-card" aria-label="소스 보관소">
       <div className="settings-section-heading">
         <div>
-          <h3>소스 로그인 보관소</h3>
+          <h3>소스 보관소</h3>
           <p>
             {status.unlocked
               ? '이 실행에서 잠금 해제됨'
               : status.configured
                 ? '암호를 입력해 잠금 해제하세요.'
-                : '로그인 정보를 이 폴더에 저장하려면 암호를 만드세요.'}
+                : '소스 설정과 로그인을 저장할 암호를 만드세요.'}
           </p>
         </div>
       </div>
@@ -64,7 +64,7 @@ export function PortableSourceVault({ manager }: { manager: InstalledExtensionMa
             setBusy(true);
             void manager.portableVaultLock!()
               .then(setStatus)
-              .catch(() => setError('잠그지 못했습니다.'))
+              .catch((cause) => setError(typeof cause === 'string' ? cause : '잠그지 못했습니다.'))
               .finally(() => setBusy(false));
           }}
         >

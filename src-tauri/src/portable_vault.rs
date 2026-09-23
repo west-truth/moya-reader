@@ -48,7 +48,7 @@ mod active {
         Ok(header)
     }
 
-    fn unlock_at(path: &Path, passphrase: &str) -> Result<(), String> {
+    fn unlock_at(path: &Path, passphrase: &str) -> Result<[u8; 32], String> {
         let key = if path.exists() {
             let header = read_header(path)?;
             let salt = STANDARD
@@ -111,6 +111,10 @@ mod active {
                 .map_err(|_| "암호 보관소를 저장하지 못했습니다.")?;
             key
         };
+        Ok(key)
+    }
+
+    pub(super) fn set_key(key: [u8; 32]) -> Result<(), String> {
         *key_cell()
             .lock()
             .map_err(|_| "암호 보관소를 열지 못했습니다.")? = Some(key);
@@ -123,7 +127,7 @@ mod active {
             .join("data/portable-vault.json"))
     }
 
-    pub(super) fn unlock(passphrase: &str) -> Result<(), String> {
+    pub(super) fn unlock(passphrase: &str) -> Result<[u8; 32], String> {
         unlock_at(&path()?, passphrase)
     }
 
@@ -163,12 +167,12 @@ mod active {
                 std::env::temp_dir().join(format!("moya-vault-test-{}", std::process::id()));
             let path = directory.join("vault.json");
             let _ = std::fs::remove_dir_all(&directory);
-            unlock_at(&path, "a-long-test-password").unwrap();
+            set_key(unlock_at(&path, "a-long-test-password").unwrap()).unwrap();
             let first = key_hex().unwrap();
             lock();
             assert!(unlock_at(&path, "a-different-password").is_err());
             assert!(key_hex().is_err());
-            unlock_at(&path, "a-long-test-password").unwrap();
+            set_key(unlock_at(&path, "a-long-test-password").unwrap()).unwrap();
             assert_eq!(key_hex().unwrap(), first);
             lock();
             std::fs::remove_dir_all(directory).unwrap();
@@ -180,7 +184,7 @@ mod active {
 #[serde(rename_all = "camelCase")]
 pub(crate) struct PortableVaultStatus {
     supported: bool,
-    configured: bool,
+    pub(crate) configured: bool,
     unlocked: bool,
 }
 
@@ -208,8 +212,11 @@ pub(crate) fn desktop_portable_vault_unlock(
 ) -> Result<PortableVaultStatus, String> {
     #[cfg(moya_portable)]
     {
-        active::unlock(&passphrase)?;
-        runtime.stop_before_exit();
+        let key = active::unlock(&passphrase)?;
+        runtime.change_vault(
+            || Ok(Some(key.iter().map(|byte| format!("{byte:02x}")).collect())),
+            || active::set_key(key),
+        )?;
         active::status()
     }
     #[cfg(not(moya_portable))]
@@ -225,8 +232,13 @@ pub(crate) fn desktop_portable_vault_lock(
 ) -> Result<PortableVaultStatus, String> {
     #[cfg(moya_portable)]
     {
-        runtime.stop_before_exit();
-        active::lock();
+        runtime.change_vault(
+            || Ok(None),
+            || {
+                active::lock();
+                Ok(())
+            },
+        )?;
         active::status()
     }
     #[cfg(not(moya_portable))]

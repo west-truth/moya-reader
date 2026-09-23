@@ -1,9 +1,7 @@
 import { createReadStream, createWriteStream } from 'node:fs';
-import { readdir, rename, stat, unlink } from 'node:fs/promises';
-import { createHash } from 'node:crypto';
+import { readdir, stat } from 'node:fs/promises';
 import { join, relative, resolve, sep } from 'node:path';
-import { Readable, Transform, Writable } from 'node:stream';
-import { pipeline } from 'node:stream/promises';
+import { Readable, Writable } from 'node:stream';
 import { fileURLToPath } from 'node:url';
 import { ZipWriter } from '@zip.js/zip.js';
 
@@ -13,41 +11,6 @@ if (process.platform !== 'win32' || process.arch !== 'x64')
 const root = resolve(fileURLToPath(new URL('../..', import.meta.url)));
 const tauri = join(root, 'src-tauri');
 const output = join(tauri, 'portable-payload.zip');
-const webviewCab = join(tauri, 'webview2-fixed.cab');
-const webviewUrl =
-  'https://msedge.sf.dl.delivery.mp.microsoft.com/filestreamingservice/files/08cd33ee-d109-49b8-9301-9f0bea43c575/Microsoft.WebView2.FixedVersionRuntime.153.0.4234.48.x64.cab';
-const webviewSha256 = '11e8240cb0bc56dcd3e4498907203c251346f65107fe35a3a13e152c7d51c79e';
-
-async function sha256(file) {
-  const hash = createHash('sha256');
-  for await (const chunk of createReadStream(file)) hash.update(chunk);
-  return hash.digest('hex');
-}
-
-if ((await stat(webviewCab).catch(() => undefined))?.isFile() && (await sha256(webviewCab)) !== webviewSha256)
-  throw new Error('Cached Microsoft WebView2 runtime digest does not match the pinned release');
-if (!(await stat(webviewCab).catch(() => undefined))?.isFile()) {
-  const response = await fetch(webviewUrl);
-  if (!response.ok || !response.body) throw new Error(`Microsoft WebView2 runtime download failed: ${response.status}`);
-  const stage = webviewCab + `.${process.pid}.part`;
-  const hash = createHash('sha256');
-  try {
-    await pipeline(
-      Readable.fromWeb(response.body),
-      new Transform({
-        transform(chunk, _encoding, callback) {
-          hash.update(chunk);
-          callback(null, chunk);
-        },
-      }),
-      createWriteStream(stage, { flags: 'wx' }),
-    );
-    if (hash.digest('hex') !== webviewSha256) throw new Error('Microsoft WebView2 runtime digest mismatch');
-    await rename(stage, webviewCab);
-  } finally {
-    await unlink(stage).catch(() => undefined);
-  }
-}
 const entries = [
   ['extension-sidecar', 'node.exe'],
   ['extension-sidecar', 'native-entry.mjs'],

@@ -77,6 +77,7 @@ const SAFE_ERRORS = new Set([
   'source_manifest_mismatch',
   'source_network_conflict',
   'source_network_unavailable',
+  'source_vault_locked',
 ]);
 async function body(request: IncomingMessage, maximum: number): Promise<Buffer> {
   const parts: Buffer[] = [];
@@ -404,6 +405,10 @@ export async function startNativeExtensionHost(
   if (!address || typeof address === 'string') throw new Error('native_start_failed');
   return {
     endpoint: `http://127.0.0.1:${address.port}`,
+    whenIdle(change: () => void) {
+      if (active.size) throw new Error('source_vault_busy');
+      change();
+    },
     async close() {
       options.apk?.close();
       options.mangayomi?.close();
