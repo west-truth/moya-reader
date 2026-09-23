@@ -88,6 +88,55 @@ for (const component of components) {
   });
 }
 
+// PostgreSQL's narrow Windows argv/getcwd must agree on UTF-8. Relative paths
+// alone do not fix its bootstrap subprocess. Preserve the vendor trust manifest
+// and add the documented per-process code page, without changing the system locale.
+const sdkBin = path.join(process.env['ProgramFiles(x86)'], 'Windows Kits', '10', 'bin');
+const sdkVersions = (await readdir(sdkBin))
+  .filter((name) => /^10\./.test(name))
+  .sort((a, b) => b.localeCompare(a, undefined, { numeric: true }));
+const mt = path.join(sdkBin, sdkVersions[0], 'x64', 'mt.exe');
+const utf8Manifest = path.join(output, 'postgres', 'moya-utf8.manifest');
+await writeFile(
+  utf8Manifest,
+  `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<assembly xmlns="urn:schemas-microsoft-com:asm.v1" manifestVersion="1.0">
+  <application xmlns="urn:schemas-microsoft-com:asm.v3"><windowsSettings>
+    <activeCodePage xmlns="http://schemas.microsoft.com/SMI/2019/WindowsSettings">UTF-8</activeCodePage>
+  </windowsSettings></application>
+</assembly>
+`,
+);
+const modifiedExecutables = [];
+for (const name of (await readdir(path.join(output, 'postgres/bin'))).filter((name) => name.endsWith('.exe'))) {
+  const executable = path.join(output, 'postgres/bin', name);
+  run(mt, [
+    '-nologo',
+    `-inputresource:${executable};#1`,
+    '-manifest',
+    utf8Manifest,
+    `-outputresource:${executable};#1`,
+  ]);
+  modifiedExecutables.push({
+    name,
+    sha256: createHash('sha256')
+      .update(await readFile(executable))
+      .digest('hex'),
+  });
+}
+await writeFile(
+  path.join(output, 'postgres', 'manifest-adjustments.json'),
+  JSON.stringify(
+    {
+      reason: 'Use UTF-8 Windows paths on Windows 10 1903 or newer',
+      recipe: 'scripts/desktop/build-embedded-runtime.mjs',
+      modifiedExecutables,
+    },
+    null,
+    2,
+  ),
+);
+
 run(process.execPath, [path.join(root, 'apps/server/build.mjs')]);
 // Reuse the same production dependency deployment as deploy/server.Dockerfile.
 const corepack = path.join(path.dirname(process.execPath), 'node_modules/corepack/dist/pnpm.js');
