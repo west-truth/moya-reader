@@ -48,6 +48,7 @@ pnpm tauri:build
 Windows x64에서 단일 파일 후보를 만들려면 `pnpm desktop:portable:win`을 실행합니다. 출력은
 `release/Moya.exe`입니다. 설치 프로그램은 생성하지 않습니다. 첫 실행 시 EXE 옆에
 `MoyaData/`가 생기며 WebView 데이터, 네이티브 작업 기록과 동봉한 Node·메타데이터 실행기가 이곳에 놓입니다.
+포터블 빌드의 앱 식별자는 `app.moya.reader`입니다. 이전 내부 시험용 EXE와 데이터 호환성은 보장하지 않습니다.
 EXE를 교체할 때는 앱을 종료하고 `MoyaData/`는 그대로 둡니다.
 Windows 후보 workflow는 `scripts/desktop/smoke-portable-windows.ps1`로 첫 실행과 전체 폴더 이동 후 재실행을 확인하고, EXE에서 해제한 Node 실행기로 합성 JS 소스를 검사합니다. 이는 실제 사용자 PC의 소스 로그인, 대용량 서재, WebView2 미설치 환경을 대신하지 않습니다.
 
