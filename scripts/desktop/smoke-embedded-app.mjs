@@ -146,11 +146,23 @@ try {
   await page.locator('.book-continue-action').first().click();
   await page.getByText('앱 창에서 내장 서버의 작품을 읽습니다.', { exact: false }).first().waitFor();
   evidence.nativeReader = true;
-  await page.getByLabel('본문 검색', { exact: true }).fill('내장 서버의 작품');
+  const reader = page.locator('.reader-scroll.is-active');
+  const readerBounds = await reader.boundingBox();
+  assert(readerBounds, 'Native reader viewport is missing');
+  await reader.click({ position: { x: readerBounds.width / 2, y: readerBounds.height / 2 } });
+  await page.locator('.reader-screen:not(.immersive)').waitFor();
+  const mobileSearch = page.getByRole('button', { name: '본문 검색 열기', exact: true });
+  if (await mobileSearch.isVisible()) {
+    await mobileSearch.click();
+    await page.getByLabel('모바일 본문 검색', { exact: true }).fill('내장 서버의 작품');
+  } else {
+    await page.getByLabel('본문 검색', { exact: true }).fill('내장 서버의 작품');
+  }
   await page.getByRole('status').getByText('1개 결과').waitFor();
   evidence.nativeSearch = true;
-  await page.getByRole('button', { name: '북마크 추가', exact: true }).first().click();
-  await page.getByRole('button', { name: '북마크 제거', exact: true }).first().waitFor();
+  if (await mobileSearch.isVisible()) await page.getByRole('button', { name: '본문 검색 닫기' }).click();
+  await page.locator('button[aria-label="북마크 추가"]:visible').click();
+  await page.locator('button[aria-label="북마크 제거"]:visible').waitFor();
   const bookmarks = await fetch(`${connection.url}/api/books/${textBookId}/bookmarks`, {
     headers: { Authorization: `Bearer ${connection.authToken}` },
   });
