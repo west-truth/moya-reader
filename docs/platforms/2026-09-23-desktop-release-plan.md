@@ -333,3 +333,11 @@ self-host와 데스크톱은 `FixedDocumentScreen.tsx`와 `fixed-document.css`�
 - 이 PC 실행 모드에는 해당 PC에서 접근할 수 있는 프록시를 지정해야 한다. self-host의 기본 프록시 설정이 자동으로 로컬 실행기로 이전되지는 않는다. 기존 WireGuard 전용 주소를 일반 Windows PC에서도 연결 가능하다고 가정하지 않는다.
 
 진단 도구의 `tsx` 변환은 `Function.toString()` 내부에 `__name` 보조 함수를 남겨 격리 실행에서 실패했다. 실제 배포와 같은 esbuild 번들(keepNames 비활성)로 다시 확인했으며, 이 진단 도구 문제를 제품 호환성 결함으로 처리하거나 관련 없는 실행기를 변경하지 않았다.
+
+#### 후속 Windows 후보 확인
+
+- 제품 커밋 `8fdef61`; [Windows 실행 35830532089](https://github.com/west-truth/moya-reader/actions/runs/35830532089) 성공.
+- [새 Moya.exe](https://github.com/west-truth/moya-reader/actions/runs/35830532089/artifacts/10737705393): 98,263,040바이트(93.71MiB), SHA-256 `db9681acdb667966c808192cdd1c3cce3bea2b0b4e92392538b66681350ccf20`.
+- Windows 실제 UI mount·중복 실행 차단·폴더 이동 후 설정 보존 통과. 동봉 Playwright/Patchright의 설치 브라우저 시작·페이지 스크립트, 보관소 이관·잠금·재열기, Mangayomi JS·DOM, 캐시 복구·원문 전달·취소·종료, 수집기 드라이버 검사 통과.
+- 앞선 `c19c580` 이미지 전체 맞춤 비율 수정도 포함된다. 실제 소스 사이트 검사는 위 격리 Linux 결과이며 Windows 자동 검사는 제어된 입력으로 수행했다. 사용자 PC의 실패 원인을 Windows에서 재현한 것으로 표시하지 않는다.
+- 운영 Docker 서비스는 변경하지 않았다.
