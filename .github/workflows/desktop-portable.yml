@@ -42,7 +42,7 @@ jobs:
             Where-Object { $_.FullName -like '*extension-sidecar*' } | Select-Object -First 1
           if (!$runtime) { throw 'Extracted source runtime is missing.' }
           $env:MOYA_PACKAGED_SIDECAR_DIR = $runtime.Directory.FullName
-          pnpm exec tsx scripts/extensions/mangayomi-native-smoke.ts
+          pnpm --dir apps/server exec tsx ../../scripts/extensions/mangayomi-native-smoke.ts
       - name: Verify standalone artifact
         shell: pwsh
         run: |
