@@ -1,3 +1,4 @@
+import { randomUuid } from '../../utils/random-uuid';
 import { useState } from 'react';
 import { ModalDrawer } from '../../shared/ui/ModalDrawer';
 import type { ExternalSourceView } from '../external-sources/useExternalSourceController';
@@ -102,11 +103,11 @@ export function DiscoveryEditor({
               templates[0]!.sections = connected
                 .filter((s) => s.contentKind !== 'text')
                 .slice(0, 4)
-                .map((s) => ({ id: crypto.randomUUID(), sourceId: s.id, mode: 'popular', title: '' }));
+                .map((s) => ({ id: randomUuid(), sourceId: s.id, mode: 'popular', title: '' }));
               templates[1]!.sections = connected
                 .filter((s) => s.contentKind === 'text')
                 .slice(0, 4)
-                .map((s) => ({ id: crypto.randomUUID(), sourceId: s.id, mode: 'popular', title: '' }));
+                .map((s) => ({ id: randomUuid(), sourceId: s.id, mode: 'popular', title: '' }));
               setDraft({ version: 1, tabs: templates });
               setExpandedTab(templates[0]!.id);
             }}
@@ -390,7 +391,7 @@ export function DiscoveryEditor({
                 className="ghost-btn"
                 disabled={!sources.length || tab.sections.length >= 60}
                 onClick={() => {
-                  const id = crypto.randomUUID();
+                  const id = randomUuid();
                   setExpandedSection(id);
                   update((d) => {
                     d.tabs[index]!.sections.push({

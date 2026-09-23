@@ -1,3 +1,4 @@
+import { randomUuid } from '../../utils/random-uuid';
 import {
   normalizeDiscoveryConfig,
   type DiscoveryConfig,
@@ -6,7 +7,7 @@ import {
 export type { DiscoveryConfig, DiscoveryTab, DiscoverySection } from '../../integration-settings/discovery-settings';
 
 export const newTab = (title = '새 탭'): DiscoveryTab => ({
-  id: crypto.randomUUID(),
+  id: randomUuid(),
   title,
   hidden: false,
   density: 'comfortable',
@@ -56,7 +57,7 @@ export function togglePinnedSource(config: DiscoveryConfig, sourceId: string, ti
       {
         ...newTab(title),
         pinnedSourceId: sourceId,
-        sections: [{ id: crypto.randomUUID(), sourceId, title: '', mode: 'popular' }],
+        sections: [{ id: randomUuid(), sourceId, title: '', mode: 'popular' }],
       },
     ],
   };

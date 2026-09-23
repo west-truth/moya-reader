@@ -1,3 +1,4 @@
+import { randomUuid } from '../../utils/random-uuid';
 import { useSourceWorkLayout } from './source-work-layout';
 import { sourceCachePolicy, sourcePageTime, transientSourceFailure } from '../../external-sources/cache-policy';
 import { storedSourcePage, saveSourceCache } from '../../external-sources/cached-page';
@@ -394,7 +395,7 @@ function currentIso(): string {
 function externalImportOperationId(scope: string): string {
   const nonce =
     typeof globalThis.crypto?.randomUUID === 'function'
-      ? globalThis.crypto.randomUUID()
+      ? randomUuid()
       : Array.from(globalThis.crypto.getRandomValues(new Uint32Array(4)), (value) => value.toString(16)).join('');
   return persistentId128('external_import_operation', [scope, currentIso(), nonce]);
 }
@@ -1943,7 +1944,7 @@ export function useExternalSourceController(options: UseExternalSourceController
         });
 
       if (collection.seriesProfile?.kind === 'document_series') {
-        const batchId = `external-document-series-${crypto.randomUUID()}`;
+        const batchId = `external-document-series-${randomUuid()}`;
         const taskIdByItemKey = new Map<string, string>();
         const serialQueue: ActiveSerialImportQueue = {
           sourceId,

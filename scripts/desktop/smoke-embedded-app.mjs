@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { spawn } from 'node:child_process';
+import { spawn, execFileSync } from 'node:child_process';
 import { mkdtemp, readFile, writeFile } from 'node:fs/promises';
 import { createServer } from 'node:net';
 import { tmpdir } from 'node:os';
@@ -19,42 +19,61 @@ let browser;
 let page;
 let connection;
 async function launch() {
+  console.log('Starting native app');
   app = spawn(executable, [], {
     env: {
       ...process.env,
       MOYA_EMBEDDED_PROFILE: profile,
+      WEBVIEW2_USER_DATA_FOLDER: path.join(profile, 'webview'),
       WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS: `--remote-debugging-port=${port}`,
     },
-    stdio: 'ignore',
+    stdio: ['ignore', 'ignore', 'pipe'],
   });
-  const deadline = Date.now() + 120_000;
+  app.stderr.on('data', (bytes) => console.error(bytes.toString()));
+  let connectionError;
+  const deadline = Date.now() + 90_000;
   while (Date.now() < deadline) {
     assert.equal(app.exitCode, null, 'Native app exited before showing a reader');
     try {
       browser = await chromium.connectOverCDP(`http://127.0.0.1:${port}`, { timeout: 1000 });
       break;
-    } catch {
+    } catch (error) {
+      connectionError = error.message;
       await delay(300);
     }
   }
-  assert(browser, 'WebView2 debugging endpoint unavailable');
+  assert(browser, `WebView2 debugging endpoint unavailable: ${connectionError}`);
+  console.log('WebView2 connection established');
   const context = browser.contexts()[0];
   while (!context.pages().length && Date.now() < deadline) await delay(100);
   page = context.pages()[0];
   await page.waitForFunction(() => Boolean(window.__TAURI_INTERNALS__), { timeout: 30_000 });
-  await page.getByRole('button', { name: '다른 기기 접속', exact: true }).waitFor({ timeout: 90_000 });
+  await page
+    .getByRole('button', { name: '다른 기기 접속', exact: true })
+    .waitFor({ timeout: 90_000 })
+    .catch(async (error) => {
+      console.error('Native startup screen:', (await page.locator('body').innerText()).slice(0, 2000));
+      throw error;
+    });
+  console.log('Shared reader is ready');
   evidence.nativeWindow = true;
   connection = await page.evaluate(() => window.__TAURI_INTERNALS__.invoke('desktop_embedded_server_status'));
   assert.equal(connection.phase, 'ready');
   evidence.serverReady = true;
 }
-async function close() {
+async function close(fromTray = false) {
   const exited = new Promise((resolve) => app.once('exit', resolve));
-  await page.getByRole('button', { name: '창 닫기', exact: true }).click();
-  await page.getByRole('button', { name: '서버와 모야 종료', exact: true }).click();
+  if (fromTray) {
+    await page.evaluate(() =>
+      window.__TAURI_INTERNALS__.invoke('desktop_embedded_server_close', { keepRunning: false }),
+    );
+  } else {
+    await page.getByRole('button', { name: '창 닫기', exact: true }).click();
+    await page.getByRole('button', { name: '서버와 모야 종료', exact: true }).click();
+  }
   await Promise.race([
     exited,
-    delay(60_000).then(() => {
+    delay(60_000, undefined, { ref: false }).then(() => {
       throw new Error('App shutdown timed out');
     }),
   ]);
@@ -64,6 +83,48 @@ async function close() {
 }
 try {
   await launch();
+  await page.evaluate(async ({ url, authToken }) => {
+    const request = async (resource, options = {}) => {
+      const response = await fetch(`${url}/api${resource}`, {
+        ...options,
+        headers: { Authorization: `Bearer ${authToken}`, ...options.headers },
+      });
+      if (!response.ok) throw new Error(`Native import failed: ${response.status}`);
+      return response.json();
+    };
+    const bytes = new TextEncoder().encode('1화 시작\n\n앱 창에서 내장 서버의 작품을 읽습니다.\n');
+    const upload = await request('/uploads/init', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        fileName: '앱 연결 검증.txt',
+        sizeBytes: bytes.length,
+        contentType: 'text/plain',
+        encoding: 'utf-8',
+        chapterSplitMode: 'auto',
+        totalChunks: 1,
+      }),
+    });
+    await request(`/uploads/${upload.uploadId}/chunks/0`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/octet-stream' },
+      body: bytes,
+    });
+    const job = await request(`/uploads/${upload.uploadId}/complete`, { method: 'POST' });
+    const deadline = Date.now() + 30_000;
+    while (Date.now() < deadline) {
+      const result = await request(`/import-jobs/${job.jobId}`);
+      if (result.status === 'done') return;
+      if (result.status === 'failed') throw new Error('Native import job failed');
+      await new Promise((resolve) => setTimeout(resolve, 100));
+    }
+    throw new Error('Native import timed out');
+  }, connection);
+  await page.reload();
+  await page.getByText('앱 연결 검증', { exact: true }).first().waitFor({ timeout: 30_000 });
+  await page.locator('.book-continue-action').first().click();
+  await page.getByText('앱 창에서 내장 서버의 작품을 읽습니다.', { exact: false }).first().waitFor();
+  evidence.nativeReader = true;
   await page.getByRole('button', { name: '다른 기기 접속', exact: true }).click();
   await page.getByLabel('아이디', { exact: true }).fill('desktop-proof');
   await page.getByLabel('비밀번호', { exact: true }).fill('desktop proof account password');
@@ -75,6 +136,8 @@ try {
     const address = page.getByLabel('다른 기기 접속 주소');
     await address.waitFor();
     const url = await address.inputValue();
+    await page.getByRole('img', { name: '서재 접속 QR 코드' }).waitFor();
+    await page.screenshot({ path: path.join(profile, 'native-sharing.png') });
     assert.equal((await fetch(`${url}/api/books`)).status, 401);
     const login = await fetch(`${url}/api/auth/login`, {
       method: 'POST',
@@ -101,14 +164,58 @@ try {
   await launch();
   assert.equal(connection.url, firstUrl);
   assert.equal(connection.sharingUrl, null);
+  await page.getByText('앱 연결 검증', { exact: true }).first().waitFor({ timeout: 30_000 });
+  await page.evaluate(() => window.__TAURI_INTERNALS__.invoke('desktop_embedded_server_close', { keepRunning: true }));
+  assert.equal((await fetch(`${connection.url}/api/ready`)).status, 200);
+  evidence.trayMaintainsServer = true;
   evidence.restart = true;
-  await close();
+  await close(true);
+} catch (error) {
+  evidence.failure = error.message;
+  if (process.platform === 'win32') {
+    try {
+      execFileSync(
+        'powershell.exe',
+        [
+          '-NoProfile',
+          '-Command',
+          `
+        Add-Type -AssemblyName System.Windows.Forms
+        Add-Type -AssemblyName System.Drawing
+        $bounds = [System.Windows.Forms.Screen]::PrimaryScreen.Bounds
+        $bitmap = New-Object System.Drawing.Bitmap $bounds.Width, $bounds.Height
+        $graphics = [System.Drawing.Graphics]::FromImage($bitmap)
+        $graphics.CopyFromScreen($bounds.Location, [System.Drawing.Point]::Empty, $bounds.Size)
+        $bitmap.Save($env:MOYA_TEST_SCREENSHOT)
+        $graphics.Dispose()
+        $bitmap.Dispose()
+        Get-Process -Id ${app.pid} | Select-Object Id,MainWindowTitle,MainWindowHandle,Responding | ConvertTo-Json
+      `,
+        ],
+        {
+          env: { ...process.env, MOYA_TEST_SCREENSHOT: path.join(profile, 'native-desktop-error.png') },
+          stdio: 'inherit',
+          timeout: 10_000,
+        },
+      );
+    } catch {
+      /* Preserve the original failure if the desktop cannot be captured. */
+    }
+  }
+  await page?.screenshot({ path: path.join(profile, 'native-error.png'), timeout: 5000 }).catch(() => {});
+  throw error;
 } finally {
   if (app && app.exitCode === null && page) {
     await page
       .evaluate(() => window.__TAURI_INTERNALS__.invoke('desktop_embedded_server_close', { keepRunning: false }))
       .catch(() => {});
   }
+  // A failed browser probe must not leave this isolated test app keeping CI alive.
+  if (app && app.exitCode === null) {
+    await Promise.race([new Promise((resolve) => app.once('exit', resolve)), delay(15_000, undefined, { ref: false })]);
+    if (app.exitCode === null) app.kill();
+  }
+  await browser?.close().catch(() => {});
   await writeFile(path.join(profile, 'app-smoke-result.json'), JSON.stringify(evidence, null, 2));
 }
 console.log(JSON.stringify({ ...evidence, profile }, null, 2));

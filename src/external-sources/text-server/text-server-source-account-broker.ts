@@ -1,3 +1,4 @@
+import { randomUuid } from '../../utils/random-uuid';
 import { isExternalSeriesProfile } from '@noveldesk/extension-contracts';
 import type {
   DownloadedExternalSourceV2,
@@ -138,7 +139,7 @@ export class TextServerSourceAccountBroker implements ExternalSourceBroker {
   private shared?: ExternalSourceSharedConnectionV1;
   private client?: TextServerClient;
   private lifecycle = new AbortController();
-  private generation = crypto.randomUUID();
+  private generation = randomUuid();
   private reason?: string;
   private readonly sourceTitles = new Map<string, string>();
   private readonly coverUrls = new Map<string, string>();
@@ -511,7 +512,7 @@ export class TextServerSourceAccountBroker implements ExternalSourceBroker {
     this.lifecycle.abort();
     this.clearCovers();
     this.lifecycle = new AbortController();
-    this.generation = crypto.randomUUID();
+    this.generation = randomUuid();
     this.client = undefined;
     this.reason = undefined;
     this.sourceTitles.clear();

@@ -1,3 +1,4 @@
+import { randomUuid } from '../utils/random-uuid';
 import {
   beginDropboxAuthorizationRedirect,
   completeDropboxAuthorizationRedirect,
@@ -113,7 +114,7 @@ export class DropboxSourceAccountBroker implements ExternalSourceBroker {
 
   private async persistCredential(credential: DropboxCredential): Promise<void> {
     const timestamp = nowIso();
-    const accountConnectionId = credential.accountId ?? `dropbox-${crypto.randomUUID()}`;
+    const accountConnectionId = credential.accountId ?? `dropbox-${randomUuid()}`;
     const key = await this.state.getOrCreateCredentialKey();
     const record: ExternalSourceCredentialRecord = {
       id: credentialRecordId(this.connectorId),

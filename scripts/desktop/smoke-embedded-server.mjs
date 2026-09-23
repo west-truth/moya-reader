@@ -7,6 +7,7 @@ import path from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 import { chromium } from 'playwright-core';
 import { startEmbeddedServer } from './embedded-server.mjs';
+import { sharingInterfaces, startSharing } from './embedded-sharing.mjs';
 
 const runtimeFile = process.argv[2];
 if (!runtimeFile) throw new Error('Pass a staged embedded runtime.json');
@@ -14,6 +15,7 @@ const profileDir = await mkdtemp(path.join(tmpdir(), 'Moya embedded 한글 '));
 const result = { profileDir, platform: `${process.platform}-${process.arch}` };
 let server;
 let browser;
+let sharing;
 try {
   const start = Date.now();
   server = await startEmbeddedServer({ runtimeFile, profileDir });
@@ -139,7 +141,63 @@ try {
   );
   assert.equal((await peer.request.get(`${url}/api/books/${bookId}/manifest`)).status(), 200);
   result.secondSession = 'passed';
+  const network = sharingInterfaces()[0];
+  if (network) {
+    sharing = await startSharing({ url, host: network.address });
+    const sharedUrl = sharing.url;
+    const remote = await browser.newContext();
+    assert.equal((await remote.request.get(`${sharedUrl}/api/books`)).status(), 401);
+    assert.equal(
+      (
+        await remote.request.get(`${sharedUrl}/api/books`, {
+          headers: { Authorization: `Bearer ${server.authToken}` },
+        })
+      ).status(),
+      403,
+    );
+    assert.equal(
+      (
+        await remote.request.get(`${sharedUrl}/api/books`, {
+          headers: { Origin: 'http://untrusted.invalid' },
+        })
+      ).status(),
+      403,
+    );
+    assert.equal(
+      (
+        await remote.request.post(`${sharedUrl}/api/auth/login`, {
+          data: { username: 'desktop-test', password },
+        })
+      ).status(),
+      200,
+    );
+    const sharedPage = await remote.newPage();
+    sharedPage.on('pageerror', (error) => console.error('Shared reader page error:', error.message));
+    await sharedPage.goto(sharedUrl);
+    await sharedPage
+      .getByText('내장 서버 검증', { exact: true })
+      .first()
+      .waitFor({ timeout: 15_000 })
+      .catch(async (error) => {
+        await sharedPage.screenshot({ path: path.join(profileDir, 'shared-reader-error.png') });
+        throw error;
+      });
+    await sharedPage.locator('.book-continue-action').first().click();
+    await sharedPage.getByText('모야 내장 서버의 독서 검증 문장입니다.', { exact: false }).first().waitFor();
+    const changed = await remote.request.patch(`${sharedUrl}/api/books/${bookId}/reading-position`, {
+      data: { ...position, chapterProgress: 0.75, updatedAt: new Date().toISOString(), deviceId: 'shared-browser' },
+    });
+    assert.equal(changed.status(), 200);
+    const peerManifest = await remote.request.get(`${sharedUrl}/api/books/${bookId}/manifest`);
+    assert.deepEqual(await peerManifest.json(), await request(`/books/${bookId}/manifest`));
+    await sharing.stop();
+    sharing = undefined;
+    await assert.rejects(fetch(`${sharedUrl}/api/books`, { signal: AbortSignal.timeout(2000) }));
+    assert.equal((await fetch(`${url}/api/ready`)).status, 200);
+    result.privateNetworkSharing = 'authenticated reader, position update and revocation passed (same machine)';
+  }
 } finally {
+  await sharing?.stop();
   await browser?.close();
   await server?.stop();
   await writeFile(path.join(profileDir, 'smoke-result.json'), JSON.stringify(result, null, 2));

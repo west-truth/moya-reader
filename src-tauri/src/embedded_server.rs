@@ -57,7 +57,8 @@ fn require_local_window(window: &WebviewWindow) -> Result<(), String> {
     if window.label() == "main"
         && ((url.scheme() == "tauri" && url.host_str() == Some("localhost"))
             || (matches!(url.scheme(), "http" | "https")
-                && url.host_str() == Some("tauri.localhost"))
+                && url.host_str() == Some("tauri.localhost")
+                && url.port().is_none())
             || (cfg!(debug_assertions)
                 && url.origin().ascii_serialization() == "http://127.0.0.1:1421"))
     {

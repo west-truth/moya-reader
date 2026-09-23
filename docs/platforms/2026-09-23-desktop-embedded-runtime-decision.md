@@ -86,3 +86,7 @@ Windows proof payload는 실행 구성을 검증하는 산출물이다. 라이�
 - 배포는 lockfile을 사용하는 hoisted production deploy로 바꾸어 절대 경로 junction에 의존하지 않도록 했다. native Windows 후보는 실제로 다른 한글 폴더로 이동해 검사한다.
 - Linux: Rust check/프런트 타입 검사·관련 25 tests 통과. 실제 서버를 사용한 native pipe readiness, 중복 실행 차단, 부모 종료 EOF 정리, 초기화 도중 취소 검증 통과.
 - Windows native 창/공유/종료/재시작은 새 CI에서 검증 중이다. P1 전체 완료나 최종 배포물로 취급하지 않는다. VC runtime/WebView2의 자동 준비, 재배포 고지·source, 전원 종료 후 복구, 실제 별도 기기 검증은 남아 있다.
+
+### 사설망 브라우저 경로에서 발견한 공통 UI 수정
+
+실제 사설 IPv4 주소의 HTTP 페이지에서 `crypto.randomUUID`가 제공되지 않아 공통 UI가 시작되지 않는 것을 재현했다. 보안 난수 `crypto.getRandomValues`를 사용하는 UUID v4 helper로 직접 호출부를 교체했다. 전용 UI나 별도 서재를 만들지 않았다. 수정 후 공통 웹 빌드에서 **사설망 로그인 → 같은 TXT 읽기 → 읽던 위치 변경 → 공유 해제 → 로컬 readiness 유지**를 Linux Chromium으로 통과했다. 서로 다른 물리 기기 검증은 아니다. 관련 UUID/내비게이션/연결 검사 22 tests와 타입·lint 검사도 통과했다.

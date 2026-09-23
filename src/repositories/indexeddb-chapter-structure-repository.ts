@@ -1,3 +1,4 @@
+import { randomUuid } from '../utils/random-uuid';
 import type { Chapter, LabeledSegment, Novel, Paragraph, ParsedNovel, UserCorrection } from '../domain/types';
 import { decodeNovelTextWithEncoding, normalizeNovelText } from '../domain/parser';
 import {
@@ -31,7 +32,7 @@ interface LoadedStructureSnapshot {
 }
 
 function randomId(prefix: string): string {
-  return `${prefix}_${globalThis.crypto.randomUUID()}`;
+  return `${prefix}_${randomUuid()}`;
 }
 
 function paragraphIds(paragraphs: readonly Paragraph[]): Set<string> {
