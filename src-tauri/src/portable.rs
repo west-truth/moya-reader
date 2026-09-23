@@ -217,7 +217,8 @@ pub(crate) fn ensure_webview2() -> Result<(), String> {
             let mut output = std::fs::File::create(&cab_path)
                 .map_err(|_| "WebView2 실행기를 디스크에 쓸 수 없습니다.")?;
             let mut hasher = Sha256::new();
-            let mut buffer = [0u8; 1024 * 1024];
+            // The Windows GUI main thread has a small stack. Keep the copy buffer on the heap.
+            let mut buffer = vec![0u8; 256 * 1024];
             let mut remaining = CAB_SIZE;
             while remaining > 0 {
                 let limit = remaining.min(buffer.len() as u64) as usize;
