@@ -2,12 +2,19 @@ name: Windows portable candidate
 
 on:
   workflow_dispatch:
+    inputs:
+      artifact_run:
+        description: Existing Windows candidate run ID for smoke-only debugging
+        type: string
+        required: false
+        default: ''
   push:
     branches:
       - feat/desktop-portable-release
 
 permissions:
   contents: read
+  actions: read
 
 jobs:
   build:
@@ -15,23 +22,37 @@ jobs:
     timeout-minutes: 90
     steps:
       - uses: actions/checkout@v7
+      - uses: actions/download-artifact@v4
+        if: inputs.artifact_run != ''
+        with:
+          name: moya-portable-windows-x64
+          path: release
+          run-id: ${{ inputs.artifact_run }}
+          github-token: ${{ github.token }}
       - uses: pnpm/action-setup@v6
+        if: inputs.artifact_run == ''
         with:
           version: 11.7.0
       - uses: actions/setup-node@v7
+        if: inputs.artifact_run == ''
         with:
           node-version: 22
           cache: pnpm
       - uses: dtolnay/rust-toolchain@stable
+        if: inputs.artifact_run == ''
       - uses: actions/setup-python@v6
+        if: inputs.artifact_run == ''
         with:
           python-version: '3.12'
       - run: pnpm install --frozen-lockfile
+        if: inputs.artifact_run == ''
       - uses: actions/cache@v4
+        if: inputs.artifact_run == ''
         with:
           path: src-tauri/webview2-fixed.cab
           key: webview2-fixed-153.0.4234.48-x64-11e8240c
       - run: pnpm desktop:portable:win
+        if: inputs.artifact_run == ''
       - name: Verify standalone artifact
         shell: pwsh
         run: |
@@ -43,6 +64,7 @@ jobs:
         shell: pwsh
         run: ./scripts/desktop/smoke-portable-windows.ps1
       - name: Verify extracted JS source runtime
+        if: inputs.artifact_run == ''
         shell: pwsh
         run: |
           $runtime = Get-ChildItem (Join-Path $env:RUNNER_TEMP 'Moya portable moved path/MoyaData/runtime') -Filter 'native-entry.mjs' -Recurse |
@@ -51,7 +73,7 @@ jobs:
           $env:MOYA_PACKAGED_SIDECAR_DIR = $runtime.Directory.FullName
           pnpm --dir apps/server exec tsx ../../scripts/extensions/mangayomi-native-smoke.ts
       - uses: actions/upload-artifact@v4
-        if: always()
+        if: always() && inputs.artifact_run == ''
         with:
           name: moya-portable-windows-x64
           path: release/Moya.exe
