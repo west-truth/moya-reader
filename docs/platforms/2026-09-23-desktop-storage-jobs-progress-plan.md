@@ -4,6 +4,8 @@
 상태: **계획 작성 완료, 아래 기능은 구현 전**.
 상위 문서: [데스크톱 공개 릴리즈 계획](2026-09-23-desktop-release-plan.md).
 
+구현 워커는 **9절의 계약·복구 규칙·체크리스트까지 함께 읽고** 착수한다. 1~8절은 제품 방향, 9절은 코드 작성과 검토 기준이다. 기존 코드에 동등한 구조가 있으면 확장하며 파일명만 맞추려고 새 계층을 만들지 않는다.
+
 ## 1. 이번 범위와 사용자 결정
 
 - 데스크톱의 파일 기반 보관, 대용량 가져오기·합치기·내보내기·백업/복원을 완성한다.
@@ -162,3 +164,100 @@ A는 기존 정보로 바로 시작하되 외부 소스의 상세 퍼센트는 C
 - [Tauri 파일 대화상자](https://v2.tauri.app/plugin/dialog/): OS 열기/저장 선택 UI를 사용하고 실제 파일 접근은 host에서 제한한다.
 - 서버의 `local-archive-policy.ts`, `backup-streams.ts`, `hosted-backup-archive.ts`, `original-zip-stream.ts`, `storage-capacity.ts`를 재사용 후보로 삼는다. 서버 DB 의존부와 분리 가능한 helper인지 먼저 확인한다.
 - 웹 업로드는 `server-upload-import-service.ts`의 기존 청크 확인/재개·상태 조회를 유지한다.
+
+## 9. 구현 워커 인계 명세
+
+### 9.1 작업 규칙과 확정/유보 경계
+
+- 현재 브랜치와 미커밋 변경을 먼저 확인한다. 이 문서의 기준 커밋 이후 수정이 있으면 보존하고 차이만 반영한다.
+- A → B → C → D → E 순서로 진행한다. 하나의 거대한 커밋으로 묶지 않고 각 단계의 동작 가능한 단위에서 커밋·문서 갱신한다.
+- **확정:** 원 중앙 진행률, 기존 카드/행 배치, 메타데이터 IndexedDB 유지, 파일 스트리밍, 트레이는 명시적 선택 시에만 사용, 기존 파일 보호, 웹/앱 fallback 구분.
+- **구현 후 확인할 값:** 파일 경로의 회차 1GiB 목표, 원의 최종 시각 크기, 디스크 작업의 전체 시간 상한. 값을 변경하면 실측 이유와 적용 경로를 기록한다. 이를 핑계로 메모리 경로 제한부터 올리지 않는다.
+- 제품 코드와 관련 문서만 수정한다. 운영 Docker 재배포, ByeDPI 설정 변경, 일반 CI 전체 재설계는 이 작업에 포함하지 않는다.
+- UI만 완료한 상태를 전체 진행률 지원 완료로 표시하지 않는다. 연결하지 못한 공급자/플랫폼은 마지막 상태표에 명시한다.
+
+### 9.2 A — 진행률 계약과 연결 지점
+
+아래는 추가 정보의 최소 의미 계약이다. 동일 의미의 기존 타입을 재사용할 수 있으며, `ImportProgress.bytesRead`의 의미를 전역 변경하지 않는다.
+
+```ts
+type TaskProgressMeasure = {
+  unit: 'bytes' | 'images' | 'entries';
+  completed: number;
+  total?: number;
+};
+type TaskProgressUpdate = {
+  jobId: string;
+  attempt: number;
+  sequence: number;
+  phase: ImportTaskPhase;
+  measure?: TaskProgressMeasure;
+};
+```
+
+`ImportTaskPhase`는 기존 타입이다. `attempt`는 재시도마다 증가하고 `sequence`는 그 실행 안에서 증가한다. host 재실행으로 순서가 초기화되면 새 attempt로 취급한다. 완료·취소된 실행의 늦은 이벤트는 무시한다. 공개 확장 protocol을 바로 깨지 말고 host→앱 사이의 선택적 진행 정보로 추가한다.
+
+- `ImportTaskView.percent`는 계속 화면 projection이다. 총량이 양수인 경우 `floor(completed / total * 100)`으로 산출해 조기 100% 반올림을 피한다. 완료량과 총량은 유한한 비음수 값으로 검증한다. 총량 불명/0이면 퍼센트를 생략한다.
+- 기존 서버의 메시지 문자열을 파싱해 숫자를 만들지 않는다. 실제 업로드 청크 확인값·이미지 완료량·쓰기 카운터를 전달한다. 구조화 정보가 없는 오래된 서버는 indeterminate로 표시한다.
+- 새 `TaskProgressRing` 공통 컴포넌트는 표시만 담당한다. 네트워크, 취소, 저장 로직을 넣지 않는다. label/percent/action을 호출부에서 받는다.
+- `LibraryImportTaskItems.tsx`, `SourceHubScreen.tsx`에 연결하고 기존 spinner/퍼센트 문구 중복을 제거한다. 진행률 원이 있는 회차에서 원 클릭=취소인 이전 handler가 남지 않게 한다.
+- `import-task-projection.ts`, `import-controller.ts`, `useExternalSourceController.ts`에서 단계·작업 ID를 연결한다. 일반 소스 큐의 `onStage`는 호환을 유지하면서 상세 진행 callback을 추가한다.
+- 스크린리더에는 진행 단계와 값/단위를 제공하되 모든 퍼센트 변경을 live announcement로 읽지 않는다. 단계 전환·실패만 간단히 알린다.
+
+필수 확인: 총량 불명, 청크 재전송 중복 합산, 99% 이후 저장 단계, 이전 attempt 이벤트 무시, 원 클릭 시 취소되지 않음. 이 조건을 기존 projection/controller 검사에 추가하며 시각 클래스 존재만 확인하는 테스트는 만들지 않는다.
+
+### 9.3 B — 파일 참조와 메타데이터 반영
+
+파일 바이트의 소유자는 기존 로컬 Node host로 한다. Tauri는 네이티브 선택/저장 권한과 프로세스 생명주기를 담당한다. Rust와 Node에 동일한 archive parser를 각각 구현하지 않는다. host의 기존 session token/Origin/Host 검사를 유지한다.
+
+파일 참조에는 최소한 `fileId`, `byteLength`, `contentType`, `contentHash`가 필요하다. host만 fileId를 내부 경로로 해석하며 클라이언트가 보낸 크기/해시를 그대로 신뢰하지 않는다. 선택 직후 아직 해시를 모르는 입력 핸들과 검증 완료 asset 참조는 다른 타입으로 구분한다. 입력 핸들은 세션 범위이고, 재개용 원본 경로는 host의 비공개 작업 기록에만 남긴다.
+
+- `PlatformDocumentIo`의 기존 `File[]`/`Blob` 메서드를 억지로 대용량 native 파일로 위장하지 않는다. capability가 있는 경우 사용하는 선택적 파일 참조 열기/파일 출력 메서드를 추가한다. 기존 browser/Android 호출부는 유지한다.
+- `BookAssetRepository.openSource`의 부분 읽기 계약을 사용한다. 원본·합본의 전체 `exportSource().blob`를 사용하는 호출부에는 파일 출력 capability를 연결한다. 이미지만 읽는 `getEmbeddedResource`는 개별 이미지 Blob을 반환해도 되지만 권 전체를 만드는 경로에는 사용하지 않는다.
+- 파일 참조용 IndexedDB store는 기존 `storageKey`를 키로 사용한다. 파일 ID·해시·길이·검증 상태를 담고 `book_assets`의 참조 활성화와 같은 IDB 트랜잭션에서 갱신한다. 기존 `book_asset_blobs.blob`를 선택 필드로 바꿔 모든 브라우저 코드를 흔드는 방식은 피한다.
+- 읽기 순서는 활성화된 파일 참조가 있으면 파일, 없으면 legacy Blob이다. 활성 파일이 없어지거나 손상됐을 때 오래된 Blob으로 조용히 되돌리지 않는다. 명시적 복구/재선택 오류를 낸다.
+- 반드시 `book-asset-store.ts`, `book-asset-transaction.ts`, `book-asset-schema.ts`, `reader-database.ts` 및 가져오기·합치기·삭제 호출부를 점검한다. repository 교체만 하고 직접 Blob 쓰기를 남기면 B는 미완료다.
+- 브라우저에서 데스크톱 전용 file 참조가 나타나면 지원되지 않는 저장 위치라고 처리하고 삭제/빈 파일로 덮지 않는다. 일반 백업에는 실행 환경의 fileId/절대 경로 대신 실제 asset 바이트를 넣는다.
+
+작업별 staging 파일은 hash 검증 후 불변 object 위치로 확정하고 IDB 활성화가 끝나기 전까지 job이 보유한다. host가 활성화를 요청하면 UI는 expected revision 검사와 함께 한 트랜잭션으로 적용하고 결과를 응답한다. 응답이 유실되면 같은 job ID와 결과 revision으로 재조회해 이미 반영했는지 판정한다. 재조회 전 파일을 지우거나 같은 작품을 다시 만들지 않는다.
+
+| 중단 위치                   | 재실행 시 처리                                                                 |
+| --------------------------- | ------------------------------------------------------------------------------ |
+| 쓰는 중                     | 검증 완료 파일만 재사용. 미완성 파일은 해당 job 범위에서 재다운로드/다시 쓰기. |
+| 파일 검증 완료, IDB 반영 전 | awaiting_activation에서 revision 검사 후 반영. 이전 서재는 그대로 유지.        |
+| IDB 반영 후 host 응답 유실  | IDB의 job/revision 영수증 확인 후 committed로 맞춤. 중복 반영 금지.            |
+| 대상 revision이 이미 변경됨 | conflict로 중단. 최신 작품을 덮어쓰지 않고 사용자가 재시도할 수 있게 함.       |
+| 취소/공간 부족              | 기존 활성 revision 유지. 작업이 독점 소유한 미사용 파일만 정리.                |
+
+보관 파일 쓰기를 무조건 in-place overwrite하지 않는다. `fileId` 경로를 추측해 읽거나 삭제할 수 없도록 host 소유 여부를 검사한다. 저장소 이동은 EXE/`MoyaData` 이동으로 해결하며 이번에 임의 다중 볼륨 관리 UI를 만들지 않는다.
+
+### 9.4 C — 소스 다운로드 연결
+
+- `services/apk-worker/catalog.mjs`의 이미지 수집부처럼 host가 이미지 목록/응답을 소유하는 곳에 **선택적 asset sink와 진행 callback**을 넣는다. 기본 메모리 sink는 기존 호출 호환용이고, desktop/지원 서버에서는 file sink를 주입한다.
+- sink는 이미지 단위 저장·해시·길이 검증을 끝낸 뒤 참조를 반환한다. stream을 받을 수 있는 transport는 스트리밍하고, 기존 실행기가 이미지 한 장을 버퍼로 반환하는 경우 우선 장당 한도/동시성으로 메모리를 제한한다. 확장 SDK 전체를 새 protocol로 바꾸는 일은 피한다.
+- `native-package-execution.ts`, `native-host.ts`, `installed-package-source-registry.ts`에서 disk job 결과는 파일 참조로 전달한다. `decodeNativeAssets` → 전체 Blob Map → `BlobWriter`로 되돌아가는 연결이 없는지 확인한다.
+- 시작 요청은 호출자가 만든 작업 ID를 사용해 재전송되어도 동일 작업을 돌려준다. 상태 조회와 취소는 기존 인증된 host에 추가한다. UI의 상태 조회 abort와 실제 job 취소를 구분한다.
+- 새 SSE/WebSocket은 필요하지 않다. 기존 상태 polling 방식을 재사용한다. 상태/취소 호출이 긴 콘텐츠 요청 뒤에서 막히지 않게 기존 요청 큐의 제어 경로를 유지한다.
+- 웹 서버 경로는 `hosted-image-download-queue.ts` 등 현재 처리 경로에 progress를 연결한다. native 작업을 웹에서 호출하거나 서버 DB staging을 그대로 desktop에 이식하지 않는다.
+- 기본 지원 대상은 사용 중인 Mangayomi 이미지 소스와 파일 업로드다. 모야/APK/텍스트 소스는 기존 동작을 보존하며 상세 진행이 가능한 경로를 연결한다. 불가능한 경로는 단계 표시를 유지하고 지원표에 적는다.
+
+파일별 완료 checkpoint는 이미지/파일 경계에서 기록한다. 재개 시 목록의 순서·개수·원격 식별자/개정 여부를 검증하고, 검증할 수 없으면 이미지를 섞지 않고 새 attempt로 시작한다. 단순 URL 문자열만 같다는 이유로 내용 동일성을 보장했다고 취급하지 않는다.
+
+### 9.5 D/E — 백업과 종료의 추가 완료 조건
+
+- `BackupRepository`에는 native 입력 핸들 검사, 검사 결과 ID로 복원, 선택한 파일로 내보내는 선택적 기능을 추가한다. `useBackupController.ts`/`BackupPanel.tsx`가 capability로 선택하고 기존 Blob 호출을 유지한다.
+- v1 백업의 파일 바이트/스토어 구조로 표현 가능하면 manifest 버전을 올리지 않는다. 저장 내부의 native 참조 store는 백업 대상에서 제외하고, 복원 시 asset 바이트에서 현재 환경의 참조를 새로 만든다. v1로 표현 불가능한 변경만 별도 버전/구버전 읽기를 구현한다.
+- 현재 백업의 `getAll()`로 모든 Blob을 모으는 부분과 전체 `Map<string, Blob>` 복원 부분을 파일 경로에 재사용하지 않는다. bounded cursor/batch 처리로 바꾼다. 글꼴 등 book asset 외 Blob 저장소도 누락 여부를 확인한다.
+- 복원 충돌 정책, 읽기 기록, 표지, 사용자 글꼴/설정까지 백업 대상 목록을 기존 repository와 대조한다. 파일 개수만 맞는 round-trip은 충분하지 않다.
+- E의 창 닫기 처리는 작업 상태를 먼저 확인하고 close를 보류한다. 사용자가 실제 종료를 선택한 경우에만 기존 `stop_before_exit`를 실행한다. 숨기기를 선택했는데 실행기가 정리되는 이중 handler가 남지 않아야 한다.
+- 최소화/트레이 상태에서 host 완료→IndexedDB 활성화까지 Windows에서 확인하기 전에는 “백그라운드 처리 완료”를 지원 완료로 쓰지 않는다. 실제 절전 복귀를 확인할 환경이 없으면 미검증으로 남긴다. Linux 타이머 테스트를 Windows 절전 검증이라고 쓰지 않는다.
+
+### 9.6 인수 체크리스트와 작업 보고
+
+- [ ] A: 파일 업로드/가져오기의 실제 퍼센트와 미정 상태, 웹·앱 공통 카드/회차 UI.
+- [ ] B: 파일 입력→보관→부분 읽기→삭제, 기존 IndexedDB 자료 읽기 유지, 반영 중단 복구.
+- [ ] C: 권 단위 파일 경로, 소스 상세 진행, 부분 완료 재사용, 기존 제한 fallback 구분.
+- [ ] D: 기존 용량 한도를 넘는 백업/합본 파일 출력, 복원 의미 검증, 선택적 기존 자료 이전.
+- [ ] E: Windows 최소화/트레이 완료, 종료 후 재개, 절전 복귀 검증 또는 명시적 미검증 기록.
+
+각 커밋 후 이 체크리스트와 함께 **변경 커밋·사용 경로·수행한 검사·남은 제한**을 기록한다. 새 한도의 최대치까지 검증하지 않았다면 실제 사용한 파일 크기를 적는다. 오류가 있었는데 재시도만 성공한 경우 최초 오류의 해결 여부를 분리한다. 제품 구현 완료, 자동 검사 완료, Windows 사용자 환경 검증을 같은 의미로 보고하지 않는다.
