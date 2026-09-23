@@ -32,6 +32,13 @@ jobs:
           path: src-tauri/webview2-fixed.cab
           key: webview2-fixed-153.0.4234.48-x64-11e8240c
       - run: pnpm desktop:portable:win
+      - name: Verify standalone artifact
+        shell: pwsh
+        run: |
+          if (!(Test-Path release/Moya.exe)) { throw "Moya.exe is missing" }
+          $size = (Get-Item release/Moya.exe).Length
+          if ($size -lt 10000000) { throw "Portable executable is unexpectedly small" }
+          Get-FileHash release/Moya.exe -Algorithm SHA256
       - name: Smoke portable launch and folder move
         shell: pwsh
         run: ./scripts/desktop/smoke-portable-windows.ps1
@@ -43,15 +50,9 @@ jobs:
           if (!$runtime) { throw 'Extracted source runtime is missing.' }
           $env:MOYA_PACKAGED_SIDECAR_DIR = $runtime.Directory.FullName
           pnpm --dir apps/server exec tsx ../../scripts/extensions/mangayomi-native-smoke.ts
-      - name: Verify standalone artifact
-        shell: pwsh
-        run: |
-          if (!(Test-Path release/Moya.exe)) { throw "Moya.exe is missing" }
-          $size = (Get-Item release/Moya.exe).Length
-          if ($size -lt 10000000) { throw "Portable executable is unexpectedly small" }
-          Get-FileHash release/Moya.exe -Algorithm SHA256
       - uses: actions/upload-artifact@v4
+        if: always()
         with:
           name: moya-portable-windows-x64
           path: release/Moya.exe
-          if-no-files-found: error
+          if-no-files-found: warn
