@@ -228,12 +228,37 @@ try {
     evidence.nativeFormats.push(format);
   }
   await page.reload();
+  const saveCapability = await page.evaluate(() => ({
+    secureContext: window.isSecureContext,
+    picker: typeof window.showSaveFilePicker,
+  }));
+  assert.deepEqual(saveCapability, { secureContext: true, picker: 'function' });
+  await page.evaluate(() => {
+    const chunks = [];
+    window.__moyaBackupProof = { chunks, saved: false };
+    Object.defineProperty(window, 'showSaveFilePicker', {
+      configurable: true,
+      value: async () => ({
+        createWritable: async () =>
+          new WritableStream({
+            write(chunk) {
+              chunks.push(chunk.slice());
+            },
+            close() {
+              window.__moyaBackupProof.saved = true;
+            },
+          }),
+      }),
+    });
+  });
   await page.getByRole('button', { name: '백업 및 복원 열기', exact: true }).click();
-  const downloadStarted = page.waitForEvent('download', { timeout: 30_000 });
   await page.getByRole('button', { name: '백업 만들기', exact: true }).click();
-  const backupDownload = await downloadStarted;
+  await page.waitForFunction(() => window.__moyaBackupProof?.saved, undefined, { timeout: 30_000 });
   const backupPath = path.join(profile, 'native-backup.zip');
-  await backupDownload.saveAs(backupPath);
+  const backupBytes = await page.evaluate(async () =>
+    Array.from(new Uint8Array(await new Blob(window.__moyaBackupProof.chunks).arrayBuffer())),
+  );
+  await writeFile(backupPath, Buffer.from(backupBytes));
   const backupReader = new ZipReader(new BlobReader(new Blob([await readFile(backupPath)])));
   try {
     const manifestEntry = (await backupReader.getEntries()).find((entry) => entry.filename === 'manifest.json');

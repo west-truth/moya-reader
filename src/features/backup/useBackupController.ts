@@ -38,6 +38,13 @@ function backupFileName(exportedAt: string): string {
   return `moya-backup-${stamp}.zip`;
 }
 
+type SavePickerWindow = Window & {
+  showSaveFilePicker?: (options: {
+    suggestedName: string;
+    types: Array<{ description: string; accept: Record<string, string[]> }>;
+  }) => Promise<{ createWritable(): Promise<WritableStream<Uint8Array>> }>;
+};
+
 export function useBackupController(options: UseBackupControllerOptions): BackupFeatureController {
   const optionsRef = useRef(options);
   optionsRef.current = options;
@@ -63,6 +70,23 @@ export function useBackupController(options: UseBackupControllerOptions): Backup
     setBusy(true);
     try {
       if (repository.createDownload && !optionsRef.current.documentIo?.usesNativeSave) {
+        const pickerWindow = typeof window === 'undefined' ? undefined : (window as SavePickerWindow);
+        const picker = pickerWindow?.showSaveFilePicker;
+        if (picker && pickerWindow.isSecureContext) {
+          // Ask while the button click still has user activation; the ticket and
+          // server stream are created only after a destination is selected.
+          const handle = await picker.call(pickerWindow, {
+            suggestedName: 'moya-backup.zip',
+            types: [{ description: '모야 백업 ZIP', accept: { 'application/zip': ['.zip'] } }],
+          });
+          const url = await repository.createDownload();
+          const response = await fetch(url, { credentials: 'same-origin' });
+          if (!response.ok || !response.body) throw new Error(`백업 다운로드에 실패했습니다. (${response.status})`);
+          await response.body.pipeTo(await handle.createWritable());
+          optionsRef.current.notify('백업 파일 저장을 완료했습니다.', 'success');
+          optionsRef.current.onExported?.(new Date().toISOString());
+          return;
+        }
         const url = await repository.createDownload();
         const anchor = document.createElement('a');
         anchor.href = url;
@@ -100,7 +124,11 @@ export function useBackupController(options: UseBackupControllerOptions): Backup
       optionsRef.current.notify(`전체 백업 ${exported.manifest.books.length}권을 만들었습니다.`, 'success');
       optionsRef.current.onExported?.(exported.manifest.exportedAt);
     } catch (error) {
-      optionsRef.current.notify(error instanceof Error ? error.message : '백업을 만들지 못했습니다.', 'danger');
+      if (error instanceof DOMException && error.name === 'AbortError') {
+        optionsRef.current.notify('백업 저장을 취소했습니다.', 'info');
+      } else {
+        optionsRef.current.notify(error instanceof Error ? error.message : '백업을 만들지 못했습니다.', 'danger');
+      }
     } finally {
       setBusy(false);
     }

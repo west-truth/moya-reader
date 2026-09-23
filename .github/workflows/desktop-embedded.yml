@@ -51,7 +51,7 @@ jobs:
         run: |
           node --test scripts/desktop/embedded-sharing.test.mjs scripts/desktop/embedded-tunnel.test.mjs
           if ($LASTEXITCODE -ne 0) { throw 'Sharing lifecycle tests failed' }
-          node node_modules/vitest/vitest.mjs run src/platform/EmbeddedServerGate.test.tsx src/platform/EmbeddedServerSharing.test.tsx
+          node node_modules/vitest/vitest.mjs run src/platform/EmbeddedServerGate.test.tsx src/platform/EmbeddedServerSharing.test.tsx src/features/backup/useBackupController.test.tsx
           if ($LASTEXITCODE -ne 0) { throw 'Native status recovery tests failed' }
       - uses: actions/cache@v4
         with:

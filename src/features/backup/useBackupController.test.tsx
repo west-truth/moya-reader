@@ -5,6 +5,63 @@ import { useBackupController, type BackupFeatureController } from './useBackupCo
 import type { PlatformDocumentIo } from '../../platform/document-io';
 
 describe('backup conflict defaults', () => {
+  it('streams the server ZIP into a selected file and confirms completion', async () => {
+    const steps: string[] = [];
+    const chunks: Uint8Array[] = [];
+    vi.stubGlobal('window', {
+      isSecureContext: true,
+      showSaveFilePicker: async () => {
+        steps.push('picker');
+        return {
+          createWritable: async () =>
+            new WritableStream<Uint8Array>({
+              write(chunk) {
+                steps.push('write');
+                chunks.push(chunk);
+              },
+              close() {
+                steps.push('close');
+              },
+            }),
+        };
+      },
+    });
+    vi.stubGlobal('fetch', async () => {
+      steps.push('fetch');
+      return new Response('zip-content');
+    });
+    const onExported = vi.fn();
+    const notify = vi.fn();
+    let controller!: BackupFeatureController;
+    let renderer!: ReactTestRenderer;
+    function Harness() {
+      controller = useBackupController({
+        repository: {
+          createDownload: async () => {
+            steps.push('ticket');
+            return '/api/backups/download/ticket';
+          },
+        } as BackupRepository,
+        refreshLibrary: async () => {},
+        notify,
+        onExported,
+      });
+      return null;
+    }
+    try {
+      await act(async () => {
+        renderer = create(<Harness />);
+      });
+      await act(async () => controller.exportBackup());
+      expect(steps).toEqual(['picker', 'ticket', 'fetch', 'write', 'close']);
+      expect(new TextDecoder().decode(chunks[0])).toBe('zip-content');
+      expect(notify).toHaveBeenCalledWith('백업 파일 저장을 완료했습니다.', 'success');
+      expect(onExported).toHaveBeenCalledOnce();
+    } finally {
+      await act(async () => renderer.unmount());
+      vi.unstubAllGlobals();
+    }
+  });
   it('starts a native browser download without buffering ZIP or reporting a completed backup', async () => {
     const anchor = { href: '', download: '', target: '', rel: '', click: vi.fn(), remove: vi.fn() };
     vi.stubGlobal('document', { createElement: () => anchor, body: { append: vi.fn() } });
