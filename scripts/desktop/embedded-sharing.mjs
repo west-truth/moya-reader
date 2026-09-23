@@ -20,11 +20,37 @@ export function sharingInterfaces() {
 }
 
 /** A separate listener allows revocation without interrupting the app's loopback API. */
-export async function startSharing({ url, host }) {
-  if (!sharingInterfaces().some(({ address }) => address === host)) {
+export async function startSharing({
+  url,
+  host,
+  onExit = () => {},
+  listInterfaces = sharingInterfaces,
+  monitorIntervalMs = 5_000,
+}) {
+  if (!listInterfaces().some(({ address }) => address === host)) {
     throw new Error('현재 연결된 사설망 주소를 선택해 주세요.');
   }
-  return createSharingListener({ url, host });
+  const listener = await createSharingListener({ url, host });
+  let stopping = false;
+  let stopPromise;
+  let monitor;
+  const stop = () =>
+    (stopPromise ??= (async () => {
+      stopping = true;
+      clearInterval(monitor);
+      await listener.stop();
+    })());
+  monitor = setInterval(() => {
+    if (stopping || listInterfaces().some(({ address }) => address === host)) return;
+    // A VPN or LAN address can disappear while the listener process is alive.
+    stopping = true;
+    void stop().then(
+      () => onExit('선택한 네트워크 연결이 끊겼습니다. 다시 연결해 주세요.'),
+      () => onExit('선택한 네트워크 연결이 끊겼습니다. 다시 연결해 주세요.'),
+    );
+  }, monitorIntervalMs);
+  monitor.unref();
+  return { ...listener, stop };
 }
 
 export async function createSharingListener({ url, host = '127.0.0.1', port = 0, publicOrigin }) {

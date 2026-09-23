@@ -62,6 +62,44 @@ describe('backup conflict defaults', () => {
       vi.unstubAllGlobals();
     }
   });
+  it('does not report completion when writing the server ZIP fails', async () => {
+    vi.stubGlobal('window', {
+      isSecureContext: true,
+      showSaveFilePicker: async () => ({
+        createWritable: async () =>
+          new WritableStream<Uint8Array>({
+            write() {
+              throw new Error('disk full');
+            },
+          }),
+      }),
+    });
+    vi.stubGlobal('fetch', async () => new Response('zip-content'));
+    const onExported = vi.fn();
+    const notify = vi.fn();
+    let controller!: BackupFeatureController;
+    let renderer!: ReactTestRenderer;
+    function Harness() {
+      controller = useBackupController({
+        repository: { createDownload: async () => '/api/backups/download/ticket' } as BackupRepository,
+        refreshLibrary: async () => {},
+        notify,
+        onExported,
+      });
+      return null;
+    }
+    try {
+      await act(async () => {
+        renderer = create(<Harness />);
+      });
+      await act(async () => controller.exportBackup());
+      expect(onExported).not.toHaveBeenCalled();
+      expect(notify).toHaveBeenCalledWith('disk full', 'danger');
+    } finally {
+      await act(async () => renderer.unmount());
+      vi.unstubAllGlobals();
+    }
+  });
   it('starts a native browser download without buffering ZIP or reporting a completed backup', async () => {
     const anchor = { href: '', download: '', target: '', rel: '', click: vi.fn(), remove: vi.fn() };
     vi.stubGlobal('document', { createElement: () => anchor, body: { append: vi.fn() } });

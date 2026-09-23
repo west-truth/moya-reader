@@ -21,6 +21,23 @@ async function unusedPort() {
   return port;
 }
 
+async function assertPortAvailable(port, service) {
+  const probe = createServer();
+  try {
+    await new Promise((resolve, reject) => {
+      probe.once('error', reject);
+      probe.listen(port, '127.0.0.1', resolve);
+    });
+  } catch (error) {
+    if (error.code === 'EADDRINUSE') {
+      throw new Error(`${service} 포트 ${port}번을 다른 프로그램이 사용 중입니다. 기존 서재 데이터는 보존했습니다.`);
+    }
+    throw error;
+  } finally {
+    if (probe.listening) await new Promise((resolve) => probe.close(resolve));
+  }
+}
+
 async function waitUntil(check, description, failed, timeout = 60_000) {
   const end = Date.now() + timeout;
   while (Date.now() < end) {
@@ -273,6 +290,13 @@ export async function startEmbeddedServer({ runtimeFile, profileDir, signal, onP
       ['postgres', 'redis', 'api'].some((key) => credentials.ports[key] === credentials.ports.tunnel)
     )
       throw new Error('Invalid tunnel port in server profile; existing data was preserved');
+    for (const [name, label] of [
+      ['postgres', 'PostgreSQL'],
+      ['redis', 'Redis'],
+      ['api', '모야 API'],
+    ]) {
+      await assertPortAvailable(credentials.ports[name], label);
+    }
     const pgVersion = await readFile(path.join(db, 'PG_VERSION'), 'utf8').catch((error) => {
       if (error.code !== 'ENOENT') throw error;
       return undefined;
@@ -583,7 +607,14 @@ if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.ar
           emit({ event: 'sharing', sharingPending: true });
           await sharing?.stop();
           sharing = undefined;
-          if (message.mode === 'direct') sharing = await startSharing({ url: server.url, host: message.host });
+          if (message.mode === 'direct')
+            sharing = await startSharing({
+              url: server.url,
+              host: message.host,
+              onExit: (error) => {
+                if (generation === sharingGeneration) emit({ event: 'sharing', sharingUrl: null, sharingError: error });
+              },
+            });
           else if (message.mode === 'cloudflare' || message.mode === 'named') {
             if (message.mode === 'named' && !message.token) throw new Error('터널 토큰을 입력해 주세요.');
             sharing = await startCloudflareSharing({

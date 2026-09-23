@@ -13,6 +13,16 @@ export function fixedTunnelOrigin(value) {
   return url.origin;
 }
 
+async function defaultPublicProbe(publicUrl) {
+  const response = await fetch(`${publicUrl}/api/auth/status`, {
+    cache: 'no-store',
+    signal: AbortSignal.timeout(5_000),
+  });
+  // A custom tunnel can have its own access gate. Any non-server-error response
+  // proves that the public route is reachable from this PC.
+  return response.status < 500;
+}
+
 /** Only the authenticated sharing gateway is published, never the private owner API. */
 export async function startCloudflareSharing({
   url,
@@ -23,6 +33,9 @@ export async function startCloudflareSharing({
   token,
   signal,
   onExit = () => {},
+  probePublicUrl = defaultPublicProbe,
+  probeIntervalMs = 15_000,
+  spawnConnector = spawn,
 }) {
   signal?.throwIfAborted();
   if (!executable) throw new Error('동봉된 Cloudflare 실행 파일을 찾지 못했습니다.');
@@ -36,9 +49,13 @@ export async function startCloudflareSharing({
   let active = false;
   let stopping = false;
   let stopPromise;
+  let monitor;
+  let probing = false;
+  let failedProbes = 0;
   const stop = () =>
     (stopPromise ??= (async () => {
       stopping = true;
+      clearInterval(monitor);
       await gateway.stop();
       if (child && child.exitCode === null && child.signalCode === null) {
         child.kill();
@@ -63,7 +80,7 @@ export async function startCloudflareSharing({
       'http2',
       ...(token ? ['run'] : ['--url', gateway.url]),
     ];
-    child = spawn(executable, args, { env, windowsHide: true, stdio: ['ignore', 'ignore', 'pipe'] });
+    child = spawnConnector(executable, args, { env, windowsHide: true, stdio: ['ignore', 'ignore', 'pipe'] });
     closed = new Promise((resolve) => {
       child.once('error', () => {
         failure = 'Cloudflare 실행에 실패했습니다.';
@@ -72,7 +89,10 @@ export async function startCloudflareSharing({
       child.once('close', () => {
         failure ??= 'Cloudflare 연결이 종료되었습니다. 다시 연결해 주세요.';
         if (active && !stopping) {
-          void gateway.stop().then(() => onExit(failure));
+          void stop().then(
+            () => onExit(failure),
+            () => onExit(failure),
+          );
         }
         resolve();
       });
@@ -98,6 +118,29 @@ export async function startCloudflareSharing({
     }
     gateway.setPublicOrigin(publicUrl);
     active = true;
+    monitor = setInterval(() => {
+      if (stopping || probing) return;
+      probing = true;
+      void Promise.resolve()
+        .then(() => probePublicUrl(publicUrl))
+        .then(
+          (reachable) => {
+            failedProbes = reachable ? 0 : failedProbes + 1;
+          },
+          () => {
+            failedProbes += 1;
+          },
+        )
+        .then(() => {
+          probing = false;
+          if (stopping || failedProbes < 3) return;
+          void stop().then(
+            () => onExit('원격 네트워크 연결을 확인할 수 없습니다. 다시 연결해 주세요.'),
+            () => onExit('원격 네트워크 연결을 확인할 수 없습니다. 다시 연결해 주세요.'),
+          );
+        });
+    }, probeIntervalMs);
+    monitor.unref();
     return { url: publicUrl, stop };
   } catch (error) {
     await stop();

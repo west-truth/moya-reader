@@ -1,8 +1,22 @@
 import assert from 'node:assert/strict';
 import { createServer, request as httpRequest } from 'node:http';
 import { test } from 'node:test';
-import { createSharingListener } from './embedded-sharing.mjs';
+import { createSharingListener, startSharing } from './embedded-sharing.mjs';
 import { fixedTunnelOrigin, startCloudflareSharing } from './embedded-tunnel.mjs';
+
+async function withinFiveSeconds(promise) {
+  let timer;
+  try {
+    return await Promise.race([
+      promise,
+      new Promise((_, reject) => {
+        timer = setTimeout(() => reject(new Error('network monitor timed out')), 5_000);
+      }),
+    ]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
 
 test('HTTPS gateway admits only its public host/origin and never native bearer credentials', async () => {
   const received = [];
@@ -50,6 +64,38 @@ test('HTTPS gateway admits only its public host/origin and never native bearer c
     await assert.rejects(request());
   } finally {
     await gateway?.stop();
+    await new Promise((resolve) => api.close(resolve));
+  }
+});
+
+test('revokes direct sharing when its network address disappears while the server stays up', async () => {
+  const api = createServer((request, response) => {
+    if (request.url === '/api/auth/status') return response.end(JSON.stringify({ setupRequired: false }));
+    response.end('library is available');
+  });
+  await new Promise((resolve) => api.listen(0, '127.0.0.1', resolve));
+  const localUrl = `http://127.0.0.1:${api.address().port}`;
+  let attached = true;
+  let sharing;
+  try {
+    let resolveDisconnected;
+    const disconnected = new Promise((resolve) => {
+      resolveDisconnected = resolve;
+    });
+    sharing = await startSharing({
+      url: localUrl,
+      host: '127.0.0.1',
+      listInterfaces: () => (attached ? [{ name: 'test VPN', address: '127.0.0.1' }] : []),
+      monitorIntervalMs: 10,
+      onExit: resolveDisconnected,
+    });
+    assert.equal((await fetch(`${sharing.url}/api/books`)).status, 200);
+    attached = false;
+    assert.match(await withinFiveSeconds(disconnected), /네트워크 연결이 끊겼습니다/);
+    await assert.rejects(fetch(`${sharing.url}/api/books`));
+    assert.equal((await fetch(`${localUrl}/api/books`)).status, 200);
+  } finally {
+    await sharing?.stop();
     await new Promise((resolve) => api.close(resolve));
   }
 });
