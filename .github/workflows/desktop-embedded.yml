@@ -18,6 +18,9 @@ on:
       - 'src-tauri/src/app.rs'
       - 'src/platform/EmbeddedServer*.tsx'
       - 'src/main.tsx'
+      - 'src/platform/webnovel-metadata-collector*'
+      - 'services/webnovel-metadata-collector/**'
+      - 'scripts/build-webnovel-metadata-collector-sidecar.mjs'
 
 permissions:
   contents: read
@@ -35,6 +38,9 @@ jobs:
         with:
           node-version: 22
           cache: pnpm
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
         with:
@@ -65,6 +71,8 @@ jobs:
         run: |
           node scripts/desktop/smoke-embedded-server.mjs ".tmp/Moya app 한글/embedded-server/runtime.json"
           if ($LASTEXITCODE -ne 0) { throw 'Embedded server smoke failed' }
+      - name: Launch packaged collector and login browser through the authenticated gateway
+        run: node scripts/desktop/smoke-embedded-collector.mjs ".tmp/Moya app 한글/embedded-server/runtime.json"
       - name: Read EPUB and PDF using the packaged server
         run: node scripts/desktop/smoke-embedded-formats.mjs ".tmp/Moya app 한글/embedded-server/runtime.json"
       - name: Build the release installer candidate

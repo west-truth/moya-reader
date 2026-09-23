@@ -71,9 +71,9 @@ export async function recoverEmbeddedProfile({ profileDir, postgresBin, redisCli
     )
   )
     throw new Error('복구할 서버 설정을 확인하지 못했습니다. 기존 자료를 보존했습니다.');
-  // API/worker receive IPC disconnect when their launcher dies. Give them time to drain.
+  // API/worker receive IPC disconnect; the collector receives stdin EOF.
   for (const child of owner.children ?? []) {
-    if (!['api', 'worker'].includes(child.label)) continue;
+    if (!['api', 'worker', 'collector'].includes(child.label)) continue;
     for (let attempt = 0; attempt < 300 && alive(child.pid); attempt++) await delay(100);
     if (alive(child.pid)) throw new Error('이전 서재 작업이 정리 중입니다. 잠시 후 다시 시도해 주세요.');
   }

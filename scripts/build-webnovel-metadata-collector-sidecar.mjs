@@ -29,6 +29,7 @@ for (const temporaryPath of [buildRoot, environmentRoot]) {
 function run(command, args, options = {}) {
   const result = spawnSync(command, args, {
     cwd: options.cwd ?? workspace,
+    env: options.env ?? process.env,
     encoding: 'utf8',
     stdio: options.stdio ?? 'inherit',
   });
@@ -144,5 +145,17 @@ run(
   ],
   { failureMessage: 'metadata collector Python license inventory could not be generated' },
 );
+if (process.env.MOYA_COLLECTOR_BUNDLE_REMOTE_BROWSER === '1') {
+  // Playwright's installed package selects the exact browser revision. Remote-frame mode
+  // always runs headless, so the full headed Chromium payload is unnecessary.
+  run(environmentPython, ['-m', 'playwright', 'install', '--only-shell', 'chromium'], {
+    env: {
+      ...process.env,
+      PLAYWRIGHT_BROWSERS_PATH: join(outputDir, 'browsers'),
+      PLAYWRIGHT_SKIP_BROWSER_GC: '1',
+    },
+    failureMessage: 'metadata collector Chromium headless shell could not be installed',
+  });
+}
 console.log(`Bundled metadata collector: ${target}`);
 console.log(`Isolated bundle environment: ${environmentRoot}`);

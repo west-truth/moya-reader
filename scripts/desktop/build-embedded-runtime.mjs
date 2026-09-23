@@ -100,6 +100,16 @@ for (const component of components) {
   });
 }
 
+// Keep the existing Python service and its dependency notices in the same app-owned payload.
+run(process.execPath, [path.join(root, 'scripts/build-webnovel-metadata-collector-sidecar.mjs')], {
+  ...process.env,
+  // The managed sidecar uses its inherited stdin pipe for graceful shutdown and crash cleanup.
+  MOYA_COLLECTOR_BUNDLE_CONSOLE: '1',
+  MOYA_COLLECTOR_BUNDLE_REMOTE_BROWSER: '1',
+});
+await cp(path.join(root, 'src-tauri/collector-sidecar'), path.join(output, 'collector'), { recursive: true });
+inventory.push({ name: 'collector', installedBytes: await directoryBytes(path.join(output, 'collector')) });
+
 // PostgreSQL's narrow Windows argv/getcwd must agree on UTF-8. Relative paths
 // alone do not fix its bootstrap subprocess. Preserve the vendor trust manifest
 // and add the documented per-process code page, without changing the system locale.
@@ -194,6 +204,8 @@ await writeFile(
       postgresBin: 'postgres/bin',
       redisServer: 'redis/redis-server.exe',
       redisCli: 'redis/redis-cli.exe',
+      collectorExecutable: 'collector/webnovel-metadata-collector.exe',
+      collectorBrowsers: 'collector/browsers',
       serverDir: 'server',
       webDir: 'web',
     },

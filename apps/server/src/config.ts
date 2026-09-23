@@ -53,6 +53,7 @@ export interface ServerConfig {
   exposure?: ServerExposure;
   corsAllowedOrigins?: readonly string[];
   webNovelMetadataCollectorUrl?: string;
+  webNovelMetadataCollectorSessionToken?: string;
   webNovelMetadataCollectorRemoteAuthEnabled?: boolean;
   textSourceServerUrl?: string;
   textSourceServerKey?: string;
@@ -289,6 +290,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): ServerConfig {
       env.WEBNOVEL_METADATA_COLLECTOR_URL,
       'WEBNOVEL_METADATA_COLLECTOR_URL',
     ),
+    webNovelMetadataCollectorSessionToken: env.WEBNOVEL_METADATA_COLLECTOR_SESSION_TOKEN?.trim() || undefined,
     webNovelMetadataCollectorRemoteAuthEnabled: boolFromEnv(env.WEBNOVEL_METADATA_COLLECTOR_REMOTE_AUTH_ENABLED, false),
     s3: {
       endpoint: env.S3_ENDPOINT ?? 'http://127.0.0.1:9000',

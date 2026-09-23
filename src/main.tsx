@@ -123,7 +123,10 @@ async function startApp(): Promise<void> {
       extensionRuntimeFactory: () =>
         createAppExtensionRuntime({
           additionalTrustedRegistrations,
-          webNovelMetadataCollector: createPlatformWebNovelMetadataCollector(platformRuntime),
+          webNovelMetadataCollector: createPlatformWebNovelMetadataCollector(
+            platformRuntime,
+            connection ? { apiBaseUrl: `${connection.url}/api`, getAuthToken: () => connection.authToken } : undefined,
+          ),
         }),
     });
 

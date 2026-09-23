@@ -51,6 +51,8 @@ export async function startEmbeddedServer({ runtimeFile, profileDir, signal, onP
   const redisCli = runtimePath('redisCli');
   const serverDir = runtimePath('serverDir');
   const webDir = runtimePath('webDir');
+  const collectorExecutable = manifest.collectorExecutable ? runtimePath('collectorExecutable') : undefined;
+  const collectorBrowsers = manifest.collectorBrowsers ? runtimePath('collectorBrowsers') : undefined;
   const pg = (name) => path.join(postgresBin, name + (process.platform === 'win32' ? '.exe' : ''));
   if (!Number.isInteger(manifest.postgresMajor)) throw new Error('Missing PostgreSQL data version');
   await Promise.all(
@@ -83,6 +85,7 @@ export async function startEmbeddedServer({ runtimeFile, profileDir, signal, onP
   let redisChild;
   let api;
   let worker;
+  let collector;
   let credentials;
   let unexpectedExit;
   const owner = { pid: process.pid, startedAt: new Date().toISOString(), children: [] };
@@ -106,7 +109,11 @@ export async function startEmbeddedServer({ runtimeFile, profileDir, signal, onP
     signal?.throwIfAborted();
     return (
       postgresExited() ||
-      children.some((child) => child.exitCode !== null || child.signalCode !== null || child.spawnFailed)
+      children.some(
+        (child) =>
+          child.managedLabel !== 'collector' &&
+          (child.exitCode !== null || child.signalCode !== null || child.spawnFailed),
+      )
     );
   };
   const db = path.join(profileDir, 'postgres');
@@ -136,15 +143,16 @@ export async function startEmbeddedServer({ runtimeFile, profileDir, signal, onP
     }
   }
 
-  async function launch(label, executable, args, options = {}, ipc = false) {
+  async function launch(label, executable, args, options = {}, ipc = false, stdinPipe = false) {
     signal?.throwIfAborted();
     const log = await open(path.join(profileDir, `${label}.log`), 'a', 0o600);
     logs.push(log);
     const child = spawn(executable, args, {
       windowsHide: true,
       ...options,
-      stdio: ['ignore', log.fd, log.fd, ...(ipc ? ['ipc'] : [])],
+      stdio: [stdinPipe ? 'pipe' : 'ignore', log.fd, log.fd, ...(ipc ? ['ipc'] : [])],
     });
+    child.managedLabel = label;
     children.push(child);
     child.closed = new Promise((resolve) => {
       child.once('error', () => {
@@ -154,7 +162,7 @@ export async function startEmbeddedServer({ runtimeFile, profileDir, signal, onP
       child.once('close', resolve);
     });
     child.once('exit', (code) => {
-      if (!stopping) unexpectedExit?.(new Error(`${label} stopped unexpectedly (${code})`));
+      if (!stopping && label !== 'collector') unexpectedExit?.(new Error(`${label} stopped unexpectedly (${code})`));
     });
     await recordChild(label, child);
     return child;
@@ -175,6 +183,15 @@ export async function startEmbeddedServer({ runtimeFile, profileDir, signal, onP
       // Close admission first; the worker can still commit its current jobs.
       await stopNode(api);
       await stopNode(worker);
+      if (collector && collector.exitCode === null && collector.signalCode === null && !collector.spawnFailed) {
+        collector.stdin.end();
+        await Promise.race([
+          collector.closed,
+          delay(15_000, undefined, { ref: false }).then(() => {
+            throw new Error('Collector shutdown timed out');
+          }),
+        ]);
+      }
       if (redisChild && redisChild.exitCode === null && !redisChild.spawnFailed) {
         await command(
           'redis-stop',
@@ -382,6 +399,69 @@ export async function startEmbeddedServer({ runtimeFile, profileDir, signal, onP
       'Redis startup',
       failed,
     );
+    let collectorUrl;
+    let collectorToken;
+    if (collectorExecutable) {
+      let collectorPort;
+      do {
+        collectorPort = await unusedPort();
+      } while (Object.values(credentials.ports).includes(collectorPort));
+      collectorUrl = `http://127.0.0.1:${collectorPort}`;
+      collectorToken = randomBytes(32).toString('hex');
+      const collectorDataDir = path.join(profileDir, 'metadata-collector');
+      await mkdir(collectorDataDir, { recursive: true, mode: 0o700 });
+      try {
+        await access(collectorExecutable);
+        if (collectorBrowsers) await access(collectorBrowsers);
+        collector = await launch(
+          'collector',
+          collectorExecutable,
+          ['--host', '127.0.0.1', '--port', String(collectorPort), '--watch-stdin'],
+          {
+            cwd: collectorDataDir,
+            env: {
+              ...process.env,
+              MOYA_COLLECTOR_DATA_DIR: collectorDataDir,
+              MOYA_COLLECTOR_SESSION_TOKEN: collectorToken,
+              ...(collectorBrowsers
+                ? {
+                    MOYA_COLLECTOR_REMOTE_AUTH: '1',
+                    MOYA_COLLECTOR_REMOTE_AUTH_HEADLESS: '1',
+                    PLAYWRIGHT_BROWSERS_PATH: collectorBrowsers,
+                  }
+                : {}),
+            },
+          },
+          false,
+          true,
+        );
+        await waitUntil(
+          async () => {
+            const response = await fetch(`${collectorUrl}/health`, {
+              headers: { 'X-Moya-Collector-Token': collectorToken },
+              signal: AbortSignal.timeout(1500),
+            });
+            if (!response.ok) return false;
+            const health = await response.json();
+            return (
+              health.status === 'ok' && health.service === 'webnovel-metadata-collector' && health.api_version === 1
+            );
+          },
+          'Collector startup',
+          () => failed() || collector.exitCode !== null || collector.signalCode !== null || collector.spawnFailed,
+          60_000,
+        );
+      } catch (error) {
+        if (signal?.aborted || failed()) throw error;
+        // Library reading remains available; the authenticated gateway reports collector failure.
+        await writeFile(path.join(profileDir, 'collector-startup.log'), `${error.message}\n`, { mode: 0o600 });
+        if (collector && collector.exitCode === null && collector.signalCode === null && !collector.spawnFailed) {
+          collector.stdin.end();
+          await Promise.race([collector.closed, delay(10_000, undefined, { ref: false })]);
+          if (collector.exitCode === null && collector.signalCode === null) collector.kill();
+        }
+      }
+    }
     const env = {
       ...process.env,
       MOYA_MANAGED_SERVER: '1',
@@ -397,6 +477,13 @@ export async function startEmbeddedServer({ runtimeFile, profileDir, signal, onP
       READER_AUTH_TOKEN: credentials.authToken,
       RUN_MIGRATIONS_ON_START: 'true',
       DEFAULT_USER_ID: 'user_desktop',
+      ...(collectorUrl
+        ? {
+            WEBNOVEL_METADATA_COLLECTOR_URL: collectorUrl,
+            WEBNOVEL_METADATA_COLLECTOR_SESSION_TOKEN: collectorToken,
+            ...(collectorBrowsers ? { WEBNOVEL_METADATA_COLLECTOR_REMOTE_AUTH_ENABLED: 'true' } : {}),
+          }
+        : {}),
     };
     await mkdir(env.OBJECT_STORAGE_DIR, { recursive: true, mode: 0o700 });
     onPhase('api');
