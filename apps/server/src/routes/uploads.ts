@@ -332,7 +332,7 @@ export async function registerUploadRoutes(
         );
         const nextAcceptedBytes = Number(acceptedResult.rows[0]?.accepted_bytes ?? 0) + request.body.length;
         const declaredBytes = Number(session.size_bytes);
-        const maxUploadBytes = localUploadLimit(config, session.file_name, session.import_mode);
+        const maxUploadBytes = localUploadLimit(config, session.file_name ?? '', session.import_mode);
         if (nextAcceptedBytes > declaredBytes || nextAcceptedBytes > maxUploadBytes) {
           await client.query('rollback');
           return reply.code(413).send({

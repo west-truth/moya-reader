@@ -52,3 +52,5 @@
 - 실제 서버 ZIP을 새 프로필에 복원하여 작품 ID·원본·독서 위치·재시작 보존을 확인했다. 복원 시 작품 `updated_at`이 갱신되는 기존 정책은 비교에서 명시적으로 구분했다.
 
 측정값과 남은 기능은 [P2 지원표](2026-09-24-desktop-feature-support.md)에 기록했다. P1/P2 전체 완료나 일반 배포 완료로 표시하지 않는다.
+
+최종 Windows 실행 [`35911331300`](https://github.com/west-truth/moya-reader/actions/runs/35911331300), 코드 `3e747f1`은 전체 통과했다. 소유권 확인·강제 종료 복구, native 앱/공유/재시작, 새 프로필 백업 복원, EPUB/PDF와 NSIS 설치/실행 검사를 포함한다. 약 129MB 설치 후보가 생성됐고 개발 도구 PATH 없이 동봉 서버로 실행했다. 실제 새 PC의 필수 구성 미설치 조건과 일반 배포 조건은 남아 있다. 자세한 수치와 증거의 범위는 [실행 기록](2026-09-23-desktop-embedded-runtime-decision.md)을 따른다.
