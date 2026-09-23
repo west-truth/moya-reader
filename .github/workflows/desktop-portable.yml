@@ -28,11 +28,17 @@ jobs:
           python-version: '3.12'
       - run: pnpm install --frozen-lockfile
       - run: pnpm desktop:portable:win
-      - name: Verify packaged JS source runtime
-        run: pnpm exec tsx scripts/extensions/mangayomi-native-smoke.ts
       - name: Smoke portable launch and folder move
         shell: pwsh
         run: ./scripts/desktop/smoke-portable-windows.ps1
+      - name: Verify extracted JS source runtime
+        shell: pwsh
+        run: |
+          $runtime = Get-ChildItem (Join-Path $env:RUNNER_TEMP 'Moya portable moved path/MoyaData/runtime') -Filter 'native-entry.mjs' -Recurse |
+            Where-Object { $_.FullName -like '*extension-sidecar*' } | Select-Object -First 1
+          if (!$runtime) { throw 'Extracted source runtime is missing.' }
+          $env:MOYA_PACKAGED_SIDECAR_DIR = $runtime.Directory.FullName
+          pnpm exec tsx scripts/extensions/mangayomi-native-smoke.ts
       - name: Verify standalone artifact
         shell: pwsh
         run: |

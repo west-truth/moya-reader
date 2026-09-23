@@ -16,7 +16,9 @@ import { NativePackageExecution } from '../../src/platform/tauri/native-package-
 
 // Requires the real generated bundle. Never substitutes system Node or skips missing resources.
 const root = fileURLToPath(new URL('../../', import.meta.url));
-const directory = resolve(root, 'src-tauri/extension-sidecar');
+const directory = process.env.MOYA_PACKAGED_SIDECAR_DIR
+  ? resolve(process.env.MOYA_PACKAGED_SIDECAR_DIR)
+  : resolve(root, 'src-tauri/extension-sidecar');
 assert.equal(process.platform, 'win32', 'This packaged runtime gate currently targets Windows x64');
 const temporary = await mkdtemp(join(tmpdir(), 'moya-native-mangayomi-'));
 const vaultDirectory = join(temporary, 'vault'),
