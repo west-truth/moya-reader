@@ -24,6 +24,7 @@ async function launch() {
     env: {
       ...process.env,
       MOYA_EMBEDDED_PROFILE: profile,
+      MOYA_EMBEDDED_CDP_PORT: String(port),
       WEBVIEW2_USER_DATA_FOLDER: path.join(profile, 'webview'),
       WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS: `--remote-debugging-port=${port}`,
     },
@@ -35,7 +36,7 @@ async function launch() {
   while (Date.now() < deadline) {
     assert.equal(app.exitCode, null, 'Native app exited before showing a reader');
     try {
-      browser = await chromium.connectOverCDP(`http://127.0.0.1:${port}`, { timeout: 1000 });
+      browser = await chromium.connectOverCDP(`http://127.0.0.1:${port}`, { timeout: 5000 });
       break;
     } catch (error) {
       connectionError = error.message;

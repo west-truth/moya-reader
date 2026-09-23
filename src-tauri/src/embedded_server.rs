@@ -108,6 +108,16 @@ impl EmbeddedServerManager {
         }
         .unwrap_or(crate::portable::data_dir(app)?.join("embedded-server"));
         std::fs::create_dir_all(&profile).map_err(|_| "서버 데이터 폴더를 만들지 못했습니다.")?;
+        let mut log_options = std::fs::OpenOptions::new();
+        log_options.create(true).append(true);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt;
+            log_options.mode(0o600);
+        }
+        let error_log = log_options
+            .open(profile.join("launcher.log"))
+            .map_err(|_| "서버 실행 로그를 열지 못했습니다.")?;
         let mut command = Command::new(node);
         command
             .arg(directory.join("embedded-server.mjs"))
@@ -116,7 +126,7 @@ impl EmbeddedServerManager {
             .arg("--stdio")
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
-            .stderr(Stdio::null());
+            .stderr(Stdio::from(error_log));
         #[cfg(target_os = "windows")]
         {
             use std::os::windows::process::CommandExt;

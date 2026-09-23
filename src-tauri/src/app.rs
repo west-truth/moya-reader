@@ -76,6 +76,23 @@ pub fn run() {
         .plugin(crate::android_document_io::init_android_document_io())
         .plugin(crate::android_plugins::init_android_shell())
         .plugin(crate::android_plugins::init_android_system_tts());
+    let context = tauri::generate_context!();
+    #[cfg(all(debug_assertions, target_os = "windows", moya_embedded_server))]
+    let context = {
+        let mut context = context;
+        if let Ok(port) = std::env::var("MOYA_EMBEDDED_CDP_PORT")
+            .unwrap_or_default()
+            .parse::<u16>()
+        {
+            if port != 0 {
+                if let Some(window) = context.config_mut().app.windows.first_mut() {
+                    window.additional_browser_args =
+                        Some(format!("--remote-debugging-port={port}"));
+                }
+            }
+        }
+        context
+    };
     let app = builder
         .on_window_event(|window, event| {
             if window.label() == "main" {
@@ -185,7 +202,7 @@ pub fn run() {
             crate::tts::render_cache::native_tts_pending_jobs,
             crate::tts::bridge::desktop_tts_list_voices
         ])
-        .build(tauri::generate_context!())
+        .build(context)
         .expect("error while building Moya");
     app.run(|app_handle, event| {
         if let tauri::RunEvent::ExitRequested { api, .. } = event {

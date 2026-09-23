@@ -182,6 +182,14 @@ try {
         await sharedPage.screenshot({ path: path.join(profileDir, 'shared-reader-error.png') });
         throw error;
       });
+    await sharedPage.getByRole('button', { name: '설정 열기', exact: true }).click();
+    await sharedPage.getByRole('tab', { name: /앱 정보/ }).click();
+    await sharedPage.getByRole('img', { name: '서재 접속 QR 코드' }).waitFor();
+    assert.equal(await sharedPage.getByLabel('다른 기기 접속 주소').inputValue(), `${sharedUrl}/`);
+    await sharedPage
+      .locator('section[aria-labelledby="server-access-title"]')
+      .screenshot({ path: path.join(profileDir, 'shared-access.png') });
+    await sharedPage.getByRole('button', { name: '설정 닫기', exact: true }).click();
     await sharedPage.locator('.book-continue-action').first().click();
     await sharedPage.getByText('모야 내장 서버의 독서 검증 문장입니다.', { exact: false }).first().waitFor();
     const changed = await remote.request.patch(`${sharedUrl}/api/books/${bookId}/reading-position`, {
