@@ -169,7 +169,12 @@ const providerWorker = createProviderWorker(config, async (jobId, attempt) => {
 importWorker.on('error', (error) => logger.error('import_worker_error', { errorName: error.name }));
 providerWorker.on('error', (error) => logger.error('provider_worker_error', { errorName: error.name }));
 
-async function shutdown(): Promise<void> {
+let shutdownPromise: Promise<void> | undefined;
+function shutdown(): Promise<void> {
+  return (shutdownPromise ??= closeWorker());
+}
+
+async function closeWorker(): Promise<void> {
   clearInterval(reviewReconcileTimer);
   clearInterval(importRecoveryTimer);
   clearInterval(providerRecoveryTimer);
@@ -197,3 +202,16 @@ process.on('SIGINT', () => {
 });
 
 logger.info('worker_started');
+
+if (process.env.MOYA_MANAGED_SERVER === '1') {
+  const managedShutdown = () => {
+    void shutdown().then(
+      () => process.exit(0),
+      () => process.exit(1),
+    );
+  };
+  process.on('message', (message) => {
+    if (message === 'shutdown') managedShutdown();
+  });
+  process.once('disconnect', managedShutdown);
+}

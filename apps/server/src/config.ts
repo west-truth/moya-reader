@@ -33,6 +33,10 @@ export interface ServerConfig {
   databaseUrl: string;
   redisUrl: string;
   dataDir: string;
+  /** App-owned object directory. Unset keeps the existing S3 deployment. */
+  objectStorageDir?: string;
+  /** Bundled shared reader assets; omitted for existing reverse-proxy deployments. */
+  webRoot?: string;
   /** Filesystem containing the actual object store; empty disables capacity probing. */
   storageCapacityPath?: string;
   storageMinimumFreeBytes?: number;
@@ -242,6 +246,8 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): ServerConfig {
     databaseUrl: databaseUrlFromEnv(env),
     redisUrl: env.REDIS_URL ?? 'redis://127.0.0.1:6379',
     dataDir: path.resolve(env.SERVER_DATA_DIR ?? '.server-data'),
+    objectStorageDir: env.OBJECT_STORAGE_DIR?.trim() ? path.resolve(env.OBJECT_STORAGE_DIR) : undefined,
+    webRoot: env.SERVER_WEB_ROOT?.trim() ? path.resolve(env.SERVER_WEB_ROOT) : undefined,
     storageCapacityPath:
       env.STORAGE_CAPACITY_PATH === undefined || env.STORAGE_CAPACITY_PATH === 'auto'
         ? undefined

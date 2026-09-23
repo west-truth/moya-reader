@@ -7,6 +7,7 @@ export function storageCapacityPath(config: ServerConfig): string | undefined {
   if (config.storageCapacityPath) return config.storageCapacityPath;
   // An explicit empty string disables the bundled-volume probe.
   if (config.storageCapacityPath === '') return undefined;
+  if (config.objectStorageDir) return config.objectStorageDir;
   try {
     if (new URL(config.s3.endpoint).hostname === 'minio') return '/data/storage-capacity';
   } catch {

@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { GetObjectCommand, type S3Client } from '@aws-sdk/client-s3';
+import { getObjectStream, type ObjectStorageClient } from './object-storage.js';
 import type pg from 'pg';
 import type { ServerConfig } from '../config.js';
 import type { ImportExpectedBase } from '../../../../src/services/import/import-service.js';
@@ -17,7 +17,7 @@ export type ReadDocumentSeriesSnapshot = (
 export function createDocumentSeriesSnapshot(
   pool: pg.Pool,
   config: ServerConfig,
-  s3: S3Client,
+  s3: ObjectStorageClient,
 ): ReadDocumentSeriesSnapshot {
   return async (bookId, expected, signal) => {
     signal.throwIfAborted();
@@ -55,10 +55,8 @@ export function createDocumentSeriesSnapshot(
       size > config.maxUploadBytes
     )
       throw new Error('invalid_source_assets');
-    const object = await s3.send(new GetObjectCommand({ Bucket: config.s3.bucket, Key: before.storage_key }), {
-      abortSignal: signal,
-    });
-    const body = object.Body;
+    const object = await getObjectStream(s3, config, before.storage_key, undefined, signal);
+    const body = object.body;
     if (!body || !(Symbol.asyncIterator in body)) throw new Error('invalid_source_assets');
     const chunks: Uint8Array[] = [];
     let length = 0;

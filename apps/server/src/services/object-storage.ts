@@ -11,10 +11,14 @@ import {
 } from '@aws-sdk/client-s3';
 import { Readable } from 'node:stream';
 import { ServerConfig } from '../config.js';
+import { FileObjectStore } from './file-object-store.js';
 
-const bucketReadiness = new WeakMap<S3Client, Map<string, Promise<void>>>();
+export type ObjectStorageClient = S3Client | FileObjectStore;
 
-export function createS3Client(config: ServerConfig): S3Client {
+const bucketReadiness = new WeakMap<ObjectStorageClient, Map<string, Promise<void>>>();
+
+export function createS3Client(config: ServerConfig): ObjectStorageClient {
+  if (config.objectStorageDir) return new FileObjectStore(config.objectStorageDir);
   return new S3Client({
     endpoint: config.s3.endpoint,
     region: config.s3.region,
@@ -26,7 +30,8 @@ export function createS3Client(config: ServerConfig): S3Client {
   });
 }
 
-export async function ensureBucket(client: S3Client, bucket: string): Promise<void> {
+export async function ensureBucket(client: ObjectStorageClient, bucket: string): Promise<void> {
+  if (client instanceof FileObjectStore) return client.ensureBucket(bucket);
   try {
     await client.send(new HeadBucketCommand({ Bucket: bucket }));
   } catch {
@@ -34,7 +39,7 @@ export async function ensureBucket(client: S3Client, bucket: string): Promise<vo
   }
 }
 
-function ensureBucketForWrite(client: S3Client, bucket: string): Promise<void> {
+function ensureBucketForWrite(client: ObjectStorageClient, bucket: string): Promise<void> {
   let clientBuckets = bucketReadiness.get(client);
   if (!clientBuckets) {
     clientBuckets = new Map();
@@ -51,14 +56,16 @@ function ensureBucketForWrite(client: S3Client, bucket: string): Promise<void> {
 }
 
 export async function putRawBookObject(
-  client: S3Client,
+  client: ObjectStorageClient,
   config: ServerConfig,
   key: string,
   body: Buffer | Blob,
   contentType: string,
   signal?: AbortSignal,
 ): Promise<void> {
+  if (client instanceof FileObjectStore) await client.ensureBucket(config.s3.bucket);
   await assertObjectStorageSpace(config, body instanceof Blob ? body.size : body.length);
+  if (client instanceof FileObjectStore) return client.put(config.s3.bucket, key, body, contentType, signal);
   await ensureBucketForWrite(client, config.s3.bucket);
   await client.send(
     new PutObjectCommand({
@@ -73,13 +80,15 @@ export async function putRawBookObject(
 }
 
 export async function putTtsAudioObject(
-  client: S3Client,
+  client: ObjectStorageClient,
   config: ServerConfig,
   key: string,
   body: Buffer,
   contentType: string,
 ): Promise<void> {
+  if (client instanceof FileObjectStore) await client.ensureBucket(config.s3.bucket);
   await assertObjectStorageSpace(config, body.length);
+  if (client instanceof FileObjectStore) return client.put(config.s3.bucket, key, body, contentType);
   await ensureBucketForWrite(client, config.s3.bucket);
   await client.send(
     new PutObjectCommand({
@@ -104,17 +113,20 @@ export interface StoredObjectStream {
 }
 
 export async function getObjectStream(
-  client: S3Client,
+  client: ObjectStorageClient,
   config: ServerConfig,
   key: string,
   range?: { readonly startInclusive: number; readonly endInclusive: number },
+  signal?: AbortSignal,
 ): Promise<StoredObjectStream> {
+  if (client instanceof FileObjectStore) return client.get(config.s3.bucket, key, range, signal);
   const result = await client.send(
     new GetObjectCommand({
       Bucket: config.s3.bucket,
       Key: key,
       ...(range ? { Range: `bytes=${range.startInclusive}-${range.endInclusive}` } : {}),
     }),
+    { abortSignal: signal },
   );
   return {
     body: objectBodyToReadable(result.Body),
@@ -123,7 +135,15 @@ export async function getObjectStream(
   };
 }
 
-export async function getObjectBuffer(client: S3Client, config: ServerConfig, key: string): Promise<StoredObject> {
+export async function getObjectBuffer(
+  client: ObjectStorageClient,
+  config: ServerConfig,
+  key: string,
+): Promise<StoredObject> {
+  if (client instanceof FileObjectStore) {
+    const object = await client.get(config.s3.bucket, key);
+    return { ...object, body: await objectBodyToBuffer(object.body) };
+  }
   const result = await client.send(
     new GetObjectCommand({
       Bucket: config.s3.bucket,
@@ -138,10 +158,11 @@ export async function getObjectBuffer(client: S3Client, config: ServerConfig, ke
 }
 
 export async function inspectStoredObject(
-  client: S3Client,
+  client: ObjectStorageClient,
   config: ServerConfig,
   key: string,
 ): Promise<{ byteLength?: number; contentType?: string } | undefined> {
+  if (client instanceof FileObjectStore) return client.inspect(config.s3.bucket, key);
   try {
     const result = await client.send(new HeadObjectCommand({ Bucket: config.s3.bucket, Key: key }));
     return { byteLength: result.ContentLength, contentType: result.ContentType };
@@ -152,12 +173,16 @@ export async function inspectStoredObject(
 }
 
 export async function getObjectRangeBuffer(
-  client: S3Client,
+  client: ObjectStorageClient,
   config: ServerConfig,
   key: string,
   startInclusive: number,
   endInclusive: number,
 ): Promise<StoredObject> {
+  if (client instanceof FileObjectStore) {
+    const object = await client.get(config.s3.bucket, key, { startInclusive, endInclusive });
+    return { ...object, body: await objectBodyToBuffer(object.body) };
+  }
   const result = await client.send(
     new GetObjectCommand({
       Bucket: config.s3.bucket,
@@ -172,7 +197,8 @@ export async function getObjectRangeBuffer(
   };
 }
 
-export async function deleteObject(client: S3Client, config: ServerConfig, key: string): Promise<void> {
+export async function deleteObject(client: ObjectStorageClient, config: ServerConfig, key: string): Promise<void> {
+  if (client instanceof FileObjectStore) return client.delete(config.s3.bucket, key);
   await client.send(new DeleteObjectCommand({ Bucket: config.s3.bucket, Key: key }));
 }
 
@@ -204,7 +230,7 @@ function objectBodyToReadable(body: unknown): Readable {
 
 /** First adoption retains the original under an attempt-owned key without downloading it into RAM. */
 export async function copyStoredObject(
-  client: S3Client,
+  client: ObjectStorageClient,
   config: ServerConfig,
   sourceKey: string,
   targetKey: string,
@@ -215,6 +241,7 @@ export async function copyStoredObject(
     if (source?.byteLength === undefined) throw new Error('복사할 원본 파일의 용량을 확인하지 못했습니다.');
     await assertObjectStorageSpace(config, source.byteLength);
   }
+  if (client instanceof FileObjectStore) return client.copy(config.s3.bucket, sourceKey, targetKey, signal);
   await client.send(
     new CopyObjectCommand({
       Bucket: config.s3.bucket,

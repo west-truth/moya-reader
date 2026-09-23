@@ -1,0 +1,52 @@
+name: Desktop embedded server proof
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [feat/desktop-embedded-selfhost]
+    paths:
+      - '.github/workflows/desktop-embedded.yml'
+      - 'scripts/desktop/*embedded*'
+      - 'apps/server/src/**'
+
+permissions:
+  contents: read
+
+jobs:
+  windows-server:
+    runs-on: windows-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+      - uses: pnpm/action-setup@v6
+        with:
+          version: 11.7.0
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: node scripts/desktop/build-embedded-runtime.mjs
+      - run: pnpm exec playwright-core install chromium
+      - name: Run packaged server and shared reader, then restart
+        shell: pwsh
+        run: |
+          node scripts/desktop/smoke-embedded-server.mjs .tmp/embedded-windows/runtime.json
+          if ($LASTEXITCODE -ne 0) { throw 'Embedded server smoke failed' }
+      - name: Collect evidence without credentials or server data
+        if: always()
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force .tmp/embedded-evidence | Out-Null
+          Copy-Item .tmp/embedded-windows/inventory.json .tmp/embedded-evidence/ -ErrorAction SilentlyContinue
+          $profile = Get-ChildItem $env:TEMP -Directory -Filter 'Moya embedded *' | Sort-Object LastWriteTime -Descending | Select-Object -First 1
+          if ($profile) {
+            foreach ($name in @('smoke-result.json', 'reader.png', 'initdb.log', 'postgres-ready.log', 'redis-ready.log')) {
+              Copy-Item (Join-Path $profile.FullName $name) .tmp/embedded-evidence/ -ErrorAction SilentlyContinue
+            }
+          }
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: embedded-windows-evidence
+          path: .tmp/embedded-evidence/
