@@ -149,7 +149,9 @@ export async function startEmbeddedServer({ runtimeFile, profileDir }) {
         await redisChild.closed;
       }
       if (pgChild && pgChild.exitCode === null && !pgChild.spawnFailed) {
-        await command('postgres-stop', pg('pg_ctl'), ['-D', db, '-m', 'fast', '-w', '-t', '30', 'stop']);
+        await command('postgres-stop', pg('pg_ctl'), ['-D', 'postgres', '-m', 'fast', '-w', '-t', '30', 'stop'], {
+          cwd: profileDir,
+        });
         await pgChild.closed;
       }
       await Promise.all(logs.map((log) => log.close()));
@@ -203,39 +205,50 @@ export async function startEmbeddedServer({ runtimeFile, profileDir }) {
       const passwordFile = path.join(profileDir, `init-password-${randomUUID()}`);
       try {
         await writeFile(passwordFile, credentials.postgresPassword, { mode: 0o600, flag: 'wx' });
-        await command('initdb', pg('initdb'), [
-          '-D',
-          staging,
-          '-U',
-          'moya',
-          '--pwfile',
-          passwordFile,
-          ...(manifest.postgresShare ? ['-L', runtimePath('postgresShare')] : []),
-          '--auth-local=scram-sha-256',
-          '--auth-host=scram-sha-256',
-          '--encoding=UTF8',
-          '--no-locale',
-        ]);
+        // Keep Unicode profile names out of the Windows CRT's narrow argv paths.
+        await command(
+          'initdb',
+          pg('initdb'),
+          [
+            '-D',
+            path.basename(staging),
+            '-U',
+            'moya',
+            '--pwfile',
+            path.basename(passwordFile),
+            ...(manifest.postgresShare ? ['-L', runtimePath('postgresShare')] : []),
+            '--auth-local=scram-sha-256',
+            '--auth-host=scram-sha-256',
+            '--encoding=UTF8',
+            '--no-locale',
+          ],
+          { cwd: profileDir },
+        );
         await rename(staging, db);
       } finally {
         await rm(passwordFile, { force: true });
       }
     }
     const databaseUrl = `postgres://moya:${credentials.postgresPassword}@127.0.0.1:${credentials.ports.postgres}/postgres`;
-    pgChild = await launch('postgres', pg('postgres'), [
-      '-D',
-      db,
-      '-h',
-      '127.0.0.1',
-      '-p',
-      String(credentials.ports.postgres),
-      '-c',
-      'unix_socket_directories=',
-      '-c',
-      'shared_buffers=32MB',
-      '-c',
-      'max_connections=50',
-    ]);
+    pgChild = await launch(
+      'postgres',
+      pg('postgres'),
+      [
+        '-D',
+        'postgres',
+        '-h',
+        '127.0.0.1',
+        '-p',
+        String(credentials.ports.postgres),
+        '-c',
+        'unix_socket_directories=',
+        '-c',
+        'shared_buffers=32MB',
+        '-c',
+        'max_connections=50',
+      ],
+      { cwd: profileDir },
+    );
     await waitUntil(
       async () => {
         await command('postgres-ready', pg('pg_isready'), [

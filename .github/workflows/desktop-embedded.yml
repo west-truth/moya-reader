@@ -41,7 +41,7 @@ jobs:
           Copy-Item .tmp/embedded-windows/inventory.json .tmp/embedded-evidence/ -ErrorAction SilentlyContinue
           $profile = Get-ChildItem $env:TEMP -Directory -Filter 'Moya embedded *' | Sort-Object LastWriteTime -Descending | Select-Object -First 1
           if ($profile) {
-            foreach ($name in @('smoke-result.json', 'reader.png', 'initdb.log', 'postgres-ready.log', 'redis-ready.log')) {
+            foreach ($name in @('smoke-result.json', 'reader.png', 'initdb.log', 'postgres.log', 'postgres-ready.log', 'redis.log', 'redis-ready.log')) {
               Copy-Item (Join-Path $profile.FullName $name) .tmp/embedded-evidence/ -ErrorAction SilentlyContinue
             }
           }
