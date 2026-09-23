@@ -4,6 +4,9 @@ use tauri::AppHandle;
 use tauri::Manager;
 
 #[cfg(moya_portable)]
+static PORTABLE_PAYLOAD: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/portable-payload.zip"));
+
+#[cfg(moya_portable)]
 #[derive(Clone)]
 pub(crate) struct PortableProfile {
     pub(crate) root: PathBuf,
@@ -40,7 +43,7 @@ pub(crate) fn prepare() -> Result<PortableProfile, String> {
                 }
                 return Err("이 MoyaData 폴더를 사용하는 Moya가 이미 실행 중입니다.".into());
             }
-            let payload = include_bytes!(concat!(env!("OUT_DIR"), "/portable-payload.zip"));
+            let payload = PORTABLE_PAYLOAD;
             let digest = format!("{:x}", Sha256::digest(payload));
             let runtime = root.join("runtime").join(&digest[..20]);
             let marker = runtime.join(".moya-payload-sha256");
@@ -180,7 +183,7 @@ pub(crate) fn ensure_webview2() -> Result<(), String> {
             .join(format!(".webview2-{}-{nanos}", std::process::id()));
         std::fs::create_dir(&stage).map_err(|_| "WebView2 임시 폴더를 만들 수 없습니다.")?;
         let result = (|| -> Result<(), String> {
-            let payload = include_bytes!(concat!(env!("OUT_DIR"), "/portable-payload.zip"));
+            let payload = PORTABLE_PAYLOAD;
             let mut archive = zip::ZipArchive::new(Cursor::new(payload))
                 .map_err(|_| "포터블 실행 파일을 읽을 수 없습니다.")?;
             let mut cab = archive
