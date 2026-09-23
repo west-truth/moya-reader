@@ -24,9 +24,11 @@
 | `segments`, `characters`, `character_relations`, `voice_profiles`, `voice_casting_states`, `corrections` | `labeled_segments`, `characters`, `character_relations`, `voice_profiles`, `voice_casting_states`, `user_corrections` | 각각의 column 변환·revision fence·참조 ID·중복 정책 확인이 필요하다. 이름이 비슷한 행을 통째로 삽입하면 안 된다. |
 | `user_fonts`, `reading_session_events` 및 blob | 서버 같은 이름의 테이블과 객체 저장소 | 폰트 blob은 서버 객체로 옮긴 뒤 content hash와 참조를 맞춘다. 세션의 book ID·operation ID 중복을 검증한다. |
 
-## 현재 서버 백업 경계의 빈 곳
+## 서버 백업 경계에서 확인한 빈 곳과 보완
 
-서버 DB에 테이블이 있어도 `HOSTED_BACKUP_TABLES`에 없으면 기존 서버 ZIP 복원은 그 행을 운반하지 않는다. 로컬 백업이 담는 `listening_positions`, `document_annotations`, `document_text_order_overrides`, `comic_profiles`, `spoken_text_rules`가 대표 사례다. `document_*`의 일부는 기기 캐시/파생 자료라 재생성 가능할 수 있지만, 사용자의 주석·읽던 위치·수정한 텍스트 순서는 그런 가정으로 버릴 수 없다.
+서버 DB에 테이블이 있어도 `HOSTED_BACKUP_TABLES`에 없으면 기존 서버 ZIP 복원은 그 행을 운반하지 않는다. 조사 시 누락된 `listening_positions`, `document_annotations`, `document_text_order_overrides`, `comic_reading_profiles`, `spoken_text_rules`와 PDF/만화 page·텍스트 revision/block을 서버 백업 목록에 추가했다. 새 서버 백업의 단위 round-trip과 copy 복원을 검사했다. 이는 **서버 ZIP 보존 범위**의 수정이며 로컬 ZIP 변환이 끝났다는 뜻은 아니다. 종전 버전이 이미 만든 서버 ZIP에는 빠진 행을 되살릴 수 없다.
+
+로컬 `comic_profiles`→서버 `comic_reading_profiles`를 포함해, 이 항목들의 camelCase/JSON 필드 변환과 원본 revision 일치 검사도 C1에서 별도로 구현해야 한다. `document_*`의 일부는 기기 캐시/파생 자료라 재생성 가능할 수 있지만, 사용자의 주석·읽던 위치·수정한 텍스트 순서는 그런 가정으로 버릴 수 없다.
 
 로컬의 `native_analysis_provenance`, `label_mutation_receipts`, `label_mutation_invalidations`, `label_reanalysis_plans`, `character_*_v2`, `chapter_structure_*`, speaker attribution/workflow, temporal memory 자료는 서버의 동명 또는 유사 테이블과 필드 계약을 아직 확인하지 못했다. 첫 변환기에서 이름만 보고 복사하지 않는다. 해당 row가 있는 ZIP은 항목별 지원/미지원 진단을 보여 주고 원본 ZIP을 보존해야 한다.
 
