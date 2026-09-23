@@ -83,7 +83,6 @@ jobs:
         timeout-minutes: 5
         run: node scripts/desktop/smoke-embedded-app.mjs ".tmp/Moya app 한글/Moya.exe"
       - name: Run packaged server and shared reader, then restart
-        if: ${{ !cancelled() }}
         shell: pwsh
         run: |
           node scripts/desktop/smoke-embedded-server.mjs ".tmp/Moya app 한글/embedded-server/runtime.json"
@@ -92,10 +91,10 @@ jobs:
         run: node scripts/desktop/smoke-embedded-formats.mjs ".tmp/Moya app 한글/embedded-server/runtime.json"
       - name: Build the release installer candidate
         id: installer
-        if: ${{ !cancelled() && inputs.build_installer }}
+        if: ${{ success() && inputs.build_installer }}
         run: node scripts/desktop/build-embedded-installer.mjs
       - name: Install and start with developer tools removed from PATH
-        if: ${{ !cancelled() && inputs.build_installer && steps.installer.outcome == 'success' }}
+        if: ${{ success() && inputs.build_installer && steps.installer.outcome == 'success' }}
         run: ./scripts/desktop/smoke-embedded-installer.ps1
       - name: Collect evidence without credentials or server data
         if: always()

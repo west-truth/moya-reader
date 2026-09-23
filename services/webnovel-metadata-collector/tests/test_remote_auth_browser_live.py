@@ -42,14 +42,14 @@ def test_real_browser_input_popup_and_restart(tmp_path):
             await context.add_cookies([{"name": "session", "value": "synthetic-login", "domain": "login.example.test", "path": "/", "httpOnly": True, "secure": True}])
             await page.evaluate("localStorage.setItem('auth-marker', 'synthetic')")
             await manager.finish_login()
-            manager.set_enabled("novelpia", True)
+            manager.set_enabled("ridi", True)
             await manager.aclose()
             restored = AuthSessionManager(tmp_path)
             restored.remote_auth = True
             restored.remote_auth_headless = True
             next_context = await restored._ensure_context(visible=False)
             assert any(c["name"] == "session" and c["value"] == "synthetic-login" for c in await next_context.cookies())
-            assert restored.is_enabled("novelpia")
+            assert restored.is_enabled("ridi")
             await next_context.unroute("**/*")
             await next_context.route("**/*", lambda route: route.fulfill(content_type="text/html", body="Restored"))
             await next_context.pages[0].goto("https://login.example.test")
