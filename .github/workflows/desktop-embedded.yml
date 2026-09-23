@@ -80,7 +80,7 @@ jobs:
       - name: Recover the same profile after killing its launcher
         run: node scripts/desktop/smoke-embedded-recovery.mjs ".tmp/Moya app 한글/embedded-server/runtime.json"
       - name: Open native window, connect automatically, share, revoke and restart
-        timeout-minutes: 5
+        timeout-minutes: 8
         run: node scripts/desktop/smoke-embedded-app.mjs ".tmp/Moya app 한글/Moya.exe"
       - name: Run packaged server and shared reader, then restart
         shell: pwsh

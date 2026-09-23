@@ -7,6 +7,7 @@ import path from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 import { chromium } from 'playwright-core';
 import { BlobReader, TextWriter, ZipReader } from '@zip.js/zip.js';
+import { startEmbeddedServer } from './embedded-server.mjs';
 import { epubFixture, pdfFixture } from './embedded-format-fixtures.mjs';
 
 const executable = path.resolve(process.argv[2]);
@@ -286,6 +287,43 @@ try {
   evidence.trayMaintainsServer = true;
   evidence.restart = true;
   await close(true);
+  const restoredProfile = await mkdtemp(path.join(tmpdir(), 'Moya native backup restored '));
+  const runtimeFile = path.join(path.dirname(executable), 'embedded-server', 'runtime.json');
+  let restoredServer;
+  try {
+    restoredServer = await startEmbeddedServer({ runtimeFile, profileDir: restoredProfile });
+    const restoredRequest = async (resource, options = {}) => {
+      const response = await fetch(`${restoredServer.url}/api${resource}`, {
+        ...options,
+        headers: { Authorization: `Bearer ${restoredServer.authToken}`, ...options.headers },
+      });
+      assert(response.ok, `${resource}: ${response.status} ${await response.clone().text()}`);
+      return response.json();
+    };
+    const inspection = await restoredRequest('/backups/inspect', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/zip' },
+      body: await readFile(backupPath),
+    });
+    assert(inspection.stagedId);
+    const result = await restoredRequest(`/backups/staged/${inspection.stagedId}/restore`, { method: 'POST' });
+    assert.equal(result.restoredBooks, 3);
+    const books = await restoredRequest('/books');
+    assert.equal(books.books.length, 3);
+    const restoredBookmarks = await restoredRequest(`/books/${textBookId}/bookmarks`);
+    assert.equal(restoredBookmarks.bookmarks.length, 1);
+    const restoredSource = await fetch(`${restoredServer.url}/api/books/${textBookId}/source`, {
+      headers: { Authorization: `Bearer ${restoredServer.authToken}` },
+    });
+    assert.equal(restoredSource.status, 200);
+    assert.deepEqual(
+      Buffer.from(await restoredSource.arrayBuffer()),
+      Buffer.from('1화 시작\n\n앱 창에서 내장 서버의 작품을 읽습니다.\n'),
+    );
+    evidence.nativeBackupRestored = true;
+  } finally {
+    await restoredServer?.stop();
+  }
 } catch (error) {
   evidence.failure = error.message;
   if (process.platform === 'win32') {
