@@ -1,4 +1,4 @@
-use tauri::Manager;
+use tauri::{Emitter, Manager};
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -77,7 +77,23 @@ pub fn run() {
         .plugin(crate::android_plugins::init_android_shell())
         .plugin(crate::android_plugins::init_android_system_tts());
     let app = builder
+        .on_window_event(|window, event| {
+            if window.label() == "main" {
+                if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                    if window
+                        .state::<crate::embedded_server::EmbeddedServerManager>()
+                        .running()
+                    {
+                        api.prevent_close();
+                        let _ = window.emit("embedded-server-close-requested", ());
+                    }
+                }
+            }
+        })
         .setup(|app| {
+            app.manage(crate::embedded_server::EmbeddedServerManager::default());
+            #[cfg(all(desktop, moya_embedded_server))]
+            crate::embedded_server::setup_tray(app.handle())?;
             #[cfg(moya_portable)]
             {
                 let window = app.config().app.windows.first().ok_or_else(|| {
@@ -116,6 +132,10 @@ pub fn run() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            crate::embedded_server::desktop_embedded_server_start,
+            crate::embedded_server::desktop_embedded_server_status,
+            crate::embedded_server::desktop_embedded_server_close,
+            crate::embedded_server::desktop_embedded_server_share,
             crate::provider_secrets::provider_secret_set,
             crate::provider_secrets::provider_secret_status,
             crate::provider_secrets::provider_secret_delete,
@@ -168,7 +188,15 @@ pub fn run() {
         .build(tauri::generate_context!())
         .expect("error while building Moya");
     app.run(|app_handle, event| {
-        if matches!(event, tauri::RunEvent::ExitRequested { .. }) {
+        if let tauri::RunEvent::ExitRequested { api, .. } = event {
+            let server = app_handle.state::<crate::embedded_server::EmbeddedServerManager>();
+            if server.running() {
+                api.prevent_exit();
+                if let Err(error) = server.stop(app_handle) {
+                    eprintln!("{error}");
+                }
+                return;
+            }
             app_handle
                 .state::<crate::extension_runtime::ExtensionRuntimeManager>()
                 .stop_before_exit();

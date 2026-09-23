@@ -143,6 +143,7 @@ const corepack = path.join(path.dirname(process.execPath), 'node_modules/corepac
 run(process.execPath, [
   corepack,
   '--config.inject-workspace-packages=true',
+  '--config.node-linker=hoisted',
   '--filter',
   'server',
   'deploy',
@@ -150,7 +151,7 @@ run(process.execPath, [
   deploy,
 ]);
 await mkdir(path.join(output, 'server'), { recursive: true });
-// Deploy directly into the final directory: Windows pnpm junctions must not be moved.
+// Hoisted deployment uses physical dependency folders and remains valid after installation or a folder move.
 await rm(path.join(deploy, 'src'), { recursive: true, force: true });
 await cp(path.join(root, 'apps/server/dist'), path.join(output, 'server/dist'), { recursive: true });
 await cp(path.join(root, 'apps/server/package.json'), path.join(output, 'server/package.json'));
@@ -163,7 +164,9 @@ run(
     VITE_API_BASE_URL: '/api',
   },
 );
-await cp(path.join(root, 'scripts/desktop/embedded-server.mjs'), path.join(output, 'embedded-server.mjs'));
+for (const script of ['embedded-server.mjs', 'embedded-sharing.mjs']) {
+  await cp(path.join(root, 'scripts/desktop', script), path.join(output, script));
+}
 for (const name of ['LICENSE', 'THIRD_PARTY_NOTICES.md']) await cp(path.join(root, name), path.join(output, name));
 await writeFile(
   path.join(output, 'runtime.json'),
@@ -198,7 +201,7 @@ await writeFile(
   path.join(output, 'inventory.json'),
   JSON.stringify(
     {
-      status: 'P0 verification payload; not a desktop release',
+      status: 'Embedded runtime verification payload; not a desktop release',
       redistributionGate: 'Complete third-party source/notices inventory, including Redis and Cygwin, before release',
       components: inventory,
       totalInstalledBytes: await directoryBytes(output),

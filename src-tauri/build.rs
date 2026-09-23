@@ -1,4 +1,9 @@
 fn main() {
+    println!("cargo:rustc-check-cfg=cfg(moya_embedded_server)");
+    println!("cargo:rerun-if-env-changed=MOYA_EMBEDDED_SERVER_BUILD");
+    if std::env::var("MOYA_EMBEDDED_SERVER_BUILD").as_deref() == Ok("1") {
+        println!("cargo:rustc-cfg=moya_embedded_server");
+    }
     println!("cargo:rustc-check-cfg=cfg(moya_portable)");
     println!("cargo:rerun-if-env-changed=MOYA_PORTABLE_BUILD");
     println!("cargo:rerun-if-changed=portable-payload.zip");

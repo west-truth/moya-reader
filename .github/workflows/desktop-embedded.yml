@@ -8,6 +8,10 @@ on:
       - '.github/workflows/desktop-embedded.yml'
       - 'scripts/desktop/*embedded*'
       - 'apps/server/src/**'
+      - 'src-tauri/src/embedded_server.rs'
+      - 'src-tauri/src/app.rs'
+      - 'src/platform/EmbeddedServer*.tsx'
+      - 'src/main.tsx'
 
 permissions:
   contents: read
@@ -15,7 +19,7 @@ permissions:
 jobs:
   windows-server:
     runs-on: windows-latest
-    timeout-minutes: 20
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v7
       - uses: pnpm/action-setup@v6
@@ -25,24 +29,37 @@ jobs:
         with:
           node-version: 22
           cache: pnpm
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
       - run: pnpm install --frozen-lockfile
       - uses: actions/cache@v4
         with:
           path: .tmp/embedded-downloads
           key: embedded-win-node22.23.2-pg16.15-redis7.2.16
       - run: node scripts/desktop/build-embedded-runtime.mjs
-      - run: pnpm exec playwright-core install chromium
+      - run: node scripts/desktop/build-embedded-app.mjs
+      - run: node node_modules/playwright-core/cli.js install chromium
+      - name: Open native window, connect automatically, share, revoke and restart
+        run: node scripts/desktop/smoke-embedded-app.mjs ".tmp/Moya app 한글/Moya.exe"
       - name: Run packaged server and shared reader, then restart
         shell: pwsh
         run: |
-          node scripts/desktop/smoke-embedded-server.mjs .tmp/embedded-windows/runtime.json
+          node scripts/desktop/smoke-embedded-server.mjs ".tmp/Moya app 한글/embedded-server/runtime.json"
           if ($LASTEXITCODE -ne 0) { throw 'Embedded server smoke failed' }
       - name: Collect evidence without credentials or server data
         if: always()
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Force .tmp/embedded-evidence | Out-Null
-          Copy-Item .tmp/embedded-windows/inventory.json .tmp/embedded-evidence/ -ErrorAction SilentlyContinue
+          Copy-Item ".tmp/Moya app 한글/embedded-server/inventory.json" .tmp/embedded-evidence/ -ErrorAction SilentlyContinue
+          $appProfile = Get-ChildItem $env:TEMP -Directory -Filter 'Moya app proof *' | Sort-Object LastWriteTime -Descending | Select-Object -First 1
+          if ($appProfile) {
+            foreach ($name in @('app-smoke-result.json', 'native-reader.png', 'initdb.log', 'postgres.log')) {
+              Copy-Item (Join-Path $appProfile.FullName $name) .tmp/embedded-evidence/ -ErrorAction SilentlyContinue
+            }
+          }
           $profile = Get-ChildItem $env:TEMP -Directory -Filter 'Moya embedded *' | Sort-Object LastWriteTime -Descending | Select-Object -First 1
           if ($profile) {
             foreach ($name in @('smoke-result.json', 'reader.png', 'initdb.log', 'postgres.log', 'postgres-start.log', 'postgres-ready.log', 'redis.log', 'redis-ready.log')) {

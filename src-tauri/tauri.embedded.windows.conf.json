@@ -1,0 +1,21 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "Moya",
+  "identifier": "app.moya.reader.embedded-candidate",
+  "build": { "beforeBuildCommand": "" },
+  "app": {
+    "windows": [
+      {
+        "label": "main",
+        "title": "모야",
+        "width": 1280,
+        "height": 820,
+        "minWidth": 720,
+        "minHeight": 640,
+        "decorations": false,
+        "shadow": true
+      }
+    ]
+  },
+  "bundle": { "active": false, "resources": { "../.tmp/embedded-windows/": "embedded-server/" } }
+}

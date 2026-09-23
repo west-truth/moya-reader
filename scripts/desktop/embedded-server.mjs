@@ -5,6 +5,8 @@ import { createServer } from 'node:net';
 import path from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 import { pathToFileURL } from 'node:url';
+import { createInterface } from 'node:readline';
+import { sharingInterfaces, startSharing } from './embedded-sharing.mjs';
 
 async function unusedPort() {
   const server = createServer();
@@ -28,7 +30,9 @@ async function waitUntil(check, description, failed, timeout = 60_000) {
 }
 
 /** The same launcher runs a staged development payload and the app's bundled payload. */
-export async function startEmbeddedServer({ runtimeFile, profileDir }) {
+export async function startEmbeddedServer({ runtimeFile, profileDir, signal, onPhase = () => {} }) {
+  signal?.throwIfAborted();
+  onPhase('preparing');
   runtimeFile = path.resolve(runtimeFile);
   profileDir = path.resolve(profileDir);
   const manifest = JSON.parse(await readFile(runtimeFile, 'utf8'));
@@ -84,9 +88,13 @@ export async function startEmbeddedServer({ runtimeFile, profileDir }) {
       return error.code === 'ESRCH';
     }
   };
-  const failed = () =>
-    postgresExited() ||
-    children.some((child) => child.exitCode !== null || child.signalCode !== null || child.spawnFailed);
+  const failed = () => {
+    signal?.throwIfAborted();
+    return (
+      postgresExited() ||
+      children.some((child) => child.exitCode !== null || child.signalCode !== null || child.spawnFailed)
+    );
+  };
   const db = path.join(profileDir, 'postgres');
   const queue = path.join(profileDir, 'queue');
 
@@ -115,6 +123,7 @@ export async function startEmbeddedServer({ runtimeFile, profileDir }) {
   }
 
   async function launch(label, executable, args, options = {}, ipc = false) {
+    signal?.throwIfAborted();
     const log = await open(path.join(profileDir, `${label}.log`), 'a', 0o600);
     logs.push(log);
     const child = spawn(executable, args, {
@@ -146,6 +155,7 @@ export async function startEmbeddedServer({ runtimeFile, profileDir }) {
   function stop() {
     return (stopPromise ??= (async () => {
       stopping = true;
+      onPhase('stopping');
       clearInterval(processMonitor);
       // Close admission first; the worker can still commit its current jobs.
       await stopNode(api);
@@ -217,6 +227,7 @@ export async function startEmbeddedServer({ runtimeFile, profileDir }) {
     if (pgVersion && pgVersion.trim() !== String(manifest.postgresMajor))
       throw new Error('PostgreSQL data version mismatch');
     if (!pgVersion) {
+      onPhase('initializing');
       const staging = path.join(profileDir, `postgres-init-${randomUUID()}`);
       const passwordFile = path.join(profileDir, `init-password-${randomUUID()}`);
       try {
@@ -246,6 +257,8 @@ export async function startEmbeddedServer({ runtimeFile, profileDir }) {
       }
     }
     const databaseUrl = `postgres://moya:${credentials.postgresPassword}@127.0.0.1:${credentials.ports.postgres}/postgres`;
+    signal?.throwIfAborted();
+    onPhase('database');
     if (process.platform === 'win32') {
       // pg_ctl uses PostgreSQL's restricted token when the parent is elevated.
       await command(
@@ -307,6 +320,7 @@ export async function startEmbeddedServer({ runtimeFile, profileDir }) {
       failed,
     );
     await mkdir(queue, { recursive: true, mode: 0o700 });
+    onPhase('queue');
     await writeFile(
       path.join(queue, 'redis.conf'),
       [
@@ -349,6 +363,7 @@ export async function startEmbeddedServer({ runtimeFile, profileDir }) {
       DEFAULT_USER_ID: 'user_desktop',
     };
     await mkdir(env.OBJECT_STORAGE_DIR, { recursive: true, mode: 0o700 });
+    onPhase('api');
     api = await launch('api', node, [path.join(serverDir, 'dist/index.js')], { cwd: serverDir, env }, true);
     const url = `http://127.0.0.1:${credentials.ports.api}`;
     await waitUntil(
@@ -357,6 +372,7 @@ export async function startEmbeddedServer({ runtimeFile, profileDir }) {
       failed,
     );
     worker = await launch('worker', node, [path.join(serverDir, 'dist/worker.js')], { cwd: serverDir, env }, true);
+    onPhase('worker');
     await waitUntil(
       async () => (await fetch(`${url}/api/ready`, { signal: AbortSignal.timeout(1500) })).ok,
       'Worker startup',
@@ -382,17 +398,31 @@ export async function startEmbeddedServer({ runtimeFile, profileDir }) {
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href) {
-  const [runtimeFile, profileDir] = process.argv.slice(2);
+  const [runtimeFile, profileDir, transport] = process.argv.slice(2);
   if (!runtimeFile || !profileDir) throw new Error('Usage: embedded-server.mjs <runtime.json> <profile directory>');
-  const server = await startEmbeddedServer({ runtimeFile, profileDir });
-  console.log(JSON.stringify({ event: 'ready', url: server.url }));
-  // Secrets only traverse the parent IPC channel, never stdout or a URL.
-  process.send?.({ event: 'ready', url: server.url, authToken: server.authToken });
+  // --stdio is only for an inherited private pipe owned by the native shell.
+  // A console invocation never prints credentials.
+  const stdio = transport === '--stdio';
+  if (stdio && (process.stdin.isTTY || process.stdout.isTTY)) throw new Error('Private pipes are required');
+  const emit = (message) => {
+    if (stdio) process.stdout.write(`${JSON.stringify(message)}\n`);
+    else process.send?.(message);
+  };
+  const controller = new AbortController();
+  let server;
+  let shutdown;
+  let sharing;
+  let sharingTask = Promise.resolve();
   const stop = () => {
-    void server.stop().then(
-      () => process.exit(0),
-      () => process.exit(1),
-    );
+    controller.abort();
+    if (server)
+      shutdown ??= sharingTask
+        .then(() => sharing?.stop())
+        .then(() => server.stop())
+        .then(
+          () => process.exit(0),
+          () => process.exit(1),
+        );
   };
   process.once('SIGINT', stop);
   process.once('SIGTERM', stop);
@@ -400,7 +430,53 @@ if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.ar
     if (message === 'shutdown') stop();
   });
   process.once('disconnect', stop);
-  server.onUnexpectedExit(() => {
-    void server.stop().finally(() => process.exit(1));
-  });
+  if (stdio) {
+    const input = createInterface({ input: process.stdin, crlfDelay: Infinity });
+    input.on('line', (line) => {
+      if (line === 'shutdown') {
+        stop();
+        return;
+      }
+      let message;
+      try {
+        message = JSON.parse(line);
+      } catch {
+        return;
+      }
+      if (message.command !== 'sharing') return;
+      sharingTask = sharingTask.then(async () => {
+        try {
+          if (controller.signal.aborted || !server) return;
+          await sharing?.stop();
+          sharing = undefined;
+          if (message.host) sharing = await startSharing({ url: server.url, host: message.host });
+          emit({ event: 'sharing', sharingUrl: sharing?.url ?? null });
+        } catch (error) {
+          emit({ event: 'sharing', sharingUrl: null, sharingError: error.message });
+        }
+      });
+    });
+    input.once('close', stop);
+    process.stdout.on('error', stop);
+  }
+  try {
+    server = await startEmbeddedServer({
+      runtimeFile,
+      profileDir,
+      signal: controller.signal,
+      onPhase: (phase) => emit({ event: 'phase', phase }),
+    });
+    if (controller.signal.aborted) stop();
+    else {
+      emit({ event: 'ready', url: server.url, authToken: server.authToken, interfaces: sharingInterfaces() });
+      if (!stdio) console.log(JSON.stringify({ event: 'ready', url: server.url }));
+      server.onUnexpectedExit(() => {
+        emit({ event: 'error', message: '내장 서버가 예기치 않게 중단되었습니다. 앱을 다시 시작해 주세요.' });
+        void server.stop().finally(() => process.exit(1));
+      });
+    }
+  } catch (error) {
+    emit({ event: 'error', message: controller.signal.aborted ? '서버 시작을 취소했습니다.' : error.message });
+    process.exit(controller.signal.aborted ? 0 : 1);
+  }
 }

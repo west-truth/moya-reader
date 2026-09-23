@@ -75,3 +75,14 @@ EDB 원본 ZIP에는 pgAdmin 등이 포함되어 332,441,502바이트지만, 후
 - [ ] 전체 기능/백업/이전/동기화의 후속 계획 수행.
 
 Windows proof payload는 실행 구성을 검증하는 산출물이다. 라이선스 고지·대응 소스·모든 필수 기능/런타임을 확인하기 전 사용자 배포물로 공개하지 않는다.
+
+## P1 진행: 앱 연결과 공통 접속 화면 (2026-09-24)
+
+- Tauri가 동봉 Node 실행기를 private stdin/stdout pipe로 실행하고 실제 endpoint/인증을 메모리로 전달한다. 서버 readiness 전에는 서재를 만들지 않으며 실패 시 오류·재시도를 표시한다.
+- 공통 Remote reader와 서버 가져오기 경로를 사용한다. 앱 소유자는 native 연결로 사용하고, 다른 브라우저는 기존 계정으로 로그인한다.
+- 창 닫기에서 트레이 유지/서버와 앱 종료/돌아가기를 제공한다. 부모 pipe EOF도 정상 서버 종료를 요청하며, 초기화 도중 종료 요청은 초기화 정리 뒤 처리한다.
+- 외부 접속은 선택한 사설 IPv4 인터페이스에 별도 HTTP listener를 열고 로그인 세션만 전달한다. DB/Redis/API 관리 포트는 loopback을 유지한다. 공유 해제는 listener와 기존 연결을 닫으며 로컬 서재는 계속 사용한다. 자동 재공유하지 않는다.
+- 사용자 추가 요청에 따라 QR·주소 복사를 공통 `ServerAccessLink`로 만들어 데스크톱과 self-host 웹 설정에서 재사용한다. QR에는 주소만 들어가고 native 소유자 토큰은 들어가지 않는다. 외부 HTTPS 터널 자동 구성은 아직 구현하지 않았다.
+- 배포는 lockfile을 사용하는 hoisted production deploy로 바꾸어 절대 경로 junction에 의존하지 않도록 했다. native Windows 후보는 실제로 다른 한글 폴더로 이동해 검사한다.
+- Linux: Rust check/프런트 타입 검사·관련 25 tests 통과. 실제 서버를 사용한 native pipe readiness, 중복 실행 차단, 부모 종료 EOF 정리, 초기화 도중 취소 검증 통과.
+- Windows native 창/공유/종료/재시작은 새 CI에서 검증 중이다. P1 전체 완료나 최종 배포물로 취급하지 않는다. VC runtime/WebView2의 자동 준비, 재배포 고지·source, 전원 종료 후 복구, 실제 별도 기기 검증은 남아 있다.

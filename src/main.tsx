@@ -1,4 +1,6 @@
 import React from 'react';
+import { EmbeddedServerGate, type EmbeddedServerConnection } from './platform/EmbeddedServerGate';
+import { createReaderRuntime } from './repositories/reader-runtime';
 import ReactDOM from 'react-dom/client';
 import App from './App';
 import { createAppRuntime } from './app/runtime/app-runtime';
@@ -107,19 +109,28 @@ async function startApp(): Promise<void> {
       },
     ];
   }
-  const runtime = createAppRuntime({
-    extensionRuntimeFactory: () =>
-      createAppExtensionRuntime({
-        additionalTrustedRegistrations,
-        webNovelMetadataCollector: createPlatformWebNovelMetadataCollector(platformRuntime),
-      }),
-  });
+  const renderReader = (connection?: EmbeddedServerConnection) => {
+    const runtime = createAppRuntime({
+      readerRuntimeFactory: connection
+        ? () =>
+            createReaderRuntime({
+              mode: 'remote',
+              apiBaseUrl: `${connection.url}/api`,
+              getAuthToken: () => connection.authToken,
+              managedByDesktop: true,
+            })
+        : undefined,
+      extensionRuntimeFactory: () =>
+        createAppExtensionRuntime({
+          additionalTrustedRegistrations,
+          webNovelMetadataCollector: createPlatformWebNovelMetadataCollector(platformRuntime),
+        }),
+    });
 
-  if (platformRuntime.kind === 'tauri-desktop') void desktopGoogleSession.restore();
-  else if (platformRuntime.kind === 'browser') void googleSession.restore();
+    if (platformRuntime.kind === 'tauri-desktop') void desktopGoogleSession.restore();
+    else if (platformRuntime.kind === 'browser') void googleSession.restore();
 
-  ReactDOM.createRoot(document.getElementById('root') as HTMLElement).render(
-    <React.StrictMode>
+    return (
       <RuntimeProvider runtime={runtime}>
         <DesktopWindowShell>
           <SelfHostAccountGate runtime={runtime.readerRuntime}>
@@ -127,6 +138,12 @@ async function startApp(): Promise<void> {
           </SelfHostAccountGate>
         </DesktopWindowShell>
       </RuntimeProvider>
+    );
+  };
+  const embedded = platformRuntime.kind === 'tauri-desktop' && import.meta.env.VITE_DESKTOP_EMBEDDED_SERVER === 'true';
+  ReactDOM.createRoot(document.getElementById('root') as HTMLElement).render(
+    <React.StrictMode>
+      {embedded ? <EmbeddedServerGate>{renderReader}</EmbeddedServerGate> : renderReader()}
     </React.StrictMode>,
   );
 }

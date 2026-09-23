@@ -9,7 +9,7 @@
     "libc": "glibc"
   },
   "summary": {
-    "componentCount": 214,
+    "componentCount": 215,
     "byLicense": {
       "0BSD": 1,
       "Apache-2.0": 45,
@@ -18,7 +18,7 @@
       "BSD-3-Clause": 16,
       "ISC": 8,
       "LGPL-3.0-or-later": 1,
-      "MIT": 132,
+      "MIT": 133,
       "SEE LICENSE IN License.txt": 1
     }
   },
@@ -1198,6 +1198,13 @@
       "version": "7.6.5",
       "license": "BSD-3-Clause",
       "homepage": "https://protobufjs.github.io/protobuf.js/"
+    },
+    {
+      "ecosystem": "npm",
+      "name": "qrcode-generator",
+      "version": "2.0.4",
+      "license": "MIT",
+      "homepage": "https://github.com/kazuhikoarase/qrcode-generator#readme"
     },
     {
       "ecosystem": "npm",

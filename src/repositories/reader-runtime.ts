@@ -40,6 +40,7 @@ export type ReaderBackendMode = 'local' | 'remote';
 
 export interface ReaderRuntime {
   mode: ReaderBackendMode;
+  managedByDesktop?: boolean;
   apiBaseUrl?: string;
   remoteApiClient?: RemoteApiClient;
   syncApiClient?: RemoteApiClient;
@@ -299,20 +300,27 @@ export function getOrCreateRemoteDeviceId(): string {
 }
 
 export function createReaderRuntime(
-  options: { mode?: ReaderBackendMode; allowServerSync?: boolean } = {},
+  options: {
+    mode?: ReaderBackendMode;
+    allowServerSync?: boolean;
+    apiBaseUrl?: string;
+    getAuthToken?: () => string | undefined;
+    managedByDesktop?: boolean;
+  } = {},
 ): ReaderRuntime {
   const mode = options.mode ?? (import.meta.env.VITE_READER_BACKEND === 'remote' ? 'remote' : 'local');
   const bookEnrichmentRepository = new IndexedDbBookEnrichmentRepository();
   if (mode === 'remote') {
-    const apiBaseUrl = resolveApiBaseUrl();
+    const apiBaseUrl = options.apiBaseUrl?.replace(/\/+$/, '') || resolveApiBaseUrl();
     const client = new RemoteApiClient(apiBaseUrl, {
-      getAuthToken: resolveApiAuthToken,
+      getAuthToken: options.getAuthToken ?? resolveApiAuthToken,
       onUnauthorized: notifySelfHostAuthRequired,
     });
     const deviceId = getOrCreateRemoteDeviceId();
     const remoteRepository = new RemoteReaderRepository(client, deviceId);
     return {
       mode,
+      managedByDesktop: options.managedByDesktop,
       apiBaseUrl,
       remoteApiClient: client,
       syncApiClient: client,

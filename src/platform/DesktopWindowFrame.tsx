@@ -19,6 +19,15 @@ function DesktopWindowFrame() {
   return (
     <header className="desktop-window-frame" onMouseDown={handleTitlebarPointer}>
       <span className="desktop-window-title">모야</span>
+      {import.meta.env.VITE_DESKTOP_EMBEDDED_SERVER === 'true' && (
+        <button
+          className="desktop-server-sharing"
+          type="button"
+          onClick={() => window.dispatchEvent(new Event('moya-open-server-sharing'))}
+        >
+          다른 기기 접속
+        </button>
+      )}
       <div className="desktop-window-controls" aria-label="창 제어">
         <button
           type="button"

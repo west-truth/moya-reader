@@ -34,8 +34,11 @@ type GateMode = 'loading' | 'setup' | 'login' | 'authenticated' | 'error';
 
 export function SelfHostAccountGate({ runtime, children }: SelfHostAccountGateProps) {
   const client = useMemo(
-    () => (runtime.mode === 'remote' ? new SelfHostAuthClient(runtime.apiBaseUrl ?? '/api') : undefined),
-    [runtime.apiBaseUrl, runtime.mode],
+    () =>
+      runtime.mode === 'remote' && !runtime.managedByDesktop
+        ? new SelfHostAuthClient(runtime.apiBaseUrl ?? '/api')
+        : undefined,
+    [runtime.apiBaseUrl, runtime.mode, runtime.managedByDesktop],
   );
   const [mode, setMode] = useState<GateMode>(runtime.mode === 'remote' ? 'loading' : 'authenticated');
   const [account, setAccount] = useState<SelfHostAccount>();
