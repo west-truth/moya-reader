@@ -267,3 +267,9 @@ MoyaData/
 검증(수정 후 Linux): native host·vault 통합 검사 2파일/5개 통과, 앱/스크립트 TypeScript 검사, 변경 파일 ESLint, 포터블 cfg Rust `cargo check --lib` 통과. Python entry 구문 검사 통과. 이 결과는 Windows EXE 실행 성공을 뜻하지 않는다. Windows 후보를 한 번 빌드해 새 배포 구성·실행기 공유를 확인한다.
 
 추가 회귀 확인: 호환 소스 목록 갱신 실패 → 오래된 소스 제외·오류 안내 → 재시도 복구 검사 통과(native host 파일 4개). vault 2개를 합쳐 이번 변경의 집중 검사는 총 6개다.
+
+Windows 수정 후보 [35821423837](https://github.com/west-truth/moya-reader/actions/runs/35821423837): EXE 빌드와 UI mount·중복 실행 차단·폴더 이동 후 설정 보존 통과. EXE 실측 89,386,496바이트(85.25MiB), SHA-256 `87aaa751cb03fa3ceb07bc6d3cb8e472e47fafa4f0027dddd6114ae025213223`. 단, 동봉 JS host 시작 검사는 실패했다. 이 산출물은 정상 소스 실행 후보가 아니다.
+
+추적 결과 기존 native 번들에서 `sharp`를 esbuild 안에 묶어 `Dynamic require of node:util is not supported`로 시작 직후 종료했다. `sharp`를 external로 두고 Windows x64 네이티브 DLL 패키지를 함께 복사하도록 수정했다([공식 sharp 번들링 지침](https://sharp.pixelplumbing.com/install/#esbuild)). 별도 새 프레임워크나 썸네일 기능 제거 없이 패키징만 보완한다.
+
+수정 번들의 Linux 진단에서 실제 host 시작·세션 설정 이관·잠금/재열기·Mangayomi 원본 JS/DOM·원문 바이트·취소·종료 통과. Windows 동봉 Node/DLL·수집기는 수정 후보에서 다시 확인한다. 검사 실패 시 host 종료를 즉시 포착하도록 smoke를 수정했으며, 기존 EXE 재검사에서도 소스 실행 검사를 생략하지 않는다.

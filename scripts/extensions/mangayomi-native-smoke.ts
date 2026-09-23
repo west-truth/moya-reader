@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { spawn } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import { once } from 'node:events';
 import { createInterface } from 'node:readline';
 import { fileURLToPath } from 'node:url';
@@ -20,6 +20,16 @@ const directory = process.env.MOYA_PACKAGED_SIDECAR_DIR
   ? resolve(process.env.MOYA_PACKAGED_SIDECAR_DIR)
   : resolve(root, 'src-tauri/extension-sidecar');
 assert.equal(process.platform, 'win32', 'This packaged runtime gate currently targets Windows x64');
+const codec = spawnSync(
+  resolve(directory, 'node.exe'),
+  [
+    '--input-type=module',
+    '-e',
+    "import sharp from 'sharp'; const bytes = await sharp({create:{width:8,height:8,channels:3,background:'#abc'}}).webp().toBuffer(); if (!bytes.length) process.exit(1);",
+  ],
+  { cwd: directory, encoding: 'utf8', timeout: 15000, windowsHide: true },
+);
+assert.equal(codec.status, 0, `Packaged cover codec failed: ${codec.stderr}`);
 const temporary = await mkdtemp(join(tmpdir(), 'moya-native-mangayomi-'));
 const vaultDirectory = join(temporary, 'vault'),
   vaultKey = '23'.repeat(32);
