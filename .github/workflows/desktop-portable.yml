@@ -27,6 +27,10 @@ jobs:
         with:
           python-version: '3.12'
       - run: pnpm install --frozen-lockfile
+      - uses: actions/cache@v4
+        with:
+          path: src-tauri/webview2-fixed.cab
+          key: webview2-fixed-153.0.4234.48-x64-11e8240c
       - run: pnpm desktop:portable:win
       - name: Smoke portable launch and folder move
         shell: pwsh
