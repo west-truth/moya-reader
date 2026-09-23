@@ -9,6 +9,8 @@ apps/server/dist/
 
 # Native build output
 src-tauri/target/
+src-tauri/portable-payload.zip
+release/Moya.exe
 
 # Local runtime/cache files
 .DS_Store

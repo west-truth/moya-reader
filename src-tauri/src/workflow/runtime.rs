@@ -9,7 +9,6 @@ use crate::ai::bridge::desktop_ai_generate_json_impl;
 use serde_json::Value;
 use std::collections::HashSet;
 use std::sync::{Arc, Mutex, MutexGuard};
-use tauri::Manager;
 
 #[derive(Clone)]
 pub(crate) struct NativeWorkflowRuntime {
@@ -23,10 +22,7 @@ struct NativeWorkflowRuntimeInner {
 
 impl NativeWorkflowRuntime {
     pub(crate) fn open(app: &tauri::AppHandle) -> Result<Self, String> {
-        let data_dir = app
-            .path()
-            .app_data_dir()
-            .map_err(|_| "native workflow app data path is unavailable".to_string())?;
+        let data_dir = crate::portable::data_dir(app)?;
         Ok(Self {
             inner: Arc::new(NativeWorkflowRuntimeInner {
                 store: Mutex::new(NativeWorkflowStore::open(&data_dir)?),

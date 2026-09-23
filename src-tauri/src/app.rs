@@ -2,6 +2,13 @@ use tauri::Manager;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    #[cfg(moya_portable)]
+    if let Err(error) = crate::portable::prepare() {
+        #[cfg(target_os = "windows")]
+        crate::portable::show_error(&error);
+        eprintln!("{error}");
+        return;
+    }
     let builder = tauri::Builder::default();
     #[cfg(target_os = "windows")]
     let builder = builder.on_page_load(|webview, payload| {
@@ -43,6 +50,22 @@ pub fn run() {
         .plugin(crate::android_plugins::init_android_system_tts());
     let app = builder
         .setup(|app| {
+            #[cfg(moya_portable)]
+            {
+                let window = app.config().app.windows.first().ok_or_else(|| {
+                    std::io::Error::other("portable main window configuration is missing")
+                })?;
+                if window.create {
+                    return Err(
+                        std::io::Error::other("portable window must have create=false").into(),
+                    );
+                }
+                let profile = crate::portable::prepare().map_err(std::io::Error::other)?;
+                std::fs::create_dir_all(profile.root.join("webview"))?;
+                tauri::WebviewWindowBuilder::from_config(app.handle(), window)?
+                    .data_directory(profile.root.join("webview"))
+                    .build()?;
+            }
             app.manage(crate::metadata_collector::MetadataCollectorManager::default());
             app.manage(crate::extension_runtime::ExtensionRuntimeManager::default());
             let runtime = crate::workflow::NativeWorkflowRuntime::open(app.handle())

@@ -2,7 +2,7 @@ use serde::Serialize;
 use std::process::{Child, Command, Stdio};
 use std::sync::Arc;
 use std::time::Duration;
-use tauri::{AppHandle, Manager, State};
+use tauri::{AppHandle, State};
 use tokio::sync::Mutex;
 
 const SESSION_TOKEN_MIN_LENGTH: usize = 43;
@@ -97,7 +97,7 @@ fn bundled_binary_name() -> &'static str {
 }
 
 fn collector_command(app: &AppHandle, port: u16) -> Result<Command, String> {
-    let mut command = if cfg!(debug_assertions) {
+    let mut command = if cfg!(debug_assertions) && !cfg!(moya_portable) {
         let service_dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
             .parent()
             .ok_or_else(|| "Metadata collector source directory is unavailable".to_string())?
@@ -112,10 +112,7 @@ fn collector_command(app: &AppHandle, port: u16) -> Result<Command, String> {
             .arg("app.sidecar");
         command
     } else {
-        let executable = app
-            .path()
-            .resource_dir()
-            .map_err(|_| "Metadata collector resource directory is unavailable".to_string())?
+        let executable = crate::portable::runtime_dir(app)?
             .join("collector-sidecar")
             .join(bundled_binary_name());
         if !executable.is_file() {
@@ -179,11 +176,7 @@ pub(crate) async fn desktop_metadata_collector_start(
             .port();
         drop(listener);
 
-        let data_dir = app
-            .path()
-            .app_data_dir()
-            .map_err(|_| "Metadata collector app data directory is unavailable".to_string())?
-            .join("metadata-collector");
+        let data_dir = crate::portable::data_dir(&app)?.join("metadata-collector");
         std::fs::create_dir_all(&data_dir).map_err(|_| {
             "Metadata collector app data directory could not be created".to_string()
         })?;

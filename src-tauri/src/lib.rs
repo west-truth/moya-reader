@@ -9,6 +9,7 @@ mod google_oauth;
 mod google_service_account;
 mod metadata_collector;
 mod native_identity;
+mod portable;
 mod provider_http;
 mod provider_secrets;
 mod secure_credentials;

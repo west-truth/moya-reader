@@ -1,0 +1,39 @@
+name: Windows portable candidate
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: windows-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v7
+      - uses: pnpm/action-setup@v6
+        with:
+          version: 11.7.0
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: pnpm
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm desktop:portable:win
+      - name: Verify standalone artifact
+        shell: pwsh
+        run: |
+          if (!(Test-Path release/Moya.exe)) { throw "Moya.exe is missing" }
+          $size = (Get-Item release/Moya.exe).Length
+          if ($size -lt 10000000) { throw "Portable executable is unexpectedly small" }
+          Get-FileHash release/Moya.exe -Algorithm SHA256
+      - uses: actions/upload-artifact@v4
+        with:
+          name: moya-portable-windows-x64
+          path: release/Moya.exe
+          if-no-files-found: error

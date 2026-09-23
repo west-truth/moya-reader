@@ -43,6 +43,18 @@ pnpm tauri:build
 결과물은 `src-tauri/target/release/bundle/nsis/`에 생성됩니다. `src-tauri/target/`과 installer는 Git에서
 제외됩니다. 이 로컬 build 성공은 코드 조합을 확인하는 개발 gate이며 공식 서명·배포 승인을 의미하지 않습니다.
 
+### 포터블 EXE 후보
+
+Windows x64에서 단일 파일 후보를 만들려면 `pnpm desktop:portable:win`을 실행합니다. 출력은
+`release/Moya.exe`입니다. 설치 프로그램은 생성하지 않습니다. 첫 실행 시 EXE 옆에
+`MoyaData/`가 생기며 WebView 데이터, 네이티브 작업 기록과 동봉한 Node·메타데이터 실행기가 이곳에 놓입니다.
+EXE를 교체할 때는 앱을 종료하고 `MoyaData/`는 그대로 둡니다.
+
+이 명령은 Python 수집기와 Windows Node 런타임을 빌드 중에 묶습니다. 기본 빌드는 JS 소스를 대상으로 하며
+APK/Java 실행기 포함은 `MOYA_BUNDLE_APK=1`로 별도 선택합니다. WebView2 Runtime은 Windows에
+필요합니다. 현재 포터블 후보는 Windows에서 실제 실행·업그레이드 검증을 거치기 전이므로 릴리즈 완성으로
+표시하지 않습니다.
+
 ## Android
 
 ### 추가 준비
@@ -119,12 +131,12 @@ Gradle 출력, JNI library, generated web asset과 APK/AAB는 모두 Git에서 �
 
 ## 검사 역할
 
-| 명령 | 확인 범위 |
-| --- | --- |
-| `pnpm check:web-server` | 웹·서버 형식, 라이선스, 타입, 전체 테스트와 production build |
-| `pnpm check:desktop` | production 웹 build와 Tauri Rust compile |
-| `pnpm check:rust` | Rust format, Clippy와 native unit test |
-| `pnpm check:mobile-readiness` | Android project와 adapter 구성의 정적 준비 상태 |
-| `pnpm check:android-rust:strict` | 설치된 Android Rust target의 실제 compile |
+| 명령                             | 확인 범위                                                    |
+| -------------------------------- | ------------------------------------------------------------ |
+| `pnpm check:web-server`          | 웹·서버 형식, 라이선스, 타입, 전체 테스트와 production build |
+| `pnpm check:desktop`             | production 웹 build와 Tauri Rust compile                     |
+| `pnpm check:rust`                | Rust format, Clippy와 native unit test                       |
+| `pnpm check:mobile-readiness`    | Android project와 adapter 구성의 정적 준비 상태              |
+| `pnpm check:android-rust:strict` | 설치된 Android Rust target의 실제 compile                    |
 
 Docker Compose 서버만 운영하는 경우에는 JDK, Android SDK와 Rust가 필요하지 않습니다.

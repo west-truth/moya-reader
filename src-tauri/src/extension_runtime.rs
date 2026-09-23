@@ -3,7 +3,7 @@ use std::io::{BufRead, BufReader, Read, Write};
 use std::process::{Child, Command, Stdio};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
-use tauri::{AppHandle, Manager, State, WebviewWindow};
+use tauri::{AppHandle, State, WebviewWindow};
 
 struct ManagedProcess {
     child: Child,
@@ -113,20 +113,13 @@ pub(crate) async fn desktop_extension_runtime_start(
     } else {
         url.origin().ascii_serialization()
     };
-    let directory = if cfg!(debug_assertions) {
+    let directory = if cfg!(debug_assertions) && !cfg!(moya_portable) {
         std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("extension-sidecar")
     } else {
-        app.path()
-            .resource_dir()
-            .map_err(|_| "native_resources_unavailable")?
-            .join("extension-sidecar")
+        crate::portable::runtime_dir(&app)?.join("extension-sidecar")
     };
     let manager = state.inner().clone();
-    let vault_directory = app
-        .path()
-        .app_data_dir()
-        .map_err(|_| "native_storage_unavailable")?
-        .join("extension-credentials");
+    let vault_directory = crate::portable::data_dir(&app)?.join("extension-credentials");
     tauri::async_runtime::spawn_blocking(move || {
         let mut process = manager
             .process

@@ -118,5 +118,8 @@ await writeFile(
     2,
   ) + '\n',
 );
-await bundleApkRuntime(root, join(output, 'apk-runtime'));
+// Preserve the installer bundle's APK behavior. The portable JS-first build
+// skips Java unless its builder explicitly asks for it.
+if (process.env.MOYA_PORTABLE_BUILD !== '1' || process.env.MOYA_BUNDLE_APK === '1')
+  await bundleApkRuntime(root, join(output, 'apk-runtime'));
 console.log(`Native extension runtime packaged: ${output}`);

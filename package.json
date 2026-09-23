@@ -66,6 +66,7 @@
     "tauri:dev": "tauri dev",
     "collector:bundle": "node scripts/build-webnovel-metadata-collector-sidecar.mjs",
     "tauri:build": "tauri build",
+    "desktop:portable:win": "node scripts/desktop/build-portable.mjs",
     "tauri:android:sync-provider-plugin": "node scripts/sync-tauri-android-provider-secret-plugin.mjs",
     "tauri:android:init": "tauri android init --ci && pnpm tauri:android:sync-provider-plugin",
     "tauri:android:dev": "pnpm tauri:android:sync-provider-plugin && tauri android dev",

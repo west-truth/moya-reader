@@ -12,7 +12,6 @@ use super::job_manifest::{
     JOB_DIRECTORY,
 };
 use std::path::PathBuf;
-use tauri::Manager;
 
 pub(super) const CACHE_DIRECTORY: &str = "native-tts-render-cache-v2";
 
@@ -121,20 +120,12 @@ pub(crate) async fn native_tts_pending_jobs(
 }
 
 fn cache_directory(app: &tauri::AppHandle) -> Result<PathBuf, String> {
-    let directory = app
-        .path()
-        .app_cache_dir()
-        .map_err(|_| "native TTS cache path is unavailable".to_string())?
-        .join(CACHE_DIRECTORY);
+    let directory = crate::portable::cache_dir(app)?.join(CACHE_DIRECTORY);
     Ok(directory)
 }
 
 fn job_directory(app: &tauri::AppHandle) -> Result<PathBuf, String> {
-    Ok(app
-        .path()
-        .app_data_dir()
-        .map_err(|_| "native TTS job path is unavailable".to_string())?
-        .join(JOB_DIRECTORY))
+    Ok(crate::portable::data_dir(app)?.join(JOB_DIRECTORY))
 }
 
 #[cfg(test)]
