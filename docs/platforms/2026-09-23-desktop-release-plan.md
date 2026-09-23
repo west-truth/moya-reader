@@ -300,7 +300,6 @@ Windows 수정 후보 [35821423837](https://github.com/west-truth/moya-reader/ac
 
 추가 사용자 보고(데스크톱 EXE에서 상하좌우 스크롤 시 전체 화면 밀림): 데스크톱 창 프레임을 뷰포트에 고정하고, 데스크톱 프레임이 있는 문서에만 `overscroll-behavior: none`을 적용했다. 웹의 스크롤 정책은 변경하지 않는다. 격리 Chromium 720px/1280px에서 바깥 문서 좌표가 0으로 유지되고 내부 작품 목록 세로 스크롤·표지 목록 가로 스크롤은 동작함을 확인했다. 실제 Windows 터치패드의 탄성 효과는 Linux 자동화만으로 재현·확정하지 않는다. 중간 후보 두 건은 최종 보완을 포함하기 위해 빌드 도중 취소했고 최종 커밋으로 한 후보를 검증한다.
 
-
 후속 수정 Windows 검증 완료:
 
 - 제품 커밋 `2a8affb` ([후보 35824714619](https://github.com/west-truth/moya-reader/actions/runs/35824714619)) 전체 성공.
