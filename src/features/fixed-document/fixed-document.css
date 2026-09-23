@@ -391,6 +391,9 @@
     saturate(var(--fixed-doc-saturation, 1)) grayscale(var(--fixed-doc-grayscale, 0)) invert(var(--fixed-doc-invert, 0));
 }
 .fixed-doc-viewport.is-page .fixed-doc-pages img {
+  /* Override dimension attributes so both constraints preserve the intrinsic ratio. */
+  width: auto;
+  height: auto;
   max-width: calc((100vw - 230px) * var(--fixed-doc-zoom));
   max-height: calc((100vh - 160px) * var(--fixed-doc-zoom));
 }
