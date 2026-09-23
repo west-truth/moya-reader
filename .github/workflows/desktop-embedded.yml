@@ -58,6 +58,23 @@ jobs:
           path: .tmp/embedded-downloads
           key: embedded-win-node22.23.2-pg16.15-redis7.2.16-cloudflared2026.9.1
       - run: node scripts/desktop/build-embedded-runtime.mjs
+      - name: Check existing collector auth, frame input and session recovery
+        shell: pwsh
+        run: |
+          $python = '.tmp/webnovel-metadata-collector-bundle-environment/Scripts/python.exe'
+          & $python -m pip install --disable-pip-version-check 'pytest>=8.4,<10'
+          if ($LASTEXITCODE -ne 0) { throw 'Collector test dependency install failed' }
+          $env:MOYA_TEST_AUTH_BROWSER = '1'
+          $env:PLAYWRIGHT_BROWSERS_PATH = (Resolve-Path 'src-tauri/collector-sidecar/browsers').Path
+          & $python -m pytest -q services/webnovel-metadata-collector/tests/test_remote_auth_browser.py services/webnovel-metadata-collector/tests/test_remote_auth_browser_live.py services/webnovel-metadata-collector/tests/test_companion_service.py
+          if ($LASTEXITCODE -ne 0) { throw 'Collector auth and session tests failed' }
+      - name: Launch packaged collector and login browser through the authenticated gateway
+        run: node scripts/desktop/smoke-embedded-collector.mjs ".tmp/embedded-windows/runtime.json"
+      - name: Keep the library available when the collector is missing
+        run: node scripts/desktop/smoke-embedded-collector-failure.mjs ".tmp/embedded-windows/runtime.json"
+      - name: Probe public metadata and cover without an account
+        continue-on-error: true
+        run: node scripts/desktop/smoke-embedded-collector.mjs ".tmp/embedded-windows/runtime.json" --live
       - run: node scripts/desktop/build-embedded-app.mjs
       - run: node node_modules/playwright-core/cli.js install chromium
       - name: Recover the same profile after killing its launcher
@@ -71,8 +88,6 @@ jobs:
         run: |
           node scripts/desktop/smoke-embedded-server.mjs ".tmp/Moya app 한글/embedded-server/runtime.json"
           if ($LASTEXITCODE -ne 0) { throw 'Embedded server smoke failed' }
-      - name: Launch packaged collector and login browser through the authenticated gateway
-        run: node scripts/desktop/smoke-embedded-collector.mjs ".tmp/Moya app 한글/embedded-server/runtime.json"
       - name: Read EPUB and PDF using the packaged server
         run: node scripts/desktop/smoke-embedded-formats.mjs ".tmp/Moya app 한글/embedded-server/runtime.json"
       - name: Build the release installer candidate
@@ -88,6 +103,7 @@ jobs:
         run: |
           New-Item -ItemType Directory -Force .tmp/embedded-evidence | Out-Null
           Copy-Item ".tmp/Moya app 한글/embedded-server/inventory.json" .tmp/embedded-evidence/ -ErrorAction SilentlyContinue
+          Copy-Item ".tmp/embedded-windows/inventory.json" .tmp/embedded-evidence/ -ErrorAction SilentlyContinue
           $appProfile = Get-ChildItem $env:TEMP -Directory -Filter 'Moya app proof *' | Sort-Object LastWriteTime -Descending | Select-Object -First 1
           if ($appProfile) {
             foreach ($name in @('app-smoke-result.json', 'launcher.log', 'native-reader.png', 'native-sharing.png', 'native-error.png', 'native-desktop-error.png', 'initdb.log', 'postgres.log')) {
@@ -98,6 +114,12 @@ jobs:
           if ($profile) {
             foreach ($name in @('smoke-result.json', 'reader.png', 'initdb.log', 'postgres.log', 'postgres-start.log', 'postgres-ready.log', 'redis.log', 'redis-ready.log')) {
               Copy-Item (Join-Path $profile.FullName $name) .tmp/embedded-evidence/ -ErrorAction SilentlyContinue
+            }
+          }
+          $collectorProfile = Get-ChildItem $env:TEMP -Directory -Filter 'Moya collector *proof *' | Sort-Object LastWriteTime -Descending | Select-Object -First 1
+          if ($collectorProfile) {
+            foreach ($name in @('collector.log', 'collector-startup.log')) {
+              Copy-Item (Join-Path $collectorProfile.FullName $name) .tmp/embedded-evidence/ -ErrorAction SilentlyContinue
             }
           }
       - uses: actions/upload-artifact@v4

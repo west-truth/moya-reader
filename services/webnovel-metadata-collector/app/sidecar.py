@@ -63,6 +63,9 @@ def main() -> None:
         log_level="warning",
     ))
     if arguments.watch_stdin:
+        if sys.stdin is None or not hasattr(sys.stdin, "buffer"):
+            raise RuntimeError("Managed collector requires an inherited shutdown pipe")
+
         def stop_when_owner_closes_pipe() -> None:
             # The embedded launcher owns the only writer. EOF also arrives after a crash.
             try:

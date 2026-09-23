@@ -19,13 +19,28 @@ const browserCheck = spawnSync(executable, ['--check-browser'], {
   timeout: 90_000,
   env: { ...process.env, PLAYWRIGHT_BROWSERS_PATH: browserDir },
 });
-assert.equal(browserCheck.status, 0, `Bundled browser failed to launch: ${browserCheck.error?.message ?? ''}`);
+assert.equal(
+  browserCheck.status,
+  0,
+  `Bundled browser failed to launch: ${browserCheck.error?.message ?? browserCheck.stderr?.toString().slice(-2000) ?? ''}`,
+);
 
 const profileDir = await mkdtemp(path.join(tmpdir(), 'Moya collector proof '));
 let server;
+let passed = false;
 try {
   server = await startEmbeddedServer({ runtimeFile, profileDir });
   const endpoint = `${server.url}/api/integrations/webnovel-metadata`;
+  const registration = await fetch(`${server.url}/api/auth/register`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      username: 'collector-proof',
+      password: 'collector proof account password',
+      setupCode: server.authToken,
+    }),
+  });
+  assert.equal(registration.status, 201, 'Synthetic owner account setup failed');
   const forbidden = await fetch(`${endpoint}/health`);
   assert.equal(forbidden.status, 401, 'Gateway allowed an unauthenticated request');
   const headers = { Authorization: `Bearer ${server.authToken}` };
@@ -49,22 +64,23 @@ try {
     const metadata = await metadataResponse.json();
     result.liveMetadataStatus = metadata.status;
     result.liveFailedPlatforms = metadata.failed_platforms;
-    if (metadata.status === 'found' && metadata.cover_ref) {
-      const cover = await fetch(`${endpoint}/api/v1/covers/${metadata.cover_ref}`, {
-        headers,
-        signal: AbortSignal.timeout(40_000),
-      });
-      result.liveCoverStatus = cover.status;
-      if (cover.ok) {
-        assert((await cover.arrayBuffer()).byteLength > 0);
-        result.liveCoverFetched = true;
-      }
-    }
+    assert.equal(metadata.status, 'found', `Public site did not return a match: ${JSON.stringify(result)}`);
+    assert(metadata.cover_ref, `Public site did not provide a cover reference: ${JSON.stringify(result)}`);
+    const cover = await fetch(`${endpoint}/api/v1/covers/${metadata.cover_ref}`, {
+      headers,
+      signal: AbortSignal.timeout(40_000),
+    });
+    result.liveCoverStatus = cover.status;
+    assert.equal(cover.status, 200, `Public cover fetch failed: ${JSON.stringify(result)}`);
+    assert((await cover.arrayBuffer()).byteLength > 0);
+    result.liveCoverFetched = true;
   }
   await server.stop();
   server = undefined;
+  passed = true;
   console.log(JSON.stringify(result));
 } finally {
-  await server?.stop();
-  await rm(profileDir, { recursive: true, force: true });
+  await server?.stop().catch(() => undefined);
+  if (passed) await rm(profileDir, { recursive: true, force: true });
+  else console.error(`Collector proof profile retained for diagnostics: ${profileDir}`);
 }

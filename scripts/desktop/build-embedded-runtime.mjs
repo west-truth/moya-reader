@@ -108,7 +108,10 @@ run(process.execPath, [path.join(root, 'scripts/build-webnovel-metadata-collecto
   MOYA_COLLECTOR_BUNDLE_REMOTE_BROWSER: '1',
 });
 await cp(path.join(root, 'src-tauri/collector-sidecar'), path.join(output, 'collector'), { recursive: true });
-inventory.push({ name: 'collector', installedBytes: await directoryBytes(path.join(output, 'collector')) });
+const collectorBytes = await directoryBytes(path.join(output, 'collector'));
+const collectorBrowserBytes = await directoryBytes(path.join(output, 'collector/browsers'));
+inventory.push({ name: 'collector-service-and-licenses', installedBytes: collectorBytes - collectorBrowserBytes });
+inventory.push({ name: 'collector-browser', installedBytes: collectorBrowserBytes });
 
 // PostgreSQL's narrow Windows argv/getcwd must agree on UTF-8. Relative paths
 // alone do not fix its bootstrap subprocess. Preserve the vendor trust manifest

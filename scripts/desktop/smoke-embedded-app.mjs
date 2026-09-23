@@ -13,7 +13,13 @@ const listener = createServer();
 await new Promise((resolve) => listener.listen(0, '127.0.0.1', resolve));
 const port = listener.address().port;
 await new Promise((resolve) => listener.close(resolve));
-const evidence = { nativeWindow: false, serverReady: false, sharingRevoked: false, restart: false };
+const evidence = {
+  nativeWindow: false,
+  serverReady: false,
+  collectorGateway: false,
+  sharingRevoked: false,
+  restart: false,
+};
 let app;
 let browser;
 let page;
@@ -61,6 +67,16 @@ async function launch() {
   connection = await page.evaluate(() => window.__TAURI_INTERNALS__.invoke('desktop_embedded_server_status'));
   assert.equal(connection.phase, 'ready');
   evidence.serverReady = true;
+  const collectorHealth = await page.evaluate(async ({ url, authToken }) => {
+    const response = await fetch(`${url}/api/integrations/webnovel-metadata/health`, {
+      headers: { Authorization: `Bearer ${authToken}` },
+      credentials: 'omit',
+    });
+    return { status: response.status, body: await response.json() };
+  }, connection);
+  assert.equal(collectorHealth.status, 200, 'Native WebView could not reach the managed collector gateway');
+  assert.equal(collectorHealth.body.service, 'webnovel-metadata-collector');
+  evidence.collectorGateway = true;
 }
 async function close(fromTray = false) {
   const exited = new Promise((resolve) => app.once('exit', resolve));
