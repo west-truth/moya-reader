@@ -38,7 +38,7 @@ jobs:
       - uses: actions/cache@v4
         with:
           path: .tmp/embedded-downloads
-          key: embedded-win-node22.23.2-pg16.15-redis7.2.16
+          key: embedded-win-node22.23.2-pg16.15-redis7.2.16-cloudflared2026.9.1
       - run: node scripts/desktop/build-embedded-runtime.mjs
       - run: node scripts/desktop/build-embedded-app.mjs
       - run: node node_modules/playwright-core/cli.js install chromium

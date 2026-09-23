@@ -7,6 +7,7 @@ import { setTimeout as delay } from 'node:timers/promises';
 import { pathToFileURL } from 'node:url';
 import { createInterface } from 'node:readline';
 import { sharingInterfaces, startSharing } from './embedded-sharing.mjs';
+import { startCloudflareSharing } from './embedded-tunnel.mjs';
 
 async function unusedPort() {
   const server = createServer();
@@ -220,6 +221,23 @@ export async function startEmbeddedServer({ runtimeFile, profileDir, signal, onP
     ) {
       throw new Error('Invalid server profile configuration; existing data was preserved');
     }
+    if (credentials.ports.tunnel === undefined) {
+      do {
+        credentials.ports.tunnel = await unusedPort();
+      } while (
+        Object.entries(credentials.ports).some(([key, value]) => key !== 'tunnel' && value === credentials.ports.tunnel)
+      );
+      const stage = `${credentialsPath}.${randomUUID()}.tmp`;
+      await writeFile(stage, JSON.stringify(credentials), { flag: 'wx', mode: 0o600 });
+      await rename(stage, credentialsPath);
+    }
+    if (
+      !Number.isInteger(credentials.ports.tunnel) ||
+      credentials.ports.tunnel <= 0 ||
+      credentials.ports.tunnel > 65535 ||
+      ['postgres', 'redis', 'api'].some((key) => credentials.ports[key] === credentials.ports.tunnel)
+    )
+      throw new Error('Invalid tunnel port in server profile; existing data was preserved');
     const pgVersion = await readFile(path.join(db, 'PG_VERSION'), 'utf8').catch((error) => {
       if (error.code !== 'ENOENT') throw error;
       return undefined;
@@ -382,6 +400,8 @@ export async function startEmbeddedServer({ runtimeFile, profileDir, signal, onP
       url,
       authToken: credentials.authToken,
       profileDir,
+      cloudflared: manifest.cloudflared ? runtimePath('cloudflared') : undefined,
+      tunnelPort: credentials.ports.tunnel,
       stop,
       processIds: [...(controlledPostgresPid ? [controlledPostgresPid] : []), ...children.map((child) => child.pid)],
       onUnexpectedExit(handler) {
@@ -413,14 +433,18 @@ if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.ar
   let shutdown;
   let sharing;
   let sharingTask = Promise.resolve();
+  let sharingController;
+  let sharingGeneration = 0;
+  let failureExitCode = 0;
   const stop = () => {
     controller.abort();
+    sharingController?.abort();
     if (server)
       shutdown ??= sharingTask
         .then(() => sharing?.stop())
         .then(() => server.stop())
         .then(
-          () => process.exit(0),
+          () => process.exit(failureExitCode),
           () => process.exit(1),
         );
   };
@@ -444,15 +468,35 @@ if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.ar
         return;
       }
       if (message.command !== 'sharing') return;
+      const generation = ++sharingGeneration;
+      sharingController?.abort();
+      const operation = new AbortController();
+      sharingController = operation;
       sharingTask = sharingTask.then(async () => {
         try {
-          if (controller.signal.aborted || !server) return;
+          if (controller.signal.aborted || operation.signal.aborted || !server) return;
+          emit({ event: 'sharing', sharingPending: true });
           await sharing?.stop();
           sharing = undefined;
-          if (message.host) sharing = await startSharing({ url: server.url, host: message.host });
-          emit({ event: 'sharing', sharingUrl: sharing?.url ?? null });
+          if (message.mode === 'direct') sharing = await startSharing({ url: server.url, host: message.host });
+          else if (message.mode === 'cloudflare' || message.mode === 'named') {
+            if (message.mode === 'named' && !message.token) throw new Error('터널 토큰을 입력해 주세요.');
+            sharing = await startCloudflareSharing({
+              url: server.url,
+              executable: server.cloudflared,
+              profileDir,
+              port: server.tunnelPort,
+              signal: operation.signal,
+              ...(message.mode === 'named' ? { token: message.token, hostname: message.hostname } : {}),
+              onExit: (error) => {
+                if (generation === sharingGeneration) emit({ event: 'sharing', sharingError: error });
+              },
+            });
+          } else if (message.mode !== 'off') throw new Error('접속 방식을 확인해 주세요.');
+          if (generation === sharingGeneration) emit({ event: 'sharing', sharingUrl: sharing?.url ?? null });
         } catch (error) {
-          emit({ event: 'sharing', sharingUrl: null, sharingError: error.message });
+          if (generation === sharingGeneration)
+            emit({ event: 'sharing', sharingUrl: null, sharingError: error.message });
         }
       });
     });
@@ -468,11 +512,18 @@ if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.ar
     });
     if (controller.signal.aborted) stop();
     else {
-      emit({ event: 'ready', url: server.url, authToken: server.authToken, interfaces: sharingInterfaces() });
+      emit({
+        event: 'ready',
+        url: server.url,
+        authToken: server.authToken,
+        interfaces: sharingInterfaces(),
+        tunnelOrigin: `http://127.0.0.1:${server.tunnelPort}`,
+      });
       if (!stdio) console.log(JSON.stringify({ event: 'ready', url: server.url }));
       server.onUnexpectedExit(() => {
         emit({ event: 'error', message: '내장 서버가 예기치 않게 중단되었습니다. 앱을 다시 시작해 주세요.' });
-        void server.stop().finally(() => process.exit(1));
+        failureExitCode = 1;
+        stop();
       });
     }
   } catch (error) {

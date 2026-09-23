@@ -12,6 +12,12 @@ const cache = path.join(root, '.tmp', 'embedded-downloads');
 const deploy = path.join(output, 'server');
 const components = [
   {
+    name: 'cloudflared',
+    url: 'https://github.com/cloudflare/cloudflared/releases/download/2026.9.1/cloudflared-windows-amd64.exe',
+    sha256: '2837888cc0f5d58f15b6dc478376de90b4d3ba5241c7947455d1e0a0df429712',
+    binary: 'cloudflared.exe',
+  },
+  {
     name: 'node',
     url: 'https://nodejs.org/dist/v22.23.2/node-v22.23.2-win-x64.zip',
     sha256: '1177b4137ba5adaa56354ae40f1080c7450e8ae09cecb47da459d1c52ac99f97',
@@ -51,7 +57,7 @@ await mkdir(output, { recursive: true });
 await mkdir(cache, { recursive: true });
 const inventory = [];
 for (const component of components) {
-  const archivePath = path.join(cache, `${component.name}-${component.sha256}.zip`);
+  const archivePath = path.join(cache, `${component.name}-${component.sha256}.${component.binary ? 'bin' : 'zip'}`);
   let archive = await readFile(archivePath).catch(() => undefined);
   const valid = (bytes) => bytes && createHash('sha256').update(bytes).digest('hex') === component.sha256;
   if (!valid(archive)) {
@@ -61,23 +67,29 @@ for (const component of components) {
     if (!valid(archive)) throw new Error(`Runtime digest mismatch: ${component.name}`);
     await writeFile(archivePath, archive);
   }
-  const zip = new ZipReader(new BlobReader(new Blob([archive])), { useWebWorkers: false });
   let installedBytes = 0;
-  try {
-    for (const entry of await zip.getEntries()) {
-      if (entry.directory || !entry.filename.startsWith(component.prefix)) continue;
-      const name = entry.filename.slice(component.prefix.length);
-      if (!component.include(name)) continue;
-      if (name.includes('\\') || name.split('/').some((part) => part === '..' || part === '.'))
-        throw new Error('Invalid runtime entry');
-      const target = path.join(output, component.name, name);
-      await mkdir(path.dirname(target), { recursive: true });
-      const bytes = await entry.getData(new Uint8ArrayWriter());
-      await writeFile(target, bytes);
-      installedBytes += bytes.byteLength;
+  if (component.binary) {
+    await mkdir(path.join(output, component.name), { recursive: true });
+    await writeFile(path.join(output, component.name, component.binary), archive);
+    installedBytes = archive.byteLength;
+  } else {
+    const zip = new ZipReader(new BlobReader(new Blob([archive])), { useWebWorkers: false });
+    try {
+      for (const entry of await zip.getEntries()) {
+        if (entry.directory || !entry.filename.startsWith(component.prefix)) continue;
+        const name = entry.filename.slice(component.prefix.length);
+        if (!component.include(name)) continue;
+        if (name.includes('\\') || name.split('/').some((part) => part === '..' || part === '.'))
+          throw new Error('Invalid runtime entry');
+        const target = path.join(output, component.name, name);
+        await mkdir(path.dirname(target), { recursive: true });
+        const bytes = await entry.getData(new Uint8ArrayWriter());
+        await writeFile(target, bytes);
+        installedBytes += bytes.byteLength;
+      }
+    } finally {
+      await zip.close();
     }
-  } finally {
-    await zip.close();
   }
   inventory.push({
     name: component.name,
@@ -164,9 +176,10 @@ run(
     VITE_API_BASE_URL: '/api',
   },
 );
-for (const script of ['embedded-server.mjs', 'embedded-sharing.mjs']) {
+for (const script of ['embedded-server.mjs', 'embedded-sharing.mjs', 'embedded-tunnel.mjs']) {
   await cp(path.join(root, 'scripts/desktop', script), path.join(output, script));
 }
+await cp(path.join(root, 'third_party/licenses/cloudflared/LICENSE'), path.join(output, 'cloudflared/LICENSE'));
 for (const name of ['LICENSE', 'THIRD_PARTY_NOTICES.md']) await cp(path.join(root, name), path.join(output, name));
 await writeFile(
   path.join(output, 'runtime.json'),
@@ -175,6 +188,7 @@ await writeFile(
       version: 1,
       platform: 'win32-x64',
       postgresMajor: 16,
+      cloudflared: 'cloudflared/cloudflared.exe',
       node: 'node/node.exe',
       postgresBin: 'postgres/bin',
       redisServer: 'redis/redis-server.exe',

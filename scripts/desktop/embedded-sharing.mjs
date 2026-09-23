@@ -24,6 +24,10 @@ export async function startSharing({ url, host }) {
   if (!sharingInterfaces().some(({ address }) => address === host)) {
     throw new Error('현재 연결된 사설망 주소를 선택해 주세요.');
   }
+  return createSharingListener({ url, host });
+}
+
+export async function createSharingListener({ url, host = '127.0.0.1', port = 0, publicOrigin }) {
   const status = await fetch(`${url}/api/auth/status`, { signal: AbortSignal.timeout(3000) }).then((response) => {
     if (!response.ok) throw new Error('계정 상태를 확인하지 못했습니다.');
     return response.json();
@@ -32,6 +36,7 @@ export async function startSharing({ url, host }) {
   const target = new URL(url);
   const sockets = new Set();
   const upstreams = new Set();
+  let origin = publicOrigin;
   let authority;
   const server = createServer((request, response) => {
     // Bound address only: reject rebinding/Host spoofing, proxy credentials and setup/recovery.
@@ -39,7 +44,7 @@ export async function startSharing({ url, host }) {
       response.writeHead(403).end();
       return;
     }
-    if (request.headers.origin && request.headers.origin !== `http://${authority}`) {
+    if (request.headers.origin && request.headers.origin !== origin) {
       response.writeHead(403).end();
       return;
     }
@@ -52,6 +57,7 @@ export async function startSharing({ url, host }) {
       if (key.startsWith('x-forwarded-') || ['forwarded', 'connection', 'upgrade', 'proxy-authorization'].includes(key))
         delete headers[key];
     }
+    if (origin?.startsWith('https://')) headers['x-forwarded-proto'] = 'https';
     const upstream = httpRequest(
       { hostname: target.hostname, port: target.port, path: request.url, method: request.method, headers },
       (incoming) => {
@@ -75,11 +81,17 @@ export async function startSharing({ url, host }) {
   });
   await new Promise((resolve, reject) => {
     server.once('error', reject);
-    server.listen(0, host, resolve);
+    server.listen(port, host, resolve);
   });
-  authority = `${host}:${server.address().port}`;
+  const localUrl = `http://${host}:${server.address().port}`;
+  origin = publicOrigin === undefined ? localUrl : publicOrigin;
+  authority = origin ? new URL(origin).host : undefined;
   return {
-    url: `http://${authority}`,
+    url: localUrl,
+    setPublicOrigin(value) {
+      origin = new URL(value).origin;
+      authority = new URL(origin).host;
+    },
     async stop() {
       const closed = new Promise((resolve) => server.close(resolve));
       for (const upstream of upstreams) upstream.destroy();

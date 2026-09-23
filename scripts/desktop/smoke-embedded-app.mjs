@@ -132,7 +132,9 @@ try {
   await page.getByLabel('비밀번호 확인', { exact: true }).fill('desktop proof account password');
   await page.getByRole('button', { name: '계정 만들기', exact: true }).click();
   await page.getByRole('button', { name: '다른 기기 접속 허용', exact: true }).waitFor();
+  assert.equal(await page.getByLabel('접속 방식', { exact: true }).inputValue(), 'cloudflare');
   if (connection.interfaces?.length) {
+    await page.getByLabel('접속 방식', { exact: true }).selectOption('direct');
     await page.getByRole('button', { name: '다른 기기 접속 허용', exact: true }).click();
     const address = page.getByLabel('다른 기기 접속 주소');
     await address.waitFor();

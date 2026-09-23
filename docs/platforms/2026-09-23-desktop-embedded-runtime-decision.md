@@ -82,7 +82,7 @@ Windows proof payload는 실행 구성을 검증하는 산출물이다. 라이�
 - 공통 Remote reader와 서버 가져오기 경로를 사용한다. 앱 소유자는 native 연결로 사용하고, 다른 브라우저는 기존 계정으로 로그인한다.
 - 창 닫기에서 트레이 유지/서버와 앱 종료/돌아가기를 제공한다. 부모 pipe EOF도 정상 서버 종료를 요청하며, 초기화 도중 종료 요청은 초기화 정리 뒤 처리한다.
 - 외부 접속은 선택한 사설 IPv4 인터페이스에 별도 HTTP listener를 열고 로그인 세션만 전달한다. DB/Redis/API 관리 포트는 loopback을 유지한다. 공유 해제는 listener와 기존 연결을 닫으며 로컬 서재는 계속 사용한다. 자동 재공유하지 않는다.
-- 사용자 추가 요청에 따라 QR·주소 복사를 공통 `ServerAccessLink`로 만들어 데스크톱과 self-host 웹 설정에서 재사용한다. QR에는 주소만 들어가고 native 소유자 토큰은 들어가지 않는다. 외부 HTTPS 터널 자동 구성은 아직 구현하지 않았다.
+- 사용자 추가 요청에 따라 QR·주소 복사를 공통 `ServerAccessLink`로 만들어 데스크톱과 self-host 웹 설정에서 재사용한다. QR에는 주소만 들어가고 native 소유자 토큰은 들어가지 않는다. 이후 Cloudflare 기본 접속 방식을 아래와 같이 추가했다.
 - 배포는 lockfile을 사용하는 hoisted production deploy로 바꾸어 절대 경로 junction에 의존하지 않도록 했다. native Windows 후보는 실제로 다른 한글 폴더로 이동해 검사한다.
 - Linux: Rust check/프런트 타입 검사·관련 25 tests 통과. 실제 서버를 사용한 native pipe readiness, 중복 실행 차단, 부모 종료 EOF 정리, 초기화 도중 취소 검증 통과.
 - Windows native 창/공유/종료/재시작은 새 CI에서 검증 중이다. P1 전체 완료나 최종 배포물로 취급하지 않는다. VC runtime/WebView2의 자동 준비, 재배포 고지·source, 전원 종료 후 복구, 실제 별도 기기 검증은 남아 있다.
@@ -90,3 +90,12 @@ Windows proof payload는 실행 구성을 검증하는 산출물이다. 라이�
 ### 사설망 브라우저 경로에서 발견한 공통 UI 수정
 
 실제 사설 IPv4 주소의 HTTP 페이지에서 `crypto.randomUUID`가 제공되지 않아 공통 UI가 시작되지 않는 것을 재현했다. 보안 난수 `crypto.getRandomValues`를 사용하는 UUID v4 helper로 직접 호출부를 교체했다. 전용 UI나 별도 서재를 만들지 않았다. 수정 후 공통 웹 빌드에서 **사설망 로그인 → 같은 TXT 읽기 → 읽던 위치 변경 → 공유 해제 → 로컬 readiness 유지**를 Linux Chromium으로 통과했다. 서로 다른 물리 기기 검증은 아니다. 관련 UUID/내비게이션/연결 검사 22 tests와 타입·lint 검사도 통과했다.
+
+### Cloudflare 기본 접속 방식 (2026-09-24)
+
+- 외부 접속을 켤 때 Quick Tunnel을 기본 선택하고, LAN/Tailscale 직접 접속과 고정 Cloudflare 터널을 선택할 수 있게 했다. 원격 접속 자체는 자동으로 켜지지 않는다.
+- `cloudflared` 2026.9.1을 SHA-256 확인 후 앱 실행 구성에 동봉한다. Windows 실행 파일은 54,976,432바이트(약 52.4MiB)를 추가한다. Apache-2.0 LICENSE를 동봉하며 Cloudflare 서비스 이용 조건은 별도다.
+- 앱 소유자 API 앞에 외부 로그인용 gateway를 두고, loopback에서만 터널 연결을 받는다. 공개 Host/Origin을 확인하고 소유자 bearer와 계정 초기화/복구 경로는 전달하지 않는다. HTTPS 로그인 쿠키에는 Secure를 설정한다.
+- 임시 주소 생성·취소·해제와 앱 종료 시 터널 정리를 연결했다. 고정 터널의 목적지 포트는 프로필에 보존하고, 토큰은 private native pipe와 자식 환경으로만 전달한다. 사용자 Cloudflare 설정 파일을 수정하지 않는다.
+- `smoke-embedded-tunnel.mjs`로 새 빈 검증 서재를 생성하여 실제 Quick Tunnel의 HTTPS 웹 응답, 계정 로그인, 세션 쿠키, 소유자 토큰 차단, 해제 뒤 접근 중단과 로컬 사용 유지를 Linux에서 통과했다. 실제 Cloudflare 계정/도메인이 필요한 고정 터널의 종단 검증은 미실시다.
+- Windows run `35884785547`에서 이동된 서버 payload와 웹 검사는 통과했다. native WebView 자동화 연결도 확인했으나 Node entrypoint의 Windows 경로 처리에서 `EISDIR lstat D:`가 발생했다. native 경로를 일반 Windows 경로로 정리하고 작업 디렉터리 기준 entrypoint로 시작하도록 수정했으며 Windows 재검증이 필요하다.

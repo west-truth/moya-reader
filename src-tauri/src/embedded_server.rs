@@ -25,6 +25,8 @@ pub(crate) struct ServerStatus {
     interfaces: Vec<SharingInterface>,
     sharing_url: Option<String>,
     sharing_error: Option<String>,
+    sharing_pending: bool,
+    tunnel_origin: Option<String>,
 }
 
 #[derive(Default)]
@@ -48,6 +50,8 @@ struct ServerMessage {
     interfaces: Option<Vec<SharingInterface>>,
     sharing_url: Option<String>,
     sharing_error: Option<String>,
+    sharing_pending: Option<bool>,
+    tunnel_origin: Option<String>,
 }
 
 fn require_local_window(window: &WebviewWindow) -> Result<(), String> {
@@ -90,6 +94,7 @@ impl EmbeddedServerManager {
             None
         }
         .unwrap_or(crate::portable::runtime_dir(app)?.join("embedded-server/runtime.json"));
+        let runtime = dunce::simplified(&runtime).to_path_buf();
         let directory = runtime.parent().ok_or("서버 실행 폴더가 없습니다.")?;
         let manifest: serde_json::Value =
             serde_json::from_slice(&std::fs::read(&runtime).map_err(|_| {
@@ -107,6 +112,7 @@ impl EmbeddedServerManager {
             None
         }
         .unwrap_or(crate::portable::data_dir(app)?.join("embedded-server"));
+        let profile = dunce::simplified(&profile).to_path_buf();
         std::fs::create_dir_all(&profile).map_err(|_| "서버 데이터 폴더를 만들지 못했습니다.")?;
         let mut log_options = std::fs::OpenOptions::new();
         log_options.create(true).append(true);
@@ -120,7 +126,10 @@ impl EmbeddedServerManager {
             .map_err(|_| "서버 실행 로그를 열지 못했습니다.")?;
         let mut command = Command::new(node);
         command
-            .arg(directory.join("embedded-server.mjs"))
+            // Node's entrypoint realpath fails on the verbatim Windows path from
+            // resource_dir (\\?\D:\...). A relative entrypoint avoids that conversion.
+            .current_dir(directory)
+            .arg("embedded-server.mjs")
             .arg(&runtime)
             .arg(&profile)
             .arg("--stdio")
@@ -178,10 +187,12 @@ impl EmbeddedServerManager {
                         }
                         state.status.phase = "ready".into();
                         state.status.interfaces = message.interfaces.unwrap_or_default();
+                        state.status.tunnel_origin = message.tunnel_origin;
                         state.status.url = message.url;
                         state.status.auth_token = message.auth_token;
                     }
                     "sharing" => {
+                        state.status.sharing_pending = message.sharing_pending.unwrap_or(false);
                         state.status.sharing_url = message.sharing_url;
                         state.status.sharing_error = message.sharing_error;
                     }
@@ -287,13 +298,16 @@ pub(crate) fn desktop_embedded_server_share(
     window: WebviewWindow,
     state: State<'_, EmbeddedServerManager>,
     host: Option<String>,
+    mode: String,
+    hostname: Option<String>,
+    token: Option<String>,
 ) -> Result<(), String> {
     require_local_window(&window)?;
     let mut state = state.0.lock().map_err(|_| "서버 상태를 읽지 못했습니다.")?;
     if state.status.phase != "ready" {
         return Err("서버가 준비되지 않았습니다.".into());
     }
-    let line = serde_json::to_string(&serde_json::json!({ "command": "sharing", "host": host }))
+    let line = serde_json::to_string(&serde_json::json!({ "command": "sharing", "mode": mode, "host": host, "hostname": hostname, "token": token }))
         .map_err(|_| "접속 설정을 전달하지 못했습니다.")?
         + "\n";
     state
@@ -303,6 +317,7 @@ pub(crate) fn desktop_embedded_server_share(
         .write_all(line.as_bytes())
         .map_err(|_| "접속 설정을 전달하지 못했습니다.")?;
     state.status.sharing_error = None;
+    state.status.sharing_pending = true;
     Ok(())
 }
 

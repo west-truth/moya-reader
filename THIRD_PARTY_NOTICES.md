@@ -133,3 +133,11 @@ intentionally remains blocked until the binary redistribution items in `third_pa
 resolved. Passing either automated inventory check is not legal approval.
 
 This inventory records engineering provenance and is not legal advice.
+
+## Cloudflare Tunnel desktop connector
+
+The embedded desktop runtime includes cloudflared 2026.9.1 for optional remote access.
+Copyright Cloudflare, Inc. Distributed under the Apache License, Version 2.0.
+Source: https://github.com/cloudflare/cloudflared/tree/2026.9.1
+License: `third_party/licenses/cloudflared/LICENSE` (also copied beside the bundled executable).
+The Cloudflare service's terms and availability are separate from the software license.
