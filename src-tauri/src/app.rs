@@ -62,9 +62,18 @@ pub fn run() {
                 }
                 let profile = crate::portable::prepare().map_err(std::io::Error::other)?;
                 std::fs::create_dir_all(profile.root.join("webview"))?;
-                tauri::WebviewWindowBuilder::from_config(app.handle(), window)?
-                    .data_directory(profile.root.join("webview"))
-                    .build()?;
+                let bounds_path = crate::portable_window::path(&profile.root);
+                let saved = crate::portable_window::restore(app.handle(), &bounds_path);
+                let mut builder = tauri::WebviewWindowBuilder::from_config(app.handle(), window)?
+                    .data_directory(profile.root.join("webview"));
+                if let Some(bounds) = &saved {
+                    builder = builder
+                        .inner_size(bounds.width, bounds.height)
+                        .position(bounds.x, bounds.y)
+                        .maximized(bounds.maximized);
+                }
+                let webview = builder.build()?;
+                crate::portable_window::track(&webview, bounds_path, saved);
             }
             app.manage(crate::metadata_collector::MetadataCollectorManager::default());
             app.manage(crate::extension_runtime::ExtensionRuntimeManager::default());

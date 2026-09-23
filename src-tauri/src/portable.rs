@@ -8,6 +8,7 @@ use tauri::Manager;
 pub(crate) struct PortableProfile {
     pub(crate) root: PathBuf,
     pub(crate) runtime: PathBuf,
+    _lock: std::sync::Arc<std::fs::File>,
 }
 
 #[cfg(moya_portable)]
@@ -26,6 +27,15 @@ pub(crate) fn prepare() -> Result<PortableProfile, String> {
                 .join("MoyaData");
             std::fs::create_dir_all(&root)
                 .map_err(|_| "MoyaData 폴더에 쓸 수 없습니다. 쓰기 가능한 폴더에서 실행해 주세요.")?;
+            let lock = std::fs::OpenOptions::new()
+                .read(true)
+                .write(true)
+                .create(true)
+                .truncate(false)
+                .open(root.join(".moya-running.lock"))
+                .map_err(|_| "MoyaData 폴더를 잠글 수 없습니다.")?;
+            lock.try_lock()
+                .map_err(|_| "이 MoyaData 폴더를 사용하는 Moya가 이미 실행 중입니다.")?;
             let payload = include_bytes!(concat!(env!("OUT_DIR"), "/portable-payload.zip"));
             let digest = format!("{:x}", Sha256::digest(payload));
             let runtime = root.join("runtime").join(&digest[..20]);
@@ -102,13 +112,10 @@ pub(crate) fn prepare() -> Result<PortableProfile, String> {
                 if extracted.is_err() {
                     // Only this process's private staging directory is removed.
                     let _ = std::fs::remove_dir_all(&stage);
-                    if ready() {
-                        return Ok(PortableProfile { root, runtime });
-                    }
                 }
                 extracted?;
             }
-            Ok(PortableProfile { root, runtime })
+            Ok(PortableProfile { root, runtime, _lock: std::sync::Arc::new(lock) })
         })
         .clone()
 }

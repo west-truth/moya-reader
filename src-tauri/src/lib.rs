@@ -11,6 +11,8 @@ mod metadata_collector;
 mod native_identity;
 mod portable;
 mod portable_vault;
+#[cfg(moya_portable)]
+mod portable_window;
 mod provider_http;
 mod provider_secrets;
 mod secure_credentials;
