@@ -105,7 +105,7 @@ jobs:
           Copy-Item ".tmp/embedded-windows/inventory.json" .tmp/embedded-evidence/ -ErrorAction SilentlyContinue
           $appProfile = Get-ChildItem $env:TEMP -Directory -Filter 'Moya app proof *' | Sort-Object LastWriteTime -Descending | Select-Object -First 1
           if ($appProfile) {
-            foreach ($name in @('app-smoke-result.json', 'launcher.log', 'native-reader.png', 'native-sharing.png', 'native-error.png', 'native-desktop-error.png', 'initdb.log', 'postgres.log')) {
+            foreach ($name in @('app-smoke-result.json', 'launcher.log', 'native-reader.png', 'native-epub.png', 'native-pdf.png', 'native-sharing.png', 'native-error.png', 'native-desktop-error.png', 'initdb.log', 'postgres.log')) {
               Copy-Item (Join-Path $appProfile.FullName $name) .tmp/embedded-evidence/ -ErrorAction SilentlyContinue
             }
           }

@@ -6,6 +6,8 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 import { chromium } from 'playwright-core';
+import { BlobReader, TextWriter, ZipReader } from '@zip.js/zip.js';
+import { epubFixture, pdfFixture } from './embedded-format-fixtures.mjs';
 
 const executable = path.resolve(process.argv[2]);
 const profile = await mkdtemp(path.join(tmpdir(), 'Moya app proof 한글 '));
@@ -17,6 +19,7 @@ const evidence = {
   nativeWindow: false,
   serverReady: false,
   collectorGateway: false,
+  nativeFormats: [],
   sharingRevoked: false,
   restart: false,
 };
@@ -100,7 +103,7 @@ async function close(fromTray = false) {
 }
 try {
   await launch();
-  await page.evaluate(async ({ url, authToken }) => {
+  const textBookId = await page.evaluate(async ({ url, authToken }) => {
     const request = async (resource, options = {}) => {
       const response = await fetch(`${url}/api${resource}`, {
         ...options,
@@ -131,7 +134,7 @@ try {
     const deadline = Date.now() + 30_000;
     while (Date.now() < deadline) {
       const result = await request(`/import-jobs/${job.jobId}`);
-      if (result.status === 'done') return;
+      if (result.status === 'done') return result.book_id;
       if (result.status === 'failed') throw new Error('Native import job failed');
       await new Promise((resolve) => setTimeout(resolve, 100));
     }
@@ -142,6 +145,94 @@ try {
   await page.locator('.book-continue-action').first().click();
   await page.getByText('앱 창에서 내장 서버의 작품을 읽습니다.', { exact: false }).first().waitFor();
   evidence.nativeReader = true;
+  await page.getByLabel('본문 검색', { exact: true }).fill('내장 서버의 작품');
+  await page.getByRole('status').getByText('1개 결과').waitFor();
+  evidence.nativeSearch = true;
+  await page.getByRole('button', { name: '북마크 추가', exact: true }).first().click();
+  await page.getByRole('button', { name: '북마크 제거', exact: true }).first().waitFor();
+  const bookmarks = await fetch(`${connection.url}/api/books/${textBookId}/bookmarks`, {
+    headers: { Authorization: `Bearer ${connection.authToken}` },
+  });
+  assert.equal(bookmarks.status, 200);
+  assert.equal((await bookmarks.json()).bookmarks.length, 1);
+  evidence.nativeBookmark = true;
+  for (const [format, bytes, contentType, title] of [
+    ['epub', await epubFixture(), 'application/epub+zip', 'Moya EPUB proof'],
+    ['pdf', pdfFixture(), 'application/pdf', 'Moya PDF proof'],
+  ]) {
+    const request = async (resource, options = {}) => {
+      const response = await fetch(`${connection.url}/api${resource}`, {
+        ...options,
+        headers: { Authorization: `Bearer ${connection.authToken}`, ...options.headers },
+      });
+      assert(response.ok, `${resource}: ${response.status} ${await response.clone().text()}`);
+      return response.json();
+    };
+    const upload = await request('/uploads/init', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ fileName: `${title}.${format}`, sizeBytes: bytes.length, contentType, totalChunks: 1 }),
+    });
+    await request(`/uploads/${upload.uploadId}/chunks/0`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/octet-stream' },
+      body: bytes,
+    });
+    const complete = await request(`/uploads/${upload.uploadId}/complete`, { method: 'POST' });
+    const deadline = Date.now() + 60_000;
+    let job;
+    do {
+      job = await request(`/import-jobs/${complete.jobId}`);
+      assert.notEqual(job.status, 'failed', job.error_message);
+      if (job.status !== 'done') await delay(250);
+    } while (job.status !== 'done' && Date.now() < deadline);
+    assert.equal(job.status, 'done');
+    const source = await fetch(`${connection.url}/api/books/${job.book_id}/source`, {
+      headers: { Authorization: `Bearer ${connection.authToken}` },
+    });
+    assert.equal(source.status, 200);
+    assert.deepEqual(Buffer.from(await source.arrayBuffer()), bytes);
+    await page.reload();
+    await page.locator(`.book-continue-action[aria-label^="${title}"]`).click();
+    if (format === 'epub') {
+      await page.getByText('Embedded EPUB reading works.', { exact: false }).first().waitFor();
+    } else {
+      await page.waitForFunction(() => {
+        const canvas = document.querySelector('.fixed-doc-pdf-page canvas');
+        if (!canvas) return false;
+        const pixels = canvas.getContext('2d').getImageData(0, 0, canvas.width, canvas.height).data;
+        let dark = false;
+        let light = false;
+        for (let i = 0; i < pixels.length; i += 4) {
+          if (pixels[i + 3] === 255 && pixels[i] < 100) dark = true;
+          if (pixels[i + 3] === 255 && pixels[i] > 200) light = true;
+          if (dark && light) return true;
+        }
+        return false;
+      });
+    }
+    await page.screenshot({ path: path.join(profile, `native-${format}.png`) });
+    evidence.nativeFormats.push(format);
+  }
+  await page.reload();
+  await page.getByRole('button', { name: '백업 및 복원 열기', exact: true }).click();
+  const downloadStarted = page.waitForEvent('download', { timeout: 30_000 });
+  await page.getByRole('button', { name: '백업 만들기', exact: true }).click();
+  const backupDownload = await downloadStarted;
+  const backupPath = path.join(profile, 'native-backup.zip');
+  await backupDownload.saveAs(backupPath);
+  const backupReader = new ZipReader(new BlobReader(new Blob([await readFile(backupPath)])));
+  try {
+    const manifestEntry = (await backupReader.getEntries()).find((entry) => entry.filename === 'manifest.json');
+    assert(manifestEntry?.getData, 'Native backup download did not contain a manifest');
+    const manifest = JSON.parse(await manifestEntry.getData(new TextWriter()));
+    assert.equal(manifest.backend, 'hosted');
+    assert.equal(manifest.books.length, 3);
+  } finally {
+    await backupReader.close();
+  }
+  evidence.nativeBackupSaved = true;
+  await page.getByRole('button', { name: '백업 패널 닫기', exact: true }).click();
   await page.getByRole('button', { name: '다른 기기 접속', exact: true }).click();
   await page.getByLabel('아이디', { exact: true }).fill('desktop-proof');
   await page.getByLabel('비밀번호', { exact: true }).fill('desktop proof account password');
@@ -184,6 +275,12 @@ try {
   assert.equal(connection.url, firstUrl);
   assert.equal(connection.sharingUrl, null);
   await page.getByText('앱 연결 검증', { exact: true }).first().waitFor({ timeout: 30_000 });
+  const persistedBookmarks = await fetch(`${connection.url}/api/books/${textBookId}/bookmarks`, {
+    headers: { Authorization: `Bearer ${connection.authToken}` },
+  });
+  assert.equal(persistedBookmarks.status, 200);
+  assert.equal((await persistedBookmarks.json()).bookmarks.length, 1);
+  evidence.nativeBookmarkRestart = true;
   await page.evaluate(() => window.__TAURI_INTERNALS__.invoke('desktop_embedded_server_close', { keepRunning: true }));
   assert.equal((await fetch(`${connection.url}/api/ready`)).status, 200);
   evidence.trayMaintainsServer = true;
