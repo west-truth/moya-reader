@@ -26,21 +26,26 @@ async function portAvailable(port) {
 async function samePostgres(pid, executable, db, startedAt) {
   if (process.platform === 'win32') {
     // Only a validated numeric PID is embedded; paths never enter shell source.
-    const script = `$p=Get-CimInstance Win32_Process -Filter "ProcessId = ${pid}"; if($p){@{exe=$p.ExecutablePath;started=([DateTimeOffset]$p.CreationDate).ToUnixTimeSeconds()}|ConvertTo-Json -Compress}`;
+    const script = `[Console]::OutputEncoding=New-Object System.Text.UTF8Encoding($false); $p=Get-CimInstance Win32_Process -Filter "ProcessId = ${pid}"; if($p){@{exe=$p.ExecutablePath;started=([DateTimeOffset]$p.CreationDate).ToUnixTimeSeconds()}|ConvertTo-Json -Compress}`;
     const { stdout } = await exec(
       'powershell.exe',
       ['-NoProfile', '-NonInteractive', '-EncodedCommand', Buffer.from(script, 'utf16le').toString('base64')],
       { windowsHide: true, timeout: 10_000 },
     );
     const info = JSON.parse(stdout);
-    return (
-      info.exe &&
-      path.resolve(info.exe).toLowerCase() === path.resolve(executable).toLowerCase() &&
-      Math.abs(info.started - startedAt) <= 2
-    );
+    if (!info.exe || !(await samePath(info.exe, executable)))
+      throw new Error('기존 DB 실행 파일의 소유권을 확인하지 못했습니다. 기존 자료를 보존했습니다.');
+    if (Math.abs(info.started - startedAt) > 2)
+      throw new Error('기존 DB 시작 시각이 기록과 다릅니다. 기존 자료를 보존했습니다.');
+    return true;
   }
   const [exe, cwd] = await Promise.all([realpath(`/proc/${pid}/exe`), realpath(`/proc/${pid}/cwd`)]);
   return exe === (await realpath(executable)) && cwd === (await realpath(db));
+}
+
+async function samePath(left, right) {
+  const [a, b] = await Promise.all([realpath(left), realpath(right)]);
+  return process.platform === 'win32' ? a.toLowerCase() === b.toLowerCase() : a === b;
 }
 
 /** Called only while the native guard holds the profile's OS lock. */
@@ -81,8 +86,9 @@ export async function recoverEmbeddedProfile({ profileDir, postgresBin, redisCli
     const pid = Number(lines[0]);
     if (alive(pid)) {
       const executable = path.join(postgresBin, process.platform === 'win32' ? 'postgres.exe' : 'postgres');
-      if (path.resolve(lines[1]) !== path.resolve(db) || !(await samePostgres(pid, executable, db, Number(lines[2]))))
-        throw new Error('기존 DB 프로세스의 소유권을 확인하지 못했습니다. 기존 자료를 보존했습니다.');
+      if (!(await samePath(lines[1], db))) throw new Error('기존 DB 데이터 경로가 다릅니다. 기존 자료를 보존했습니다.');
+      if (!(await samePostgres(pid, executable, db, Number(lines[2]))))
+        throw new Error('기존 DB 실행 파일의 소유권을 확인하지 못했습니다. 기존 자료를 보존했습니다.');
       await exec(
         path.join(postgresBin, process.platform === 'win32' ? 'pg_ctl.exe' : 'pg_ctl'),
         ['-D', 'postgres', '-m', 'fast', '-w', '-t', '30', 'stop'],

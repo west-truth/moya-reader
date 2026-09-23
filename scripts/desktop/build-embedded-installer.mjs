@@ -3,6 +3,7 @@ import { createHash } from 'node:crypto';
 import { cp, mkdir, readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { recordProfileGuard } from './embedded-inventory.mjs';
 
 if (process.platform !== 'win32') throw new Error('Build the Windows installer on Windows');
 const root = fileURLToPath(new URL('../../', import.meta.url));
@@ -54,6 +55,7 @@ await cp(
   path.join(root, 'src-tauri/target/release/moya-server-guard.exe'),
   path.join(root, '.tmp/Moya app 한글/embedded-server/moya-server-guard.exe'),
 );
+await recordProfileGuard(path.join(root, '.tmp/Moya app 한글/embedded-server'));
 const build = spawnSync(
   process.execPath,
   [

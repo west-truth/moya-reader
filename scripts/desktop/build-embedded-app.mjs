@@ -2,6 +2,7 @@ import { spawnSync } from 'node:child_process';
 import { cp, mkdir, rename, rm } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { recordProfileGuard } from './embedded-inventory.mjs';
 
 if (process.platform !== 'win32') throw new Error('Build the Windows candidate on Windows');
 const root = fileURLToPath(new URL('../../', import.meta.url));
@@ -21,6 +22,7 @@ await cp(
   path.join(root, 'src-tauri/target/debug/moya-server-guard.exe'),
   path.join(root, '.tmp/embedded-windows/moya-server-guard.exe'),
 );
+await recordProfileGuard(path.join(root, '.tmp/embedded-windows'));
 run([
   'node_modules/@tauri-apps/cli/tauri.js',
   'build',

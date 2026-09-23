@@ -53,9 +53,9 @@ jobs:
           key: embedded-win-node22.23.2-pg16.15-redis7.2.16-cloudflared2026.9.1
       - run: node scripts/desktop/build-embedded-runtime.mjs
       - run: node scripts/desktop/build-embedded-app.mjs
+      - run: node node_modules/playwright-core/cli.js install chromium
       - name: Recover the same profile after killing its launcher
         run: node scripts/desktop/smoke-embedded-recovery.mjs ".tmp/Moya app 한글/embedded-server/runtime.json"
-      - run: node node_modules/playwright-core/cli.js install chromium
       - name: Open native window, connect automatically, share, revoke and restart
         timeout-minutes: 5
         run: node scripts/desktop/smoke-embedded-app.mjs ".tmp/Moya app 한글/Moya.exe"
@@ -66,10 +66,11 @@ jobs:
           node scripts/desktop/smoke-embedded-server.mjs ".tmp/Moya app 한글/embedded-server/runtime.json"
           if ($LASTEXITCODE -ne 0) { throw 'Embedded server smoke failed' }
       - name: Build the release installer candidate
-        if: ${{ inputs.build_installer }}
+        id: installer
+        if: ${{ !cancelled() && inputs.build_installer }}
         run: node scripts/desktop/build-embedded-installer.mjs
       - name: Install and start with developer tools removed from PATH
-        if: ${{ inputs.build_installer }}
+        if: ${{ !cancelled() && inputs.build_installer && steps.installer.outcome == 'success' }}
         run: ./scripts/desktop/smoke-embedded-installer.ps1
       - name: Collect evidence without credentials or server data
         if: always()

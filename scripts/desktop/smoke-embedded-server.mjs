@@ -204,6 +204,43 @@ try {
     assert.equal((await fetch(`${url}/api/ready`)).status, 200);
     result.privateNetworkSharing = 'authenticated reader, position update and revocation passed (same machine)';
   }
+  // Restore a real streamed server backup into an entirely new synthetic profile.
+  const beforeBackup = await request(`/books/${bookId}/manifest`);
+  const ticket = await request('/backups/download', { method: 'POST' });
+  const backupResponse = await fetch(`${server.url}/api/backups/download/${ticket.ticket}`);
+  assert.equal(backupResponse.status, 200);
+  const backup = Buffer.from(await backupResponse.arrayBuffer());
+  await browser.close();
+  browser = undefined;
+  await server.stop();
+  server = undefined;
+  const restoredProfile = await mkdtemp(path.join(tmpdir(), 'Moya restored proof '));
+  server = await startEmbeddedServer({ runtimeFile, profileDir: restoredProfile });
+  const inspection = await request('/backups/inspect', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/zip' },
+    body: backup,
+  });
+  assert(inspection.stagedId);
+  const restored = await request(`/backups/staged/${inspection.stagedId}/restore`, { method: 'POST' });
+  assert.equal(restored.restoredBooks, 1);
+  const restoredManifest = await request(`/books/${bookId}/manifest`);
+  // Restore deliberately stamps library_books.updated_at; content and reader timestamps must survive.
+  assert(Number.isFinite(Date.parse(restoredManifest.book.updated_at)));
+  assert.deepEqual(
+    { ...restoredManifest, book: { ...restoredManifest.book, updated_at: beforeBackup.book.updated_at } },
+    beforeBackup,
+  );
+  const restoredSource = await fetch(`${server.url}/api/books/${bookId}/source`, {
+    headers: { Authorization: `Bearer ${server.authToken}` },
+  });
+  assert.equal(restoredSource.status, 200);
+  assert.deepEqual(Buffer.from(await restoredSource.arrayBuffer()), bytes);
+  await server.stop();
+  server = undefined;
+  server = await startEmbeddedServer({ runtimeFile, profileDir: restoredProfile });
+  assert.deepEqual(await request(`/books/${bookId}/manifest`), restoredManifest);
+  result.backupRestore = 'new profile: same book ID, manifest, reading position and original bytes; restart passed';
 } finally {
   await sharing?.stop();
   await browser?.close();

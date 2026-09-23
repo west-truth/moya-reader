@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { createHash, randomBytes } from 'node:crypto';
+import { execFileSync } from 'node:child_process';
 import { createReadStream } from 'node:fs';
 import { mkdtemp, open, stat, writeFile } from 'node:fs/promises';
 import { createRequire } from 'node:module';
@@ -35,10 +36,27 @@ const bytes = (await stat(filename)).size;
 assert(bytes > 500 * 1024 ** 2);
 let server;
 let browser;
+let sampler;
 const result = { bytes, pages: 11, profileDir };
 const start = Date.now();
 try {
   server = await startEmbeddedServer({ runtimeFile: process.argv[2], profileDir });
+  if (process.platform === 'linux') {
+    result.resourceSampling =
+      '2-second Linux samples; managed server PIDs only, excluding browser and PostgreSQL child processes';
+    const sample = () => {
+      const rss = execFileSync('ps', ['-o', 'rss=', '-p', server.processIds.join(',')], { encoding: 'utf8' })
+        .trim()
+        .split(/\s+/)
+        .reduce((sum, value) => sum + Number(value) * 1024, 0);
+      const disk = Number(execFileSync('du', ['-sb', profileDir], { encoding: 'utf8' }).split(/\s+/)[0]);
+      result.peakSampledServerResidentBytes = Math.max(result.peakSampledServerResidentBytes ?? 0, rss);
+      result.peakSampledProfileBytes = Math.max(result.peakSampledProfileBytes ?? 0, disk);
+    };
+    sample();
+    result.initialProfileBytes = result.peakSampledProfileBytes;
+    sampler = setInterval(sample, 2000);
+  }
   const password = randomBytes(16).toString('hex');
   await fetch(`${server.url}/api/auth/register`, {
     method: 'POST',
@@ -69,6 +87,8 @@ try {
   );
   result.numericProgress = true;
   await page.screenshot({ path: path.join(profileDir, 'numeric-progress.png') });
+  // Background the active import; otherwise completion opens the series automatically.
+  await page.getByRole('button', { name: '가져오기 닫기', exact: true }).click();
   // Follow the real server job created by the shared UI.
   const deadline = Date.now() + 600_000;
   let books;
@@ -87,10 +107,6 @@ try {
   assert.equal(books.books?.length, 1, 'Large import did not commit');
   const bookId = books.books[0].id;
   result.importMs = Date.now() - start;
-  await page
-    .getByRole('button', { name: '가져오기 닫기', exact: true })
-    .click()
-    .catch(() => {});
   await page.locator('.book-continue-action').first().click({ timeout: 30_000 });
   await page.waitForFunction(
     () =>
@@ -113,6 +129,7 @@ try {
   await writeFile(path.join(profileDir, 'large-import-result.json'), JSON.stringify(result, null, 2));
   console.log(JSON.stringify(result));
 } finally {
+  clearInterval(sampler);
   await browser?.close();
   await server?.stop();
 }
