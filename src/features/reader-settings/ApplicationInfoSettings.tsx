@@ -17,7 +17,6 @@ import packageMetadata from '../../../package.json';
 import { useOptionalAppRuntime } from '../../app/runtime/RuntimeProvider';
 import type { PlatformRuntimeInfo, PlatformRuntimeKind, ProviderExecutionRuntimeKind } from '../../platform/runtime';
 import type { SelfHostAccount } from '../auth/self-host-auth-client';
-import { ServerPeerSyncSettings } from './ServerPeerSyncSettings';
 
 const archiveBackends = [
   {
@@ -208,10 +207,6 @@ export function ApplicationInfoSettings(props: ApplicationInfoSettingsProps) {
           <ServerAccessLink url={webAccessUrl} />
           <p>같은 서버의 서재를 엽니다. 해당 주소에 접속할 수 있는 네트워크가 필요합니다.</p>
         </section>
-      )}
-
-      {reader?.mode === 'remote' && reader.remoteApiClient && (
-        <ServerPeerSyncSettings client={reader.remoteApiClient} />
       )}
 
       <section aria-labelledby="platform-help-title">

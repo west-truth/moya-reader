@@ -46,15 +46,7 @@ describeWithPostgres('complete-package expected base with PostgreSQL and loopbac
           "select payload, revision from sync_events where book_id='book_fixture' and type='book_imported' order by sequence",
         );
         expect(contentEvents.rows).toHaveLength(2);
-        expect(contentEvents.rows[1].payload).toMatchObject({
-          bookId: 'book_fixture',
-          content: {
-            kind: 'revision_v1',
-            baseRevisionId: original.active_content_revision_id,
-            targetRevisionId: updated.active_content_revision_id,
-            revisionNumber: 2,
-          },
-        });
+        expect(contentEvents.rows[1].payload).toEqual({ bookId: 'book_fixture' });
         expect(contentEvents.rows[1].revision.payloadHash).toBe(
           syncPayloadIntegrityHash(contentEvents.rows[1].payload),
         );
@@ -65,7 +57,8 @@ describeWithPostgres('complete-package expected base with PostgreSQL and loopbac
             where revision.book_id='book_fixture' order by revision.revision_number`,
         );
         expect(sourceHistory.rows).toHaveLength(2);
-        expect(sourceHistory.rows.every((row) => typeof row.storage_key === 'string')).toBe(true);
+        expect(sourceHistory.rows[0].storage_key).toBeNull();
+        expect(typeof sourceHistory.rows[1].storage_key).toBe('string');
         const staging = new BackupStaging(path.join(fixture.config.dataDir, 'history-backup-staging'));
         try {
           const backup = await exportHostedBackup(pool, fixture.config);
@@ -73,7 +66,7 @@ describeWithPostgres('complete-package expected base with PostgreSQL and loopbac
           await backup.completion;
           expect(received.stage.source).toBe('hosted');
           if (received.stage.source !== 'hosted') throw new Error('Expected hosted archive');
-          expect(received.stage.parsed.objects.filter((object) => object.asset_kind === 'source')).toHaveLength(2);
+          expect(received.stage.parsed.objects.filter((object) => object.asset_kind === 'source')).toHaveLength(1);
           expect(received.stage.parsed.tables.get('book_content_revisions')).toHaveLength(2);
           await staging.discard(received.id);
         } finally {

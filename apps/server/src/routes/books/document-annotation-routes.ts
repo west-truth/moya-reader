@@ -1,5 +1,4 @@
 import type { FastifyInstance } from 'fastify';
-import { randomUUID } from 'node:crypto';
 import type pg from 'pg';
 import type { DocumentAnnotation } from '@noveldesk/contracts';
 import type { ServerConfig } from '../../config.js';
@@ -9,8 +8,6 @@ import { insertServerSyncEvent, withTransaction } from '../ai/sync-event-reposit
 import { lockBookResource } from '../resource-revision.js';
 import { documentPageHash } from './document-page-identity.js';
 import { validDocumentTextAnchor } from './document-text-anchor.js';
-import { activeBookContentRevisionId, readerEntityRevision, readerEntityValue } from './reader-entity-revisions.js';
-import { expectedResourceRevision } from '../resource-revision.js';
 
 function mapRow(row: Record<string, unknown>): DocumentAnnotation {
   return {
@@ -54,7 +51,6 @@ export async function registerDocumentAnnotationRoutes(app: FastifyInstance, poo
       const body = request.body;
       const candidate =
         body && typeof body === 'object' && !Array.isArray(body) ? (body as Record<string, unknown>) : {};
-      const expectedRevision = expectedResourceRevision(candidate);
       const now = new Date().toISOString();
       const parsed = parseDocumentAnnotationPayload({
         payload: { annotation: candidate },
@@ -89,13 +85,6 @@ export async function registerDocumentAnnotationRoutes(app: FastifyInstance, poo
       }
       const result = await withTransaction(pool, async (db) => {
         if (!(await lockBookResource(db, config.defaultUserId, parsed.bookId))) return 'missing_book';
-        const baseEntityRevision = await readerEntityRevision(
-          db,
-          config.defaultUserId,
-          'document_annotation',
-          parsed.id,
-        );
-        if (expectedRevision && expectedRevision !== baseEntityRevision) return 'conflict';
         const pageHash = await documentPageHash(db, parsed.bookId, parsed.pageIndex, config.defaultUserId);
         if (!pageHash) return 'missing_page';
         const anchor = candidate.anchor as Record<string, unknown>;
@@ -114,7 +103,7 @@ export async function registerDocumentAnnotationRoutes(app: FastifyInstance, poo
              updated_at = excluded.updated_at, deleted_at = null
            where document_annotations.book_id = excluded.book_id
              and document_annotations.user_id = excluded.user_id
-             and (document_annotations.updated_at <= excluded.updated_at or $13::boolean)
+             and document_annotations.updated_at <= excluded.updated_at
            returning id`,
           [
             parsed.id,
@@ -129,18 +118,12 @@ export async function registerDocumentAnnotationRoutes(app: FastifyInstance, poo
             candidate.textAnchorRemap ? JSON.stringify(candidate.textAnchorRemap) : null,
             createdAt,
             updatedAt,
-            Boolean(expectedRevision),
           ],
         );
         if (!saved.rows[0]) return 'conflict';
-        const payload = {
-          annotation: await readerEntityValue(db, config.defaultUserId, 'document_annotation', parsed.id),
-          baseEntityRevision,
-          targetEntityRevision: await readerEntityRevision(db, config.defaultUserId, 'document_annotation', parsed.id),
-          contentRevisionId: await activeBookContentRevisionId(db, config.defaultUserId, parsed.bookId),
-        };
+        const payload = { annotation: candidate };
         await insertServerSyncEvent(db, config.defaultUserId, {
-          seed: `document_annotation_updated:${parsed.id}:${updatedAt}:${randomUUID()}`,
+          seed: `document_annotation_updated:${parsed.id}:${updatedAt}`,
           type: 'document_annotation_updated',
           bookId: parsed.bookId,
           entityId: parsed.id,
@@ -162,38 +145,19 @@ export async function registerDocumentAnnotationRoutes(app: FastifyInstance, poo
     },
   );
 
-  app.delete<{ Params: { bookId: string; annotationId: string }; Body: Record<string, unknown> }>(
+  app.delete<{ Params: { bookId: string; annotationId: string } }>(
     '/api/books/:bookId/document-annotations/:annotationId',
     async (request, reply) => {
       const deletedAt = new Date().toISOString();
-      const expectedRevision = expectedResourceRevision(request.body);
       const result = await withTransaction(pool, async (db) => {
         if (!(await lockBookResource(db, config.defaultUserId, request.params.bookId))) return false;
-        const baseEntityRevision = await readerEntityRevision(
-          db,
-          config.defaultUserId,
-          'document_annotation',
-          request.params.annotationId,
-        );
-        if (expectedRevision && expectedRevision !== baseEntityRevision) return 'conflict';
         const deleted = await db.query(
           `update document_annotations set deleted_at = $4, updated_at = $4
            where id = $1 and book_id = $2 and user_id = $3 and deleted_at is null returning id`,
           [request.params.annotationId, request.params.bookId, config.defaultUserId, deletedAt],
         );
         if (!deleted.rows[0]) return false;
-        const payload = {
-          id: request.params.annotationId,
-          deletedAt,
-          baseEntityRevision,
-          targetEntityRevision: await readerEntityRevision(
-            db,
-            config.defaultUserId,
-            'document_annotation',
-            request.params.annotationId,
-          ),
-          contentRevisionId: await activeBookContentRevisionId(db, config.defaultUserId, request.params.bookId),
-        };
+        const payload = { id: request.params.annotationId, deletedAt };
         await insertServerSyncEvent(db, config.defaultUserId, {
           seed: `document_annotation_deleted:${request.params.annotationId}:${deletedAt}`,
           type: 'document_annotation_deleted',
@@ -211,7 +175,6 @@ export async function registerDocumentAnnotationRoutes(app: FastifyInstance, poo
         });
         return true;
       });
-      if (result === 'conflict') return reply.code(409).send({ error: 'resource revision conflict' });
       if (!result) return reply.code(404).send({ error: 'annotation not found' });
       return { ok: true };
     },

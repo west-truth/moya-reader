@@ -12,7 +12,6 @@ import { mapPushSyncResponse } from './response-mappers.js';
 import { insertSyncEvent } from './sync-event-persistence.js';
 import { canonicalizeIncomingSyncEvent, SyncIdentityTranslationError } from './sync-contract-translation.js';
 import { mapSyncEventRow, type SyncEventRow } from './row-mappers.js';
-import { readerEntityRevision, type ReaderEntityKind } from '../books/reader-entity-revisions.js';
 
 type SourceEvent = SyncEvent;
 
@@ -141,27 +140,7 @@ async function processSourceEvent(
       rejection: { id: sourceEventId, reason: 'invalid', message: 'sync event ID already has different content' },
     };
   }
-  if (inserted) {
-    await applySyncEvent(client, config.defaultUserId, event);
-    const kind: ReaderEntityKind | undefined = event.type.startsWith('bookmark_')
-      ? 'bookmark'
-      : event.type.startsWith('highlight_')
-        ? 'highlight'
-        : event.type.startsWith('note_')
-          ? 'note'
-          : event.type.startsWith('document_annotation_')
-            ? 'document_annotation'
-            : undefined;
-    const target = (event.payload as Record<string, unknown> | undefined)?.targetEntityRevision;
-    if (kind && typeof target === 'string') {
-      if (
-        !event.entityId ||
-        (await readerEntityRevision(client, config.defaultUserId, kind, event.entityId)) !== target
-      ) {
-        throw new Error('reader entity did not reach the claimed target revision');
-      }
-    }
-  }
+  if (inserted) await applySyncEvent(client, config.defaultUserId, event);
   return { sourceEventId, inserted };
 }
 

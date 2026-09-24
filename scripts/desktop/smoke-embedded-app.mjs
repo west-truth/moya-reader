@@ -2,20 +2,17 @@ import assert from 'node:assert/strict';
 import { spawn, execFileSync } from 'node:child_process';
 import { mkdtemp, readFile, writeFile } from 'node:fs/promises';
 import { createServer } from 'node:net';
-import { createRequire } from 'node:module';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 import { chromium } from 'playwright-core';
 import { BlobReader, TextWriter, ZipReader } from '@zip.js/zip.js';
-import { startEmbeddedServer } from './embedded-server.mjs';
 import { epubFixture, pdfFixture } from './embedded-format-fixtures.mjs';
 
-const { Client } = createRequire(new URL('../../apps/server/package.json', import.meta.url))('pg');
 const executable = path.resolve(process.argv[2]);
 const profile = await mkdtemp(path.join(tmpdir(), 'Moya app proof 한글 '));
-// Initial peer copy, newly synced peer book, native TXT, EPUB and PDF.
-const expectedBackupBookCount = 5;
+// Native TXT, EPUB and PDF stored in the single embedded server.
+const expectedBackupBookCount = 3;
 const listener = createServer();
 await new Promise((resolve) => listener.listen(0, '127.0.0.1', resolve));
 const port = listener.address().port;
@@ -23,11 +20,6 @@ await new Promise((resolve) => listener.close(resolve));
 const evidence = {
   nativeWindow: false,
   serverReady: false,
-  nativePeerSettings: false,
-  nativePeerCopied: false,
-  nativePeerCopyResumed: false,
-  nativePeerReauthenticated: false,
-  nativePeerNewBook: false,
   collectorGateway: false,
   nativeFormats: [],
   sharingRevoked: false,
@@ -37,7 +29,6 @@ let app;
 let browser;
 let page;
 let connection;
-let peerSource;
 async function launch() {
   console.log('Starting native app');
   app = spawn(executable, [], {
@@ -138,173 +129,6 @@ async function close(fromTray = false) {
 }
 try {
   await launch();
-  const peerSourceProfile = await mkdtemp(path.join(tmpdir(), 'Moya peer source proof '));
-  const peerRuntimeFile = path.join(path.dirname(executable), 'embedded-server', 'runtime.json');
-  peerSource = await startEmbeddedServer({ runtimeFile: peerRuntimeFile, profileDir: peerSourceProfile });
-  const peerSourceRequest = async (resource, options = {}) => {
-    const response = await fetch(`${peerSource.url}/api${resource}`, {
-      ...options,
-      headers: { Authorization: `Bearer ${peerSource.authToken}`, ...options.headers },
-    });
-    assert(response.ok, `Peer source ${resource}: ${response.status} ${await response.clone().text()}`);
-    return response.json();
-  };
-  const peerPassword = 'desktop peer proof account password';
-  await peerSourceRequest('/auth/register', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ username: 'peer-source', password: peerPassword, setupCode: peerSource.authToken }),
-  });
-  const peerBytes = Buffer.from('1화 시작\n\n서버 간 복제 검증 원본입니다.\n', 'utf8');
-  const importPeerText = async (fileName, bytes) => {
-    const peerUpload = await peerSourceRequest('/uploads/init', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        fileName,
-        sizeBytes: bytes.length,
-        contentType: 'text/plain',
-        totalChunks: 1,
-      }),
-    });
-    await peerSourceRequest(`/uploads/${peerUpload.uploadId}/chunks/0`, {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/octet-stream' },
-      body: bytes,
-    });
-    const peerJob = await peerSourceRequest(`/uploads/${peerUpload.uploadId}/complete`, { method: 'POST' });
-    let peerBookId;
-    const peerImportDeadline = Date.now() + 30_000;
-    while (Date.now() < peerImportDeadline) {
-      const result = await peerSourceRequest(`/import-jobs/${peerJob.jobId}`);
-      assert.notEqual(result.status, 'failed', JSON.stringify(result));
-      if (result.status === 'done') {
-        peerBookId = result.book_id;
-        break;
-      }
-      await delay(150);
-    }
-    assert(peerBookId, 'Peer source import timed out');
-    return peerBookId;
-  };
-  const peerBookId = await importPeerText('서버 간 복제 검증.txt', peerBytes);
-  await page.getByRole('button', { name: '설정 열기', exact: true }).click();
-  await page.getByRole('tab', { name: /앱 정보/ }).click();
-  await page.getByRole('heading', { name: '다른 서버의 서재를 이 서버에 보관' }).waitFor();
-  await page.getByRole('button', { name: '빈 서재에 복제하고 연결' }).waitFor();
-  await page.getByLabel('기존 서버 주소').fill(peerSource.url);
-  await page.getByLabel('기존 서버 계정').fill('peer-source');
-  await page.getByLabel('비밀번호', { exact: true }).fill(peerPassword);
-  // Interrupt between persisted pairing and the copy request, then reopen the
-  // actual settings panel to exercise its durable retry state.
-  await page.route('**/api/sync/peer/bootstrap', (route) => route.abort('failed'), { times: 1 });
-  await page.getByRole('button', { name: '빈 서재에 복제하고 연결' }).click();
-  await page.getByText(/· 초기 복제 대기$/).waitFor();
-  await page.getByRole('button', { name: '설정 닫기', exact: true }).click();
-  await page.getByRole('button', { name: '설정 열기', exact: true }).click();
-  await page.getByRole('tab', { name: /앱 정보/ }).click();
-  const [bootstrapResult] = await Promise.all([
-    page.waitForResponse(
-      (response) => response.url().endsWith('/api/sync/peer/bootstrap') && response.request().method() === 'POST',
-      { timeout: 60_000 },
-    ),
-    page.getByRole('button', { name: '빈 서재 복제 다시 시도' }).click(),
-  ]);
-  if (bootstrapResult.status() !== 200) {
-    const readTarget = async (resource) =>
-      (
-        await fetch(`${connection.url}/api${resource}`, {
-          headers: { Authorization: `Bearer ${connection.authToken}` },
-        })
-      ).json();
-    const [state, books, watermark] = await Promise.all([
-      readTarget('/sync/peer'),
-      readTarget('/books'),
-      readTarget('/sync/watermark'),
-    ]);
-    evidence.bootstrapFailure = {
-      status: state.status,
-      outboundCursor: state.outboundCursor,
-      localWatermark: watermark.cursor,
-      bookCount: books.books?.length,
-      containsExpectedBook: books.books?.some((book) => book.id === peerBookId),
-    };
-  }
-  assert.equal(bootstrapResult.status(), 200, await bootstrapResult.text());
-  const peerCopyDeadline = Date.now() + 60_000;
-  let peerCopy;
-  while (Date.now() < peerCopyDeadline) {
-    peerCopy = await fetch(`${connection.url}/api/books/${peerBookId}/source`, {
-      headers: { Authorization: `Bearer ${connection.authToken}` },
-    });
-    if (peerCopy.ok) break;
-    assert.equal(peerCopy.status, 404, 'Peer copy failed with an unexpected source response');
-    await delay(250);
-  }
-  assert(peerCopy?.ok, 'Native peer setup did not copy the source book');
-  assert.deepEqual(Buffer.from(await peerCopy.arrayBuffer()), peerBytes);
-  const peerStatus = await fetch(`${connection.url}/api/sync/peer`, {
-    headers: { Authorization: `Bearer ${connection.authToken}` },
-  });
-  assert.equal(peerStatus.status, 200);
-  const pairedState = await peerStatus.json();
-  assert.equal(pairedState.status, 'ready');
-  evidence.nativePeerCopyResumed = true;
-  // Expire sessions only in this smoke's newly-created source profile.
-  const sourceCredentials = JSON.parse(await readFile(path.join(peerSourceProfile, 'server-credentials.json'), 'utf8'));
-  const sourceDatabase = new Client({
-    host: '127.0.0.1',
-    port: sourceCredentials.ports.postgres,
-    user: 'moya',
-    password: sourceCredentials.postgresPassword,
-    database: 'postgres',
-  });
-  try {
-    await sourceDatabase.connect();
-    await sourceDatabase.query('delete from self_host_sessions');
-  } finally {
-    await sourceDatabase.end();
-  }
-  await page.getByRole('button', { name: '새 작품·독서 위치 지금 동기화' }).click();
-  await page.getByRole('button', { name: '기존 연결에 다시 로그인' }).waitFor();
-  await page.getByLabel('기존 서버 계정').fill('peer-source');
-  await page.getByLabel('비밀번호', { exact: true }).fill(peerPassword);
-  await page.getByRole('button', { name: '기존 연결에 다시 로그인' }).click();
-  await page.getByRole('button', { name: '기존 연결에 다시 로그인' }).waitFor({ state: 'hidden' });
-  const restoredSession = await fetch(`${connection.url}/api/sync/peer`, {
-    headers: { Authorization: `Bearer ${connection.authToken}` },
-  });
-  assert.equal(restoredSession.status, 200);
-  const resumedState = await restoredSession.json();
-  assert.equal(resumedState.status, 'ready');
-  assert.equal(resumedState.inboundCursor, pairedState.inboundCursor);
-  assert.equal(resumedState.outboundCursor, pairedState.outboundCursor);
-  evidence.nativePeerReauthenticated = true;
-  const addedBytes = Buffer.from('1화 새 작품\n\n연결 후 추가한 원본을 전달합니다.\n', 'utf8');
-  const addedBookId = await importPeerText('연결 후 새 작품.txt', addedBytes);
-  const [synced] = await Promise.all([
-    page.waitForResponse(
-      (response) => response.url().endsWith('/api/sync/peer/run') && response.request().method() === 'POST',
-      { timeout: 60_000 },
-    ),
-    page.getByRole('button', { name: '새 작품·독서 위치 지금 동기화' }).click(),
-  ]);
-  assert.equal(synced.status(), 200);
-  const afterNewBook = await synced.json();
-  assert.equal(afterNewBook.status, 'ready', JSON.stringify(afterNewBook));
-  const addedCopy = await fetch(`${connection.url}/api/books/${addedBookId}/source`, {
-    headers: { Authorization: `Bearer ${connection.authToken}` },
-  });
-  assert.equal(addedCopy.status, 200);
-  assert.deepEqual(Buffer.from(await addedCopy.arrayBuffer()), addedBytes);
-  evidence.nativePeerNewBook = true;
-  await page.getByRole('button', { name: '서버 연결 해제' }).click();
-  await page.getByRole('button', { name: '빈 서재에 복제하고 연결' }).waitFor();
-  await peerSource.stop();
-  peerSource = undefined;
-  evidence.nativePeerCopied = true;
-  await page.getByRole('button', { name: '설정 닫기', exact: true }).click();
-  evidence.nativePeerSettings = true;
   const textBookId = await page.evaluate(async ({ url, authToken }) => {
     const request = async (resource, options = {}) => {
       const response = await fetch(`${url}/api${resource}`, {
@@ -652,7 +476,6 @@ try {
   await page?.screenshot({ path: path.join(profile, 'native-error.png'), timeout: 5000 }).catch(() => {});
   throw error;
 } finally {
-  await peerSource?.stop().catch(() => {});
   if (app && app.exitCode === null && page) {
     await page
       .evaluate(() => window.__TAURI_INTERNALS__.invoke('desktop_embedded_server_close', { keepRunning: false }))

@@ -1,7 +1,6 @@
 import pg from 'pg';
 import type { AnalysisStatus, Character, LabeledSegment, SegmentType } from '@noveldesk/contracts';
 import { matchesIntegrityHash } from '@noveldesk/text-core/hash';
-import { resourceEntityRevision } from '@noveldesk/text-core/identity/sync';
 import type { CharacterRelation } from '../../../../../src/providers/ai.js';
 import type { SyncEvent } from '@noveldesk/contracts/sync';
 import { documentPageHash } from '../books/document-page-identity.js';
@@ -813,33 +812,6 @@ export async function validateSyncEventPayload(
   client: pg.PoolClient,
   event: SyncEvent,
 ): Promise<{ ok: true } | { ok: false; message: string }> {
-  const versionedEntity = (() => {
-    if (event.type.startsWith('bookmark_')) return { kind: 'bookmark', valueKey: 'bookmark' };
-    if (event.type.startsWith('highlight_')) return { kind: 'highlight', valueKey: 'highlight' };
-    if (event.type.startsWith('note_')) return { kind: 'note', valueKey: 'note' };
-    if (event.type.startsWith('document_annotation_')) return { kind: 'document_annotation', valueKey: 'annotation' };
-    return undefined;
-  })();
-  const entityPayload = record(event.payload);
-  if (versionedEntity && entityPayload.targetEntityRevision !== undefined) {
-    const deleted = event.type.endsWith('_deleted');
-    const id = deleted
-      ? stringValue(entityPayload.id)
-      : stringValue(record(entityPayload[versionedEntity.valueKey]).id);
-    const value = deleted
-      ? id && stringValue(entityPayload.deletedAt)
-        ? { id, deletedAt: entityPayload.deletedAt }
-        : undefined
-      : id
-        ? record(entityPayload[versionedEntity.valueKey])
-        : undefined;
-    if (
-      !value ||
-      resourceEntityRevision(versionedEntity.kind, value as { id: string }) !== entityPayload.targetEntityRevision
-    ) {
-      return { ok: false, message: 'reader entity target revision does not match its payload' };
-    }
-  }
   const readerAnchor = await validateReaderAnchorPayload(client, event);
   if (!readerAnchor.ok) return readerAnchor;
   if (event.type === 'document_annotation_updated') {

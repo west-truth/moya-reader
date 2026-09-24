@@ -643,15 +643,15 @@ describe('sync reader event routes', () => {
     expect(materialized).toEqual([
       {
         sql: expect.stringContaining('update bookmarks set deleted_at'),
-        params: ['bookmark_1', 'user_test', '2026-07-05T00:06:00.000Z'],
+        params: ['bookmark_1', 'user_test', '2026-07-05T00:06:00.000Z', 'book_1'],
       },
       {
         sql: expect.stringContaining('update highlights set deleted_at'),
-        params: ['highlight_1', 'user_test', '2026-07-05T00:07:00.000Z'],
+        params: ['highlight_1', 'user_test', '2026-07-05T00:07:00.000Z', 'book_1'],
       },
       {
         sql: expect.stringContaining('update notes set deleted_at'),
-        params: ['note_1', 'user_test', '2026-07-05T00:08:00.000Z'],
+        params: ['note_1', 'user_test', '2026-07-05T00:08:00.000Z', 'book_1'],
       },
     ]);
 

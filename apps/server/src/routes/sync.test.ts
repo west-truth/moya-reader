@@ -17,6 +17,22 @@ describe('sync route composition', () => {
     expect(app.hasRoute({ method: 'GET', url: '/api/sync/capabilities' })).toBe(true);
     expect(app.hasRoute({ method: 'POST', url: '/api/sync/events' })).toBe(true);
 
+    // Archived server-to-server replication must not add routes or startup work
+    // to the shared self-host server. Browser/client sync stays available.
+    for (const url of [
+      '/api/sync/peer',
+      '/api/sync/peer/bootstrap',
+      '/api/sync/peer/run',
+      '/api/sync/book-content/book_1',
+    ]) {
+      expect((await app.inject({ method: 'GET', url })).statusCode).toBe(404);
+      expect((await app.inject({ method: 'POST', url })).statusCode).toBe(404);
+    }
+    const capabilities = await app.inject({ method: 'GET', url: '/api/sync/capabilities' });
+    expect(capabilities.json()).toMatchObject({ contractVersion: 2 });
+    expect(capabilities.json()).not.toHaveProperty('peerFeatures');
+    expect(pool.query).not.toHaveBeenCalled();
+
     await app.close();
   });
 

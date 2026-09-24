@@ -20,11 +20,7 @@ import {
 } from './object-storage.js';
 import { parseNovelFileForImport } from '@noveldesk/text-core/parser';
 import { materializeStreamingEpubImport } from '@noveldesk/epub-core';
-import {
-  hasDocumentSeriesManifest,
-  materializeDocumentSeriesArchive,
-  isRemoteDocumentSeriesImport,
-} from '@noveldesk/document-series-core';
+import { hasDocumentSeriesManifest, materializeDocumentSeriesArchive } from '@noveldesk/document-series-core';
 import {
   materializePdfImport,
   materializeStreamingImageArchiveImport,
@@ -44,7 +40,6 @@ import type {
 } from '@noveldesk/contracts';
 import { integrityHash, persistentId128 } from '@noveldesk/text-core/hash';
 import { syncPayloadIntegrityHash } from '@noveldesk/text-core/identity/sync';
-import type { BookImportContentChangeV1 } from '@noveldesk/contracts/sync';
 import { paragraphPageId, parsedChapterId, parsedParagraphId } from '@noveldesk/text-core/identity/parser';
 import { validateUploadCompleteness } from './upload-validation.js';
 import {
@@ -1432,7 +1427,6 @@ export async function processImportJob(
           `delete from book_objects object
             where object.id = $1
               and not exists (select 1 from library_books book where book.object_id = object.id)
-              and not exists (select 1 from book_content_revisions revision where revision.source_object_id = object.id)
             returning object.storage_key`,
           [previousBookObject.rows[0].object_id],
         );
@@ -1566,19 +1560,7 @@ export async function processImportJob(
         await restoreExactAnchoredReaderState(client, replacement);
       }
       if (replacement) await finalizeBookReplacement(client, replacement);
-      const contentChange: BookImportContentChangeV1 | undefined = replacement
-        ? {
-            kind: 'revision_v1',
-            baseRevisionId: replacement.replacement.fromContentRevisionId,
-            targetRevisionId: replacement.replacement.toContentRevisionId,
-            revisionNumber: replacement.replacement.toContentRevisionNumber,
-            sourceHash: rawHash,
-            normalizedHash: parsed.novel.normalizedTextHash,
-          }
-        : undefined;
-      const importPayload = contentChange
-        ? { bookId: parsed.novel.id, content: contentChange }
-        : { bookId: parsed.novel.id };
+      const importPayload = { bookId: parsed.novel.id };
       const importRevision = {
         entityType: 'book',
         entityId: parsed.novel.id,
@@ -1599,7 +1581,7 @@ export async function processImportJob(
             'book_imported',
             parsed.novel.id,
             parsed.novel.updatedAt,
-            ...(contentChange ? [contentChange.targetRevisionId] : []),
+            ...(replacement ? [replacement.replacement.toContentRevisionId] : []),
           ]),
           session.user_id,
           'book_imported',

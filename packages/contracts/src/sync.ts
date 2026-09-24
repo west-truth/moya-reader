@@ -1,4 +1,4 @@
-import type { Chapter, ListeningPosition, Novel, ParagraphPage, ReadingPosition } from './domain';
+import type { Chapter, Novel, ParagraphPage, ReadingPosition } from './domain';
 
 export type { ReadingPosition } from './domain';
 
@@ -29,28 +29,6 @@ export interface ResolvedSyncContract {
 export interface SyncCapabilities extends ResolvedSyncContract {
   supportedContracts: ResolvedSyncContract[];
   defaultPullContract: ResolvedSyncContract;
-  /** Advertised separately from the browser sync contract; older servers omit it. */
-  peerFeatures?: PeerSyncFeature[];
-}
-
-export type PeerSyncFeature =
-  | 'new_book_content_v1'
-  | 'reading_positions_v1'
-  | 'reader_annotations_v1'
-  | 'single_text_replacement_v1'
-  | 'text_fast_forward_v1'
-  | 'image_series_append_v1'
-  | 'epub_replacement_v1'
-  | 'pdf_unannotated_replacement_v1';
-
-/** An import worker records this only when it replaced an existing content revision. */
-export interface BookImportContentChangeV1 {
-  kind: 'revision_v1';
-  baseRevisionId: string;
-  targetRevisionId: string;
-  revisionNumber: number;
-  sourceHash: string;
-  normalizedHash: string;
 }
 
 export interface NegotiatedSyncContract {

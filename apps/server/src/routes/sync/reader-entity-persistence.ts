@@ -329,6 +329,7 @@ export async function persistReaderSyncEvent(
               updated_at = excluded.updated_at,
               deleted_at = null
           where bookmarks.user_id = excluded.user_id and bookmarks.book_id = excluded.book_id
+            and (bookmarks.deleted_at is null or bookmarks.updated_at <= excluded.updated_at)
       `,
       [
         stringValue(bookmark.id) ?? event.entityId,
@@ -350,7 +351,7 @@ export async function persistReaderSyncEvent(
     const deletedAt = String(payload.deletedAt ?? event.createdAt);
     if (id) {
       await client.query(
-        'update bookmarks set deleted_at = $3, updated_at = $3 where id = $1 and user_id = $2 and book_id = $4',
+        'update bookmarks set deleted_at = $3, updated_at = $3 where id = $1 and user_id = $2 and book_id = $4 and (deleted_at is null or updated_at <= $3::timestamptz)',
         [id, userId, deletedAt, event.novelId],
       );
     }
@@ -373,6 +374,7 @@ export async function persistReaderSyncEvent(
               updated_at = excluded.updated_at,
               deleted_at = null
           where highlights.user_id = excluded.user_id and highlights.book_id = excluded.book_id
+            and (highlights.deleted_at is null or highlights.updated_at <= excluded.updated_at)
       `,
       [
         stringValue(highlight.id) ?? event.entityId,
@@ -395,7 +397,7 @@ export async function persistReaderSyncEvent(
     const deletedAt = String(payload.deletedAt ?? event.createdAt);
     if (id) {
       await client.query(
-        'update highlights set deleted_at = $3, updated_at = $3 where id = $1 and user_id = $2 and book_id = $4',
+        'update highlights set deleted_at = $3, updated_at = $3 where id = $1 and user_id = $2 and book_id = $4 and (deleted_at is null or updated_at <= $3::timestamptz)',
         [id, userId, deletedAt, event.novelId],
       );
     }
@@ -418,6 +420,7 @@ export async function persistReaderSyncEvent(
               updated_at = excluded.updated_at,
               deleted_at = null
           where notes.user_id = excluded.user_id and notes.book_id = excluded.book_id
+            and (notes.deleted_at is null or notes.updated_at <= excluded.updated_at)
       `,
       [
         stringValue(note.id) ?? event.entityId,
@@ -440,7 +443,7 @@ export async function persistReaderSyncEvent(
     const deletedAt = String(payload.deletedAt ?? event.createdAt);
     if (id) {
       await client.query(
-        'update notes set deleted_at = $3, updated_at = $3 where id = $1 and user_id = $2 and book_id = $4',
+        'update notes set deleted_at = $3, updated_at = $3 where id = $1 and user_id = $2 and book_id = $4 and (deleted_at is null or updated_at <= $3::timestamptz)',
         [id, userId, deletedAt, event.novelId],
       );
     }
@@ -469,7 +472,7 @@ export async function persistReaderSyncEvent(
               updated_at = excluded.updated_at,
               deleted_at = null
           where document_annotations.user_id = excluded.user_id
-            and document_annotations.book_id = excluded.book_id
+            and (document_annotations.deleted_at is null or document_annotations.updated_at <= excluded.updated_at)
       `,
       [
         parsed.id,
@@ -495,8 +498,8 @@ export async function persistReaderSyncEvent(
     await client.query(
       `update document_annotations
        set deleted_at = $3, updated_at = $3
-       where id = $1 and user_id = $2 and book_id = $4`,
-      [parsed.id, userId, parsed.deletedAt, event.novelId],
+       where id = $1 and user_id = $2 and (deleted_at is null or updated_at <= $3::timestamptz)`,
+      [parsed.id, userId, parsed.deletedAt],
     );
     return true;
   }
