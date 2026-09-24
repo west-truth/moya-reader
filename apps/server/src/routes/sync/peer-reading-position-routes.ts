@@ -32,6 +32,7 @@ interface PeerRow {
   outbound_cursor: number | string;
   inbound_cursor: number | string;
   status: string;
+  bootstrap_required: boolean;
   last_error: string | null;
   last_synced_at: Date | string | null;
 }
@@ -288,6 +289,7 @@ function publicPeer(row: PeerRow | undefined) {
         outboundCursor: Number(row.outbound_cursor),
         inboundCursor: Number(row.inbound_cursor),
         status: row.status,
+        bootstrapRequired: row.bootstrap_required,
         lastError: row.last_error,
         lastSyncedAt: row.last_synced_at,
         scope: 'matching_books_new_reading_positions_only',
@@ -306,9 +308,10 @@ export function registerPeerReadingPositionRoutes(app: FastifyInstance, pool: pg
     | { stage: 'preparing' | 'downloading' | 'validating' | 'restoring'; completedBytes?: number; totalBytes?: number }
     | undefined;
   let configuring = false;
+  const shutdown = new AbortController();
 
   const execute = () => {
-    if (configuring) return Promise.resolve();
+    if (configuring || shutdown.signal.aborted) return Promise.resolve();
     if (running) return running;
     activeAbort = new AbortController();
     const timeout = setTimeout(() => activeAbort?.abort(), 60_000);
@@ -330,7 +333,14 @@ export function registerPeerReadingPositionRoutes(app: FastifyInstance, pool: pg
 
   async function runOnce(signal: AbortSignal): Promise<void> {
     const row = await loadPeer(pool, userId);
-    if (!row || row.status === 'blocked' || row.status === 'needs_login' || row.status === 'bootstrapping') return;
+    if (
+      !row ||
+      row.bootstrap_required ||
+      row.status === 'blocked' ||
+      row.status === 'needs_login' ||
+      row.status === 'bootstrapping'
+    )
+      return;
     try {
       const cookie = decryptedSession(key(), row);
       const identity = (await peerRequest(row.peer_url, '/api/sync/identity', cookie, { signal })).body as {
@@ -498,13 +508,17 @@ export function registerPeerReadingPositionRoutes(app: FastifyInstance, pool: pg
       const login = await peerRequest(url, '/api/auth/login', undefined, {
         method: 'POST',
         body: { username: request.body.username, password: request.body.password },
+        signal: shutdown.signal,
       });
       const cookie = sessionCookie(login.setCookie);
-      const identity = (await peerRequest(url, '/api/sync/identity', cookie)).body as { serverId?: string };
+      const identity = (await peerRequest(url, '/api/sync/identity', cookie, { signal: shutdown.signal })).body as {
+        serverId?: string;
+      };
       if (!identity.serverId || identity.serverId === (await serverId(pool))) {
         throw new PeerSyncFailure('peer_server_identity_invalid', 'blocked');
       }
-      const capabilities = (await peerRequest(url, '/api/sync/capabilities', cookie)).body as {
+      const capabilities = (await peerRequest(url, '/api/sync/capabilities', cookie, { signal: shutdown.signal }))
+        .body as {
         contractVersion?: number;
         idContract?: string;
         hashContract?: string;
@@ -516,7 +530,9 @@ export function registerPeerReadingPositionRoutes(app: FastifyInstance, pool: pg
       ) {
         throw new PeerSyncFailure('peer_contract_unsupported', 'blocked');
       }
-      const remote = (await peerRequest(url, '/api/sync/watermark', cookie)).body as { cursor?: number };
+      const remote = (await peerRequest(url, '/api/sync/watermark', cookie, { signal: shutdown.signal })).body as {
+        cursor?: number;
+      };
       if (!Number.isSafeInteger(remote.cursor) || remote.cursor! < 0) {
         throw new PeerSyncFailure('peer_cursor_invalid', 'blocked');
       }
@@ -527,14 +543,15 @@ export function registerPeerReadingPositionRoutes(app: FastifyInstance, pool: pg
       await pool.query(
         `insert into sync_server_peers (
            user_id, peer_id, peer_url, peer_server_id, session_ciphertext, session_iv,
-           session_auth_tag, session_key_version, outbound_cursor, inbound_cursor, status
-         ) values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,'ready')
+           session_auth_tag, session_key_version, outbound_cursor, inbound_cursor, status, bootstrap_required
+         ) values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
          on conflict (user_id) do update set
            peer_id = excluded.peer_id, peer_url = excluded.peer_url, peer_server_id = excluded.peer_server_id,
            session_ciphertext = excluded.session_ciphertext, session_iv = excluded.session_iv,
            session_auth_tag = excluded.session_auth_tag, session_key_version = excluded.session_key_version,
            outbound_cursor = excluded.outbound_cursor, inbound_cursor = excluded.inbound_cursor,
-           status = 'ready', last_error = null, last_synced_at = null, updated_at = now()`,
+           status = excluded.status, bootstrap_required = excluded.bootstrap_required,
+           last_error = null, last_synced_at = null, updated_at = now()`,
         [
           userId,
           peerId,
@@ -546,12 +563,15 @@ export function registerPeerReadingPositionRoutes(app: FastifyInstance, pool: pg
           PEER_KEY_VERSION,
           localCursor,
           remote.cursor,
+          request.body.requireEmptyLibrary === true ? 'awaiting_bootstrap' : 'ready',
+          request.body.requireEmptyLibrary === true,
         ],
       );
       if (previous) {
         try {
           await peerRequest(previous.peer_url, '/api/auth/logout', decryptedSession(key(), previous), {
             method: 'POST',
+            signal: shutdown.signal,
           });
         } catch {
           // The previous remote session expires even when its server is unavailable now.
@@ -566,6 +586,76 @@ export function registerPeerReadingPositionRoutes(app: FastifyInstance, pool: pg
       configuring = false;
     }
   });
+  app.post<{ Body: { username?: unknown; password?: unknown } }>(
+    '/api/sync/peer/reauthenticate',
+    { bodyLimit: 4096 },
+    async (request, reply) => {
+      if (typeof request.body?.username !== 'string' || typeof request.body?.password !== 'string')
+        return reply.code(400).send({ error: 'peer_credentials_required' });
+      if (configuring) return reply.code(409).send({ error: 'peer_configuration_busy' });
+      configuring = true;
+      let newSession: { url: string; cookie: string } | undefined;
+      try {
+        await running;
+        const row = await loadPeer(pool, userId);
+        if (!row) return reply.code(404).send({ error: 'peer_not_configured' });
+        const login = await peerRequest(row.peer_url, '/api/auth/login', undefined, {
+          method: 'POST',
+          body: { username: request.body.username, password: request.body.password },
+          signal: shutdown.signal,
+        });
+        const cookie = sessionCookie(login.setCookie);
+        newSession = { url: row.peer_url, cookie };
+        const identity = (await peerRequest(row.peer_url, '/api/sync/identity', cookie, { signal: shutdown.signal }))
+          .body as { serverId?: string };
+        if (identity.serverId !== row.peer_server_id)
+          throw new PeerSyncFailure('peer_server_identity_changed', 'blocked');
+        const secret = encryptedSession(key(), userId, row.peer_id, cookie);
+        const status = row.bootstrap_required
+          ? 'awaiting_bootstrap'
+          : row.status === 'needs_login' || row.status === 'offline'
+            ? 'ready'
+            : row.status;
+        const updated = await pool.query(
+          `update sync_server_peers set session_ciphertext=$3, session_iv=$4, session_auth_tag=$5,
+             session_key_version=$6, status=$7, last_error=$8, updated_at=now()
+           where user_id=$1 and peer_id=$2`,
+          [
+            userId,
+            row.peer_id,
+            secret.ciphertext,
+            secret.iv,
+            secret.authTag,
+            PEER_KEY_VERSION,
+            status,
+            status === 'blocked' ? row.last_error : null,
+          ],
+        );
+        if (updated.rowCount !== 1) throw new PeerSyncFailure('peer_configuration_changed', 'blocked');
+        newSession = undefined; // The new session is now owned by the persisted pairing.
+        try {
+          const oldCookie = decryptedSession(key(), row);
+          if (oldCookie !== cookie)
+            await peerRequest(row.peer_url, '/api/auth/logout', oldCookie, { method: 'POST', signal: shutdown.signal });
+        } catch {
+          /* An expired session needs no further cleanup. */
+        }
+        return publicPeer(await loadPeer(pool, userId));
+      } catch (error) {
+        return reply.code(400).send({ error: error instanceof PeerSyncFailure ? error.code : 'peer_pairing_failed' });
+      } finally {
+        try {
+          if (newSession)
+            await peerRequest(newSession.url, '/api/auth/logout', newSession.cookie, {
+              method: 'POST',
+              signal: shutdown.signal,
+            }).catch(() => undefined);
+        } finally {
+          configuring = false;
+        }
+      }
+    },
+  );
   app.post('/api/sync/peer/bootstrap', async (_request, reply) => {
     if (configuring) return reply.code(409).send({ error: 'peer_configuration_busy' });
     configuring = true;
@@ -585,19 +675,19 @@ export function registerPeerReadingPositionRoutes(app: FastifyInstance, pool: pg
       if (Number(localBooks.rows[0].count) !== 0 || (await watermark(pool, userId)) !== Number(row.outbound_cursor)) {
         return reply.code(409).send({ error: 'peer_bootstrap_requires_empty_library' });
       }
+      const reserved = await pool.query(
+        `update sync_server_peers set status = 'bootstrapping', bootstrap_required = true, last_error = null, updated_at = now()
+          where user_id = $1 and peer_id = $2`,
+        [userId, peerId],
+      );
+      if (reserved.rowCount !== 1) throw new PeerSyncFailure('peer_configuration_changed', 'blocked');
+      bootstrapProgress = { stage: 'preparing' };
       const cookie = decryptedSession(key(), row);
       const identity = (await peerRequest(row.peer_url, '/api/sync/identity', cookie, { signal })).body as {
         serverId?: string;
       };
       if (identity.serverId !== row.peer_server_id)
         throw new PeerSyncFailure('peer_server_identity_changed', 'blocked');
-      const reserved = await pool.query(
-        `update sync_server_peers set status = 'bootstrapping', last_error = null, updated_at = now()
-          where user_id = $1 and peer_id = $2`,
-        [userId, peerId],
-      );
-      if (reserved.rowCount !== 1) throw new PeerSyncFailure('peer_configuration_changed', 'blocked');
-      bootstrapProgress = { stage: 'preparing' };
 
       const before = (await peerRequest(row.peer_url, '/api/sync/watermark', cookie, { signal })).body as {
         cursor?: number;
@@ -629,11 +719,18 @@ export function registerPeerReadingPositionRoutes(app: FastifyInstance, pool: pg
       const input = Readable.fromWeb(archive.body as never);
       // An interrupted fetch can emit once more after pipeline has torn down its listeners.
       input.on('error', () => undefined);
-      const received = await backupStaging.receive(input, expectedBytes, signal, (completedBytes) => {
-        bootstrapProgress = { stage: 'downloading', completedBytes, totalBytes: expectedBytes };
-      });
+      const received = await backupStaging.receive(
+        input,
+        expectedBytes,
+        signal,
+        (completedBytes) => {
+          bootstrapProgress = { stage: 'downloading', completedBytes, totalBytes: expectedBytes };
+        },
+        () => {
+          bootstrapProgress = { stage: 'validating' };
+        },
+      );
       stagedId = received.id;
-      bootstrapProgress = { stage: 'validating' };
       if (received.stage.source !== 'hosted') throw new PeerSyncFailure('peer_backup_format_invalid', 'blocked');
       const inspection = await inspectHostedBackup(pool, config, received.stage.parsed, received.stage.byteLength);
       if (inspection.conflicts.length) throw new PeerSyncFailure('peer_bootstrap_library_changed', 'blocked');
@@ -672,7 +769,7 @@ export function registerPeerReadingPositionRoutes(app: FastifyInstance, pool: pg
             },
             beforeCommit: async (client) => {
               const updated = await client.query(
-                `update sync_server_peers set inbound_cursor = $3, status = 'ready', last_error = null,
+                `update sync_server_peers set inbound_cursor = $3, status = 'ready', bootstrap_required = false, last_error = null,
                         last_synced_at = now(), updated_at = now()
                   where user_id = $1 and peer_id = $2 and status = 'bootstrapping' and inbound_cursor = $4`,
                 [userId, peerId, before.cursor, row.inbound_cursor],
@@ -703,10 +800,13 @@ export function registerPeerReadingPositionRoutes(app: FastifyInstance, pool: pg
         .code(error instanceof PeerSyncFailure && error.status === 'offline' ? 503 : 409)
         .send({ error: code });
     } finally {
-      if (stagedId) await backupStaging.discard(stagedId);
-      bootstrapAbort = undefined;
-      bootstrapProgress = undefined;
-      configuring = false;
+      try {
+        if (stagedId) await backupStaging.discard(stagedId);
+      } finally {
+        bootstrapAbort = undefined;
+        bootstrapProgress = undefined;
+        configuring = false;
+      }
     }
   });
   app.post('/api/sync/peer/run', async (_request, reply) => {
@@ -723,7 +823,10 @@ export function registerPeerReadingPositionRoutes(app: FastifyInstance, pool: pg
       await pool.query('delete from sync_server_peers where user_id = $1', [userId]);
       if (row) {
         try {
-          await peerRequest(row.peer_url, '/api/auth/logout', decryptedSession(key(), row), { method: 'POST' });
+          await peerRequest(row.peer_url, '/api/auth/logout', decryptedSession(key(), row), {
+            method: 'POST',
+            signal: shutdown.signal,
+          });
         } catch {
           // The local pairing is already removed; the remote session also expires there.
         }
@@ -737,6 +840,7 @@ export function registerPeerReadingPositionRoutes(app: FastifyInstance, pool: pg
   const timer = setInterval(() => void execute(), PEER_POLL_INTERVAL_MS);
   timer.unref();
   app.addHook('preClose', async () => {
+    shutdown.abort();
     clearInterval(timer);
     activeAbort?.abort();
     bootstrapAbort?.abort();

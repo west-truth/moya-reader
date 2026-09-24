@@ -152,7 +152,7 @@ describe.skipIf(!harness)('two server reading position sync', () => {
         await migrateDatabase(poolB);
         await poolB.query("insert into users (id,email,display_name) values ($1,'peer@example.com','Peer')", [USER_B]);
         const a = await testServer(poolA, path.join(directory, 'a'), 'native_a', USER_A);
-        const b = await testServer(poolB, path.join(directory, 'b'), 'native_b', USER_B);
+        let b = await testServer(poolB, path.join(directory, 'b'), 'native_b', USER_B);
         try {
           const account = await fetch(`${a.url}/api/auth/register`, {
             method: 'POST',
@@ -172,6 +172,15 @@ describe.skipIf(!harness)('two server reading position sync', () => {
             }),
           });
           expect(paired.status).toBe(200);
+          expect(await paired.json()).toMatchObject({ status: 'awaiting_bootstrap', bootstrapRequired: true });
+          await b.app.close();
+          b = await testServer(poolB, path.join(directory, 'b'), 'native_b', USER_B);
+          // Closing the panel between pairing and copying must retain a durable retry state.
+          const waiting = await fetch(`${b.url}/api/sync/peer/run`, {
+            method: 'POST',
+            headers: { Authorization: `Bearer ${b.token}` },
+          });
+          expect(await waiting.json()).toMatchObject({ status: 'awaiting_bootstrap', bootstrapRequired: true });
           const source = Buffer.from('Example text');
           const hash = `sha256:${createHash('sha256').update(source).digest('hex')}`;
           await poolA.query('update book_objects set raw_text_hash = $1, size_bytes = $2 where id = $3', [
@@ -184,6 +193,18 @@ describe.skipIf(!harness)('two server reading position sync', () => {
               method: 'POST',
               headers: { Authorization: `Bearer ${b.token}` },
             });
+          await poolA.query('delete from self_host_sessions');
+          expect((await bootstrap()).status).toBe(409);
+          const pendingAuth = await fetch(`${b.url}/api/sync/peer`, {
+            headers: { Authorization: `Bearer ${b.token}` },
+          });
+          expect(await pendingAuth.json()).toMatchObject({ status: 'needs_login', bootstrapRequired: true });
+          const resumeAuth = await fetch(`${b.url}/api/sync/peer/reauthenticate`, {
+            method: 'POST',
+            headers: { Authorization: `Bearer ${b.token}`, 'Content-Type': 'application/json' },
+            body: JSON.stringify({ username: 'source', password: 'long bootstrap password' }),
+          });
+          expect(await resumeAuth.json()).toMatchObject({ status: 'awaiting_bootstrap', bootstrapRequired: true });
           const missingSource = await bootstrap();
           expect(missingSource.status).toBe(409);
           expect((await poolB.query('select count(*)::int as count from library_books')).rows[0].count).toBe(0);
@@ -230,6 +251,37 @@ describe.skipIf(!harness)('two server reading position sync', () => {
             }),
           });
           expect(await changed.json()).toMatchObject({ ok: true, applied: true });
+          const beforeLogin = (await poolB.query('select * from sync_server_peers')).rows[0];
+          await poolA.query('delete from self_host_sessions');
+          const expired = await fetch(`${b.url}/api/sync/peer/run`, {
+            method: 'POST',
+            headers: { Authorization: `Bearer ${b.token}` },
+          });
+          expect(await expired.json()).toMatchObject({ status: 'needs_login' });
+          const wrongPassword = await fetch(`${b.url}/api/sync/peer/reauthenticate`, {
+            method: 'POST',
+            headers: { Authorization: `Bearer ${b.token}`, 'Content-Type': 'application/json' },
+            body: JSON.stringify({ username: 'source', password: 'incorrect password' }),
+          });
+          expect(wrongPassword.status).toBe(400);
+          expect((await poolB.query('select * from sync_server_peers')).rows[0]).toMatchObject({
+            peer_id: beforeLogin.peer_id,
+            inbound_cursor: beforeLogin.inbound_cursor,
+            outbound_cursor: beforeLogin.outbound_cursor,
+            session_ciphertext: beforeLogin.session_ciphertext,
+          });
+          const loginAgain = await fetch(`${b.url}/api/sync/peer/reauthenticate`, {
+            method: 'POST',
+            headers: { Authorization: `Bearer ${b.token}`, 'Content-Type': 'application/json' },
+            body: JSON.stringify({ username: 'source', password: 'long bootstrap password' }),
+          });
+          expect(loginAgain.status).toBe(200);
+          const afterLogin = (await poolB.query('select * from sync_server_peers')).rows[0];
+          expect(afterLogin).toMatchObject({
+            peer_id: beforeLogin.peer_id,
+            inbound_cursor: beforeLogin.inbound_cursor,
+            outbound_cursor: beforeLogin.outbound_cursor,
+          });
           const sync = await fetch(`${b.url}/api/sync/peer/run`, {
             method: 'POST',
             headers: { Authorization: `Bearer ${b.token}` },
@@ -305,6 +357,39 @@ describe.skipIf(!harness)('two server reading position sync', () => {
             (await pool.query("select count(*)::int as count from sync_events where type='reading_position_deleted'"))
               .rows[0].count,
           ).toBe(1);
+          // Both requests wait behind the same lock. The later PATCH must read the
+          // DELETE tombstone committed while it was waiting, not its old statement snapshot.
+          await request('PATCH', { ...position, updatedAt: '2026-09-24T03:00:00.000Z' });
+          const blocker = await pool.connect();
+          const pending: Array<Promise<Response>> = [];
+          try {
+            await blocker.query('begin');
+            await blocker.query("select pg_advisory_xact_lock(hashtextextended('book_1', 7319))");
+            const waitQueued = async (count: number) => {
+              const deadline = Date.now() + 3_000;
+              while (Date.now() < deadline) {
+                const result = await pool.query(
+                  "select count(*)::int as n from pg_locks where locktype='advisory' and not granted and database=(select oid from pg_database where datname=current_database())",
+                );
+                if (result.rows[0].n >= count) return;
+                await delay(10);
+              }
+              throw new Error('Reading position requests did not queue behind the test lock');
+            };
+            pending.push(request('DELETE', { deviceId: 'device_a', updatedAt: '2026-09-24T05:00:00.000Z' }));
+            await waitQueued(1);
+            pending.push(request('PATCH', { ...position, updatedAt: '2026-09-24T04:00:00.000Z' }));
+            await waitQueued(2);
+            await blocker.query('commit');
+            const [deleted, staleWrite] = await Promise.all(pending);
+            expect(deleted.status).toBe(200);
+            expect(await staleWrite.json()).toMatchObject({ applied: false });
+            expect((await pool.query('select count(*)::int as count from reading_positions')).rows[0].count).toBe(0);
+          } finally {
+            await blocker.query('rollback');
+            blocker.release();
+            await Promise.allSettled(pending);
+          }
         } finally {
           await server.app.close();
         }

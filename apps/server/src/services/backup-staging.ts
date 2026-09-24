@@ -48,6 +48,7 @@ export class BackupStaging {
     expectedBytes?: number,
     signal?: AbortSignal,
     onBytesReceived?: (bytes: number) => void,
+    onValidationStarted?: () => void,
   ): Promise<{ id: string; stage: StagedBackup }> {
     await this.expire();
     if (this.occupied >= 2) throw new Error('다른 백업 작업이 진행 중입니다. 잠시 후 다시 시도해 주세요.');
@@ -90,6 +91,7 @@ export class BackupStaging {
           throw new Error('백업 업로드가 완료되지 않았습니다.');
       }
       await pipeline(chunks(), createWriteStream(zipPath, { flags: 'wx', mode: 0o600 }), { signal });
+      onValidationStarted?.();
       const assets = path.join(directory, 'assets');
       await mkdir(assets);
       const archiveBlob = await openAsBlob(zipPath);

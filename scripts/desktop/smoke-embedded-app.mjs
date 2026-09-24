@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { spawn, execFileSync } from 'node:child_process';
 import { mkdtemp, readFile, writeFile } from 'node:fs/promises';
 import { createServer } from 'node:net';
+import { createRequire } from 'node:module';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
@@ -10,6 +11,7 @@ import { BlobReader, TextWriter, ZipReader } from '@zip.js/zip.js';
 import { startEmbeddedServer } from './embedded-server.mjs';
 import { epubFixture, pdfFixture } from './embedded-format-fixtures.mjs';
 
+const { Client } = createRequire(new URL('../../apps/server/package.json', import.meta.url))('pg');
 const executable = path.resolve(process.argv[2]);
 const profile = await mkdtemp(path.join(tmpdir(), 'Moya app proof 한글 '));
 const listener = createServer();
@@ -21,6 +23,8 @@ const evidence = {
   serverReady: false,
   nativePeerSettings: false,
   nativePeerCopied: false,
+  nativePeerCopyResumed: false,
+  nativePeerReauthenticated: false,
   collectorGateway: false,
   nativeFormats: [],
   sharingRevoked: false,
@@ -184,7 +188,15 @@ try {
   await page.getByLabel('기존 서버 주소').fill(peerSource.url);
   await page.getByLabel('기존 서버 계정').fill('peer-source');
   await page.getByLabel('비밀번호', { exact: true }).fill(peerPassword);
+  // Interrupt between persisted pairing and the copy request, then reopen the
+  // actual settings panel to exercise its durable retry state.
+  await page.route('**/api/sync/peer/bootstrap', (route) => route.abort('failed'), { times: 1 });
   await page.getByRole('button', { name: '빈 서재에 복제하고 연결' }).click();
+  await page.getByText('초기 복제 대기', { exact: true }).waitFor();
+  await page.getByRole('button', { name: '설정 닫기', exact: true }).click();
+  await page.getByRole('button', { name: '설정 열기', exact: true }).click();
+  await page.getByRole('tab', { name: /앱 정보/ }).click();
+  await page.getByRole('button', { name: '빈 서재 복제 다시 시도' }).click();
   const peerCopyDeadline = Date.now() + 60_000;
   let peerCopy;
   while (Date.now() < peerCopyDeadline) {
@@ -201,7 +213,39 @@ try {
     headers: { Authorization: `Bearer ${connection.authToken}` },
   });
   assert.equal(peerStatus.status, 200);
-  assert.equal((await peerStatus.json()).status, 'ready');
+  const pairedState = await peerStatus.json();
+  assert.equal(pairedState.status, 'ready');
+  evidence.nativePeerCopyResumed = true;
+  // Expire sessions only in this smoke's newly-created source profile.
+  const sourceCredentials = JSON.parse(await readFile(path.join(peerSourceProfile, 'server-credentials.json'), 'utf8'));
+  const sourceDatabase = new Client({
+    host: '127.0.0.1',
+    port: sourceCredentials.ports.postgres,
+    user: 'moya',
+    password: sourceCredentials.postgresPassword,
+    database: 'postgres',
+  });
+  try {
+    await sourceDatabase.connect();
+    await sourceDatabase.query('delete from self_host_sessions');
+  } finally {
+    await sourceDatabase.end();
+  }
+  await page.getByRole('button', { name: '독서 위치 지금 동기화' }).click();
+  await page.getByRole('button', { name: '기존 연결에 다시 로그인' }).waitFor();
+  await page.getByLabel('기존 서버 계정').fill('peer-source');
+  await page.getByLabel('비밀번호', { exact: true }).fill(peerPassword);
+  await page.getByRole('button', { name: '기존 연결에 다시 로그인' }).click();
+  await page.getByRole('button', { name: '기존 연결에 다시 로그인' }).waitFor({ state: 'hidden' });
+  const restoredSession = await fetch(`${connection.url}/api/sync/peer`, {
+    headers: { Authorization: `Bearer ${connection.authToken}` },
+  });
+  assert.equal(restoredSession.status, 200);
+  const resumedState = await restoredSession.json();
+  assert.equal(resumedState.status, 'ready');
+  assert.equal(resumedState.inboundCursor, pairedState.inboundCursor);
+  assert.equal(resumedState.outboundCursor, pairedState.outboundCursor);
+  evidence.nativePeerReauthenticated = true;
   await page.getByRole('button', { name: '서버 연결 해제' }).click();
   await page.getByRole('button', { name: '빈 서재에 복제하고 연결' }).waitFor();
   await peerSource.stop();

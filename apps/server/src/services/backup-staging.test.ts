@@ -113,7 +113,11 @@ describe('disk staged backup', () => {
 
   it('removes partial uploads on cancellation and rejects invalid archives without retained files', async () => {
     await withStaging(async (staging, directory) => {
-      await expect(staging.receive(Readable.from(['not a zip']))).rejects.toThrow();
+      const validationStarted = vi.fn();
+      await expect(
+        staging.receive(Readable.from(['not a zip']), undefined, undefined, undefined, validationStarted),
+      ).rejects.toThrow();
+      expect(validationStarted).toHaveBeenCalledOnce();
       expect(await readdir(directory)).toEqual([]);
       const zip = createHostedBackupStream(snapshot(), async () => Buffer.from('abc'));
       const [buffer] = await Promise.all([

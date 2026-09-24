@@ -14,7 +14,8 @@ type PeerState =
   | { configured: false }
   | {
       url: string;
-      status: 'ready' | 'offline' | 'blocked' | 'needs_login' | 'bootstrapping';
+      status: 'ready' | 'offline' | 'blocked' | 'needs_login' | 'bootstrapping' | 'awaiting_bootstrap';
+      bootstrapRequired?: boolean;
       lastError?: string | null;
       lastSyncedAt?: string | null;
       bootstrapProgress?: BootstrapProgress;
@@ -26,6 +27,7 @@ const statusText: Record<Exclude<PeerState, { configured: false }>['status'], st
   blocked: '확인이 필요한 변경으로 동기화 중단',
   needs_login: '상대 서버에 다시 로그인 필요',
   bootstrapping: '서재 복제 중',
+  awaiting_bootstrap: '초기 복제 대기',
 };
 
 const errorText: Record<string, string> = {
@@ -116,7 +118,7 @@ export function ServerPeerSyncSettings({ client }: { readonly client: Pick<Remot
           method: 'POST',
           body: JSON.stringify({ url: url.trim(), username, password, startFromNow: true, requireEmptyLibrary: true }),
         },
-        20_000,
+        90_000,
       );
       setPassword('');
       await refresh();
@@ -124,6 +126,27 @@ export function ServerPeerSyncSettings({ client }: { readonly client: Pick<Remot
     } catch (error) {
       setActionError(describeError(error));
       await refresh().catch(() => undefined);
+    } finally {
+      setBusy(false);
+    }
+  };
+  const reauthenticate = async (event: FormEvent) => {
+    event.preventDefault();
+    setBusy(true);
+    setActionError('');
+    try {
+      await client.request(
+        '/sync/peer/reauthenticate',
+        {
+          method: 'POST',
+          body: JSON.stringify({ username, password }),
+        },
+        90_000,
+      );
+      setPassword('');
+      await refresh();
+    } catch (error) {
+      setActionError(describeError(error));
     } finally {
       setBusy(false);
     }
@@ -148,6 +171,14 @@ export function ServerPeerSyncSettings({ client }: { readonly client: Pick<Remot
   };
   const configuredPeer = peer && 'url' in peer ? peer : undefined;
   const progress = configuredPeer?.bootstrapProgress;
+  const bootstrapRequired =
+    configuredPeer?.bootstrapRequired ||
+    configuredPeer?.status === 'awaiting_bootstrap' ||
+    configuredPeer?.status === 'bootstrapping';
+  const progressDetail =
+    progress?.stage === 'downloading' && typeof progress.completedBytes === 'number'
+      ? `${formatBytes(progress.completedBytes)}${progress.totalBytes ? ` / ${formatBytes(progress.totalBytes)}` : ''}`
+      : undefined;
   const percent =
     progress?.stage === 'downloading' &&
     typeof progress.totalBytes === 'number' &&
@@ -175,16 +206,14 @@ export function ServerPeerSyncSettings({ client }: { readonly client: Pick<Remot
           )}
           {progress && (
             <p role="status">
-              <TaskProgressRing
-                percent={percent}
-                label={progressLabel(progress)}
-                detail={
-                  progress.stage === 'downloading' && typeof progress.completedBytes === 'number'
-                    ? `${formatBytes(progress.completedBytes)}${progress.totalBytes ? ` / ${formatBytes(progress.totalBytes)}` : ''}`
-                    : undefined
-                }
-              />{' '}
+              <TaskProgressRing percent={percent} label={progressLabel(progress)} detail={progressDetail} />{' '}
               {progressLabel(progress)}
+              {progressDetail && (
+                <>
+                  {' '}
+                  · <span>{progressDetail}</span>
+                </>
+              )}
             </p>
           )}
           {configuredPeer.status === 'bootstrapping' && !progress && (
@@ -194,12 +223,50 @@ export function ServerPeerSyncSettings({ client }: { readonly client: Pick<Remot
                 : '이전 복제가 중단되었습니다. 책장이 비어 있다면 다시 시도할 수 있습니다.'}
             </p>
           )}
-          {configuredPeer.status !== 'ready' && !progress && (
+          {configuredPeer.status === 'needs_login' && (
+            <form onSubmit={(event) => void reauthenticate(event)}>
+              <label>
+                기존 서버 계정
+                <input
+                  required
+                  autoComplete="username"
+                  value={username}
+                  onChange={(event) => setUsername(event.target.value)}
+                />
+              </label>
+              <label>
+                비밀번호
+                <input
+                  type="password"
+                  required
+                  autoComplete="current-password"
+                  value={password}
+                  onChange={(event) => setPassword(event.target.value)}
+                />
+              </label>
+              <p>현재 서재와 아직 보내지 못한 변경을 유지하고 다시 로그인합니다.</p>
+              <button className="primary-btn" disabled={busy}>
+                기존 연결에 다시 로그인
+              </button>
+            </form>
+          )}
+          {bootstrapRequired && configuredPeer.status !== 'needs_login' && !progress && (
             <button type="button" className="secondary-btn" disabled={busy} onClick={() => void run('bootstrap')}>
               빈 서재 복제 다시 시도
             </button>
           )}
-          <button type="button" className="secondary-btn" disabled={busy || !!progress} onClick={() => void run('run')}>
+          <button
+            type="button"
+            className="secondary-btn"
+            disabled={
+              busy ||
+              !!progress ||
+              bootstrapRequired ||
+              configuredPeer.status === 'needs_login' ||
+              configuredPeer.status === 'blocked'
+            }
+            onClick={() => void run('run')}
+          >
             독서 위치 지금 동기화
           </button>
           <button

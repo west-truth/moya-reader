@@ -30,17 +30,17 @@ export async function registerReaderStateRoutes(
       const client = await pool.connect();
       try {
         await client.query('begin');
+        // Acquire the lock before the statement snapshot is taken. A lock inside
+        // the CTE can wait for a DELETE, then still read its pre-delete snapshot.
+        await client.query('select pg_advisory_xact_lock(hashtextextended($1, 7319))', [request.params.bookId]);
         const positionResult = await client.query(
           `
-          with book_write_lock as (
-            select pg_advisory_xact_lock(hashtextextended($1, 7319))
-          ),
-          requested_chapter as (
+          with requested_chapter as (
             select c.id, c.book_id, c.document_section_id
-              from book_write_lock
-              join library_books b on b.id = $1 and b.user_id = $2 and b.deleted_at is null
+              from library_books b
               join chapters c on c.book_id = b.id and c.id = $3
-             where $11::text is null or c.document_section_id = $11
+             where b.id = $1 and b.user_id = $2 and b.deleted_at is null
+               and ($11::text is null or c.document_section_id = $11)
           ),
           position_write as (insert into reading_positions (
             book_id, user_id, chapter_id, paragraph_id, paragraph_index, offset_in_paragraph,
