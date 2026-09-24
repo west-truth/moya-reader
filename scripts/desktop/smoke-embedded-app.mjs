@@ -192,7 +192,7 @@ try {
   // actual settings panel to exercise its durable retry state.
   await page.route('**/api/sync/peer/bootstrap', (route) => route.abort('failed'), { times: 1 });
   await page.getByRole('button', { name: '빈 서재에 복제하고 연결' }).click();
-  await page.getByText('초기 복제 대기', { exact: true }).waitFor();
+  await page.getByText(/· 초기 복제 대기$/).waitFor();
   await page.getByRole('button', { name: '설정 닫기', exact: true }).click();
   await page.getByRole('button', { name: '설정 열기', exact: true }).click();
   await page.getByRole('tab', { name: /앱 정보/ }).click();
