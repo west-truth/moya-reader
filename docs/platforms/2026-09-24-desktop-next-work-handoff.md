@@ -40,6 +40,7 @@ Windows 초기 성공: [35911331300](https://github.com/west-truth/moya-reader/a
 - **D1 독서 위치 첫 범위:** 동일 book/source hash/active revision/chapter ID를 가진 두 독립 서버에서 새 독서 위치만 교환하는 API 실행기를 추가했다. 서버 DB의 방향별 cursor, 암호화한 상대 계정 session, 15초 백그라운드 실행을 사용한다. 두 실제 PostgreSQL DB/HTTP 서버에서 A→B, 재시작 후 B→A, 같은 시각 충돌·미지원 북마크·세션 만료를 검사했다. 초기 작품/원본 복제와 공통 UI 연결은 없다. 세부 계약은 [D0/D1 기록](2026-09-24-server-sync-contract-audit.md)을 따른다.
 - **D1 저장 원자성 보완:** 독서 위치 REST 저장·삭제와 sync event를 한 DB transaction으로 묶었다. 사건 기록 실패를 실제 DB에 주입하여 위치 변경이 남지 않는지 확인했고, 같은 ID에 다른 내용의 재요청은 409로 거부한다. 관련 서버 회귀 검사 33개와 타입 검사가 통과했다. 다른 자료의 writer는 이 검사로 보장되지 않는다.
 - **Windows 복구 재검증:** [실행 35952587865](https://github.com/west-truth/moya-reader/actions/runs/35952587865), 코드 `52fb8d7`에서 PostgreSQL 소유권 조회의 제한된 재시도와 launcher 강제 종료 후 동일 프로필 복구가 통과했다. 같은 실행의 실제 앱 창, 공유·재시작, 패키징 서버 독서도 통과했다. 소유권을 확인할 수 없을 때 기존 자료를 보존하고 복구를 중단한다.
+- **현재 Windows 코드 검증:** [실행 35953318186](https://github.com/west-truth/moya-reader/actions/runs/35953318186), 코드 `abb418c`에서 내장 런타임·수집기·복구·실제 앱 창·공유·재시작·패키징 서버 독서·EPUB/PDF가 통과했다. 이 push 실행은 설치본 생성 옵션을 켜지 않았으므로 새 설치 파일의 최초 설치 증거는 아니다.
 
 ## 2. 실행 순서
 

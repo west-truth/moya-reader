@@ -1,8 +1,8 @@
 # 내장 서버 앱 기능 연결과 검증 현황
 
-기준: `feat/desktop-embedded-selfhost`, 2026-09-24. [구현 계획](2026-09-23-desktop-embedded-selfhost-plan.md)의 P2 지원표다. 기존 코드가 있다는 것과 후보 앱에서 검증을 통과했다는 것을 구분한다. 수집기 포함 Windows 기본 후보는 [`775a9ff` 실행](https://github.com/west-truth/moya-reader/actions/runs/35929350327)에서 통과했다. 실제 앱 기능과 설치 후보는 [`62514e5` 실행](https://github.com/west-truth/moya-reader/actions/runs/35932538748)에서 통과했다.
+기준: `feat/desktop-embedded-selfhost`, 2026-09-24. [구현 계획](2026-09-23-desktop-embedded-selfhost-plan.md)의 P2 지원표다. 기존 코드가 있다는 것과 후보 앱에서 검증을 통과했다는 것을 구분한다. 수집기 포함 Windows 기본 후보는 [`775a9ff` 실행](https://github.com/west-truth/moya-reader/actions/runs/35929350327)에서 통과했다. 실제 앱 기능과 설치 후보는 [`62514e5` 실행](https://github.com/west-truth/moya-reader/actions/runs/35932538748)에서 통과했다. 최신 코드 `abb418c`의 Windows 앱·복구·공통 독서 회귀는 [실행 35953318186](https://github.com/west-truth/moya-reader/actions/runs/35953318186)에서 통과했다(설치본 생성 옵션 제외).
 
-다음 구현의 파일·작업 순서·완료 검사는 [실행 지침](2026-09-24-desktop-next-work-handoff.md)을 따른다. A1~A3은 기존 self-host 수집기와 로그인 브라우저를 앱에 연결하고 실제 Windows 패키지에서 검증했다. C0/D0 조사는 별도 문서에 기록했다. C1의 기본 로컬 ZIP 이전은 구현·DB 검증 중이며 D1 서버 간 동기화는 남았다.
+다음 구현의 파일·작업 순서·완료 검사는 [실행 지침](2026-09-24-desktop-next-work-handoff.md)을 따른다. A1~A3은 기존 self-host 수집기와 로그인 브라우저를 앱에 연결하고 실제 Windows 패키지에서 검증했다. C0/D0 조사는 별도 문서에 기록했다. C1의 기본 로컬 ZIP 이전과 D1의 동일 작품 신규 독서 위치 교환을 검증했다. 초기 작품·원본 복제와 나머지 동기화 항목은 남았다.
 
 | 기능 | 연결 상태 | 확인한 범위 / 남은 검사 |
 | --- | --- | --- |
