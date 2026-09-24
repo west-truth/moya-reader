@@ -106,7 +106,7 @@ async function peerRequest(
   baseUrl: string,
   resource: string,
   cookie: string | undefined,
-  options: { method?: string; body?: unknown } = {},
+  options: { method?: string; body?: unknown; signal?: AbortSignal } = {},
 ): Promise<{ body: unknown; setCookie: string | null }> {
   let response: Response;
   try {
@@ -119,7 +119,9 @@ async function peerRequest(
         ...(options.body === undefined ? {} : { 'Content-Type': 'application/json' }),
       },
       ...(options.body === undefined ? {} : { body: JSON.stringify(options.body) }),
-      signal: AbortSignal.timeout(10_000),
+      signal: options.signal
+        ? AbortSignal.any([options.signal, AbortSignal.timeout(10_000)])
+        : AbortSignal.timeout(10_000),
     });
   } catch {
     throw new PeerSyncFailure('peer_unreachable', 'offline');
@@ -250,11 +252,19 @@ function assertSupportedEvents(events: readonly SyncEvent[]): void {
   }
 }
 
-async function assertMatchingBooks(pool: pg.Pool, userId: string, row: PeerRow, cookie: string, events: SyncEvent[]) {
+async function assertMatchingBooks(
+  pool: pg.Pool,
+  userId: string,
+  row: PeerRow,
+  cookie: string,
+  events: SyncEvent[],
+  signal: AbortSignal,
+) {
   for (const bookId of new Set(events.map((event) => event.novelId!))) {
     const local = await bookIdentity(pool, userId, bookId);
-    const remote = (await peerRequest(row.peer_url, `/api/sync/book-identity/${encodeURIComponent(bookId)}`, cookie))
-      .body as BookIdentity;
+    const remote = (
+      await peerRequest(row.peer_url, `/api/sync/book-identity/${encodeURIComponent(bookId)}`, cookie, { signal })
+    ).body as BookIdentity;
     if (!local || JSON.stringify(local) !== JSON.stringify(remote)) {
       throw new PeerSyncFailure('peer_book_identity_mismatch', 'blocked');
     }
@@ -285,12 +295,16 @@ export function registerPeerReadingPositionRoutes(app: FastifyInstance, pool: pg
   const userId = config.defaultUserId;
   const key = () => loadProviderSecretMasterKey(config, process.env);
   let running: Promise<void> | undefined;
+  let activeAbort: AbortController | undefined;
   let configuring = false;
 
   const execute = () => {
     if (configuring) return Promise.resolve();
     if (running) return running;
-    running = runOnce()
+    activeAbort = new AbortController();
+    const timeout = setTimeout(() => activeAbort?.abort(), 60_000);
+    timeout.unref();
+    running = runOnce(activeAbort.signal)
       .catch((error) => {
         app.log.warn(
           { code: error instanceof PeerSyncFailure ? error.code : 'internal_error' },
@@ -298,17 +312,21 @@ export function registerPeerReadingPositionRoutes(app: FastifyInstance, pool: pg
         );
       })
       .finally(() => {
+        clearTimeout(timeout);
+        activeAbort = undefined;
         running = undefined;
       });
     return running;
   };
 
-  async function runOnce(): Promise<void> {
+  async function runOnce(signal: AbortSignal): Promise<void> {
     const row = await loadPeer(pool, userId);
     if (!row || row.status === 'blocked' || row.status === 'needs_login') return;
     try {
       const cookie = decryptedSession(key(), row);
-      const identity = (await peerRequest(row.peer_url, '/api/sync/identity', cookie)).body as { serverId?: string };
+      const identity = (await peerRequest(row.peer_url, '/api/sync/identity', cookie, { signal })).body as {
+        serverId?: string;
+      };
       if (identity.serverId !== row.peer_server_id)
         throw new PeerSyncFailure('peer_server_identity_changed', 'blocked');
 
@@ -322,11 +340,12 @@ export function registerPeerReadingPositionRoutes(app: FastifyInstance, pool: pg
       }
       assertSupportedEvents(outbound);
       if (outbound.length) {
-        await assertMatchingBooks(pool, userId, row, cookie, outbound);
+        await assertMatchingBooks(pool, userId, row, cookie, outbound, signal);
         const response = (
           await peerRequest(row.peer_url, '/api/sync/events', cookie, {
             method: 'POST',
             body: { ...SYNC_CONTRACT_V2, events: outbound },
+            signal,
           })
         ).body as { acceptedIds?: string[]; rejected?: Array<{ reason?: string }> };
         if (
@@ -353,6 +372,7 @@ export function registerPeerReadingPositionRoutes(app: FastifyInstance, pool: pg
           row.peer_url,
           `/api/sync?since=${Number(row.inbound_cursor)}&contractVersion=2&idContract=v2-sha256-128&hashContract=v2-sha256-tagged`,
           cookie,
+          { signal },
         )
       ).body as PullResponse;
       if (
@@ -380,7 +400,7 @@ export function registerPeerReadingPositionRoutes(app: FastifyInstance, pool: pg
         throw new PeerSyncFailure('peer_cursor_invalid', 'blocked');
       }
       assertSupportedEvents(inbound);
-      await assertMatchingBooks(pool, userId, row, cookie, inbound);
+      await assertMatchingBooks(pool, userId, row, cookie, inbound, signal);
       if (inbound.length) {
         const transaction = await pool.connect();
         try {
@@ -551,6 +571,7 @@ export function registerPeerReadingPositionRoutes(app: FastifyInstance, pool: pg
   timer.unref();
   app.addHook('onClose', async () => {
     clearInterval(timer);
+    activeAbort?.abort();
     await running;
   });
 }
