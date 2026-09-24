@@ -27,12 +27,24 @@ async function samePostgres(pid, executable, db, startedAt) {
   if (process.platform === 'win32') {
     // Only a validated numeric PID is embedded; paths never enter shell source.
     const script = `[Console]::OutputEncoding=New-Object System.Text.UTF8Encoding($false); $p=Get-CimInstance Win32_Process -Filter "ProcessId = ${pid}"; if($p){@{exe=$p.ExecutablePath;started=([DateTimeOffset]$p.CreationDate).ToUnixTimeSeconds()}|ConvertTo-Json -Compress}`;
-    const { stdout } = await exec(
-      'powershell.exe',
-      ['-NoProfile', '-NonInteractive', '-EncodedCommand', Buffer.from(script, 'utf16le').toString('base64')],
-      { windowsHide: true, timeout: 10_000 },
-    );
-    const info = JSON.parse(stdout);
+    const args = [
+      '-NoProfile',
+      '-NonInteractive',
+      '-EncodedCommand',
+      Buffer.from(script, 'utf16le').toString('base64'),
+    ];
+    let info;
+    for (let attempt = 0; attempt < 2; attempt++) {
+      try {
+        const { stdout } = await exec('powershell.exe', args, { windowsHide: true, timeout: 20_000 });
+        info = JSON.parse(stdout);
+        break;
+      } catch {
+        // CIM can take longer while Windows prepares PowerShell modules on first use.
+        if (attempt === 0) await delay(250);
+      }
+    }
+    if (!info) throw new Error('기존 DB 프로세스의 소유권을 확인하지 못했습니다. 기존 자료를 보존했습니다.');
     if (!info.exe || !(await samePath(info.exe, executable)))
       throw new Error('기존 DB 실행 파일의 소유권을 확인하지 못했습니다. 기존 자료를 보존했습니다.');
     if (
