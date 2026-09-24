@@ -36,6 +36,7 @@ export interface SyncCapabilities extends ResolvedSyncContract {
 export type PeerSyncFeature =
   | 'new_book_content_v1'
   | 'reading_positions_v1'
+  | 'reader_annotations_v1'
   | 'single_text_replacement_v1'
   | 'text_fast_forward_v1'
   | 'image_series_append_v1'

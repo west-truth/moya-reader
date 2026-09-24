@@ -1,5 +1,6 @@
 import pg from 'pg';
 import type { SyncEvent } from '@noveldesk/contracts/sync';
+import { readerEntityRevision, type ReaderEntityKind } from '../books/reader-entity-revisions.js';
 import {
   parseChapterSegmentsPayload,
   parseCharacterGraphPayload,
@@ -58,6 +59,14 @@ async function shouldAcceptReaderContentRevision(
 ): Promise<boolean> {
   const updatedAt = readerArtifactUpdatedAt(event);
   if (!updatedAt || !event.novelId) return true;
+  const contentRevisionId = stringValue(record(event.payload).contentRevisionId);
+  if (contentRevisionId) {
+    const current = await client.query<{ active_content_revision_id: string | null }>(
+      'select active_content_revision_id from library_books where id = $1 and user_id = $2',
+      [event.novelId, userId],
+    );
+    return current.rows[0]?.active_content_revision_id === contentRevisionId;
+  }
   const result = await client.query<{ should_accept: boolean }>(
     `
       select case
@@ -250,6 +259,25 @@ function userEntityUpdatedAt(event: SyncEvent):
 async function shouldAcceptUserEntityEvent(client: pg.PoolClient, userId: string, event: SyncEvent): Promise<boolean> {
   const entity = userEntityUpdatedAt(event);
   if (!entity) return true;
+  const owned = await client.query<{ user_id: string; book_id: string }>(
+    `select user_id, book_id from ${entity.table} where id = $1`,
+    [entity.id],
+  );
+  if (owned.rows[0] && (owned.rows[0].user_id !== userId || owned.rows[0].book_id !== event.novelId)) return false;
+  const payload = record(event.payload);
+  const base = stringValue(payload.baseEntityRevision);
+  const target = stringValue(payload.targetEntityRevision);
+  if (base || target) {
+    if (
+      !base ||
+      !target ||
+      !(['bookmarks', 'highlights', 'notes', 'document_annotations'] as string[]).includes(entity.table)
+    )
+      return false;
+    const kind = entity.table.slice(0, -1) as ReaderEntityKind;
+    const current = await readerEntityRevision(client, userId, kind, entity.id);
+    return current === base || current === target;
+  }
   const result = await client.query<{ should_accept: boolean }>(
     `
       select coalesce(
@@ -502,8 +530,18 @@ export async function hasExistingBookForEvent(
   event: SyncEvent,
 ): Promise<boolean> {
   if (!requiresExistingBook(event) || !event.novelId) return true;
+  const annotationMutation =
+    event.type === 'bookmark_created' ||
+    event.type === 'bookmark_deleted' ||
+    event.type === 'highlight_created' ||
+    event.type === 'highlight_deleted' ||
+    event.type === 'note_created' ||
+    event.type === 'note_updated' ||
+    event.type === 'note_deleted' ||
+    event.type === 'document_annotation_updated' ||
+    event.type === 'document_annotation_deleted';
   const result = await client.query<{ exists: boolean }>(
-    'select true as exists from library_books where id = $1 and user_id = $2 for share',
+    `select true as exists from library_books where id = $1 and user_id = $2 for ${annotationMutation ? 'update' : 'share'}`,
     [event.novelId, userId],
   );
   return result.rows[0]?.exists ?? false;

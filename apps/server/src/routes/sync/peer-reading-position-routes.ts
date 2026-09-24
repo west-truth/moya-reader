@@ -29,7 +29,23 @@ import { mapSyncEventRow } from './row-mappers.js';
 const PEER_KEY_VERSION = 'local-aes-256-gcm-v1';
 const MAX_PEER_RESPONSE_BYTES = 4 * 1024 * 1024;
 const PEER_POLL_INTERVAL_MS = 15_000;
-const SUPPORTED_TYPES = new Set(['book_imported', 'reading_position_updated', 'reading_position_deleted']);
+const ANNOTATION_TYPES = new Set([
+  'bookmark_created',
+  'bookmark_deleted',
+  'highlight_created',
+  'highlight_deleted',
+  'note_created',
+  'note_updated',
+  'note_deleted',
+  'document_annotation_updated',
+  'document_annotation_deleted',
+]);
+const SUPPORTED_TYPES = new Set([
+  'book_imported',
+  'reading_position_updated',
+  'reading_position_deleted',
+  ...ANNOTATION_TYPES,
+]);
 
 interface PeerRow {
   user_id: string;
@@ -295,6 +311,23 @@ function assertSupportedEvents(events: readonly SyncEvent[], direction: PeerConf
   const invalidContract = events.find((event) => !event.novelId || event.contractVersion !== 2);
   if (invalidContract) {
     throw new PeerSyncFailure('peer_event_contract_unsupported', 'blocked', eventConflict(invalidContract, direction));
+  }
+  const unversionedAnnotation = events.find((event) => {
+    if (!ANNOTATION_TYPES.has(event.type)) return false;
+    const payload = event.payload as Record<string, unknown> | undefined;
+    return (
+      !payload ||
+      typeof payload.contentRevisionId !== 'string' ||
+      typeof payload.baseEntityRevision !== 'string' ||
+      typeof payload.targetEntityRevision !== 'string'
+    );
+  });
+  if (unversionedAnnotation) {
+    throw new PeerSyncFailure(
+      'peer_annotation_version_missing',
+      'blocked',
+      eventConflict(unversionedAnnotation, direction),
+    );
   }
 }
 
@@ -621,6 +654,14 @@ export function registerPeerReadingPositionRoutes(app: FastifyInstance, pool: pg
         client.release();
       }
       assertSupportedEvents(outbound, 'outbound');
+      const unsupportedAnnotation = outbound.find((event) => ANNOTATION_TYPES.has(event.type));
+      if (unsupportedAnnotation && !remoteFeatures.has('reader_annotations_v1')) {
+        throw new PeerSyncFailure(
+          'peer_feature_unsupported',
+          'blocked',
+          eventConflict(unsupportedAnnotation, 'outbound'),
+        );
+      }
       if (outbound.length) {
         await ensurePeerBooks(pool, config, row, cookie, outbound, signal, 'outbound', backupStaging, remoteFeatures);
         const response = (

@@ -12,9 +12,13 @@ describe('hosted document annotations', () => {
       query: async (sql: string, params: unknown[] = []) => {
         if (sql.includes('select id from library_books')) return { rows: [{ id: 'pdf_1' }] };
         if (sql.includes('select 1 from library_books')) return { rows: [{ '?column?': 1 }] };
+        if (sql.includes('select active_content_revision_id from library_books')) {
+          return { rows: [{ active_content_revision_id: 'revision_1' }] };
+        }
         if (sql.includes('from library_books b')) {
           return { rows: [{ format: 'pdf', raw_text_hash: 'sha256:source', chapter_id: 'chapter_1' }] };
         }
+        if (sql.includes('from document_text_revisions')) return { rows: [] };
         if (sql.includes('insert into document_annotations')) {
           const [id, bookId, userId, pageIndex, type, anchor, quote, body, color, remap, createdAt, updatedAt] = params;
           if (rows.has(String(id)) && rows.get(String(id))?.book_id !== bookId) return { rows: [] };
@@ -35,7 +39,13 @@ describe('hosted document annotations', () => {
           return { rows: [{ id }] };
         }
         if (sql.includes('from document_annotations')) {
-          return { rows: [...rows.values()].filter((row) => row.book_id === params[0] && row.user_id === params[1]) };
+          return sql.includes('where id = $1')
+            ? { rows: [...rows.values()].filter((row) => row.id === params[0] && row.user_id === params[1]) }
+            : {
+                rows: [...rows.values()].filter(
+                  (row) => row.book_id === params[0] && row.user_id === params[1] && !row.deleted_at,
+                ),
+              };
         }
         if (sql.includes('insert into sync_events')) {
           syncEvents++;
@@ -44,7 +54,8 @@ describe('hosted document annotations', () => {
         if (sql.includes('update document_annotations')) {
           const row = rows.get(String(params[0]));
           if (!row || row.book_id !== params[1] || row.user_id !== params[2]) return { rows: [] };
-          rows.delete(String(params[0]));
+          row.deleted_at = params[3];
+          row.updated_at = params[3];
           return { rows: [{ id: params[0] }] };
         }
         throw new Error(`Unexpected SQL: ${sql}`);
@@ -90,6 +101,26 @@ describe('hosted document annotations', () => {
           payload: {
             ...annotation,
             anchor: { ...annotation.anchor, pageHash: 'old-source' },
+          },
+        })
+      ).statusCode,
+    ).toBe(409);
+    expect(
+      (
+        await app.inject({
+          method: 'PUT',
+          url,
+          payload: {
+            ...annotation,
+            anchor: {
+              kind: 'fixed_text',
+              bookId: 'pdf_1',
+              pageIndex: 0,
+              textRevisionId: 'missing',
+              blockId: 'missing',
+              startOffset: 0,
+              endOffset: 1,
+            },
           },
         })
       ).statusCode,

@@ -7,7 +7,7 @@ import { setTimeout as delay } from 'node:timers/promises';
 import { BlobWriter, TextReader, Uint8ArrayReader, ZipWriter } from '@zip.js/zip.js';
 import Fastify from 'fastify';
 import pg from 'pg';
-import { syncEventId, syncPayloadIntegrityHash } from '@noveldesk/text-core/identity/sync';
+import { resourceEntityRevision, syncEventId, syncPayloadIntegrityHash } from '@noveldesk/text-core/identity/sync';
 import { persistentId128 } from '@noveldesk/text-core/hash';
 import type { SyncEvent } from '@noveldesk/contracts/sync';
 import { afterAll, describe, expect, it } from 'vitest';
@@ -16,6 +16,9 @@ import { migrateDatabase } from '../src/db/migrate.js';
 import type { ServerConfig } from '../src/config.js';
 import { registerSelfHostAuthRoutes } from '../src/routes/auth.js';
 import { registerBackupRoutes } from '../src/routes/backups.js';
+import { registerAnnotationRoutes } from '../src/routes/books/annotation-routes.js';
+import { registerDocumentAnnotationRoutes } from '../src/routes/books/document-annotation-routes.js';
+import { documentPageHash } from '../src/routes/books/document-page-identity.js';
 import { registerReaderStateRoutes } from '../src/routes/books/reader-state-routes.js';
 import { registerSyncRoutes } from '../src/routes/sync.js';
 import { PostgresSelfHostAuthStore, SelfHostAuthService } from '../src/services/self-host-auth-service.js';
@@ -167,6 +170,8 @@ async function testServer(
   await registerAuthHook(app, config, auth);
   await registerSelfHostAuthRoutes(app, auth, config);
   await registerReaderStateRoutes(app, pool, config);
+  await registerAnnotationRoutes(app, pool, config);
+  await registerDocumentAnnotationRoutes(app, pool, config);
   await registerBackupRoutes(app, pool, config);
   await registerSyncRoutes(app, pool, config);
   const url = await app.listen({ host: '127.0.0.1', port });
@@ -193,6 +198,250 @@ async function withTwoDatabases(run: (poolA: pg.Pool, poolB: pg.Pool) => Promise
 }
 
 describe.skipIf(!harness)('two server reading position sync', () => {
+  it('exchanges API-written annotations with content and entity revisions and blocks concurrent edits', async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), 'moya-peer-annotations-'));
+    try {
+      await withTwoDatabases(async (poolA, poolB) => {
+        await fixtureBook(poolA, USER_A);
+        await fixtureBook(poolB, USER_B);
+        const a = await testServer(poolA, path.join(directory, 'a'), 'native_a', USER_A);
+        const b = await testServer(poolB, path.join(directory, 'b'), 'native_b', USER_B);
+        const write = (server: typeof a, method: string, route: string, body?: unknown) =>
+          fetch(`${server.url}/api${route}`, {
+            method,
+            headers: { Authorization: `Bearer ${server.token}`, 'Content-Type': 'application/json' },
+            ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+          });
+        const run = async () =>
+          (await (await write(a, 'POST', '/sync/peer/run', {})).json()) as {
+            status: string;
+            lastError: string | null;
+            outboundCursor: number;
+          };
+        const currentNote = async (server: typeof a) => {
+          const response = await write(server, 'GET', '/books/book_1/notes');
+          const row = ((await response.json()) as { notes: Array<Record<string, unknown>> }).notes[0];
+          return {
+            id: String(row.id),
+            novelId: 'book_1',
+            chapterId: String(row.chapter_id),
+            paragraphId: String(row.paragraph_id),
+            body: String(row.body),
+            progress: Number(row.progress),
+            createdAt: String(row.created_at),
+            updatedAt: String(row.updated_at),
+          };
+        };
+        try {
+          expect(
+            (
+              await write(b, 'POST', '/auth/register', {
+                username: 'peer',
+                password: 'long peer test password',
+                setupCode: b.token,
+              })
+            ).status,
+          ).toBe(201);
+          expect(
+            (
+              await write(a, 'POST', '/sync/peer', {
+                url: b.url,
+                username: 'peer',
+                password: 'long peer test password',
+                startFromNow: true,
+              })
+            ).status,
+          ).toBe(200);
+          const createdAt = '2026-09-24T10:00:00.000Z';
+          const common = { chapterId: 'chapter_1', paragraphId: 'paragraph_1', progress: 0.4, createdAt };
+          expect(
+            (
+              await write(a, 'POST', '/books/book_1/bookmarks', {
+                ...common,
+                id: 'mark_peer',
+                label: 'First',
+                scrollTop: 12,
+              })
+            ).status,
+          ).toBe(200);
+          expect(
+            (
+              await write(a, 'POST', '/books/book_1/highlights', {
+                ...common,
+                id: 'highlight_peer',
+                quote: 'Text',
+                color: 'yellow',
+                updatedAt: createdAt,
+              })
+            ).status,
+          ).toBe(200);
+          expect(
+            (
+              await write(a, 'POST', '/books/book_1/notes', {
+                ...common,
+                id: 'note_peer',
+                body: 'First note',
+                updatedAt: createdAt,
+              })
+            ).status,
+          ).toBe(200);
+          expect(await run()).toMatchObject({ status: 'ready', lastError: null });
+          expect((await poolB.query("select label from bookmarks where id='mark_peer'")).rows[0].label).toBe('First');
+          expect((await poolB.query("select quote from highlights where id='highlight_peer'")).rows[0].quote).toBe(
+            'Text',
+          );
+          expect((await poolB.query("select body from notes where id='note_peer'")).rows[0].body).toBe('First note');
+
+          const note = await currentNote(b);
+          const expectedRevision = resourceEntityRevision('note', note);
+          expect(
+            (
+              await write(b, 'POST', '/books/book_1/notes', {
+                ...note,
+                body: 'Older clock edit',
+                updatedAt: '2026-09-24T09:00:00.000Z',
+                expectedRevision,
+              })
+            ).status,
+          ).toBe(200);
+          expect(await run()).toMatchObject({ status: 'ready', lastError: null });
+          expect((await poolA.query("select body from notes where id='note_peer'")).rows[0].body).toBe(
+            'Older clock edit',
+          );
+
+          expect((await write(a, 'DELETE', '/bookmarks/mark_peer', {})).status).toBe(200);
+          expect((await write(b, 'DELETE', '/highlights/highlight_peer', {})).status).toBe(200);
+          expect(await run()).toMatchObject({ status: 'ready', lastError: null });
+          expect(
+            (await poolA.query("select deleted_at is not null as deleted from highlights where id='highlight_peer'"))
+              .rows[0].deleted,
+          ).toBe(true);
+          expect(
+            (await poolB.query("select deleted_at is not null as deleted from bookmarks where id='mark_peer'")).rows[0]
+              .deleted,
+          ).toBe(true);
+          expect(await run()).toMatchObject({ status: 'ready', lastError: null });
+
+          const currentA = await currentNote(a);
+          const currentB = await currentNote(b);
+          expect(
+            (
+              await write(a, 'POST', '/books/book_1/notes', {
+                ...currentA,
+                body: 'A edit',
+                updatedAt: '2026-09-24T11:00:00.000Z',
+                expectedRevision: resourceEntityRevision('note', currentA),
+              })
+            ).status,
+          ).toBe(200);
+          expect(
+            (
+              await write(b, 'POST', '/books/book_1/notes', {
+                ...currentB,
+                body: 'B edit',
+                updatedAt: '2026-09-24T12:00:00.000Z',
+                expectedRevision: resourceEntityRevision('note', currentB),
+              })
+            ).status,
+          ).toBe(200);
+          const cursor = Number(
+            (await poolA.query('select outbound_cursor from sync_server_peers')).rows[0].outbound_cursor,
+          );
+          expect(await run()).toMatchObject({ status: 'blocked', outboundCursor: cursor });
+          expect((await poolA.query("select body from notes where id='note_peer'")).rows[0].body).toBe('A edit');
+          expect((await poolB.query("select body from notes where id='note_peer'")).rows[0].body).toBe('B edit');
+        } finally {
+          await Promise.all([a.app.close(), b.app.close()]);
+        }
+      });
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  }, 30_000);
+
+  it('exchanges PDF page annotations through the API with a verified page hash', async () => {
+    await withTwoDatabases(async (poolA, poolB) => {
+      await withImportPageFixture(poolA, async (fixtureA) => {
+        await withImportPageFixture(poolB, async (fixtureB) => {
+          const a = await testServer(poolA, fixtureA.config.dataDir, 'native_a', 'user_test', 0, fixtureA.config);
+          const b = await testServer(poolB, fixtureB.config.dataDir, 'native_b', 'user_test', 0, fixtureB.config);
+          const write = (server: typeof a, method: string, route: string, body?: unknown) =>
+            fetch(`${server.url}/api${route}`, {
+              method,
+              headers: { Authorization: `Bearer ${server.token}`, 'Content-Type': 'application/json' },
+              ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+            });
+          try {
+            expect(
+              (
+                await write(b, 'POST', '/auth/register', {
+                  username: 'peer',
+                  password: 'long peer test password',
+                  setupCode: b.token,
+                })
+              ).status,
+            ).toBe(201);
+            expect(
+              (
+                await write(a, 'POST', '/sync/peer', {
+                  url: b.url,
+                  username: 'peer',
+                  password: 'long peer test password',
+                  startFromNow: true,
+                })
+              ).status,
+            ).toBe(200);
+            await fixtureA.import(pdfBytes('Annotate this page'), false, 'book_pdf', {
+              fileName: 'annotation.pdf',
+              contentType: 'application/pdf',
+            });
+            expect(await (await write(a, 'POST', '/sync/peer/run', {})).json()).toMatchObject({ status: 'ready' });
+            const pageHash = await documentPageHash(poolB, 'book_pdf', 0, 'user_test');
+            expect(pageHash).toBeDefined();
+            const annotation = {
+              id: 'peer_pdf_mark',
+              bookId: 'book_pdf',
+              pageIndex: 0,
+              type: 'page_bookmark',
+              anchor: { kind: 'fixed_page', bookId: 'book_pdf', pageIndex: 0, pageHash },
+              body: 'Page note',
+              createdAt: '2026-09-24T10:00:00.000Z',
+              updatedAt: '2026-09-24T10:00:00.000Z',
+            };
+            expect(
+              (await write(b, 'PUT', '/books/book_pdf/document-annotations/peer_pdf_mark', annotation)).status,
+            ).toBe(200);
+            expect(await (await write(a, 'POST', '/sync/peer/run', {})).json()).toMatchObject({ status: 'ready' });
+            expect(
+              (await poolA.query("select body from document_annotations where id='peer_pdf_mark'")).rows[0].body,
+            ).toBe('Page note');
+            const changed = { ...annotation, body: 'Updated page note', updatedAt: '2026-09-24T11:00:00.000Z' };
+            expect((await write(b, 'PUT', '/books/book_pdf/document-annotations/peer_pdf_mark', changed)).status).toBe(
+              200,
+            );
+            expect(await (await write(a, 'POST', '/sync/peer/run', {})).json()).toMatchObject({ status: 'ready' });
+            expect(
+              (await poolA.query("select body from document_annotations where id='peer_pdf_mark'")).rows[0].body,
+            ).toBe('Updated page note');
+            expect((await write(b, 'DELETE', '/books/book_pdf/document-annotations/peer_pdf_mark', {})).status).toBe(
+              200,
+            );
+            expect(await (await write(a, 'POST', '/sync/peer/run', {})).json()).toMatchObject({ status: 'ready' });
+            expect(
+              (
+                await poolA.query(
+                  "select deleted_at is not null as deleted from document_annotations where id='peer_pdf_mark'",
+                )
+              ).rows[0].deleted,
+            ).toBe(true);
+          } finally {
+            await Promise.all([a.app.close(), b.app.close()]);
+          }
+        });
+      });
+    });
+  }, 30_000);
+
   it('transfers and replaces EPUB content with resources while preserving the target note', async () => {
     await withTwoDatabases(async (poolA, poolB) => {
       await withImportPageFixture(poolA, async (fixtureA) => {
@@ -1731,7 +1980,7 @@ describe.skipIf(!harness)('two server reading position sync', () => {
             });
             expect(await unsupportedRun.json()).toMatchObject({
               status: 'blocked',
-              lastError: 'peer_event_type_unsupported',
+              lastError: 'peer_annotation_version_missing',
               outboundCursor: unsupportedBaseline.outboundCursor,
               inboundCursor: unsupportedBaseline.inboundCursor,
             });
@@ -1746,7 +1995,7 @@ describe.skipIf(!harness)('two server reading position sync', () => {
                   event_id: bookmark.id,
                   event_type: 'bookmark_created',
                   book_id: 'book_1',
-                  reason: 'peer_event_type_unsupported',
+                  reason: 'peer_annotation_version_missing',
                 },
               ],
             });

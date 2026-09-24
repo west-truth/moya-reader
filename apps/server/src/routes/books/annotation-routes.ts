@@ -1,9 +1,11 @@
 import type { FastifyInstance } from 'fastify';
+import { randomUUID } from 'node:crypto';
 import pg from 'pg';
 import { resourceEntityRevision } from '@noveldesk/text-core/identity/sync';
 import type { ServerConfig } from '../../config.js';
 import { hasBookChapterAccess } from './book-access-query.js';
 import { mapBookmarkRows, mapHighlightRows, mapNoteRows } from './row-mappers.js';
+import { activeBookContentRevisionId, readerEntityRevision, readerEntityValue } from './reader-entity-revisions.js';
 import { validateBookmarkBody, validateHighlightBody, validateNoteBody } from './request-contracts.js';
 import { createServerRevision } from './sync-event-repository.js';
 import { insertServerSyncEvent, withTransaction, type QueryRunner } from '../ai/sync-event-repository.js';
@@ -14,85 +16,16 @@ import {
   ServerResourceRevisionConflictError,
 } from '../resource-revision.js';
 
-function isoTimestamp(value: unknown): string {
-  if (value instanceof Date) return value.toISOString();
-  if (typeof value === 'string') {
-    const parsed = new Date(value);
-    if (!Number.isNaN(parsed.valueOf())) return parsed.toISOString();
-  }
-  return String(value);
-}
-
-function optionalString(value: unknown): string | undefined {
-  return typeof value === 'string' && value ? value : undefined;
-}
-
-function currentBookmarkValue(row: Record<string, unknown>) {
-  return {
-    id: String(row.id),
-    novelId: String(row.book_id),
-    chapterId: String(row.chapter_id),
-    paragraphId: optionalString(row.paragraph_id),
-    label: String(row.label),
-    progress: Number(row.progress),
-    scrollTop: Number(row.scroll_top),
-    createdAt: isoTimestamp(row.created_at),
-  };
-}
-
-function currentHighlightValue(row: Record<string, unknown>) {
-  return {
-    id: String(row.id),
-    novelId: String(row.book_id),
-    chapterId: String(row.chapter_id),
-    paragraphId: String(row.paragraph_id),
-    quote: String(row.quote),
-    color: String(row.color),
-    progress: Number(row.progress),
-    createdAt: isoTimestamp(row.created_at),
-    updatedAt: isoTimestamp(row.updated_at),
-  };
-}
-
-function currentNoteValue(row: Record<string, unknown>) {
-  return {
-    id: String(row.id),
-    novelId: String(row.book_id),
-    chapterId: String(row.chapter_id),
-    paragraphId: optionalString(row.paragraph_id),
-    quote: optionalString(row.quote),
-    body: String(row.body),
-    progress: Number(row.progress),
-    createdAt: isoTimestamp(row.created_at),
-    updatedAt: isoTimestamp(row.updated_at),
-  };
-}
-
 async function currentBookmarkRevision(db: QueryRunner, userId: string, id: string): Promise<string> {
-  const result = await db.query(
-    `select id, book_id, chapter_id, paragraph_id, label, progress, scroll_top, created_at
-     from bookmarks where id = $1 and user_id = $2 and deleted_at is null`,
-    [id, userId],
-  );
-  return resourceEntityRevision('bookmark', result.rows[0] ? currentBookmarkValue(result.rows[0]) : undefined);
+  return readerEntityRevision(db, userId, 'bookmark', id, false);
 }
 
 async function currentHighlightRevision(db: QueryRunner, userId: string, id: string): Promise<string> {
-  const result = await db.query(
-    `select id, book_id, chapter_id, paragraph_id, quote, color, progress, created_at, updated_at
-     from highlights where id = $1 and user_id = $2 and deleted_at is null`,
-    [id, userId],
-  );
-  return resourceEntityRevision('highlight', result.rows[0] ? currentHighlightValue(result.rows[0]) : undefined);
+  return readerEntityRevision(db, userId, 'highlight', id, false);
 }
 
 async function currentNoteRevision(db: QueryRunner, userId: string, id: string): Promise<string> {
-  const result = await db.query(
-    `select id, book_id, chapter_id, paragraph_id, quote, body, progress, created_at, updated_at
-     from notes where id = $1 and user_id = $2 and deleted_at is null`,
-    [id, userId],
-  );
-  return resourceEntityRevision('note', result.rows[0] ? currentNoteValue(result.rows[0]) : undefined);
+  return readerEntityRevision(db, userId, 'note', id, false);
 }
 
 function resourceConflictPayload(error: ServerResourceRevisionConflictError) {
@@ -132,6 +65,7 @@ export async function registerAnnotationRoutes(
         return reply.code(404).send({ error: 'book or chapter not found' });
       }
       const createdAt = bookmark.createdAt;
+      const modifiedAt = new Date().toISOString();
       try {
         const applied = await withTransaction(pool, async (db) => {
           if (!(await lockBookResource(db, config.defaultUserId, request.params.bookId))) {
@@ -147,10 +81,11 @@ export async function registerAnnotationRoutes(
               await currentBookmarkRevision(db, config.defaultUserId, bookmark.id),
             );
           }
+          const baseEntityRevision = await readerEntityRevision(db, config.defaultUserId, 'bookmark', bookmark.id);
           const saved = await db.query(
             `
           insert into bookmarks (id, book_id, user_id, chapter_id, paragraph_id, label, progress, scroll_top, created_at, updated_at)
-          values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $9)
+          values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
           on conflict (id) do update
             set label = excluded.label,
                 progress = excluded.progress,
@@ -159,7 +94,7 @@ export async function registerAnnotationRoutes(
                 deleted_at = null
             where bookmarks.book_id = excluded.book_id
               and bookmarks.user_id = excluded.user_id
-              and bookmarks.updated_at <= excluded.updated_at
+              and (bookmarks.updated_at <= excluded.updated_at or $11::boolean)
           returning id
             `,
             [
@@ -172,12 +107,19 @@ export async function registerAnnotationRoutes(
               bookmark.progress ?? 0,
               bookmark.scrollTop ?? 0,
               createdAt,
+              modifiedAt,
+              Boolean(expectedRevision),
             ],
           );
           if ((saved.rowCount ?? 0) === 0) return false;
-          const payload = { bookmark };
+          const payload = {
+            bookmark: await readerEntityValue(db, config.defaultUserId, 'bookmark', bookmark.id),
+            baseEntityRevision,
+            targetEntityRevision: await readerEntityRevision(db, config.defaultUserId, 'bookmark', bookmark.id),
+            contentRevisionId: await activeBookContentRevisionId(db, config.defaultUserId, request.params.bookId),
+          };
           await insertServerSyncEvent(db, config.defaultUserId, {
-            seed: `bookmark_created:${bookmark.id}:${createdAt}`,
+            seed: `bookmark_created:${bookmark.id}:${modifiedAt}:${randomUUID()}`,
             type: 'bookmark_created',
             bookId: request.params.bookId,
             entityId: bookmark.id,
@@ -186,10 +128,10 @@ export async function registerAnnotationRoutes(
               entityType: 'bookmark',
               entityId: bookmark.id,
               novelId: request.params.bookId,
-              updatedAt: createdAt,
+              updatedAt: modifiedAt,
               payload,
             }),
-            createdAt,
+            createdAt: modifiedAt,
           });
           return true;
         });
@@ -228,12 +170,29 @@ export async function registerAnnotationRoutes(
               await currentBookmarkRevision(db, config.defaultUserId, request.params.bookmarkId),
             );
           }
+          const baseEntityRevision = await readerEntityRevision(
+            db,
+            config.defaultUserId,
+            'bookmark',
+            request.params.bookmarkId,
+          );
           const deleted = await db.query(
             'update bookmarks set deleted_at = $3, updated_at = $3 where id = $1 and user_id = $2 and deleted_at is null returning book_id',
             [request.params.bookmarkId, config.defaultUserId, deletedAt],
           );
           if (!deleted.rows[0]) throw new Error('bookmark not found');
-          const payload = { id: request.params.bookmarkId, deletedAt };
+          const payload = {
+            id: request.params.bookmarkId,
+            deletedAt,
+            baseEntityRevision,
+            targetEntityRevision: await readerEntityRevision(
+              db,
+              config.defaultUserId,
+              'bookmark',
+              request.params.bookmarkId,
+            ),
+            contentRevisionId: await activeBookContentRevisionId(db, config.defaultUserId, bookId),
+          };
           await insertServerSyncEvent(db, config.defaultUserId, {
             seed: `bookmark_deleted:${request.params.bookmarkId}:${deletedAt}`,
             type: 'bookmark_deleted',
@@ -300,6 +259,7 @@ export async function registerAnnotationRoutes(
               await currentHighlightRevision(db, config.defaultUserId, highlight.id),
             );
           }
+          const baseEntityRevision = await readerEntityRevision(db, config.defaultUserId, 'highlight', highlight.id);
           const saved = await db.query(
             `
           insert into highlights (id, book_id, user_id, chapter_id, paragraph_id, quote, color, progress, created_at, updated_at)
@@ -312,7 +272,7 @@ export async function registerAnnotationRoutes(
                 deleted_at = null
             where highlights.book_id = excluded.book_id
               and highlights.user_id = excluded.user_id
-              and highlights.updated_at <= excluded.updated_at
+              and (highlights.updated_at <= excluded.updated_at or $11::boolean)
           returning id
             `,
             [
@@ -326,10 +286,16 @@ export async function registerAnnotationRoutes(
               highlight.progress ?? 0,
               highlight.createdAt,
               highlight.updatedAt,
+              Boolean(expectedRevision),
             ],
           );
           if ((saved.rowCount ?? 0) === 0) return false;
-          const payload = { highlight };
+          const payload = {
+            highlight: await readerEntityValue(db, config.defaultUserId, 'highlight', highlight.id),
+            baseEntityRevision,
+            targetEntityRevision: await readerEntityRevision(db, config.defaultUserId, 'highlight', highlight.id),
+            contentRevisionId: await activeBookContentRevisionId(db, config.defaultUserId, request.params.bookId),
+          };
           await insertServerSyncEvent(db, config.defaultUserId, {
             seed: `highlight_created:${highlight.id}:${highlight.updatedAt}`,
             type: 'highlight_created',
@@ -382,12 +348,29 @@ export async function registerAnnotationRoutes(
               await currentHighlightRevision(db, config.defaultUserId, request.params.highlightId),
             );
           }
+          const baseEntityRevision = await readerEntityRevision(
+            db,
+            config.defaultUserId,
+            'highlight',
+            request.params.highlightId,
+          );
           const deleted = await db.query(
             'update highlights set deleted_at = $3, updated_at = $3 where id = $1 and user_id = $2 and deleted_at is null returning book_id',
             [request.params.highlightId, config.defaultUserId, deletedAt],
           );
           if (!deleted.rows[0]) throw new Error('highlight not found');
-          const payload = { id: request.params.highlightId, deletedAt };
+          const payload = {
+            id: request.params.highlightId,
+            deletedAt,
+            baseEntityRevision,
+            targetEntityRevision: await readerEntityRevision(
+              db,
+              config.defaultUserId,
+              'highlight',
+              request.params.highlightId,
+            ),
+            contentRevisionId: await activeBookContentRevisionId(db, config.defaultUserId, bookId),
+          };
           await insertServerSyncEvent(db, config.defaultUserId, {
             seed: `highlight_deleted:${request.params.highlightId}:${deletedAt}`,
             type: 'highlight_deleted',
@@ -447,6 +430,7 @@ export async function registerAnnotationRoutes(
           if (!(await hasBookChapterAccess(db, config, request.params.bookId, note.chapterId))) {
             throw new Error('book or chapter not found');
           }
+          const baseEntityRevision = await readerEntityRevision(db, config.defaultUserId, 'note', note.id);
           const actualRevision = await currentNoteRevision(db, config.defaultUserId, note.id);
           if (expectedRevision) assertServerResourceRevision('note', expectedRevision, actualRevision);
           const existing = actualRevision !== resourceEntityRevision('note', undefined);
@@ -462,7 +446,7 @@ export async function registerAnnotationRoutes(
                 deleted_at = null
             where notes.book_id = excluded.book_id
               and notes.user_id = excluded.user_id
-              and notes.updated_at <= excluded.updated_at
+              and (notes.updated_at <= excluded.updated_at or $11::boolean)
           returning id
             `,
             [
@@ -476,11 +460,17 @@ export async function registerAnnotationRoutes(
               note.progress ?? 0,
               note.createdAt,
               note.updatedAt,
+              Boolean(expectedRevision),
             ],
           );
           if ((saved.rowCount ?? 0) === 0) return false;
           const type = existing ? 'note_updated' : 'note_created';
-          const payload = { note };
+          const payload = {
+            note: await readerEntityValue(db, config.defaultUserId, 'note', note.id),
+            baseEntityRevision,
+            targetEntityRevision: await readerEntityRevision(db, config.defaultUserId, 'note', note.id),
+            contentRevisionId: await activeBookContentRevisionId(db, config.defaultUserId, request.params.bookId),
+          };
           await insertServerSyncEvent(db, config.defaultUserId, {
             seed: `${type}:${note.id}:${note.updatedAt}`,
             type,
@@ -532,12 +522,24 @@ export async function registerAnnotationRoutes(
               await currentNoteRevision(db, config.defaultUserId, request.params.noteId),
             );
           }
+          const baseEntityRevision = await readerEntityRevision(
+            db,
+            config.defaultUserId,
+            'note',
+            request.params.noteId,
+          );
           const deleted = await db.query(
             'update notes set deleted_at = $3, updated_at = $3 where id = $1 and user_id = $2 and deleted_at is null returning book_id',
             [request.params.noteId, config.defaultUserId, deletedAt],
           );
           if (!deleted.rows[0]) throw new Error('note not found');
-          const payload = { id: request.params.noteId, deletedAt };
+          const payload = {
+            id: request.params.noteId,
+            deletedAt,
+            baseEntityRevision,
+            targetEntityRevision: await readerEntityRevision(db, config.defaultUserId, 'note', request.params.noteId),
+            contentRevisionId: await activeBookContentRevisionId(db, config.defaultUserId, bookId),
+          };
           await insertServerSyncEvent(db, config.defaultUserId, {
             seed: `note_deleted:${request.params.noteId}:${deletedAt}`,
             type: 'note_deleted',

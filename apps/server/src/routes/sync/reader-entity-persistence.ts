@@ -328,8 +328,7 @@ export async function persistReaderSyncEvent(
               scroll_top = excluded.scroll_top,
               updated_at = excluded.updated_at,
               deleted_at = null
-          where bookmarks.deleted_at is null
-             or bookmarks.updated_at <= excluded.updated_at
+          where bookmarks.user_id = excluded.user_id and bookmarks.book_id = excluded.book_id
       `,
       [
         stringValue(bookmark.id) ?? event.entityId,
@@ -351,8 +350,8 @@ export async function persistReaderSyncEvent(
     const deletedAt = String(payload.deletedAt ?? event.createdAt);
     if (id) {
       await client.query(
-        'update bookmarks set deleted_at = $3, updated_at = $3 where id = $1 and user_id = $2 and (deleted_at is null or updated_at <= $3::timestamptz)',
-        [id, userId, deletedAt],
+        'update bookmarks set deleted_at = $3, updated_at = $3 where id = $1 and user_id = $2 and book_id = $4',
+        [id, userId, deletedAt, event.novelId],
       );
     }
     return true;
@@ -373,8 +372,7 @@ export async function persistReaderSyncEvent(
               progress = excluded.progress,
               updated_at = excluded.updated_at,
               deleted_at = null
-          where highlights.deleted_at is null
-             or highlights.updated_at <= excluded.updated_at
+          where highlights.user_id = excluded.user_id and highlights.book_id = excluded.book_id
       `,
       [
         stringValue(highlight.id) ?? event.entityId,
@@ -397,8 +395,8 @@ export async function persistReaderSyncEvent(
     const deletedAt = String(payload.deletedAt ?? event.createdAt);
     if (id) {
       await client.query(
-        'update highlights set deleted_at = $3, updated_at = $3 where id = $1 and user_id = $2 and (deleted_at is null or updated_at <= $3::timestamptz)',
-        [id, userId, deletedAt],
+        'update highlights set deleted_at = $3, updated_at = $3 where id = $1 and user_id = $2 and book_id = $4',
+        [id, userId, deletedAt, event.novelId],
       );
     }
     return true;
@@ -419,8 +417,7 @@ export async function persistReaderSyncEvent(
               progress = excluded.progress,
               updated_at = excluded.updated_at,
               deleted_at = null
-          where notes.deleted_at is null
-             or notes.updated_at <= excluded.updated_at
+          where notes.user_id = excluded.user_id and notes.book_id = excluded.book_id
       `,
       [
         stringValue(note.id) ?? event.entityId,
@@ -443,8 +440,8 @@ export async function persistReaderSyncEvent(
     const deletedAt = String(payload.deletedAt ?? event.createdAt);
     if (id) {
       await client.query(
-        'update notes set deleted_at = $3, updated_at = $3 where id = $1 and user_id = $2 and (deleted_at is null or updated_at <= $3::timestamptz)',
-        [id, userId, deletedAt],
+        'update notes set deleted_at = $3, updated_at = $3 where id = $1 and user_id = $2 and book_id = $4',
+        [id, userId, deletedAt, event.novelId],
       );
     }
     return true;
@@ -472,7 +469,7 @@ export async function persistReaderSyncEvent(
               updated_at = excluded.updated_at,
               deleted_at = null
           where document_annotations.user_id = excluded.user_id
-            and (document_annotations.deleted_at is null or document_annotations.updated_at <= excluded.updated_at)
+            and document_annotations.book_id = excluded.book_id
       `,
       [
         parsed.id,
@@ -498,8 +495,8 @@ export async function persistReaderSyncEvent(
     await client.query(
       `update document_annotations
        set deleted_at = $3, updated_at = $3
-       where id = $1 and user_id = $2 and (deleted_at is null or updated_at <= $3::timestamptz)`,
-      [parsed.id, userId, parsed.deletedAt],
+       where id = $1 and user_id = $2 and book_id = $4`,
+      [parsed.id, userId, parsed.deletedAt, event.novelId],
     );
     return true;
   }
