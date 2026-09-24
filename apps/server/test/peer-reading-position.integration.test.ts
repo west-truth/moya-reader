@@ -1,7 +1,9 @@
 import { randomUUID } from 'node:crypto';
 import { mkdtemp, rm } from 'node:fs/promises';
+import { createServer } from 'node:http';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
+import { setTimeout as delay } from 'node:timers/promises';
 import Fastify from 'fastify';
 import pg from 'pg';
 import { syncEventId, syncPayloadIntegrityHash } from '@noveldesk/text-core/identity/sync';
@@ -375,6 +377,45 @@ describe.skipIf(!harness)('two server reading position sync', () => {
               headers: { Authorization: `Bearer ${restarted.token}` },
             });
             expect(await expiredRun.json()).toMatchObject({ status: 'needs_login', lastError: 'peer_auth_required' });
+
+            const rePairBeforeShutdown = await fetch(`${restarted.url}/api/sync/peer`, {
+              method: 'POST',
+              headers: { Authorization: `Bearer ${restarted.token}`, 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                url: b.url,
+                username: 'peer',
+                password: 'long peer test password',
+                startFromNow: true,
+              }),
+            });
+            expect(rePairBeforeShutdown.status).toBe(200);
+            const hangingPort = Number(new URL(b.url).port);
+            await b.app.close();
+            let requestArrived: () => void = () => undefined;
+            const requestStarted = new Promise<void>((resolve) => {
+              requestArrived = resolve;
+            });
+            const hanging = createServer(() => requestArrived());
+            await new Promise<void>((resolve) => hanging.listen(hangingPort, '127.0.0.1', resolve));
+            try {
+              const pending = fetch(`${restarted.url}/api/sync/peer/run`, {
+                method: 'POST',
+                headers: { Authorization: `Bearer ${restarted.token}` },
+              }).catch(() => undefined);
+              await Promise.race([
+                requestStarted,
+                delay(2_000).then(() => {
+                  throw new Error('peer request never started');
+                }),
+              ]);
+              const shutdownStarted = Date.now();
+              await restarted.app.close();
+              expect(Date.now() - shutdownStarted).toBeLessThan(2_000);
+              await pending;
+            } finally {
+              hanging.closeAllConnections();
+              await new Promise<void>((resolve) => hanging.close(() => resolve()));
+            }
           } finally {
             await restarted.app.close();
           }

@@ -569,9 +569,11 @@ export function registerPeerReadingPositionRoutes(app: FastifyInstance, pool: pg
 
   const timer = setInterval(() => void execute(), PEER_POLL_INTERVAL_MS);
   timer.unref();
-  app.addHook('onClose', async () => {
+  app.addHook('preClose', async () => {
     clearInterval(timer);
     activeAbort?.abort();
+  });
+  app.addHook('onClose', async () => {
     await running;
   });
 }
