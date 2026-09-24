@@ -158,6 +158,7 @@ describe('sync AI and TTS event routes', () => {
           return { rowCount: 1, rows: [{ exists: true }] };
         }
         if (sql.includes('should_accept')) return { rowCount: 1, rows: [{ should_accept: false }] };
+        if (sql.includes('from sync_events where id = $1')) return { rowCount: 0, rows: [] };
         if (sql.includes('insert into sync_events') || sql.includes('insert into voice_casting_states')) {
           throw new Error('rejected voice casting events must not be persisted');
         }
@@ -376,6 +377,7 @@ describe('sync AI and TTS event routes', () => {
         if (sql.includes('select exists(select 1 from paragraph_search'))
           return { rowCount: 1, rows: [{ exists: true }] };
         if (sql.includes('should_accept')) return { rowCount: 1, rows: [{ should_accept: false }] };
+        if (sql.includes('from sync_events where id = $1')) return { rowCount: 0, rows: [] };
         if (
           sql.includes('insert into sync_events') ||
           sql.includes('delete from voice_profiles') ||

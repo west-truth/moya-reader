@@ -86,7 +86,12 @@ async function shouldAcceptReadingPositionEvent(
 
   const result = await client.query<{ should_accept: boolean }>(
     `
-      select coalesce(
+      select not exists (
+        select 1 from sync_events
+        where user_id = $2 and book_id = $1
+          and type in ('reading_position_updated', 'reading_position_deleted')
+          and created_at = $3::timestamptz and id <> $5
+      ) and coalesce(
         (
           select max(entity_updated_at) <= $3::timestamptz
           from (
@@ -101,11 +106,16 @@ async function shouldAcceptReadingPositionEvent(
               and type = 'reading_position_deleted'
               and entity_id = $4
           ) versions
-        ),
-        true
+        ), true
       ) as should_accept
     `,
-    [event.novelId, userId, readingPositionUpdatedAt(event), event.entityId ?? `reading_position_${event.novelId}`],
+    [
+      event.novelId,
+      userId,
+      readingPositionUpdatedAt(event),
+      event.entityId ?? `reading_position_${event.novelId}`,
+      event.id,
+    ],
   );
   return result.rows[0]?.should_accept ?? true;
 }
@@ -143,9 +153,7 @@ async function shouldAcceptListeningPositionEvent(
   return result.rows[0]?.should_accept ?? true;
 }
 
-function userEntityUpdatedAt(
-  event: SyncEvent,
-):
+function userEntityUpdatedAt(event: SyncEvent):
   | {
       table: 'bookmarks' | 'highlights' | 'notes' | 'document_annotations' | 'document_text_order_overrides';
       id: string;
@@ -218,15 +226,11 @@ function userEntityUpdatedAt(
   }
   if (event.type === 'document_annotation_updated') {
     const parsed = parseDocumentAnnotationPayload(event);
-    return parsed.ok
-      ? { table: 'document_annotations', id: parsed.id, updatedAt: parsed.updatedAt }
-      : undefined;
+    return parsed.ok ? { table: 'document_annotations', id: parsed.id, updatedAt: parsed.updatedAt } : undefined;
   }
   if (event.type === 'document_annotation_deleted') {
     const parsed = parseDocumentAnnotationDeletedPayload(event);
-    return parsed.ok
-      ? { table: 'document_annotations', id: parsed.id, updatedAt: parsed.deletedAt }
-      : undefined;
+    return parsed.ok ? { table: 'document_annotations', id: parsed.id, updatedAt: parsed.deletedAt } : undefined;
   }
   if (event.type === 'document_text_order_override_updated') {
     const parsed = parseDocumentTextOrderOverridePayload(event);

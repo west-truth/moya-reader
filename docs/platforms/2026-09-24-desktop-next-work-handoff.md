@@ -1,6 +1,6 @@
 # 내장 self-host 데스크톱: 다음 작업 실행 지침
 
-작성: 2026-09-24. 초기 코드 확인 기준: `d537b26`. 현재 수집기 검증 기준: `775a9ff`, 실제 앱 검증 기준: `9fe6097`. **다음 작업은 B의 남은 장애 경계와 D1 서버 간 동기화다.** 이 문서는 기존 구현 계획을 실행 단위로 구체화한다. 제품 구현을 완료했다는 기록이 아니다.
+작성: 2026-09-24. 초기 코드 확인 기준: `d537b26`. 현재 수집기 검증 기준: `775a9ff`, 실제 앱 검증 기준: `9fe6097`. **다음 작업은 B의 남은 장애 경계와 D1 이후 초기 작품·원본 복제다.** 이 문서는 기존 구현 계획을 실행 단위로 구체화한다. 제품 구현을 완료했다는 기록이 아니다.
 
 ## 0. 시작 위치와 읽을 순서
 
@@ -36,7 +36,8 @@ Windows 초기 성공: [35911331300](https://github.com/west-truth/moya-reader/a
 - **B 문서 주석:** 원격 PDF 화면의 주석이 브라우저 IndexedDB에만 남던 결함을 서버 API와 원격 repository로 수정했다. [Windows 실행 35946363523](https://github.com/west-truth/moya-reader/actions/runs/35946363523), 코드 `fba22b5`에서 native PDF 주석 저장→재시작→백업 복원이 통과했다. 종전 브라우저 IndexedDB에만 남은 주석은 자동 이전하지 않았다.
 - **B AI/TTS·저장 공간:** 내장 서버 연결 시 `createAppRuntime`이 기존 서버 provider control·분석 gateway를 선택한다. runtime/TTS controller 단위 검사는 통과했다. 공급자 키가 없어 외부 AI/TTS 실요청은 미검증이다. 백업 staging 도중 `ENOSPC`가 발생하면 부분 파일을 정리하고 임시 공간 부족 오류를 표시하도록 했다. 작은 실패 주입 검사를 통과했다.
 - **C0/D0:** [로컬 백업 매핑 조사](2026-09-24-local-backup-mapping-audit.md)와 [서버 동기화 계약 조사](2026-09-24-server-sync-contract-audit.md)를 작성했다. 서버 ZIP의 문서·듣기 상태 누락은 `3d3bb9b`에서 보완했다.
-- **C1 기본 ZIP 이전:** 로컬 v1 ZIP을 기존 서버 staging/복원 경계에서 검사·변환한다. TXT/EPUB/PDF/CBZ fixture의 원본·자산·회차·문단과 PDF 페이지 주석을 검증했다. 실제 PostgreSQL/객체 저장소에서 TXT 원본·독서 위치·북마크와 재적용 skip/replace/copy를 통과했다. [Windows 앱 창 검사 35948632633](https://github.com/west-truth/moya-reader/actions/runs/35948632633), 코드 `9fe6097`에서 파일 입력→로컬 ZIP 검사 안내→복원 버튼→서버 원본·위치·북마크 확인도 통과했다. OS 파일 선택 대화상자 조작은 검사 범위 밖이다. 매핑되지 않은 자료가 있으면 부분 복원하지 않고 거부한다. 지원/거부 범위는 [C0 문서](2026-09-24-local-backup-mapping-audit.md)의 구현 기록을 따른다. 기존 사용자의 다양한 ZIP과 프로세스 중단/재시도 검증은 남았다. **D1 실행기는 아직 없다.**
+- **C1 기본 ZIP 이전:** 로컬 v1 ZIP을 기존 서버 staging/복원 경계에서 검사·변환한다. TXT/EPUB/PDF/CBZ fixture의 원본·자산·회차·문단과 PDF 페이지 주석을 검증했다. 실제 PostgreSQL/객체 저장소에서 TXT 원본·독서 위치·북마크와 재적용 skip/replace/copy를 통과했다. [Windows 앱 창 검사 35948632633](https://github.com/west-truth/moya-reader/actions/runs/35948632633), 코드 `9fe6097`에서 파일 입력→로컬 ZIP 검사 안내→복원 버튼→서버 원본·위치·북마크 확인도 통과했다. OS 파일 선택 대화상자 조작은 검사 범위 밖이다. 매핑되지 않은 자료가 있으면 부분 복원하지 않고 거부한다. 지원/거부 범위는 [C0 문서](2026-09-24-local-backup-mapping-audit.md)의 구현 기록을 따른다. 기존 사용자의 다양한 ZIP과 프로세스 중단/재시도 검증은 남았다.
+- **D1 독서 위치 첫 범위:** 동일 book/source hash/active revision/chapter ID를 가진 두 독립 서버에서 새 독서 위치만 교환하는 API 실행기를 추가했다. 서버 DB의 방향별 cursor, 암호화한 상대 계정 session, 15초 백그라운드 실행을 사용한다. 두 실제 PostgreSQL DB/HTTP 서버에서 A→B, 재시작 후 B→A, 같은 시각 충돌·미지원 북마크·세션 만료를 검사했다. 초기 작품/원본 복제와 공통 UI 연결은 없다. 세부 계약은 [D0/D1 기록](2026-09-24-server-sync-contract-audit.md)을 따른다.
 
 ## 2. 실행 순서
 
@@ -47,7 +48,7 @@ Windows 초기 성공: [35911331300](https://github.com/west-truth/moya-reader/a
 | A3 | 수집기 로그인 브라우저 연결 | 기존 remote-frame 기능 재사용, 브라우저 제공 방식 확정·실행 검사·크기 보고 |
 | B | 기존 기능·실패 복구의 남은 검증 | 아래 B 표의 작은 사용 흐름별 결과와 재현된 오류만 수정 |
 | C0 → C1 | 기존 로컬 백업을 서버로 이전 | 기본 ZIP 변환·DB 복원·앱 창 파일 입력 통과. 다양한 사용자 자료·OS 파일 선택 대화상자·프로세스 중단/재시도 검사 남음 |
-| D0 → D1… | 독립 서버 간 동기화 | 기존 계약 지원표 확정 → 작은 양방향 동기화 → 원본/삭제/충돌/중단 복구 확대 |
+| D0 → D1… | 독립 서버 간 동기화 | 지원표와 동일 작품의 신규 독서 위치 양방향 실행기 통과. 초기 snapshot·원본·주석·삭제·충돌 해결/UI 확대 남음 |
 | E | 일반 배포 확인 | 새 PC 필수 구성, 라이선스/대응 소스, 실제 타 기기 검증 |
 
 A1~A3은 하나의 수집기 연결 작업을 검토 가능한 단위로 나눈 것이다. A1만 끝내고 “수집기 완료”로 표시하지 않는다. C0/D0은 필요한 설계 산출물이 명시된 작업이며, 확인되지 않은 데이터 계약을 구현자가 추측해서 채우지 않는다.
@@ -138,7 +139,7 @@ A1~A3은 하나의 수집기 연결 작업을 검토 가능한 단위로 나눈 
 
 ## D0/D1… 독립 서재 동기화
 
-**현재 구체화 수준: 목표와 재사용 계약은 확정, 서버 간 실행기/원본·snapshot 계약의 누락 범위는 미확정. D0 없이 전체 동기화를 구현하지 않는다.**
+**현재 상태: D0 계약 조사와 D1 독서 위치 첫 범위 통과. 초기 원본·snapshot·다른 항목의 복제는 미구현.**
 
 1. D0 출발점: `src/sync/contract.ts`, `types.ts`, `local-outbox-sync-service.ts`, `apps/server/src/routes/sync/*`, 서버 book source/asset·snapshot·삭제 경로. 웹의 기존 동기화 계약을 유지한다.
 2. 산출물은 `항목 / 기존 writer / push·pull 경로 / revision·ID 규칙 / 중복 처리 / 충돌 정책 / 부족한 부분 / 확인 테스트` 표다. 독서 위치·주석·메타데이터·원본/자산·작품 추가/삭제·AI/TTS와 인증·cursor·최초 snapshot을 각각 채운다. 파일이 있다는 것만으로 지원으로 표시하지 않는다.
@@ -160,4 +161,4 @@ A1~A3은 하나의 수집기 연결 작업을 검토 가능한 단위로 나눈 
 
 ## 다음 세션에 전달할 짧은 지시문
 
-> `/home/koho5155/Docker_Services/.worktrees/moya-desktop-selfhost`의 `feat/desktop-embedded-selfhost`에서 작업한다. 전체 구현 계획, 이 인계 문서, C0/D0 조사 문서를 읽는다. A1~A3과 `9fe6097`까지의 Windows 실제 앱 검사를 재구현하지 않는다. C1 기본 로컬 ZIP 변환은 서버 staging에 있으며 미지원 행을 조용히 버리지 않는다. C1의 다양한 사용자 자료 검증을 넓히고, D1의 동일 작품 두 서버 독서 위치 동기화, B의 남은 종료·디스크 부족·AI/TTS·실제 공유 단절, E 배포 검증을 진행한다. 기존 self-host와 공통 UI를 재사용하며 데스크톱 IDB 정본이나 새 수집 엔진을 만들지 않는다. 작업 단위별 검증 결과와 다음 작업 ID를 기록한다.
+> `/home/koho5155/Docker_Services/.worktrees/moya-desktop-selfhost`의 `feat/desktop-embedded-selfhost`에서 작업한다. 전체 구현 계획, 이 인계 문서, C0/D0/D1 조사 문서를 읽는다. A1~A3과 `9fe6097`까지의 Windows 실제 앱 검사를 재구현하지 않는다. C1 기본 로컬 ZIP 변환은 서버 staging에 있으며 미지원 행을 조용히 버리지 않는다. C1의 다양한 사용자 자료 검증을 넓히고, D1 이후 초기 작품/원본 복제와 일반 UI, B의 남은 종료·디스크 부족·AI/TTS·실제 공유 단절, E 배포 검증을 진행한다. 기존 self-host와 공통 UI를 재사용하며 데스크톱 IDB 정본이나 새 수집 엔진을 만들지 않는다. 작업 단위별 검증 결과와 다음 작업 ID를 기록한다.

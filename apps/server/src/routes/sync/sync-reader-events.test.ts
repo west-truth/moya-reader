@@ -1,4 +1,5 @@
 import pg from 'pg';
+import { syncPayloadIntegrityHash } from '@noveldesk/text-core/identity/sync';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { SyncEvent } from '@noveldesk/contracts/sync';
 import { validateSyncEventPayload } from './event-contracts.js';
@@ -393,6 +394,7 @@ describe('sync reader event routes', () => {
         if (sql.includes('from reading_positions') && sql.includes('should_accept')) {
           return { rowCount: 1, rows: [{ should_accept: false }] };
         }
+        if (sql.includes('from sync_events where id = $1')) return { rowCount: 0, rows: [] };
         if (sql.includes('insert into sync_events') || sql.includes('insert into reading_positions')) {
           throw new Error('stale events should not be inserted or materialized');
         }
@@ -668,6 +670,7 @@ describe('sync reader event routes', () => {
           return { rowCount: 1, rows: [{ exists: true }] };
         if (sql.includes('join book_content_revisions')) return { rowCount: 1, rows: [{ should_accept: true }] };
         if (sql.includes('should_accept')) return { rowCount: 1, rows: [{ should_accept: false }] };
+        if (sql.includes('from sync_events where id = $1')) return { rowCount: 0, rows: [] };
         if (
           sql.includes('insert into sync_events') ||
           sql.includes('insert into bookmarks') ||
@@ -800,6 +803,39 @@ describe('sync reader event routes', () => {
     });
     expect(client.query).toHaveBeenCalledWith('commit');
 
+    await app.close();
+  });
+
+  it('accepts an identical replay after a newer position and rejects a changed event with the same ID', async () => {
+    const { pool } = syncRoundTripPool();
+    const app = await appWithSync(pool);
+    const older = readingPositionEvent('replayed_position', '2026-07-05T01:00:00.000Z');
+    const newer = readingPositionEvent('newer_position', '2026-07-05T02:00:00.000Z');
+    for (const event of [older, newer]) {
+      const response = await app.inject({ method: 'POST', url: '/api/sync/events', payload: v2PushEnvelope([event]) });
+      expect(response.statusCode).toBe(200);
+      expect(response.json().acceptedIds).toEqual([event.id]);
+    }
+
+    const replay = await app.inject({ method: 'POST', url: '/api/sync/events', payload: v2PushEnvelope([older]) });
+    expect(replay.statusCode).toBe(200);
+    expect(replay.json()).toMatchObject({ accepted: 0, acceptedIds: [older.id] });
+
+    const changedPayload = {
+      position: { ...(older.payload as { position: Record<string, unknown> }).position, scrollTop: 999 },
+    };
+    const changed = {
+      ...older,
+      payload: changedPayload,
+      revision: older.revision
+        ? { ...older.revision, payloadHash: syncPayloadIntegrityHash(changedPayload) }
+        : undefined,
+    };
+    const collision = await app.inject({ method: 'POST', url: '/api/sync/events', payload: v2PushEnvelope([changed]) });
+    expect(collision.statusCode).toBe(200);
+    expect(collision.json().rejected).toEqual([
+      { id: older.id, reason: 'invalid', message: 'sync event ID already has different content' },
+    ]);
     await app.close();
   });
 });

@@ -491,6 +491,11 @@ export function syncRoundTripPool() {
         return { rows: eventRows.filter((row) => row.sequence > since).slice(0, 500) };
       }
 
+      if (sql.includes('from sync_events where id = $1')) {
+        const row = eventRows.find((event) => event.id === params?.[0]);
+        return { rowCount: row ? 1 : 0, rows: row ? [{ ...row, user_id: 'user_test' }] : [] };
+      }
+
       if (sql.includes('from library_books') && sql.includes('for share')) {
         return { rowCount: 1, rows: [{ exists: true }] };
       }
