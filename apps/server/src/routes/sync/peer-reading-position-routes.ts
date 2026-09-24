@@ -18,6 +18,7 @@ import {
   PeerBookContentError,
   restorePeerBookContent,
   restorePeerBookReplacement,
+  sameBookIdentity,
   type BookIdentity,
   type PeerBookContentChain,
 } from '../../services/peer-book-content.js';
@@ -165,6 +166,29 @@ async function peerRequest(
   }
   if (response.status === 401 || response.status === 403)
     throw new PeerSyncFailure('peer_auth_required', 'needs_login');
+  if (response.status === 409 && response.body) {
+    const reader = response.body.getReader();
+    const chunks: Uint8Array[] = [];
+    let length = 0;
+    try {
+      while (length <= 1024) {
+        const next = await reader.read();
+        if (next.done) break;
+        length += next.value.byteLength;
+        if (length > 1024) break;
+        chunks.push(next.value);
+      }
+      if (length <= 1024) {
+        const value = JSON.parse(Buffer.concat(chunks).toString('utf8')) as { error?: unknown };
+        if (typeof value.error === 'string' && /^peer_book_[a-z_]{1,90}$/.test(value.error))
+          throw new PeerSyncFailure(value.error, 'blocked');
+      }
+    } catch (error) {
+      if (error instanceof PeerSyncFailure) throw error;
+    } finally {
+      await reader.cancel().catch(() => undefined);
+    }
+  }
   if (!response.ok)
     throw new PeerSyncFailure(`peer_http_${response.status}`, response.status === 404 ? 'blocked' : 'offline');
   const contentLength = Number(response.headers.get('content-length'));
@@ -300,7 +324,7 @@ async function ensurePeerBooks(
     } catch (error) {
       if (!(error instanceof PeerSyncFailure) || error.code !== 'peer_http_404') throw error;
     }
-    if (local && remote && JSON.stringify(local) === JSON.stringify(remote)) continue;
+    if (sameBookIdentity(local, remote)) continue;
     const source = direction === 'outbound' ? local : remote;
     const target = direction === 'outbound' ? remote : local;
     const imports = events.filter((event) => event.novelId === bookId && event.type === 'book_imported');
@@ -318,7 +342,16 @@ async function ensurePeerBooks(
     let change: BookImportContentChangeV1 | undefined;
     let chain: PeerBookContentChain | undefined;
     if (target) {
-      if (!remoteFeatures.has('single_text_replacement_v1'))
+      if (
+        !(source.format === 'image_archive'
+          ? remoteFeatures.has('image_series_append_v1')
+          : source.format === 'epub'
+            ? remoteFeatures.has('epub_replacement_v1')
+            : source.format === 'pdf'
+              ? remoteFeatures.has('pdf_unannotated_replacement_v1')
+              : (source.format === 'txt' || source.format === 'markdown') &&
+                remoteFeatures.has('single_text_replacement_v1'))
+      )
         throw new PeerSyncFailure('peer_feature_unsupported', 'blocked', context);
       if (imports.length > 1 && !remoteFeatures.has('text_fast_forward_v1'))
         throw new PeerSyncFailure('peer_feature_unsupported', 'blocked', context);
@@ -420,7 +453,7 @@ async function ensurePeerBooks(
           )
         ).body as { identity?: BookIdentity };
         await archive.completion;
-        if (JSON.stringify(response.identity) !== JSON.stringify(source))
+        if (!sameBookIdentity(response.identity, source))
           throw new PeerSyncFailure('peer_book_identity_changed', 'blocked', context);
       } else {
         const response = await fetch(
@@ -458,7 +491,7 @@ async function ensurePeerBooks(
               change,
               chain,
             );
-            if (JSON.stringify(restored.identity) !== JSON.stringify(source))
+            if (!sameBookIdentity(restored.identity, source))
               throw new PeerSyncFailure('peer_book_identity_changed', 'blocked', context);
           } else {
             await restorePeerBookContent(pool, config, received.stage.parsed, bookId, transferSignal, source, chain);
@@ -474,6 +507,8 @@ async function ensurePeerBooks(
       )
         throw new PeerSyncFailure('peer_book_transfer_rejected', 'blocked', context);
       if (error instanceof PeerBookContentError) throw new PeerSyncFailure(error.message, 'blocked', context);
+      if (error instanceof PeerSyncFailure && error.status === 'blocked' && !error.conflict)
+        throw new PeerSyncFailure(error.code, 'blocked', context);
       throw error;
     } finally {
       transferAbort.abort();
@@ -497,7 +532,7 @@ function publicPeer(row: PeerRow | undefined) {
         bootstrapRequired: row.bootstrap_required,
         lastError: row.last_error,
         lastSyncedAt: row.last_synced_at,
-        scope: 'new_book_content_text_revisions_up_to_32_and_matching_reading_positions',
+        scope: 'new_book_content_text_epub_image_series_and_unannotated_pdf_revisions_up_to_32',
       }
     : { configured: false };
 }

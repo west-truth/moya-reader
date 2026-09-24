@@ -502,7 +502,7 @@ export async function restoreSourceObjects(
   }
 }
 
-async function restoreEmbeddedBookObjects(
+export async function restoreEmbeddedBookObjects(
   pool: pg.Pool,
   config: ServerConfig,
   parsed: Awaited<ReturnType<typeof parseHostedBackupArchive>>,

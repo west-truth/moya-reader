@@ -4,9 +4,11 @@ import { createServer } from 'node:http';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
+import { BlobWriter, TextReader, Uint8ArrayReader, ZipWriter } from '@zip.js/zip.js';
 import Fastify from 'fastify';
 import pg from 'pg';
 import { syncEventId, syncPayloadIntegrityHash } from '@noveldesk/text-core/identity/sync';
+import { persistentId128 } from '@noveldesk/text-core/hash';
 import type { SyncEvent } from '@noveldesk/contracts/sync';
 import { afterAll, describe, expect, it } from 'vitest';
 import { registerAuthHook } from '../src/auth.js';
@@ -18,7 +20,7 @@ import { registerReaderStateRoutes } from '../src/routes/books/reader-state-rout
 import { registerSyncRoutes } from '../src/routes/sync.js';
 import { PostgresSelfHostAuthStore, SelfHostAuthService } from '../src/services/self-host-auth-service.js';
 import { FileObjectStore } from '../src/services/file-object-store.js';
-import { withImportPageFixture } from '../src/services/testing/import-page-fixture.js';
+import { fixturePng, fixtureSeries, withImportPageFixture } from '../src/services/testing/import-page-fixture.js';
 import { startPostgresIntegrationHarness } from '../src/services/id-v2-migration/postgres-integration-harness.js';
 import {
   bookmarkCreatedEvent,
@@ -32,6 +34,41 @@ afterAll(async () => harness?.stop());
 
 const USER_A = 'user_desktop';
 const USER_B = 'user_dev';
+
+async function epubBytes(body: string): Promise<Buffer> {
+  const writer = new ZipWriter(new BlobWriter(), { useWebWorkers: false });
+  const entries = {
+    mimetype: 'application/epub+zip',
+    'META-INF/container.xml': '<container><rootfiles><rootfile full-path="book.opf"/></rootfiles></container>',
+    'book.opf':
+      '<package version="3.0"><metadata xmlns:dc="http://purl.org/dc/elements/1.1/"><dc:title>Peer EPUB</dc:title><dc:language>en</dc:language></metadata><manifest><item id="text" href="chapter.xhtml" media-type="application/xhtml+xml"/><item id="image" href="images/page.png" media-type="image/png"/></manifest><spine><itemref idref="text"/></spine></package>',
+    'chapter.xhtml': `<html xmlns="http://www.w3.org/1999/xhtml"><body><h1>First chapter</h1><p>Keep this paragraph.</p><p>${body}</p><img src="images/page.png"/></body></html>`,
+  };
+  for (const [name, value] of Object.entries(entries)) await writer.add(name, new TextReader(value), { level: 0 });
+  await writer.add('images/page.png', new Uint8ArrayReader(fixturePng(45)), { level: 0 });
+  return Buffer.from(await (await writer.close()).arrayBuffer());
+}
+
+function pdfBytes(body: string): Buffer {
+  const text = `BT /F1 24 Tf 72 720 Td (${body}) Tj ET\n`;
+  const objects = [
+    '<< /Type /Catalog /Pages 2 0 R >>',
+    '<< /Type /Pages /Kids [3 0 R] /Count 1 >>',
+    '<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 4 0 R >> >> /Contents 5 0 R >>',
+    '<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>',
+    `<< /Length ${Buffer.byteLength(text)} >>\nstream\n${text}endstream`,
+  ];
+  let pdf = '%PDF-1.4\n';
+  const offsets: number[] = [];
+  for (const [index, object] of objects.entries()) {
+    offsets.push(Buffer.byteLength(pdf));
+    pdf += `${index + 1} 0 obj\n${object}\nendobj\n`;
+  }
+  const xref = Buffer.byteLength(pdf);
+  pdf += `xref\n0 6\n0000000000 65535 f \n${offsets.map((offset) => `${String(offset).padStart(10, '0')} 00000 n \n`).join('')}`;
+  pdf += `trailer\n<< /Size 6 /Root 1 0 R >>\nstartxref\n${xref}\n%%EOF\n`;
+  return Buffer.from(pdf);
+}
 
 function ownedEvent(event: SyncEvent, userId: string): SyncEvent {
   return {
@@ -156,6 +193,355 @@ async function withTwoDatabases(run: (poolA: pg.Pool, poolB: pg.Pool) => Promise
 }
 
 describe.skipIf(!harness)('two server reading position sync', () => {
+  it('transfers and replaces EPUB content with resources while preserving the target note', async () => {
+    await withTwoDatabases(async (poolA, poolB) => {
+      await withImportPageFixture(poolA, async (fixtureA) => {
+        await withImportPageFixture(poolB, async (fixtureB) => {
+          const a = await testServer(poolA, fixtureA.config.dataDir, 'native_a', 'user_test', 0, fixtureA.config);
+          const b = await testServer(poolB, fixtureB.config.dataDir, 'native_b', 'user_test', 0, fixtureB.config);
+          const request = (server: typeof a, resource: string, body: unknown) =>
+            fetch(`${server.url}/api${resource}`, {
+              method: 'POST',
+              headers: { Authorization: `Bearer ${server.token}`, 'Content-Type': 'application/json' },
+              body: JSON.stringify(body),
+            });
+          const options = { fileName: 'fixture.epub', contentType: 'application/epub+zip' };
+          try {
+            expect(
+              (
+                await request(b, '/auth/register', {
+                  username: 'peer',
+                  password: 'long peer test password',
+                  setupCode: b.token,
+                })
+              ).status,
+            ).toBe(201);
+            expect(
+              (
+                await request(a, '/sync/peer', {
+                  url: b.url,
+                  username: 'peer',
+                  password: 'long peer test password',
+                  startFromNow: true,
+                })
+              ).status,
+            ).toBe(200);
+            await fixtureA.import(await epubBytes('Original ending.'), false, 'book_epub', options);
+            const firstRun = (await (await request(a, '/sync/peer/run', {})).json()) as {
+              status: string;
+              lastError: string | null;
+            };
+            expect(firstRun.lastError).toBeNull();
+            expect(firstRun.status).toBe('ready');
+            const original = (
+              await poolB.query("select active_content_revision_id from library_books where id='book_epub'")
+            ).rows[0].active_content_revision_id as string;
+            const anchor = (
+              await poolB.query(
+                "select chapter_id,paragraph_id from paragraph_search where book_id='book_epub' and text like '%Keep this paragraph%' limit 1",
+              )
+            ).rows[0] as { chapter_id: string; paragraph_id: string };
+            expect(anchor).toBeDefined();
+            await poolB.query(
+              `insert into notes (id,book_id,user_id,chapter_id,paragraph_id,body)
+               values ('epub_note','book_epub','user_test',$1,$2,'Keep EPUB note')`,
+              [anchor.chapter_id, anchor.paragraph_id],
+            );
+            await poolB.query("update library_books set title='My EPUB title' where id='book_epub'");
+            await fixtureA.import(await epubBytes('Updated ending.'), false, 'book_epub', {
+              ...options,
+              expectedBase: { kind: 'revision', contentRevisionId: original },
+            });
+            const secondRun = (await (await request(a, '/sync/peer/run', {})).json()) as {
+              status: string;
+              lastError: string | null;
+            };
+            expect(secondRun.lastError).toBeNull();
+            expect(secondRun.status).toBe('ready');
+            expect(
+              (await poolB.query("select active_content_revision_id from library_books where id='book_epub'")).rows[0]
+                .active_content_revision_id,
+            ).toBe(
+              (await poolA.query("select active_content_revision_id from library_books where id='book_epub'")).rows[0]
+                .active_content_revision_id,
+            );
+            expect((await poolB.query("select title from library_books where id='book_epub'")).rows[0].title).toBe(
+              'My EPUB title',
+            );
+            expect((await poolB.query("select body from notes where id='epub_note'")).rows[0]?.body).toBe(
+              'Keep EPUB note',
+            );
+            const resources = (
+              await poolB.query(
+                "select storage_key,content_hash from book_assets where book_id='book_epub' and kind='epub_resource' and status='active'",
+              )
+            ).rows;
+            expect(resources.length).toBeGreaterThan(0);
+            for (const resource of resources) {
+              const bytes = fixtureB.objects.get(resource.storage_key)?.bytes;
+              expect(bytes).toBeDefined();
+              expect(`sha256:${createHash('sha256').update(bytes!).digest('hex')}`).toBe(resource.content_hash);
+            }
+            const pdf = pdfBytes('Peer PDF proof');
+            await fixtureA.import(pdf, false, 'book_pdf', {
+              fileName: 'fixture.pdf',
+              contentType: 'application/pdf',
+            });
+            expect(await (await request(a, '/sync/peer/run', {})).json()).toMatchObject({ status: 'ready' });
+            const pdfBook = (
+              await poolB.query(
+                "select format,active_content_revision_id,object_id from library_books where id='book_pdf'",
+              )
+            ).rows[0];
+            expect(pdfBook.format).toBe('pdf');
+            expect(pdfBook.active_content_revision_id).toBe(
+              (await poolA.query("select active_content_revision_id from library_books where id='book_pdf'")).rows[0]
+                .active_content_revision_id,
+            );
+            const pdfKey = (await poolB.query('select storage_key from book_objects where id=$1', [pdfBook.object_id]))
+              .rows[0].storage_key as string;
+            expect(fixtureB.objects.get(pdfKey)?.bytes).toEqual(pdf);
+            await fixtureA.import(pdfBytes('Updated PDF proof'), false, 'book_pdf', {
+              fileName: 'fixture.pdf',
+              contentType: 'application/pdf',
+              expectedBase: { kind: 'revision', contentRevisionId: pdfBook.active_content_revision_id },
+            });
+            expect(await (await request(a, '/sync/peer/run', {})).json()).toMatchObject({ status: 'ready' });
+            const updatedPdf = (
+              await poolB.query("select active_content_revision_id from library_books where id='book_pdf'")
+            ).rows[0].active_content_revision_id as string;
+            expect(updatedPdf).toBe(
+              (await poolA.query("select active_content_revision_id from library_books where id='book_pdf'")).rows[0]
+                .active_content_revision_id,
+            );
+            await poolB.query(
+              `insert into document_annotations (id,book_id,user_id,page_index,annotation_type,anchor,body)
+               values ('pdf_note','book_pdf','user_test',0,'note','{"pageHash":"saved"}'::jsonb,'Keep PDF annotation')`,
+            );
+            await fixtureA.import(pdfBytes('Third PDF proof'), false, 'book_pdf', {
+              fileName: 'fixture.pdf',
+              contentType: 'application/pdf',
+              expectedBase: { kind: 'revision', contentRevisionId: updatedPdf },
+            });
+            const pdfCursor = Number(
+              (await poolA.query('select outbound_cursor from sync_server_peers')).rows[0].outbound_cursor,
+            );
+            expect(await (await request(a, '/sync/peer/run', {})).json()).toMatchObject({
+              status: 'blocked',
+              outboundCursor: pdfCursor,
+              lastError: 'peer_book_document_annotations_require_remap',
+            });
+            expect(
+              (await poolB.query("select active_content_revision_id from library_books where id='book_pdf'")).rows[0]
+                .active_content_revision_id,
+            ).toBe(updatedPdf);
+            expect((await poolB.query("select body from document_annotations where id='pdf_note'")).rows[0].body).toBe(
+              'Keep PDF annotation',
+            );
+            expect(
+              (
+                await poolA.query(
+                  "select count(*)::int as n from sync_peer_conflicts where reason='peer_book_document_annotations_require_remap' and status='unresolved'",
+                )
+              ).rows[0].n,
+            ).toBe(1);
+          } finally {
+            await a.app.close();
+            await b.app.close();
+          }
+        });
+      });
+    });
+  }, 90_000);
+
+  it('transfers an imported image series and its page assets to an empty peer', async () => {
+    await withTwoDatabases(async (poolA, poolB) => {
+      await withImportPageFixture(poolA, async (fixtureA) => {
+        await withImportPageFixture(poolB, async (fixtureB) => {
+          const a = await testServer(poolA, fixtureA.config.dataDir, 'native_a', 'user_test', 0, fixtureA.config);
+          const b = await testServer(poolB, fixtureB.config.dataDir, 'native_b', 'user_test', 0, fixtureB.config);
+          const request = (server: typeof a, resource: string, body: unknown) =>
+            fetch(`${server.url}/api${resource}`, {
+              method: 'POST',
+              headers: { Authorization: `Bearer ${server.token}`, 'Content-Type': 'application/json' },
+              body: JSON.stringify(body),
+            });
+          try {
+            expect(
+              (
+                await request(b, '/auth/register', {
+                  username: 'peer',
+                  password: 'long peer test password',
+                  setupCode: b.token,
+                })
+              ).status,
+            ).toBe(201);
+            expect(
+              (
+                await request(a, '/sync/peer', {
+                  url: b.url,
+                  username: 'peer',
+                  password: 'long peer test password',
+                  startFromNow: true,
+                })
+              ).status,
+            ).toBe(200);
+            const archive = await fixtureSeries([{ number: 1, pages: [fixturePng(1), fixturePng(2)] }], 'book_series');
+            await fixtureA.import(archive, false, 'book_series');
+            const run = (await (await request(a, '/sync/peer/run', {})).json()) as {
+              status: string;
+              lastError: string | null;
+            };
+            expect(run.lastError).toBeNull();
+            expect(run.status).toBe('ready');
+            const source = (
+              await poolA.query("select active_content_revision_id, format from library_books where id='book_series'")
+            ).rows[0];
+            expect(
+              (await poolB.query("select active_content_revision_id, format from library_books where id='book_series'"))
+                .rows[0],
+            ).toEqual(source);
+            const assets = await poolB.query(
+              "select storage_key, content_hash from book_assets where book_id='book_series' and status='active' and kind='document_page' order by id",
+            );
+            expect(assets.rows).toHaveLength(2);
+            expect(assets.rows.every((row) => fixtureB.objects.has(row.storage_key))).toBe(true);
+            const preservedCover = (
+              await poolB.query(
+                "select id, storage_key from book_assets where book_id='book_series' and kind='cover' and status='active'",
+              )
+            ).rows[0];
+            const firstChapter = (
+              await poolB.query("select id from chapters where book_id='book_series' order by chapter_index limit 1")
+            ).rows[0].id as string;
+            await poolB.query(
+              `insert into reading_positions (book_id,user_id,chapter_id,paragraph_index,scroll_top)
+               values ('book_series','user_test',$1,0,17)`,
+              [firstChapter],
+            );
+            await poolB.query(
+              `insert into notes (id,book_id,user_id,chapter_id,body)
+               values ('series_note','book_series','user_test',$1,'Remember this page')`,
+              [firstChapter],
+            );
+            const delta = await fixtureSeries([{ number: 2, pages: [fixturePng(3)] }], 'book_series');
+            await fixtureA.import(delta, true, 'book_series');
+            const appended = (await (await request(a, '/sync/peer/run', {})).json()) as {
+              status: string;
+              lastError: string | null;
+            };
+            expect(appended.lastError).toBeNull();
+            expect(appended.status).toBe('ready');
+            expect(
+              (await poolB.query("select id from chapters where book_id='book_series' order by chapter_index")).rows,
+            ).toEqual(
+              (await poolA.query("select id from chapters where book_id='book_series' order by chapter_index")).rows,
+            );
+            expect(
+              (
+                await poolB.query(
+                  "select id, storage_key from book_assets where book_id='book_series' and kind='cover' and status='active'",
+                )
+              ).rows[0],
+            ).toEqual(preservedCover);
+            expect(
+              (await poolB.query("select chapter_id from reading_positions where book_id='book_series'")).rows[0]
+                ?.chapter_id,
+            ).toBe(firstChapter);
+            expect((await poolB.query("select body from notes where id='series_note'")).rows[0]?.body).toBe(
+              'Remember this page',
+            );
+            const activeAssets = await poolB.query(
+              "select kind, storage_key, content_hash, byte_length from book_assets where book_id='book_series' and status='active' and kind in ('document_page','source_part')",
+            );
+            expect(activeAssets.rows.filter((row) => row.kind === 'document_page')).toHaveLength(3);
+            expect(activeAssets.rows.filter((row) => row.kind === 'source_part')).toHaveLength(2);
+            for (const asset of activeAssets.rows) {
+              const bytes = fixtureB.objects.get(asset.storage_key)?.bytes;
+              expect(bytes?.byteLength).toBe(Number(asset.byte_length));
+              expect(`sha256:${createHash('sha256').update(bytes!).digest('hex')}`).toBe(asset.content_hash);
+            }
+            const pageZero = (
+              await poolB.query(
+                "select id from book_assets where book_id='book_series' and kind='document_page' and status='active' and page_index=0",
+              )
+            ).rows[0].id as string;
+            const pageHash = persistentId128('archive_thumbnail_asset_v2', [pageZero, '0']);
+            await poolB.query(
+              `insert into document_annotations (id,book_id,user_id,page_index,annotation_type,anchor,body)
+               values ('series_document_note','book_series','user_test',0,'note',$1::jsonb,'Page note')`,
+              [JSON.stringify({ pageHash })],
+            );
+            for (const number of [3, 4]) {
+              const next = await fixtureSeries([{ number, pages: [fixturePng(number + 1)] }], 'book_series');
+              await fixtureA.import(next, true, 'book_series');
+            }
+            expect(await (await request(a, '/sync/peer/run', {})).json()).toMatchObject({ status: 'ready' });
+            expect(
+              (
+                await poolB.query(
+                  "select active_content_revision_id, content_revision_number from library_books where id='book_series'",
+                )
+              ).rows[0],
+            ).toEqual(
+              (
+                await poolA.query(
+                  "select active_content_revision_id, content_revision_number from library_books where id='book_series'",
+                )
+              ).rows[0],
+            );
+            const sourceAssets = (
+              await poolA.query(
+                "select id,kind,content_hash from book_assets where book_id='book_series' and status='active' and kind in ('document_page','source_part') order by id",
+              )
+            ).rows;
+            const targetAssets = (
+              await poolB.query(
+                "select id,kind,content_hash,storage_key from book_assets where book_id='book_series' and status='active' and kind in ('document_page','source_part') order by id",
+              )
+            ).rows;
+            expect(targetAssets.map(({ storage_key: _storageKey, ...asset }) => asset)).toEqual(sourceAssets);
+            expect(targetAssets.every((asset) => fixtureB.objects.has(asset.storage_key))).toBe(true);
+            expect(
+              (await poolB.query("select body from document_annotations where id='series_document_note'")).rows[0].body,
+            ).toBe('Page note');
+            expect(
+              (await poolB.query("select event_ids from sync_peer_content_receipts where book_id='book_series'"))
+                .rows[0].event_ids,
+            ).toHaveLength(2);
+            const imageRevision = (
+              await poolB.query("select active_content_revision_id from library_books where id='book_series'")
+            ).rows[0].active_content_revision_id as string;
+            await fixtureA.import(
+              await fixtureSeries([{ number: 1, pages: [fixturePng(99)] }], 'book_series'),
+              false,
+              'book_series',
+              { expectedBase: { kind: 'revision', contentRevisionId: imageRevision } },
+            );
+            const imageCursor = Number(
+              (await poolA.query('select outbound_cursor from sync_server_peers')).rows[0].outbound_cursor,
+            );
+            expect(await (await request(a, '/sync/peer/run', {})).json()).toMatchObject({
+              status: 'blocked',
+              outboundCursor: imageCursor,
+              lastError: 'peer_book_document_annotations_require_remap',
+            });
+            expect(
+              (await poolB.query("select active_content_revision_id from library_books where id='book_series'")).rows[0]
+                .active_content_revision_id,
+            ).toBe(imageRevision);
+            expect(
+              (await poolB.query("select body from document_annotations where id='series_document_note'")).rows[0].body,
+            ).toBe('Page note');
+          } finally {
+            await a.app.close();
+            await b.app.close();
+          }
+        });
+      });
+    });
+  }, 90_000);
+
   it('fast-forwards two remote TXT replacements through the inbound path', async () => {
     await withTwoDatabases(async (poolA, poolB) => {
       await withImportPageFixture(poolA, async (fixtureA) => {

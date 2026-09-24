@@ -7,6 +7,7 @@ import type { ParsedHostedBackupArchive } from './hosted-backup-archive.js';
 import {
   insertHostedBackupRow,
   PEER_BOOK_CONTENT_TABLES,
+  restoreEmbeddedBookObjects,
   restoreHostedBackup,
   restoreSourceObjects,
 } from './hosted-backup-service.js';
@@ -25,6 +26,23 @@ export interface BookIdentity {
   activeRevisionId: string;
   normalizedTextHash: string;
   chapterIds: string[];
+  format?: string;
+}
+
+export function sameBookIdentity(a: BookIdentity | undefined, b: BookIdentity | undefined): boolean {
+  return Boolean(
+    a &&
+    b &&
+    a.bookId === b.bookId &&
+    a.sourceHash === b.sourceHash &&
+    a.activeRevisionId === b.activeRevisionId &&
+    a.normalizedTextHash === b.normalizedTextHash &&
+    (!a.format || !b.format || a.format === b.format) &&
+    Array.isArray(a.chapterIds) &&
+    Array.isArray(b.chapterIds) &&
+    a.chapterIds.length === b.chapterIds.length &&
+    a.chapterIds.every((id, index) => id === b.chapterIds[index]),
+  );
 }
 
 export class PeerBookContentError extends Error {}
@@ -122,9 +140,10 @@ export async function bookIdentity(
     active_revision_id: string | null;
     normalized_text_hash: string;
     chapter_ids: string[];
+    format: string;
   }>(
     `select b.id, o.raw_text_hash as source_hash, b.active_content_revision_id as active_revision_id,
-            b.normalized_text_hash,
+            b.normalized_text_hash, b.format,
             coalesce(array_agg(c.id order by c.chapter_index) filter (where c.id is not null), '{}'::text[]) as chapter_ids
        from library_books b
        left join book_objects o on o.id = b.object_id
@@ -141,6 +160,7 @@ export async function bookIdentity(
     activeRevisionId: row.active_revision_id,
     normalizedTextHash: row.normalized_text_hash,
     chapterIds: row.chapter_ids,
+    format: row.format,
   };
 }
 
@@ -194,6 +214,7 @@ function archiveIdentity(parsed: ParsedHostedBackupArchive, bookId: string, init
     activeRevisionId: String(book.active_content_revision_id),
     normalizedTextHash: String(book.normalized_text_hash),
     chapterIds,
+    format: String(book.format),
   };
 }
 
@@ -235,21 +256,28 @@ export async function restorePeerBookReplacement(
     Number(book.content_revision_number) !== expected.revisionNumber
   )
     throw new PeerBookContentError('peer_book_identity_changed');
-  // First support text revisions. Fixed documents and their assets need their
-  // own source/page replacement checks before this boundary can be widened.
+  const format = String(book.format);
+  const contentAssets = (parsed.tables.get('book_assets') ?? []).filter((asset) => asset.kind !== 'cover');
+  // Imported PDF page identities derive from the source hash. Existing
+  // document annotations/order overrides must be remapped before replacement.
   if (
-    !['txt', 'markdown'].includes(String(book.format)) ||
-    (parsed.tables.get('book_assets') ?? []).some((asset) => asset.kind !== 'cover') ||
+    !['txt', 'markdown', 'image_archive', 'epub', 'pdf'].includes(format) ||
+    (format === 'image_archive'
+      ? contentAssets.some((asset) => !['document_page', 'source_part'].includes(String(asset.kind)))
+      : format === 'epub'
+        ? contentAssets.some((asset) => asset.kind !== 'epub_resource')
+        : contentAssets.length > 0) ||
     (parsed.tables.get('document_pages') ?? []).length ||
     (parsed.tables.get('document_text_revisions') ?? []).length ||
     (parsed.tables.get('document_text_blocks') ?? []).length
   )
     throw new PeerBookContentError('peer_book_replacement_format_unsupported');
   const existing = await bookIdentity(pool, config.defaultUserId, bookId);
-  if (existing && JSON.stringify(existing) === JSON.stringify(identity)) return { installed: false, identity };
+  if (sameBookIdentity(existing, identity)) return { installed: false, identity };
   if (existing?.activeRevisionId !== baseRevisionId) throw new PeerBookContentError('peer_book_identity_mismatch');
 
   const client = await pool.connect();
+  const restorePrefix = `${config.defaultUserId}/peer-replacements/${randomUUID().replaceAll('-', '')}`;
   const stagedKeys: string[] = [];
   const publishedKeys: string[] = [];
   try {
@@ -265,6 +293,33 @@ export async function restorePeerBookReplacement(
       (verifiedChain?.events[0].content.revisionNumber ?? expected.revisionNumber) - 1
     )
       throw new PeerBookContentError('peer_book_revision_mismatch');
+    if (format === 'pdf' || format === 'image_archive') {
+      const destinationPageHash = (pageIndex: number): string | undefined => {
+        if (!Number.isSafeInteger(pageIndex) || pageIndex < 0 || pageIndex >= identity.chapterIds.length)
+          return undefined;
+        if (format === 'pdf') return `${expected.sourceHash}:pdf-page:${pageIndex}`;
+        const pageAsset = contentAssets.find(
+          (asset) => asset.kind === 'document_page' && Number(asset.page_index) === pageIndex,
+        );
+        return pageAsset
+          ? persistentId128('archive_thumbnail_asset_v2', [String(pageAsset.id), String(pageIndex)])
+          : undefined;
+      };
+      const documentState = await client.query<{ page_index: number; page_hash: string | null }>(
+        `select page_index, anchor->>'pageHash' as page_hash
+           from document_annotations where book_id=$1 and user_id=$2 and deleted_at is null
+         union all
+         select page_index, page_hash
+           from document_text_order_overrides where book_id=$1 and user_id=$2 and deleted_at is null`,
+        [bookId, config.defaultUserId],
+      );
+      if (
+        documentState.rows.some(
+          (row) => !row.page_hash || row.page_hash !== destinationPageHash(Number(row.page_index)),
+        )
+      )
+        throw new PeerBookContentError('peer_book_document_annotations_require_remap');
+    }
     const current = await bookIdentity(client, config.defaultUserId, bookId);
     if (current?.activeRevisionId !== baseRevisionId) throw new PeerBookContentError('peer_book_identity_mismatch');
     const objectIds = await restoreSourceObjects(
@@ -273,13 +328,27 @@ export async function restorePeerBookReplacement(
       config,
       parsed,
       new Set([String(book.object_id)]),
-      `${config.defaultUserId}/peer-replacements/${randomUUID().replaceAll('-', '')}`,
+      restorePrefix,
       stagedKeys,
       publishedKeys,
       signal,
     );
     const sourceObjectId = objectIds.get(String(book.object_id));
     if (!sourceObjectId) throw new PeerBookContentError('peer_book_source_missing');
+    const embeddedStorageKeys =
+      format === 'image_archive' || format === 'epub'
+        ? await restoreEmbeddedBookObjects(
+            pool,
+            config,
+            { ...parsed, tables: new Map(parsed.tables).set('book_assets', contentAssets) },
+            new Map([[bookId, 'replace' as const]]),
+            new Map(),
+            restorePrefix,
+            stagedKeys,
+            publishedKeys,
+            signal,
+          )
+        : new Map<string, string>();
     const prepared = await prepareBookReplacement(client, {
       userId: config.defaultUserId,
       bookId,
@@ -317,6 +386,28 @@ export async function restorePeerBookReplacement(
       ],
     );
     await replaceParsedBookContent(client, bookId);
+    if (format === 'image_archive' || format === 'epub') {
+      const replacedAssets = await client.query<{ storage_key: string }>(
+        `delete from book_assets where book_id=$1 and user_id=$2
+           and status='active' and kind = any($3::text[])
+         returning storage_key`,
+        [bookId, config.defaultUserId, format === 'epub' ? ['epub_resource'] : ['document_page', 'source_part']],
+      );
+      await enqueueObjectDeletions(
+        client,
+        replacedAssets.rows.map((row) => row.storage_key),
+        'peer_replacement_superseded',
+      );
+      for (const asset of contentAssets) {
+        const storageKey = embeddedStorageKeys.get(String(asset.id));
+        if (!storageKey) throw new PeerBookContentError('peer_book_asset_missing');
+        await insertHostedBackupRow(client, 'book_assets', {
+          ...asset,
+          user_id: config.defaultUserId,
+          storage_key: storageKey,
+        });
+      }
+    }
     for (const chapter of parsed.tables.get('chapters') ?? []) await insertHostedBackupRow(client, 'chapters', chapter);
     const pages = parsed.tables.get('paragraph_pages') ?? [];
     for (const page of pages) await insertHostedBackupRow(client, 'paragraph_pages', page);
@@ -338,8 +429,7 @@ export async function restorePeerBookReplacement(
       );
     }
     const restored = await bookIdentity(client, config.defaultUserId, bookId);
-    if (JSON.stringify(restored) !== JSON.stringify(identity))
-      throw new PeerBookContentError('peer_book_identity_mismatch');
+    if (!sameBookIdentity(restored, identity)) throw new PeerBookContentError('peer_book_identity_mismatch');
     await releaseObjectDeletionReservations(client, publishedKeys);
     signal.throwIfAborted();
     await client.query('commit');
@@ -376,12 +466,10 @@ export async function restorePeerBookContent(
     )
       throw new PeerBookContentError('peer_book_change_chain_invalid');
   }
-  if (expected && JSON.stringify(identity) !== JSON.stringify(expected))
-    throw new PeerBookContentError('peer_book_identity_changed');
+  if (expected && !sameBookIdentity(identity, expected)) throw new PeerBookContentError('peer_book_identity_changed');
   const existing = await bookIdentity(pool, config.defaultUserId, bookId);
   if (existing) {
-    if (JSON.stringify(existing) !== JSON.stringify(identity))
-      throw new PeerBookContentError('peer_book_identity_mismatch');
+    if (!sameBookIdentity(existing, identity)) throw new PeerBookContentError('peer_book_identity_mismatch');
     return { installed: false, identity: existing };
   }
   await restoreHostedBackup(pool, config, parsed, { defaultConflictResolution: 'skip' }, signal, {
@@ -394,8 +482,7 @@ export async function restorePeerBookContent(
     },
     beforeCommit: async (client) => {
       const restored = await bookIdentity(client, config.defaultUserId, bookId);
-      if (JSON.stringify(restored) !== JSON.stringify(identity))
-        throw new PeerBookContentError('peer_book_identity_mismatch');
+      if (!sameBookIdentity(restored, identity)) throw new PeerBookContentError('peer_book_identity_mismatch');
       if (verifiedChain) {
         await client.query(
           `insert into sync_peer_content_receipts (user_id, book_id, base_revision_id, target_revision_id, event_ids)
