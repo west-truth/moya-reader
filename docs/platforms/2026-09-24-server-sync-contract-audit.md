@@ -37,6 +37,7 @@
 - 각 book ID의 원본 hash·활성 revision ID·정규화 hash·회차 ID 순서가 양쪽에서 같을 때만 `reading_position_updated/deleted`를 교환한다. 다른 사건이 앞에 있으면 cursor를 건너뛰지 않고 `blocked`가 된다. 상대가 accepted ID를 모두 반환한 뒤 outbound cursor를 저장한다. inbound 이벤트 적용과 cursor 저장은 한 DB transaction이다. 같은 ID 재전송은 내용이 같을 때만 성공한다. 같은 timestamp의 다른 독서 위치는 거부해 기존 위치를 보존한다.
 - 서로 다른 기본 사용자 ID(`user_desktop`/`user_dev`)를 둔 두 독립 PostgreSQL DB/실제 HTTP 서버 통합 검사에서 A→B, 상대 서버 일시 중단·동일 주소 재시작 뒤 재연결, API 서버 재시작 후 B→A, 삭제 이벤트, 중복 재전송, 같은 시각 충돌, 미지원 북마크 앞에서 cursor 보존, session 삭제 후 재로그인을 확인했다. 상대 HTTP 요청이 응답 없이 열린 중에도 API 종료가 요청을 취소하고 2초 안에 끝나는 검사도 통과했다. 기존 sync route 32개 회귀 검사와 서버 production build도 통과했다.
 - 독서 위치 REST writer의 위치 변경·삭제와 sync event 기록을 같은 PostgreSQL transaction으로 묶었다. 같은 event ID의 재요청은 내용이 동일할 때만 허용한다. 실제 DB에서 event 기록 실패를 주입해 위치 행이 원상복구되고, 같은 시각·같은 기기에서 내용만 바꾼 재요청이 409로 거부되는 것을 확인했다. 모든 서버 writer의 원자성을 보장하는 변경은 아니다.
-- **아직 없는 기능:** 최초 작품/원본/자산과 기존 읽던 위치 snapshot, 서로 다른 작품 ID·revision 매핑, 주석·메타데이터·삭제·AI/TTS 동기화, 충돌 해결 UI, 일반 사용자 연결 UI, 비 loopback HTTP 사설망 연결, 실제 다른 기기 사용 검증. `서버 서재 열기`를 오프라인 복제와 동일하게 표시하지 않는다.
+- 빈 대상 서버의 첫 작품·원본 복제는 새 형식 대신 기존 서버 백업 다운로드·staging·복원을 사용한다. `POST /api/sync/peer/bootstrap`은 기존 계정 session으로 상대 백업을 스트리밍하고, 원본·자산 해시를 기존 parser에서 검증한다. 복제 전후 상대 event watermark가 바뀌면 복원을 시작하지 않는다. 대상 책장이 비어 있는지 복원 transaction에서 잠금과 함께 다시 확인하고, 복원과 inbound cursor 전진을 같은 commit에 넣는다. 중단 중 DB 복원이 실패하면 cursor도 전진하지 않아 같은 연결에서 다시 실행할 수 있다. 실패 후 빈 서재 보존→재시도→복제된 원본 바이트 확인→새 독서 위치 전달을 두 실제 DB·HTTP 서버에서 검증했다.
+- **아직 없는 기능:** 최초 복제 이후의 작품/원본/자산·기존 위치 변경 전송, 서로 다른 작품 ID·revision 매핑, 주석·메타데이터·삭제·AI/TTS 동기화, 충돌 해결 UI, 일반 사용자 연결 UI, 비 loopback HTTP 사설망 연결, 실제 다른 기기 사용 검증. `서버 서재 열기`를 오프라인 복제와 동일하게 표시하지 않는다.
 
-D1 이후에는 작품·원본 snapshot/자산, 삭제, 주석/메타데이터, 오프라인 변경 순으로 계약을 넓힌다.
+D1 이후에는 이어지는 작품·원본 변경, 삭제, 주석/메타데이터, 오프라인 변경 순으로 계약을 넓힌다. 현재 bootstrap은 **빈 대상 서재에 한 번 복사하는 초기 snapshot**이며 이후에는 신규 독서 위치만 교환한다. 복제 중 원본 서버의 변경이 계속되면 시작을 거부하거나 미지원 사건에서 안전하게 차단할 수 있다. 일반 UI와 실제 타 기기 검증도 남아 있다.

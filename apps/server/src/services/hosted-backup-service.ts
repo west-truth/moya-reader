@@ -45,6 +45,11 @@ export interface HostedBackupRestoreOptions {
   readonly conflictResolutions?: Readonly<Record<string, HostedBackupConflictResolution>>;
 }
 
+export interface HostedBackupRestoreHooks {
+  readonly beforeRestore?: (client: pg.PoolClient) => Promise<void>;
+  readonly beforeCommit?: (client: pg.PoolClient) => Promise<void>;
+}
+
 export interface HostedBackupRestoreResult {
   readonly restoredBooks: number;
   readonly skippedBooks: number;
@@ -600,6 +605,7 @@ export async function restoreHostedBackup(
   archive: Uint8Array | ParsedHostedBackupArchive,
   options: HostedBackupRestoreOptions,
   signal: AbortSignal = AbortSignal.timeout(60 * 60_000),
+  hooks: HostedBackupRestoreHooks = {},
 ): Promise<HostedBackupRestoreResult> {
   const parsed = archive instanceof Uint8Array ? await parseHostedBackupArchive(archive) : archive;
   const books = bookRows(parsed);
@@ -612,6 +618,7 @@ export async function restoreHostedBackup(
     signal.throwIfAborted();
     await client.query('begin');
     await client.query("set local statement_timeout = '1h'");
+    await hooks.beforeRestore?.(client);
     const existing = await existingBookTitles(client, config.defaultUserId, bookIds);
     const conflicts = new Set(existing.keys());
     const resolutions = new Map(bookIds.map((bookId) => [bookId, resolutionFor(bookId, conflicts, options)] as const));
@@ -757,6 +764,7 @@ export async function restoreHostedBackup(
     }
     await enqueueSupersededRestoreObjects(client, supersededObjects);
     await finalizeRestoreReservations(client, publishedKeys);
+    await hooks.beforeCommit?.(client);
     signal.throwIfAborted();
     await client.query('commit');
 

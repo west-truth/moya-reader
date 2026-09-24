@@ -1,4 +1,4 @@
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { createServer } from 'node:http';
 import { tmpdir } from 'node:os';
@@ -13,9 +13,11 @@ import { registerAuthHook } from '../src/auth.js';
 import { migrateDatabase } from '../src/db/migrate.js';
 import type { ServerConfig } from '../src/config.js';
 import { registerSelfHostAuthRoutes } from '../src/routes/auth.js';
+import { registerBackupRoutes } from '../src/routes/backups.js';
 import { registerReaderStateRoutes } from '../src/routes/books/reader-state-routes.js';
 import { registerSyncRoutes } from '../src/routes/sync.js';
 import { PostgresSelfHostAuthStore, SelfHostAuthService } from '../src/services/self-host-auth-service.js';
+import { FileObjectStore } from '../src/services/file-object-store.js';
 import { startPostgresIntegrationHarness } from '../src/services/id-v2-migration/postgres-integration-harness.js';
 import {
   bookmarkCreatedEvent,
@@ -76,6 +78,12 @@ async function fixtureBook(pool: pg.Pool, userId: string) {
      ) values ('chapter_1','book_1',1,'Chapter','sha256:chapter',0,12,12,1)`,
   );
   await pool.query(
+    `insert into paragraph_pages (
+       id,book_id,chapter_id,page_index,start_paragraph_index,end_paragraph_index,paragraphs,text_hash
+     ) values ('page_1','book_1','chapter_1',0,0,0,$1::jsonb,'sha256:page')`,
+    [JSON.stringify([{ id: 'paragraph_1', index: 0, text: 'Text' }])],
+  );
+  await pool.query(
     `insert into paragraph_search (
        id,paragraph_id,book_id,chapter_id,page_index,paragraph_index,text,text_lower,paragraph
      ) values ('search_1','paragraph_1','book_1','chapter_1',0,0,'Text','text','{}'::jsonb)`,
@@ -89,6 +97,7 @@ async function testServer(pool: pg.Pool, directory: string, token: string, userI
     databaseUrl: '',
     redisUrl: '',
     dataDir: directory,
+    objectStorageDir: path.join(directory, 'objects'),
     authToken: token,
     maxChunkBytes: 1024,
     maxUploadBytes: 1024,
@@ -109,9 +118,10 @@ async function testServer(pool: pg.Pool, directory: string, token: string, userI
   await registerAuthHook(app, config, auth);
   await registerSelfHostAuthRoutes(app, auth, config);
   await registerReaderStateRoutes(app, pool, config);
+  await registerBackupRoutes(app, pool, config);
   await registerSyncRoutes(app, pool, config);
   const url = await app.listen({ host: '127.0.0.1', port });
-  return { app, url, token };
+  return { app, url, token, config };
 }
 
 async function withTwoDatabases(run: (poolA: pg.Pool, poolB: pg.Pool) => Promise<void>) {
@@ -134,6 +144,92 @@ async function withTwoDatabases(run: (poolA: pg.Pool, poolB: pg.Pool) => Promise
 }
 
 describe.skipIf(!harness)('two server reading position sync', () => {
+  it('seeds an empty peer from the existing streamed server backup and then syncs new positions', async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), 'moya-peer-bootstrap-'));
+    try {
+      await withTwoDatabases(async (poolA, poolB) => {
+        await fixtureBook(poolA, USER_A);
+        await migrateDatabase(poolB);
+        await poolB.query("insert into users (id,email,display_name) values ($1,'peer@example.com','Peer')", [USER_B]);
+        const a = await testServer(poolA, path.join(directory, 'a'), 'native_a', USER_A);
+        const b = await testServer(poolB, path.join(directory, 'b'), 'native_b', USER_B);
+        try {
+          const account = await fetch(`${a.url}/api/auth/register`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ username: 'source', password: 'long bootstrap password', setupCode: a.token }),
+          });
+          expect(account.status).toBe(201);
+          const paired = await fetch(`${b.url}/api/sync/peer`, {
+            method: 'POST',
+            headers: { Authorization: `Bearer ${b.token}`, 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              url: a.url,
+              username: 'source',
+              password: 'long bootstrap password',
+              startFromNow: true,
+            }),
+          });
+          expect(paired.status).toBe(200);
+          const source = Buffer.from('Example text');
+          const hash = `sha256:${createHash('sha256').update(source).digest('hex')}`;
+          await poolA.query('update book_objects set raw_text_hash = $1, size_bytes = $2 where id = $3', [
+            hash,
+            source.length,
+            'source_1',
+          ]);
+          const bootstrap = () =>
+            fetch(`${b.url}/api/sync/peer/bootstrap`, {
+              method: 'POST',
+              headers: { Authorization: `Bearer ${b.token}` },
+            });
+          const missingSource = await bootstrap();
+          expect(missingSource.status).toBe(409);
+          expect((await poolB.query('select count(*)::int as count from library_books')).rows[0].count).toBe(0);
+          await new FileObjectStore(a.config.objectStorageDir!).put('test', 'fixture/source', source, 'text/plain');
+          const seeded = await bootstrap();
+          expect(await seeded.json()).toMatchObject({ status: 'ready', restoredBooks: 1 });
+          expect((await poolB.query('select count(*)::int as count from library_books')).rows[0].count).toBe(1);
+          const object = (await poolB.query("select storage_key from book_objects where id='source_1'")).rows[0];
+          const stored = await new FileObjectStore(b.config.objectStorageDir!).get('test', object.storage_key);
+          const chunks: Buffer[] = [];
+          for await (const chunk of stored.body) chunks.push(Buffer.from(chunk));
+          const copied = Buffer.concat(chunks);
+          expect(copied).toEqual(source);
+          expect((await bootstrap()).status).toBe(409);
+
+          const changed = await fetch(`${a.url}/api/books/book_1/reading-position`, {
+            method: 'PATCH',
+            headers: { Authorization: `Bearer ${a.token}`, 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              chapterId: 'chapter_1',
+              paragraphId: 'paragraph_1',
+              chapterProgress: 0.5,
+              scrollTop: 320,
+              deviceId: 'source',
+              updatedAt: '2026-09-24T05:00:00.000Z',
+            }),
+          });
+          expect(await changed.json()).toMatchObject({ ok: true, applied: true });
+          const sync = await fetch(`${b.url}/api/sync/peer/run`, {
+            method: 'POST',
+            headers: { Authorization: `Bearer ${b.token}` },
+          });
+          const syncState = await sync.json();
+          expect(syncState, JSON.stringify(syncState)).toMatchObject({ status: 'ready' });
+          expect(
+            (await poolB.query("select scroll_top from reading_positions where book_id='book_1'")).rows[0].scroll_top,
+          ).toBe(320);
+        } finally {
+          await a.app.close();
+          await b.app.close();
+        }
+      });
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  }, 60_000);
+
   it('commits a local position and its event together, and rejects a changed replay', async () => {
     const directory = await mkdtemp(path.join(tmpdir(), 'moya-position-atomic-'));
     try {

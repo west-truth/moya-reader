@@ -1,4 +1,5 @@
 import { createCipheriv, createDecipheriv, randomBytes, randomUUID } from 'node:crypto';
+import { Readable } from 'node:stream';
 import type { FastifyInstance } from 'fastify';
 import pg from 'pg';
 import type { SyncEvent } from '@noveldesk/contracts/sync';
@@ -7,6 +8,9 @@ import { validateV2SyncEvent } from '../../../../../src/sync/event-contract-vali
 import { SELF_HOST_SESSION_COOKIE } from '../../auth-cookie.js';
 import type { ServerConfig } from '../../config.js';
 import { loadProviderSecretMasterKey } from '../../providers/server-provider-secrets.js';
+import { BackupStaging } from '../../services/backup-staging.js';
+import { inspectHostedBackup, restoreHostedBackup } from '../../services/hosted-backup-service.js';
+import path from 'node:path';
 import { querySyncEventsAfter } from './pull-query.js';
 import { applySyncEventsInTransaction } from './push-route.js';
 import { mapSyncEventRow } from './row-mappers.js';
@@ -294,8 +298,10 @@ function publicPeer(row: PeerRow | undefined) {
 export function registerPeerReadingPositionRoutes(app: FastifyInstance, pool: pg.Pool, config: ServerConfig): void {
   const userId = config.defaultUserId;
   const key = () => loadProviderSecretMasterKey(config, process.env);
+  const backupStaging = new BackupStaging(path.join(config.dataDir, 'peer-backup-staging'));
   let running: Promise<void> | undefined;
   let activeAbort: AbortController | undefined;
+  let bootstrapAbort: AbortController | undefined;
   let configuring = false;
 
   const execute = () => {
@@ -321,7 +327,7 @@ export function registerPeerReadingPositionRoutes(app: FastifyInstance, pool: pg
 
   async function runOnce(signal: AbortSignal): Promise<void> {
     const row = await loadPeer(pool, userId);
-    if (!row || row.status === 'blocked' || row.status === 'needs_login') return;
+    if (!row || row.status === 'blocked' || row.status === 'needs_login' || row.status === 'bootstrapping') return;
     try {
       const cookie = decryptedSession(key(), row);
       const identity = (await peerRequest(row.peer_url, '/api/sync/identity', cookie, { signal })).body as {
@@ -542,6 +548,142 @@ export function registerPeerReadingPositionRoutes(app: FastifyInstance, pool: pg
       configuring = false;
     }
   });
+  app.post('/api/sync/peer/bootstrap', async (_request, reply) => {
+    if (configuring) return reply.code(409).send({ error: 'peer_configuration_busy' });
+    configuring = true;
+    bootstrapAbort = new AbortController();
+    const signal = AbortSignal.any([bootstrapAbort.signal, AbortSignal.timeout(60 * 60_000)]);
+    let stagedId: string | undefined;
+    let peerId: string | undefined;
+    try {
+      await running;
+      const row = await loadPeer(pool, userId);
+      if (!row) return reply.code(404).send({ error: 'peer_not_configured' });
+      peerId = row.peer_id;
+      const localBooks = await pool.query<{ count: string }>(
+        'select count(*)::text as count from library_books where user_id = $1',
+        [userId],
+      );
+      if (Number(localBooks.rows[0].count) !== 0 || (await watermark(pool, userId)) !== Number(row.outbound_cursor)) {
+        return reply.code(409).send({ error: 'peer_bootstrap_requires_empty_library' });
+      }
+      const cookie = decryptedSession(key(), row);
+      const identity = (await peerRequest(row.peer_url, '/api/sync/identity', cookie, { signal })).body as {
+        serverId?: string;
+      };
+      if (identity.serverId !== row.peer_server_id)
+        throw new PeerSyncFailure('peer_server_identity_changed', 'blocked');
+      const reserved = await pool.query(
+        `update sync_server_peers set status = 'bootstrapping', last_error = null, updated_at = now()
+          where user_id = $1 and peer_id = $2`,
+        [userId, peerId],
+      );
+      if (reserved.rowCount !== 1) throw new PeerSyncFailure('peer_configuration_changed', 'blocked');
+
+      const before = (await peerRequest(row.peer_url, '/api/sync/watermark', cookie, { signal })).body as {
+        cursor?: number;
+      };
+      if (!Number.isSafeInteger(before.cursor) || before.cursor! < 0)
+        throw new PeerSyncFailure('peer_cursor_invalid', 'blocked');
+      const ticket = (await peerRequest(row.peer_url, '/api/backups/download', cookie, { method: 'POST', signal }))
+        .body as { ticket?: string };
+      if (!ticket.ticket || !/^[A-Za-z0-9_-]{20,100}$/.test(ticket.ticket))
+        throw new PeerSyncFailure('peer_backup_ticket_invalid', 'blocked');
+      let archive: Response;
+      try {
+        archive = await fetch(new URL(`/api/backups/download/${ticket.ticket}`, row.peer_url), {
+          headers: { Cookie: cookie, Accept: 'application/zip' },
+          redirect: 'manual',
+          signal,
+        });
+      } catch {
+        throw new PeerSyncFailure('peer_backup_unreachable', 'offline');
+      }
+      if (archive.status === 401 || archive.status === 403)
+        throw new PeerSyncFailure('peer_auth_required', 'needs_login');
+      if (!archive.ok || !archive.body || !archive.headers.get('content-type')?.includes('application/zip')) {
+        throw new PeerSyncFailure('peer_backup_unavailable', 'blocked');
+      }
+      const lengthHeader = archive.headers.get('content-length');
+      const expectedBytes = lengthHeader === null ? undefined : Number(lengthHeader);
+      const input = Readable.fromWeb(archive.body as never);
+      // An interrupted fetch can emit once more after pipeline has torn down its listeners.
+      input.on('error', () => undefined);
+      const received = await backupStaging.receive(input, expectedBytes, signal);
+      stagedId = received.id;
+      if (received.stage.source !== 'hosted') throw new PeerSyncFailure('peer_backup_format_invalid', 'blocked');
+      const inspection = await inspectHostedBackup(pool, config, received.stage.parsed, received.stage.byteLength);
+      if (inspection.conflicts.length) throw new PeerSyncFailure('peer_bootstrap_library_changed', 'blocked');
+      const after = (await peerRequest(row.peer_url, '/api/sync/watermark', cookie, { signal })).body as {
+        cursor?: number;
+      };
+      if (after.cursor !== before.cursor) throw new PeerSyncFailure('peer_changed_during_bootstrap', 'blocked');
+
+      const staged = backupStaging.take(stagedId);
+      stagedId = undefined;
+      let restored;
+      try {
+        restored = await restoreHostedBackup(
+          pool,
+          config,
+          staged.parsed,
+          { defaultConflictResolution: 'skip' },
+          signal,
+          {
+            beforeRestore: async (client) => {
+              await client.query('lock table library_books in share row exclusive mode');
+              const current = await client.query<{ peer_id: string; status: string }>(
+                'select peer_id, status from sync_server_peers where user_id = $1 for update',
+                [userId],
+              );
+              if (current.rows[0]?.peer_id !== peerId || current.rows[0]?.status !== 'bootstrapping') {
+                throw new PeerSyncFailure('peer_configuration_changed', 'blocked');
+              }
+              const books = await client.query<{ count: string }>(
+                'select count(*)::text as count from library_books where user_id = $1',
+                [userId],
+              );
+              if (Number(books.rows[0].count) !== 0)
+                throw new PeerSyncFailure('peer_bootstrap_library_changed', 'blocked');
+            },
+            beforeCommit: async (client) => {
+              const updated = await client.query(
+                `update sync_server_peers set inbound_cursor = $3, status = 'ready', last_error = null,
+                        last_synced_at = now(), updated_at = now()
+                  where user_id = $1 and peer_id = $2 and status = 'bootstrapping' and inbound_cursor = $4`,
+                [userId, peerId, before.cursor, row.inbound_cursor],
+              );
+              if (updated.rowCount !== 1) throw new PeerSyncFailure('peer_configuration_changed', 'blocked');
+            },
+          },
+        );
+      } finally {
+        await staged.dispose();
+      }
+      return { ...publicPeer(await loadPeer(pool, userId)), restoredBooks: restored.restoredBooks };
+    } catch (error) {
+      const code = error instanceof PeerSyncFailure ? error.code : 'peer_bootstrap_failed';
+      if (peerId) {
+        await pool.query(
+          `update sync_server_peers set status = $3, last_error = $4, updated_at = now()
+            where user_id = $1 and peer_id = $2 and status = 'bootstrapping'`,
+          [
+            userId,
+            peerId,
+            error instanceof PeerSyncFailure && error.status === 'needs_login' ? 'needs_login' : 'blocked',
+            code,
+          ],
+        );
+      }
+      return reply
+        .code(error instanceof PeerSyncFailure && error.status === 'offline' ? 503 : 409)
+        .send({ error: code });
+    } finally {
+      if (stagedId) await backupStaging.discard(stagedId);
+      bootstrapAbort = undefined;
+      configuring = false;
+    }
+  });
   app.post('/api/sync/peer/run', async (_request, reply) => {
     if (configuring) return reply.code(409).send({ error: 'peer_configuration_busy' });
     await execute();
@@ -572,8 +714,10 @@ export function registerPeerReadingPositionRoutes(app: FastifyInstance, pool: pg
   app.addHook('preClose', async () => {
     clearInterval(timer);
     activeAbort?.abort();
+    bootstrapAbort?.abort();
   });
   app.addHook('onClose', async () => {
     await running;
+    await backupStaging.close();
   });
 }
