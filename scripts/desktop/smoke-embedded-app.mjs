@@ -19,6 +19,7 @@ await new Promise((resolve) => listener.close(resolve));
 const evidence = {
   nativeWindow: false,
   serverReady: false,
+  nativePeerSettings: false,
   collectorGateway: false,
   nativeFormats: [],
   sharingRevoked: false,
@@ -104,6 +105,12 @@ async function close(fromTray = false) {
 }
 try {
   await launch();
+  await page.getByRole('button', { name: '설정 열기', exact: true }).click();
+  await page.getByRole('tab', { name: /앱 정보/ }).click();
+  await page.getByRole('heading', { name: '다른 서버의 서재를 이 서버에 보관' }).waitFor();
+  await page.getByRole('button', { name: '빈 서재에 복제하고 연결' }).waitFor();
+  await page.getByRole('button', { name: '설정 닫기', exact: true }).click();
+  evidence.nativePeerSettings = true;
   const textBookId = await page.evaluate(async ({ url, authToken }) => {
     const request = async (resource, options = {}) => {
       const response = await fetch(`${url}/api${resource}`, {

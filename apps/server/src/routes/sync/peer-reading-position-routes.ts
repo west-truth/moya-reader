@@ -302,6 +302,9 @@ export function registerPeerReadingPositionRoutes(app: FastifyInstance, pool: pg
   let running: Promise<void> | undefined;
   let activeAbort: AbortController | undefined;
   let bootstrapAbort: AbortController | undefined;
+  let bootstrapProgress:
+    | { stage: 'preparing' | 'downloading' | 'validating' | 'restoring'; completedBytes?: number; totalBytes?: number }
+    | undefined;
   let configuring = false;
 
   const execute = () => {
@@ -461,7 +464,10 @@ export function registerPeerReadingPositionRoutes(app: FastifyInstance, pool: pg
     const identity = await bookIdentity(pool, userId, request.params.bookId);
     return identity ?? reply.code(404).send({ error: 'sync_book_identity_unavailable' });
   });
-  app.get('/api/sync/peer', async () => publicPeer(await loadPeer(pool, userId)));
+  app.get('/api/sync/peer', async () => ({
+    ...publicPeer(await loadPeer(pool, userId)),
+    ...(bootstrapProgress ? { bootstrapProgress } : {}),
+  }));
   app.post<{
     Body: { url?: unknown; username?: unknown; password?: unknown; startFromNow?: unknown };
   }>('/api/sync/peer', { bodyLimit: 4096 }, async (request, reply) => {
@@ -579,6 +585,7 @@ export function registerPeerReadingPositionRoutes(app: FastifyInstance, pool: pg
         [userId, peerId],
       );
       if (reserved.rowCount !== 1) throw new PeerSyncFailure('peer_configuration_changed', 'blocked');
+      bootstrapProgress = { stage: 'preparing' };
 
       const before = (await peerRequest(row.peer_url, '/api/sync/watermark', cookie, { signal })).body as {
         cursor?: number;
@@ -606,11 +613,15 @@ export function registerPeerReadingPositionRoutes(app: FastifyInstance, pool: pg
       }
       const lengthHeader = archive.headers.get('content-length');
       const expectedBytes = lengthHeader === null ? undefined : Number(lengthHeader);
+      bootstrapProgress = { stage: 'downloading', completedBytes: 0, totalBytes: expectedBytes };
       const input = Readable.fromWeb(archive.body as never);
       // An interrupted fetch can emit once more after pipeline has torn down its listeners.
       input.on('error', () => undefined);
-      const received = await backupStaging.receive(input, expectedBytes, signal);
+      const received = await backupStaging.receive(input, expectedBytes, signal, (completedBytes) => {
+        bootstrapProgress = { stage: 'downloading', completedBytes, totalBytes: expectedBytes };
+      });
       stagedId = received.id;
+      bootstrapProgress = { stage: 'validating' };
       if (received.stage.source !== 'hosted') throw new PeerSyncFailure('peer_backup_format_invalid', 'blocked');
       const inspection = await inspectHostedBackup(pool, config, received.stage.parsed, received.stage.byteLength);
       if (inspection.conflicts.length) throw new PeerSyncFailure('peer_bootstrap_library_changed', 'blocked');
@@ -621,6 +632,7 @@ export function registerPeerReadingPositionRoutes(app: FastifyInstance, pool: pg
 
       const staged = backupStaging.take(stagedId);
       stagedId = undefined;
+      bootstrapProgress = { stage: 'restoring' };
       let restored;
       try {
         restored = await restoreHostedBackup(
@@ -681,6 +693,7 @@ export function registerPeerReadingPositionRoutes(app: FastifyInstance, pool: pg
     } finally {
       if (stagedId) await backupStaging.discard(stagedId);
       bootstrapAbort = undefined;
+      bootstrapProgress = undefined;
       configuring = false;
     }
   });
