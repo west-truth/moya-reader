@@ -111,6 +111,9 @@ export async function startCloudflareSharing({
         throw new Error('Cloudflare 연결 시간이 초과되었습니다. 네트워크와 터널 설정을 확인해 주세요.');
       await delay(100, undefined, { signal });
     }
+    // A connector can print readiness immediately before exiting. Wait briefly
+    // before exposing an address to the UI.
+    await delay(250, undefined, { signal });
     // Readiness logs can arrive just before the connector exits or is cancelled.
     signal?.throwIfAborted();
     if (failure || child.exitCode !== null || child.signalCode !== null) {
