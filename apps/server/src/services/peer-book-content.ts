@@ -1,5 +1,6 @@
 import pg from 'pg';
 import { randomUUID } from 'node:crypto';
+import { persistentId128 } from '@noveldesk/text-core/hash';
 import type { BookImportContentChangeV1 } from '@noveldesk/contracts/sync';
 import type { ServerConfig } from '../config.js';
 import type { ParsedHostedBackupArchive } from './hosted-backup-archive.js';
@@ -28,6 +29,10 @@ export interface BookIdentity {
 
 export class PeerBookContentError extends Error {}
 
+export interface PeerBookContentChain {
+  events: Array<{ id: string; content: BookImportContentChangeV1 }>;
+}
+
 const revisionIdPattern = /^[A-Za-z0-9:_-]{1,512}$/;
 const taggedHashPattern = /^sha256:[0-9a-f]{64}$/;
 
@@ -53,6 +58,57 @@ export function parsePeerBookContentChange(value: unknown): BookImportContentCha
   )
     throw new PeerBookContentError('peer_book_content_change_invalid');
   return value as BookImportContentChangeV1;
+}
+
+export function parsePeerBookContentChain(value: unknown): PeerBookContentChain {
+  if (!value || typeof value !== 'object' || Array.isArray(value))
+    throw new PeerBookContentError('peer_book_change_chain_invalid');
+  const row = value as Record<string, unknown>;
+  if (
+    Object.keys(row).join(',') !== 'events' ||
+    !Array.isArray(row.events) ||
+    row.events.length < 1 ||
+    row.events.length > 32
+  )
+    throw new PeerBookContentError('peer_book_change_chain_invalid');
+  const events = row.events.map((entry: unknown) => {
+    if (!entry || typeof entry !== 'object' || Array.isArray(entry))
+      throw new PeerBookContentError('peer_book_change_chain_invalid');
+    const event = entry as Record<string, unknown>;
+    if (
+      Object.keys(event).sort().join(',') !== 'content,id' ||
+      typeof event.id !== 'string' ||
+      !revisionIdPattern.test(event.id)
+    )
+      throw new PeerBookContentError('peer_book_change_chain_invalid');
+    return { id: event.id, content: parsePeerBookContentChange(event.content) };
+  });
+  if (
+    new Set(events.map((event) => event.id)).size !== events.length ||
+    events.some(
+      (event, index) =>
+        index > 0 &&
+        (event.content.baseRevisionId !== events[index - 1].content.targetRevisionId ||
+          event.content.revisionNumber !== events[index - 1].content.revisionNumber + 1),
+    )
+  )
+    throw new PeerBookContentError('peer_book_change_chain_invalid');
+  return { events };
+}
+
+function assertBookChain(bookId: string, chain: PeerBookContentChain): void {
+  for (const { content } of chain.events) {
+    if (
+      content.targetRevisionId !==
+      persistentId128('book_content_revision', [
+        bookId,
+        String(content.revisionNumber),
+        content.sourceHash,
+        content.normalizedHash,
+      ])
+    )
+      throw new PeerBookContentError('peer_book_change_chain_invalid');
+  }
 }
 
 export async function bookIdentity(
@@ -149,8 +205,24 @@ export async function restorePeerBookReplacement(
   bookId: string,
   signal: AbortSignal,
   change: BookImportContentChangeV1,
+  chain?: PeerBookContentChain,
 ): Promise<{ installed: boolean; identity: BookIdentity }> {
   const expected = parsePeerBookContentChange(change);
+  const verifiedChain = chain ? parsePeerBookContentChain(chain) : undefined;
+  if (verifiedChain) assertBookChain(bookId, verifiedChain);
+  if (verifiedChain) {
+    const last = verifiedChain.events.at(-1)!.content;
+    if (
+      last.kind !== expected.kind ||
+      last.baseRevisionId !== expected.baseRevisionId ||
+      last.targetRevisionId !== expected.targetRevisionId ||
+      last.revisionNumber !== expected.revisionNumber ||
+      last.sourceHash !== expected.sourceHash ||
+      last.normalizedHash !== expected.normalizedHash
+    )
+      throw new PeerBookContentError('peer_book_change_chain_invalid');
+  }
+  const baseRevisionId = verifiedChain?.events[0].content.baseRevisionId ?? expected.baseRevisionId;
   const identity = archiveIdentity(parsed, bookId, false);
   const book = parsed.tables.get('library_books')![0];
   const source = parsed.objects.find((object) => object.id === book.object_id && object.asset_kind === 'source');
@@ -167,7 +239,7 @@ export async function restorePeerBookReplacement(
   // own source/page replacement checks before this boundary can be widened.
   if (
     !['txt', 'markdown'].includes(String(book.format)) ||
-    (parsed.tables.get('book_assets') ?? []).length ||
+    (parsed.tables.get('book_assets') ?? []).some((asset) => asset.kind !== 'cover') ||
     (parsed.tables.get('document_pages') ?? []).length ||
     (parsed.tables.get('document_text_revisions') ?? []).length ||
     (parsed.tables.get('document_text_blocks') ?? []).length
@@ -175,8 +247,7 @@ export async function restorePeerBookReplacement(
     throw new PeerBookContentError('peer_book_replacement_format_unsupported');
   const existing = await bookIdentity(pool, config.defaultUserId, bookId);
   if (existing && JSON.stringify(existing) === JSON.stringify(identity)) return { installed: false, identity };
-  if (existing?.activeRevisionId !== expected.baseRevisionId)
-    throw new PeerBookContentError('peer_book_identity_mismatch');
+  if (existing?.activeRevisionId !== baseRevisionId) throw new PeerBookContentError('peer_book_identity_mismatch');
 
   const client = await pool.connect();
   const stagedKeys: string[] = [];
@@ -185,13 +256,17 @@ export async function restorePeerBookReplacement(
     signal.throwIfAborted();
     await client.query('begin');
     await client.query("set local statement_timeout = '1h'");
-    await client.query('select id from library_books where id=$1 and user_id=$2 for update', [
-      bookId,
-      config.defaultUserId,
-    ]);
+    const lockedBook = await client.query<{ content_revision_number: number | string }>(
+      'select content_revision_number from library_books where id=$1 and user_id=$2 for update',
+      [bookId, config.defaultUserId],
+    );
+    if (
+      Number(lockedBook.rows[0]?.content_revision_number) !==
+      (verifiedChain?.events[0].content.revisionNumber ?? expected.revisionNumber) - 1
+    )
+      throw new PeerBookContentError('peer_book_revision_mismatch');
     const current = await bookIdentity(client, config.defaultUserId, bookId);
-    if (current?.activeRevisionId !== expected.baseRevisionId)
-      throw new PeerBookContentError('peer_book_identity_mismatch');
+    if (current?.activeRevisionId !== baseRevisionId) throw new PeerBookContentError('peer_book_identity_mismatch');
     const objectIds = await restoreSourceObjects(
       pool,
       client,
@@ -213,10 +288,11 @@ export async function restorePeerBookReplacement(
       normalizedTextHash: expected.normalizedHash,
       sourceFileName: String(book.source_file_name),
       sourceEncoding: typeof book.source_encoding === 'string' ? book.source_encoding : undefined,
+      targetRevisionNumber: expected.revisionNumber,
     });
     if (
       !prepared ||
-      prepared.replacement.fromContentRevisionId !== expected.baseRevisionId ||
+      prepared.replacement.fromContentRevisionId !== baseRevisionId ||
       prepared.replacement.toContentRevisionId !== expected.targetRevisionId ||
       prepared.replacement.toContentRevisionNumber !== expected.revisionNumber
     )
@@ -247,6 +323,20 @@ export async function restorePeerBookReplacement(
     await rebuildParagraphSearchFromStoredPages(client, pages);
     await restoreExactAnchoredReaderState(client, prepared);
     await finalizeBookReplacement(client, prepared);
+    if (verifiedChain) {
+      await client.query(
+        `insert into sync_peer_content_receipts (user_id, book_id, base_revision_id, target_revision_id, event_ids)
+         values ($1,$2,$3,$4,$5::jsonb)
+         on conflict (user_id, book_id, target_revision_id) do nothing`,
+        [
+          config.defaultUserId,
+          bookId,
+          baseRevisionId,
+          expected.targetRevisionId,
+          JSON.stringify(verifiedChain.events.map((event) => event.id)),
+        ],
+      );
+    }
     const restored = await bookIdentity(client, config.defaultUserId, bookId);
     if (JSON.stringify(restored) !== JSON.stringify(identity))
       throw new PeerBookContentError('peer_book_identity_mismatch');
@@ -270,8 +360,22 @@ export async function restorePeerBookContent(
   bookId: string,
   signal: AbortSignal,
   expected?: BookIdentity,
+  chain?: PeerBookContentChain,
 ): Promise<{ installed: boolean; identity: BookIdentity }> {
-  const identity = archiveIdentity(parsed, bookId);
+  const verifiedChain = chain ? parsePeerBookContentChain(chain) : undefined;
+  if (verifiedChain) assertBookChain(bookId, verifiedChain);
+  const identity = archiveIdentity(parsed, bookId, !verifiedChain);
+  if (verifiedChain) {
+    const last = verifiedChain.events.at(-1)!.content;
+    const book = parsed.tables.get('library_books')![0];
+    if (
+      identity.activeRevisionId !== last.targetRevisionId ||
+      identity.sourceHash !== last.sourceHash ||
+      identity.normalizedTextHash !== last.normalizedHash ||
+      Number(book.content_revision_number) !== last.revisionNumber
+    )
+      throw new PeerBookContentError('peer_book_change_chain_invalid');
+  }
   if (expected && JSON.stringify(identity) !== JSON.stringify(expected))
     throw new PeerBookContentError('peer_book_identity_changed');
   const existing = await bookIdentity(pool, config.defaultUserId, bookId);
@@ -292,6 +396,19 @@ export async function restorePeerBookContent(
       const restored = await bookIdentity(client, config.defaultUserId, bookId);
       if (JSON.stringify(restored) !== JSON.stringify(identity))
         throw new PeerBookContentError('peer_book_identity_mismatch');
+      if (verifiedChain) {
+        await client.query(
+          `insert into sync_peer_content_receipts (user_id, book_id, base_revision_id, target_revision_id, event_ids)
+           values ($1,$2,$3,$4,$5::jsonb) on conflict do nothing`,
+          [
+            config.defaultUserId,
+            bookId,
+            verifiedChain.events[0].content.baseRevisionId,
+            identity.activeRevisionId,
+            JSON.stringify(verifiedChain.events.map((event) => event.id)),
+          ],
+        );
+      }
     },
   });
   return { installed: true, identity };

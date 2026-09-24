@@ -42,6 +42,11 @@ const errorText: Record<string, string> = {
     '양쪽에서 같은 작품의 원본을 서로 다르게 바꿨습니다. 각 원본을 보존하고 동기화를 중단했습니다.',
   peer_feature_unsupported: '상대 서버가 이 원본 교체 기능을 지원하지 않습니다. 상대 서버를 업데이트해 주세요.',
   peer_book_replacement_format_unsupported: '이 형식의 기존 작품 원본 교체는 아직 동기화할 수 없습니다.',
+  peer_book_change_chain_invalid: '원본 변경 기록을 확인할 수 없어 기존 자료를 보존하고 중단했습니다.',
+  peer_book_change_chain_too_long:
+    '한 번에 확인할 원본 변경 기록이 너무 많아 동기화를 중단했습니다. 원본과 백업을 보존해 주세요.',
+  peer_interleaved_reader_change_requires_remap:
+    '연속 원본 교체 사이의 독서 상태를 안전하게 옮길 수 없어 동기화를 중단했습니다.',
   peer_book_transfer_rejected: '작품 전송을 진행할 수 없습니다. 상대 서버 버전과 원본 교체 여부를 확인해 주세요.',
   peer_book_identity_changed: '전송 중 작품 내용이 바뀌어 동기화를 중단했습니다.',
   peer_book_target_changed: '전송 중 이 서버의 서재가 바뀌어 기존 작품을 보존하고 중단했습니다.',
@@ -204,8 +209,9 @@ export function ServerPeerSyncSettings({ client }: { readonly client: Pick<Remot
       <h3 id="server-peer-sync-title">다른 서버의 서재를 이 서버에 보관</h3>
       <p>
         현재 서버의 책장이 비어 있으면 기존 self-host 서재를 한 번 복제할 수 있습니다. 이후에는 새 작품의 원본·회차,
-        기존 TXT/Markdown 작품의 한 차례 원본 교체, 독서 위치를 양방향으로 동기화합니다. 여러 차례의 오프라인 원본
-        교체와 주석 변경은 아직 자동으로 따라오지 않습니다.
+        기존 TXT/Markdown 작품의 원본 교체와 독서 위치를 양방향으로 동기화합니다. 오프라인에서 연속 교체한 원본은 중간에
+        독서 상태 변경이 없을 때 최신 내용으로 따라잡습니다. 주석 변경과 중간 독서 상태 변경은 아직 자동으로 따라오지
+        않습니다.
       </p>
       {loadError && <p role="alert">{loadError}</p>}
       {peer === undefined && !loadError && <p role="status">서버 연결 상태를 불러오는 중입니다.</p>}

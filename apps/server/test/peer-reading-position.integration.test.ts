@@ -156,6 +156,120 @@ async function withTwoDatabases(run: (poolA: pg.Pool, poolB: pg.Pool) => Promise
 }
 
 describe.skipIf(!harness)('two server reading position sync', () => {
+  it('fast-forwards two remote TXT replacements through the inbound path', async () => {
+    await withTwoDatabases(async (poolA, poolB) => {
+      await withImportPageFixture(poolA, async (fixtureA) => {
+        await withImportPageFixture(poolB, async (fixtureB) => {
+          const a = await testServer(poolA, fixtureA.config.dataDir, 'native_a', 'user_test', 0, fixtureA.config);
+          const b = await testServer(poolB, fixtureB.config.dataDir, 'native_b', 'user_test', 0, fixtureB.config);
+          const request = (server: typeof a, resource: string, body: unknown) =>
+            fetch(`${server.url}/api${resource}`, {
+              method: 'POST',
+              headers: { Authorization: `Bearer ${server.token}`, 'Content-Type': 'application/json' },
+              body: JSON.stringify(body),
+            });
+          const options = { fileName: 'fixture.txt', contentType: 'text/plain' };
+          try {
+            expect(
+              (
+                await request(b, '/auth/register', {
+                  username: 'peer',
+                  password: 'long peer test password',
+                  setupCode: b.token,
+                })
+              ).status,
+            ).toBe(201);
+            expect(
+              (
+                await request(a, '/sync/peer', {
+                  url: b.url,
+                  username: 'peer',
+                  password: 'long peer test password',
+                  startFromNow: true,
+                })
+              ).status,
+            ).toBe(200);
+            await fixtureB.import(Buffer.from('First remote text.'), false, 'book_fixture', options);
+            const inboundResult = await (await request(a, '/sync/peer/run', {})).json();
+            expect(inboundResult).toEqual(expect.objectContaining({ status: 'ready', lastError: null }));
+            const original = (
+              await poolA.query("select active_content_revision_id from library_books where id='book_fixture'")
+            ).rows[0].active_content_revision_id as string;
+            await fixtureB.import(Buffer.from('Second remote text.'), false, 'book_fixture', {
+              ...options,
+              expectedBase: { kind: 'revision', contentRevisionId: original },
+            });
+            const second = (
+              await poolB.query("select active_content_revision_id from library_books where id='book_fixture'")
+            ).rows[0].active_content_revision_id as string;
+            await fixtureB.import(Buffer.from('Third remote text.'), false, 'book_fixture', {
+              ...options,
+              expectedBase: { kind: 'revision', contentRevisionId: second },
+            });
+            const fastForwardResult = (await (await request(a, '/sync/peer/run', {})).json()) as {
+              status: string;
+              lastError: string | null;
+            };
+            expect(fastForwardResult.lastError).toBeNull();
+            expect(fastForwardResult.status).toBe('ready');
+            const source = (
+              await poolB.query(
+                "select active_content_revision_id, content_revision_number from library_books where id='book_fixture'",
+              )
+            ).rows[0];
+            const target = (
+              await poolA.query(
+                "select active_content_revision_id, content_revision_number from library_books where id='book_fixture'",
+              )
+            ).rows[0];
+            expect(target).toEqual(source);
+            expect(Number(target.content_revision_number)).toBe(3);
+            const receipt = (
+              await poolA.query("select event_ids from sync_peer_content_receipts where book_id='book_fixture'")
+            ).rows[0];
+            expect(receipt.event_ids).toHaveLength(2);
+            await fixtureB.import(Buffer.from('Offline initial.'), false, 'book_offline', options);
+            const offlineFirst = (
+              await poolB.query("select active_content_revision_id from library_books where id='book_offline'")
+            ).rows[0].active_content_revision_id as string;
+            await fixtureB.import(Buffer.from('Offline second.'), false, 'book_offline', {
+              ...options,
+              expectedBase: { kind: 'revision', contentRevisionId: offlineFirst },
+            });
+            const offlineSecond = (
+              await poolB.query("select active_content_revision_id from library_books where id='book_offline'")
+            ).rows[0].active_content_revision_id as string;
+            await fixtureB.import(Buffer.from('Offline third.'), false, 'book_offline', {
+              ...options,
+              expectedBase: { kind: 'revision', contentRevisionId: offlineSecond },
+            });
+            expect(await (await request(a, '/sync/peer/run', {})).json()).toMatchObject({ status: 'ready' });
+            expect(
+              (
+                await poolA.query(
+                  "select active_content_revision_id, content_revision_number from library_books where id='book_offline'",
+                )
+              ).rows[0],
+            ).toEqual(
+              (
+                await poolB.query(
+                  "select active_content_revision_id, content_revision_number from library_books where id='book_offline'",
+                )
+              ).rows[0],
+            );
+            expect(
+              (await poolA.query("select event_ids from sync_peer_content_receipts where book_id='book_offline'"))
+                .rows[0].event_ids,
+            ).toHaveLength(2);
+          } finally {
+            await a.app.close();
+            await b.app.close();
+          }
+        });
+      });
+    });
+  }, 90_000);
+
   it('applies a TXT replacement from the import worker and preserves target-only reader state', async () => {
     await withTwoDatabases(async (poolA, poolB) => {
       await withImportPageFixture(poolA, async (fixtureA) => {
@@ -228,6 +342,26 @@ describe.skipIf(!harness)('two server reading position sync', () => {
               await poolA.query("select active_content_revision_id from library_books where id='book_fixture'")
             ).rows[0].active_content_revision_id as string;
             expect(changed).not.toBe(before);
+            await poolB.query(`create function reject_peer_finalize() returns trigger language plpgsql as $$
+              begin raise exception 'injected_peer_finalize_failure'; end $$`);
+            await poolB.query(`create trigger reject_peer_finalize before update on book_replacement_runs
+              for each row execute function reject_peer_finalize()`);
+            const beforeFailedRun = Number(
+              (await poolA.query('select outbound_cursor from sync_server_peers')).rows[0].outbound_cursor,
+            );
+            expect(await (await request(a, '/sync/peer/run', {})).json()).toMatchObject({
+              status: 'offline',
+              outboundCursor: beforeFailedRun,
+            });
+            expect(
+              (await poolB.query("select active_content_revision_id from library_books where id='book_fixture'"))
+                .rows[0].active_content_revision_id,
+            ).toBe(before);
+            expect((await poolB.query("select body from notes where id='target_note'")).rows[0]?.body).toBe(
+              'Do not lose this note',
+            );
+            await poolB.query('drop trigger reject_peer_finalize on book_replacement_runs');
+            await poolB.query('drop function reject_peer_finalize()');
             expect(await (await request(a, '/sync/peer/run', {})).json()).toMatchObject({ status: 'ready' });
             expect(
               (await poolB.query("select active_content_revision_id from library_books where id='book_fixture'"))
@@ -261,6 +395,40 @@ describe.skipIf(!harness)('two server reading position sync', () => {
                 )
               ).rows[0].n,
             ).toBe(1);
+            const outboundOptions = { fileName: 'fixture.txt', contentType: 'text/plain' };
+            await fixtureA.import(Buffer.from('Outbound initial.'), false, 'book_outbound', outboundOptions);
+            const outboundFirst = (
+              await poolA.query("select active_content_revision_id from library_books where id='book_outbound'")
+            ).rows[0].active_content_revision_id as string;
+            await fixtureA.import(Buffer.from('Outbound second.'), false, 'book_outbound', {
+              ...outboundOptions,
+              expectedBase: { kind: 'revision', contentRevisionId: outboundFirst },
+            });
+            const outboundSecond = (
+              await poolA.query("select active_content_revision_id from library_books where id='book_outbound'")
+            ).rows[0].active_content_revision_id as string;
+            await fixtureA.import(Buffer.from('Outbound third.'), false, 'book_outbound', {
+              ...outboundOptions,
+              expectedBase: { kind: 'revision', contentRevisionId: outboundSecond },
+            });
+            expect(await (await request(a, '/sync/peer/run', {})).json()).toMatchObject({ status: 'ready' });
+            expect(
+              (
+                await poolB.query(
+                  "select active_content_revision_id, content_revision_number from library_books where id='book_outbound'",
+                )
+              ).rows[0],
+            ).toEqual(
+              (
+                await poolA.query(
+                  "select active_content_revision_id, content_revision_number from library_books where id='book_outbound'",
+                )
+              ).rows[0],
+            );
+            expect(
+              (await poolB.query("select event_ids from sync_peer_content_receipts where book_id='book_outbound'"))
+                .rows[0].event_ids,
+            ).toHaveLength(2);
             const cursorBeforeRetry = Number(
               (await poolA.query('select outbound_cursor from sync_server_peers')).rows[0].outbound_cursor,
             );
@@ -272,6 +440,19 @@ describe.skipIf(!harness)('two server reading position sync', () => {
                 fileName: 'fixture.txt',
                 contentType: 'text/plain',
                 expectedBase: { kind: 'revision', contentRevisionId: changed },
+              },
+            );
+            const intermediate = (
+              await poolA.query("select active_content_revision_id from library_books where id='book_fixture'")
+            ).rows[0].active_content_revision_id as string;
+            await fixtureA.import(
+              Buffer.from('Chapter One\n\nKeep this paragraph.\n\nFinal offline ending.'),
+              false,
+              'book_fixture',
+              {
+                fileName: 'fixture.txt',
+                contentType: 'text/plain',
+                expectedBase: { kind: 'revision', contentRevisionId: intermediate },
               },
             );
             const nextKey = (
@@ -288,6 +469,12 @@ describe.skipIf(!harness)('two server reading position sync', () => {
             });
             fixtureA.objects.set(nextKey, savedSource!);
             expect(await (await request(a, '/sync/peer/run', {})).json()).toMatchObject({ status: 'ready' });
+            const receipt = await poolB.query(
+              "select base_revision_id, target_revision_id, event_ids from sync_peer_content_receipts where book_id='book_fixture'",
+            );
+            expect(receipt.rows).toHaveLength(1);
+            expect(receipt.rows[0].base_revision_id).toBe(changed);
+            expect(receipt.rows[0].event_ids).toHaveLength(2);
             const sharedBase = (
               await poolA.query("select active_content_revision_id from library_books where id='book_fixture'")
             ).rows[0].active_content_revision_id as string;
@@ -622,14 +809,21 @@ describe.skipIf(!harness)('two server reading position sync', () => {
           expect(await copiedBytes(a, poolA, missing.bookId)).toEqual(missing.bytes);
           // A collision preserves the target book and leaves the next event pending.
           await poolB.query("update book_objects set raw_text_hash='sha256:different' where id='source_new_a'");
-          const cursor = (await poolA.query('select outbound_cursor from sync_server_peers')).rows[0].outbound_cursor;
-          await poolA.query('update sync_server_peers set outbound_cursor=0');
+          const positionUpdate = await fetch(`${a.url}/api/books/${first.bookId}/reading-position`, {
+            method: 'PATCH',
+            headers: { Authorization: `Bearer ${a.token}`, 'Content-Type': 'application/json' },
+            body: JSON.stringify({ chapterId: 'chapter_new_a', updatedAt: '2026-09-24T05:00:00.000Z', scrollTop: 43 }),
+          });
+          expect(positionUpdate.status).toBe(200);
+          const cursor = Number(
+            (await poolA.query('select outbound_cursor from sync_server_peers')).rows[0].outbound_cursor,
+          );
           expect(await (await request(a, '/sync/peer/run', {})).json()).toMatchObject({
             status: 'blocked',
             lastError: 'peer_book_identity_mismatch',
-            outboundCursor: 0,
+            outboundCursor: cursor,
           });
-          expect(Number(cursor)).toBeGreaterThan(0);
+          expect(cursor).toBeGreaterThan(0);
           expect(
             (await poolB.query("select raw_text_hash from book_objects where id='source_new_a'")).rows[0].raw_text_hash,
           ).toBe('sha256:different');

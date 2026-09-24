@@ -13,11 +13,13 @@ import { exportHostedBackup, inspectHostedBackup, restoreHostedBackup } from '..
 import path from 'node:path';
 import {
   bookIdentity,
+  parsePeerBookContentChain,
   parsePeerBookContentChange,
   PeerBookContentError,
   restorePeerBookContent,
   restorePeerBookReplacement,
   type BookIdentity,
+  type PeerBookContentChain,
 } from '../../services/peer-book-content.js';
 import { querySyncEventsAfter, waitForSyncWriters } from './pull-query.js';
 import { applySyncEventsInTransaction } from './push-route.js';
@@ -308,17 +310,35 @@ async function ensurePeerBooks(
       localIdentity: local,
       remoteIdentity: remote,
     };
-    if (!source || imports.length !== 1 || (target && contentChangePayload(imports[0]) === undefined)) {
+    if (!source || imports.length === 0 || (target && contentChangePayload(imports[0]) === undefined)) {
       throw new PeerSyncFailure('peer_book_identity_mismatch', 'blocked', {
         ...context,
       });
     }
     let change: BookImportContentChangeV1 | undefined;
+    let chain: PeerBookContentChain | undefined;
     if (target) {
       if (!remoteFeatures.has('single_text_replacement_v1'))
         throw new PeerSyncFailure('peer_feature_unsupported', 'blocked', context);
+      if (imports.length > 1 && !remoteFeatures.has('text_fast_forward_v1'))
+        throw new PeerSyncFailure('peer_feature_unsupported', 'blocked', context);
+      if (imports.length > 32) throw new PeerSyncFailure('peer_book_change_chain_too_long', 'blocked', context);
+      if (
+        imports.length > 1 &&
+        events.some(
+          (item) =>
+            item.novelId === bookId &&
+            item.type !== 'book_imported' &&
+            Number(item.sequence) < Number(imports.at(-1)!.sequence),
+        )
+      )
+        throw new PeerSyncFailure('peer_interleaved_reader_change_requires_remap', 'blocked', context);
       try {
-        change = parsePeerBookContentChange(contentChangePayload(imports[0]));
+        if (imports.length > 1)
+          chain = parsePeerBookContentChain({
+            events: imports.map((item) => ({ id: item.id, content: contentChangePayload(item) })),
+          });
+        change = parsePeerBookContentChange(contentChangePayload(imports.at(-1)!));
       } catch {
         throw new PeerSyncFailure('peer_book_content_change_invalid', 'blocked', context);
       }
@@ -326,16 +346,53 @@ async function ensurePeerBooks(
         source.activeRevisionId !== change.targetRevisionId ||
         source.sourceHash !== change.sourceHash ||
         source.normalizedTextHash !== change.normalizedHash ||
-        target.activeRevisionId !== change.baseRevisionId
+        target.activeRevisionId !== (chain?.events[0].content.baseRevisionId ?? change.baseRevisionId)
       )
         throw new PeerSyncFailure('peer_book_revision_conflict', 'blocked', context);
+    } else if (imports.length > 1) {
+      if (!remoteFeatures.has('text_fast_forward_v1'))
+        throw new PeerSyncFailure('peer_feature_unsupported', 'blocked', context);
+      if (imports.length > 33) throw new PeerSyncFailure('peer_book_change_chain_too_long', 'blocked', context);
+      if (
+        contentChangePayload(imports[0]) !== undefined ||
+        events.some(
+          (item) =>
+            item.novelId === bookId &&
+            item.type !== 'book_imported' &&
+            Number(item.sequence) < Number(imports.at(-1)!.sequence),
+        )
+      )
+        throw new PeerSyncFailure('peer_book_change_chain_invalid', 'blocked', context);
+      try {
+        chain = parsePeerBookContentChain({
+          events: imports.slice(1).map((item) => ({ id: item.id, content: contentChangePayload(item) })),
+        });
+      } catch {
+        throw new PeerSyncFailure('peer_book_change_chain_invalid', 'blocked', context);
+      }
+      const last = chain.events.at(-1)!.content;
+      if (
+        source.activeRevisionId !== last.targetRevisionId ||
+        source.sourceHash !== last.sourceHash ||
+        source.normalizedTextHash !== last.normalizedHash
+      )
+        throw new PeerSyncFailure('peer_book_revision_conflict', 'blocked', context);
+    } else if (contentChangePayload(imports[0]) !== undefined) {
+      throw new PeerSyncFailure('peer_book_identity_mismatch', 'blocked', context);
     }
     const transferAbort = new AbortController();
     const transferSignal = AbortSignal.any([signal, transferAbort.signal]);
     try {
       const resource = `/api/sync/book-content/${encodeURIComponent(bookId)}`;
       if (direction === 'outbound') {
-        const archive = await exportHostedBackup(pool, config, transferSignal, false, bookId, change?.targetRevisionId);
+        const archive = await exportHostedBackup(
+          pool,
+          config,
+          transferSignal,
+          false,
+          bookId,
+          change?.targetRevisionId ?? chain?.events.at(-1)?.content.targetRevisionId,
+        );
         // Observe failures even if the receiver rejects before it consumes the stream.
         void archive.completion.catch(() => undefined);
         const response = (
@@ -348,9 +405,17 @@ async function ensurePeerBooks(
               archive: archive.readable,
               signal: transferSignal,
               timeoutMs: 60 * 60_000,
-              headers: change
-                ? { 'X-Moya-Content-Change': Buffer.from(JSON.stringify(change)).toString('base64url') }
-                : undefined,
+              headers:
+                change || chain
+                  ? {
+                      ...(change
+                        ? { 'X-Moya-Content-Change': Buffer.from(JSON.stringify(change)).toString('base64url') }
+                        : {}),
+                      ...(chain
+                        ? { 'X-Moya-Content-Chain': Buffer.from(JSON.stringify(chain)).toString('base64url') }
+                        : {}),
+                    }
+                  : undefined,
             },
           )
         ).body as { identity?: BookIdentity };
@@ -360,7 +425,9 @@ async function ensurePeerBooks(
       } else {
         const response = await fetch(
           new URL(
-            change ? `${resource}?revision=${encodeURIComponent(change.targetRevisionId)}` : resource,
+            change || chain
+              ? `${resource}?revision=${encodeURIComponent((change?.targetRevisionId ?? chain?.events.at(-1)?.content.targetRevisionId)!)}`
+              : resource,
             row.peer_url,
           ),
           {
@@ -389,11 +456,12 @@ async function ensurePeerBooks(
               bookId,
               transferSignal,
               change,
+              chain,
             );
             if (JSON.stringify(restored.identity) !== JSON.stringify(source))
               throw new PeerSyncFailure('peer_book_identity_changed', 'blocked', context);
           } else {
-            await restorePeerBookContent(pool, config, received.stage.parsed, bookId, transferSignal, source);
+            await restorePeerBookContent(pool, config, received.stage.parsed, bookId, transferSignal, source, chain);
           }
         } finally {
           await staging.discard(received.id);
@@ -429,7 +497,7 @@ function publicPeer(row: PeerRow | undefined) {
         bootstrapRequired: row.bootstrap_required,
         lastError: row.last_error,
         lastSyncedAt: row.last_synced_at,
-        scope: 'new_book_content_single_text_replacement_and_matching_reading_positions',
+        scope: 'new_book_content_text_revisions_up_to_32_and_matching_reading_positions',
       }
     : { configured: false };
 }
@@ -496,10 +564,20 @@ export function registerPeerReadingPositionRoutes(app: FastifyInstance, pool: pg
 
       const client = await pool.connect();
       let outbound: SyncEvent[];
+      let outboundWatermark = Number(row.outbound_cursor);
       try {
         await client.query('begin');
         const rows = await querySyncEventsAfter(client, userId, Number(row.outbound_cursor));
-        outbound = rows.map(mapSyncEventRow);
+        outboundWatermark = Number(rows.at(-1)?.sequence ?? row.outbound_cursor);
+        const echoes = rows.length
+          ? await client.query<{ event_id: string }>(
+              `select event_id from sync_peer_received_events
+                where user_id=$1 and peer_id=$2 and event_id = any($3::text[])`,
+              [userId, row.peer_id, rows.map((item) => item.id)],
+            )
+          : { rows: [] };
+        const receivedIds = new Set(echoes.rows.map((item) => item.event_id));
+        outbound = rows.filter((item) => !receivedIds.has(item.id)).map(mapSyncEventRow);
         await client.query('commit');
       } catch (error) {
         await client.query('rollback');
@@ -534,7 +612,14 @@ export function registerPeerReadingPositionRoutes(app: FastifyInstance, pool: pg
         const updated = await pool.query(
           `update sync_server_peers set outbound_cursor = $3, updated_at = now()
             where user_id = $1 and peer_id = $2 and outbound_cursor = $4`,
-          [userId, row.peer_id, outbound.at(-1)!.sequence, row.outbound_cursor],
+          [userId, row.peer_id, outboundWatermark, row.outbound_cursor],
+        );
+        if (updated.rowCount !== 1) throw new PeerSyncFailure('peer_cursor_changed', 'blocked');
+      } else if (outboundWatermark > Number(row.outbound_cursor)) {
+        const updated = await pool.query(
+          `update sync_server_peers set outbound_cursor=$3, updated_at=now()
+            where user_id=$1 and peer_id=$2 and outbound_cursor=$4`,
+          [userId, row.peer_id, outboundWatermark, row.outbound_cursor],
         );
         if (updated.rowCount !== 1) throw new PeerSyncFailure('peer_cursor_changed', 'blocked');
       }
@@ -592,6 +677,12 @@ export function registerPeerReadingPositionRoutes(app: FastifyInstance, pool: pg
               rejectedEvent ? eventConflict(rejectedEvent, 'inbound') : undefined,
             );
           }
+          await transaction.query(
+            `insert into sync_peer_received_events (user_id, peer_id, event_id)
+             select $1, $2, id from sync_events where id = any($3::text[])
+             on conflict do nothing`,
+            [userId, row.peer_id, inbound.map((event) => event.id)],
+          );
           const updated = await transaction.query(
             `update sync_server_peers set inbound_cursor = $3, status = 'ready', last_error = null,
                     last_synced_at = now(), updated_at = now()
