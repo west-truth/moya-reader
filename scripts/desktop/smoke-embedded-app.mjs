@@ -289,6 +289,34 @@ try {
   }
   evidence.nativeBackupSaved = true;
   await page.getByRole('button', { name: '백업 패널 닫기', exact: true }).click();
+  const localBackupPath = path.join(profile, 'previous-local-backup.zip');
+  const fixtureScript = path.join(import.meta.dirname, 'create-embedded-local-backup-fixture.ts');
+  const tsxCli = path.resolve(import.meta.dirname, '../../apps/server/node_modules/tsx/dist/cli.mjs');
+  const localFixture = JSON.parse(
+    execFileSync(process.execPath, [tsxCli, fixtureScript, localBackupPath], {
+      encoding: 'utf8',
+    }),
+  );
+  await page.getByRole('button', { name: '백업 및 복원 열기', exact: true }).click();
+  await page.locator('.backup-dialog input[type="file"]').setInputFiles(localBackupPath);
+  await page.getByText('기존 로컬 백업을 서버 저장 형식으로 검증했습니다.', { exact: false }).waitFor();
+  await page.getByRole('button', { name: '검사한 백업 복원', exact: true }).click();
+  await page.getByRole('button', { name: '백업 패널 닫기', exact: true }).waitFor({ state: 'hidden' });
+  const localHeaders = { Authorization: `Bearer ${connection.authToken}` };
+  const localManifest = await fetch(`${connection.url}/api/books/${localFixture.bookId}`, { headers: localHeaders });
+  assert.equal(localManifest.status, 200);
+  assert.equal((await localManifest.json()).readingPosition.scroll_top, 19);
+  const localBookmarks = await fetch(`${connection.url}/api/books/${localFixture.bookId}/bookmarks`, {
+    headers: localHeaders,
+  });
+  assert.equal(localBookmarks.status, 200);
+  assert.equal((await localBookmarks.json()).bookmarks[0].label, '기존 백업 북마크');
+  const localSource = await fetch(`${connection.url}/api/books/${localFixture.bookId}/source`, {
+    headers: localHeaders,
+  });
+  assert.equal(localSource.status, 200);
+  assert.deepEqual(Buffer.from(await localSource.arrayBuffer()), Buffer.from(localFixture.source, 'base64'));
+  evidence.nativeLocalBackupRestored = true;
   await page.getByRole('button', { name: '다른 기기 접속', exact: true }).click();
   await page.getByLabel('아이디', { exact: true }).fill('desktop-proof');
   await page.getByLabel('비밀번호', { exact: true }).fill('desktop proof account password');
