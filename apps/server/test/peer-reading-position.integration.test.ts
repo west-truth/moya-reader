@@ -168,6 +168,7 @@ describe.skipIf(!harness)('two server reading position sync', () => {
               username: 'source',
               password: 'long bootstrap password',
               startFromNow: true,
+              requireEmptyLibrary: true,
             }),
           });
           expect(paired.status).toBe(200);
@@ -197,6 +198,24 @@ describe.skipIf(!harness)('two server reading position sync', () => {
           const copied = Buffer.concat(chunks);
           expect(copied).toEqual(source);
           expect((await bootstrap()).status).toBe(409);
+          const linkedPeer = (await poolB.query('select peer_id from sync_server_peers where user_id = $1', [USER_B]))
+            .rows[0].peer_id;
+          const reconnect = await fetch(`${b.url}/api/sync/peer`, {
+            method: 'POST',
+            headers: { Authorization: `Bearer ${b.token}`, 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              url: a.url,
+              username: 'source',
+              password: 'long bootstrap password',
+              startFromNow: true,
+              requireEmptyLibrary: true,
+            }),
+          });
+          expect(reconnect.status).toBe(409);
+          expect(await reconnect.json()).toMatchObject({ error: 'peer_bootstrap_requires_empty_library' });
+          expect(
+            (await poolB.query('select peer_id from sync_server_peers where user_id = $1', [USER_B])).rows[0].peer_id,
+          ).toBe(linkedPeer);
 
           const changed = await fetch(`${a.url}/api/books/book_1/reading-position`, {
             method: 'PATCH',

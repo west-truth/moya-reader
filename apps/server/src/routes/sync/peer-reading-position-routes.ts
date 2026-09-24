@@ -469,7 +469,13 @@ export function registerPeerReadingPositionRoutes(app: FastifyInstance, pool: pg
     ...(bootstrapProgress ? { bootstrapProgress } : {}),
   }));
   app.post<{
-    Body: { url?: unknown; username?: unknown; password?: unknown; startFromNow?: unknown };
+    Body: {
+      url?: unknown;
+      username?: unknown;
+      password?: unknown;
+      startFromNow?: unknown;
+      requireEmptyLibrary?: unknown;
+    };
   }>('/api/sync/peer', { bodyLimit: 4096 }, async (request, reply) => {
     if (request.body?.startFromNow !== true) return reply.code(400).send({ error: 'start_from_now_required' });
     if (typeof request.body.username !== 'string' || typeof request.body.password !== 'string') {
@@ -485,6 +491,10 @@ export function registerPeerReadingPositionRoutes(app: FastifyInstance, pool: pg
     configuring = true;
     try {
       await running;
+      if (request.body.requireEmptyLibrary === true) {
+        const existing = await pool.query('select 1 from library_books where user_id = $1 limit 1', [userId]);
+        if (existing.rowCount) throw new PeerSyncFailure('peer_bootstrap_requires_empty_library', 'blocked');
+      }
       const login = await peerRequest(url, '/api/auth/login', undefined, {
         method: 'POST',
         body: { username: request.body.username, password: request.body.password },
@@ -549,7 +559,9 @@ export function registerPeerReadingPositionRoutes(app: FastifyInstance, pool: pg
       }
       return publicPeer(await loadPeer(pool, userId));
     } catch (error) {
-      return reply.code(400).send({ error: error instanceof PeerSyncFailure ? error.code : 'peer_pairing_failed' });
+      return reply
+        .code(error instanceof PeerSyncFailure && error.code === 'peer_bootstrap_requires_empty_library' ? 409 : 400)
+        .send({ error: error instanceof PeerSyncFailure ? error.code : 'peer_pairing_failed' });
     } finally {
       configuring = false;
     }

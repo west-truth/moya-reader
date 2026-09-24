@@ -112,7 +112,10 @@ export function ServerPeerSyncSettings({ client }: { readonly client: Pick<Remot
     try {
       await client.request(
         '/sync/peer',
-        { method: 'POST', body: JSON.stringify({ url: url.trim(), username, password, startFromNow: true }) },
+        {
+          method: 'POST',
+          body: JSON.stringify({ url: url.trim(), username, password, startFromNow: true, requireEmptyLibrary: true }),
+        },
         20_000,
       );
       setPassword('');

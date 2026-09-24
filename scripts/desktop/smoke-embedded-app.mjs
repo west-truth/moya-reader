@@ -93,12 +93,36 @@ async function close(fromTray = false) {
     await page.getByRole('button', { name: '창 닫기', exact: true }).click();
     await page.getByRole('button', { name: '서버와 모야 종료', exact: true }).click();
   }
-  await Promise.race([
-    exited,
-    delay(60_000, undefined, { ref: false }).then(() => {
-      throw new Error('App shutdown timed out');
-    }),
-  ]);
+  try {
+    await Promise.race([
+      exited,
+      delay(60_000, undefined, { ref: false }).then(() => {
+        throw new Error('App shutdown timed out');
+      }),
+    ]);
+  } catch (error) {
+    const status = await Promise.race([
+      page
+        .evaluate(() => window.__TAURI_INTERNALS__.invoke('desktop_embedded_server_status'))
+        .then(({ phase, running }) => ({ phase, running }))
+        .catch(() => undefined),
+      delay(3_000, undefined, { ref: false }).then(() => undefined),
+    ]);
+    const lifecycle = (await readFile(path.join(profile, 'api.log'), 'utf8').catch(() => ''))
+      .split('\n')
+      .flatMap((line) => {
+        try {
+          const record = JSON.parse(line);
+          return typeof record.msg === 'string' && record.msg.startsWith('server_shutdown_')
+            ? [{ time: record.time, msg: record.msg, signal: record.signal, errorName: record.errorName }]
+            : [];
+        } catch {
+          return [];
+        }
+      });
+    console.error('Native shutdown diagnostics:', JSON.stringify({ status, lifecycle }));
+    throw error;
+  }
   assert.equal(app.exitCode, 0);
   browser = undefined;
   await assert.rejects(readFile(path.join(profile, 'server.lock')), { code: 'ENOENT' });

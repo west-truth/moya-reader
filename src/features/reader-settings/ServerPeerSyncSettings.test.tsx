@@ -44,6 +44,7 @@ describe('server peer sync settings', () => {
           username: 'owner',
           password: 'secret password',
           startFromNow: true,
+          requireEmptyLibrary: true,
         }),
       },
       20_000,
