@@ -1,6 +1,6 @@
 # C0: 로컬 백업을 서버 서재로 옮기기 전 데이터 계약 조사
 
-작성: 2026-09-24. **변환 구현 전 조사 기록**이다. 현재 로컬 ZIP을 서버 복원에 직접 넣을 수 없다.
+작성: 2026-09-24. C0 조사 기록과 C1 구현 범위를 함께 적는다. 로컬 ZIP은 서버 ZIP과 호환되지 않으며, 서버 staging에서 검증·변환한 뒤 복원한다.
 
 ## 확인한 입력
 
@@ -42,3 +42,11 @@
 1. TXT/EPUB/PDF/만화 fixture의 기본 row/원본 자산 형태는 확인했다. 다음에는 문서 anchor·개인화 항목을 넣은 각 ZIP을 서버 열에 매핑하고 원본 해시를 검사한다. 기본 자료의 형태 확인만으로 전체 format을 승인하지 않는다.
 2. 서버 백업 staging에 누락된 사용자 소유 테이블을 더할지, 이전 전용 staging을 둘지 결정한다. 둘 다 기존 서버 복원 원자성·참조 검증·원본 보존을 유지해야 한다.
 3. 지원하지 않는 항목이 있는 ZIP을 부분 성공으로 보고하지 않는다. 명시적인 사전 inspection, skip/replace/copy, 같은 ZIP 재실행의 중복 정책을 정한 뒤 변환한다.
+
+## C1 기본 변환 구현 기록
+
+- `apps/server/src/services/local-backup-converter.ts`가 로컬 v1 ZIP의 entry 수·크기·경로·SHA-256을 확인한다. 기존 `BackupStaging`이 hosted manifest와 구분하고, 변환 결과를 기존 `restoreHostedBackup`에 넘긴다. 원본 로컬 ZIP과 기존 프로필을 직접 수정하지 않는다.
+- 활성 단일 revision을 가진 TXT/Markdown/EPUB/PDF/CBZ의 작품·원본·표지/embedded 자산·회차·문단 페이지를 매핑한다. 작품 메타데이터, 로컬 읽던 위치·북마크·하이라이트·메모·듣기 위치·고정 문서 주석·공유 Reader 설정도 지원된 필드를 옮긴다. 실제 테스트 fixture는 TXT 독서 위치/북마크와 PDF 페이지 북마크를 포함한다. PDF/CBZ 원본 페이지 hash를 확인하며 대상에 없는 텍스트 revision 기반 주석은 거부한다.
+- 비어 있지 않은 미지원 저장소, legacy 내용 행, 복합/추가 revision, `source_part`, 별도 문단 저장소, Reader anchor, Cloud Vault ID/읽기 방향/누적 독서 시간, 매핑되지 않은 필드/참조가 있으면 전체 ZIP을 거부한다. 따라서 **모든 기존 로컬 서재 이전 완료**로 표시하지 않는다. 로컬 백업은 256MiB 제한을 유지한다. 미전송 sync outbox는 원래 ZIP에 없다.
+- `apps/server/test/local-backup-converter.test.ts`가 실제 로컬 가져오기로 만든 네 포맷 ZIP과 처리할 수 없는 신규 필드 거부를 검사한다. `apps/server/test/local-backup-converter.integration.test.ts`는 실제 PostgreSQL/객체 저장소에 TXT ZIP을 복원하고 원본 바이트·위치·북마크, 중복 inspection, skip/replace/copy를 검사했다. 객체 업로드가 실패한 첫 복원에서 DB가 비어 있고 같은 ZIP의 재시도가 성공함도 확인했다.
+- 남은 조건: 다양한 기존 사용자 ZIP, 실제 데스크톱 파일 선택/inspection/복원 UI, 프로세스 강제 종료 뒤 재시도, 원본 보존, 256MiB 근처 메모리 측정. 변환기에서 거부한 저장소의 필드 계약을 조사해 작은 범위씩 추가한다.

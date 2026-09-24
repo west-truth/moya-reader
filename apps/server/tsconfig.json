@@ -13,6 +13,7 @@
   },
   "include": [
     "src/**/*.ts",
+    "test/**/*.ts",
     "../../src/vite-env.d.ts",
     "../../src/repositories/reader-defaults.ts",
     "../../src/sync/**/*.ts"

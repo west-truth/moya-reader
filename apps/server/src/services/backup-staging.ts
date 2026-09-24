@@ -10,10 +10,12 @@ import {
   parseHostedBackupArchive,
   type ParsedHostedBackupArchive,
 } from './hosted-backup-archive.js';
+import { convertLocalBackup } from './local-backup-converter.js';
 
 const INSPECTION_TTL = 30 * 60_000;
 interface StagedBackup {
   parsed: ParsedHostedBackupArchive;
+  source: 'hosted' | 'local';
   byteLength: number;
   expires: number;
   dispose(): Promise<void>;
@@ -24,7 +26,10 @@ export class BackupStaging {
   private readonly ready = new Map<string, StagedBackup>();
   private occupied = 0;
   private readonly timer: NodeJS.Timeout;
-  constructor(private readonly root: string) {
+  constructor(
+    private readonly root: string,
+    private readonly userId?: string,
+  ) {
     this.timer = setInterval(() => void this.expire().catch(() => undefined), 60_000);
     this.timer.unref();
   }
@@ -85,15 +90,23 @@ export class BackupStaging {
       await pipeline(chunks(), createWriteStream(zipPath, { flags: 'wx', mode: 0o600 }), { signal });
       const assets = path.join(directory, 'assets');
       await mkdir(assets);
-      const parsed = await parseHostedBackupArchive(await openAsBlob(zipPath), {
-        assetDirectory: assets,
-        signal,
-        archiveHash: `sha256:${archiveHash.digest('hex')}`,
-      });
+      const archiveBlob = await openAsBlob(zipPath);
+      const digest = `sha256:${archiveHash.digest('hex')}`;
+      let parsed: ParsedHostedBackupArchive;
+      let source: StagedBackup['source'] = 'hosted';
+      try {
+        parsed = await parseHostedBackupArchive(archiveBlob, { assetDirectory: assets, signal, archiveHash: digest });
+      } catch (error) {
+        if (!(error instanceof Error) || error.message !== 'Unsupported hosted backup manifest' || !this.userId) {
+          throw error;
+        }
+        parsed = await convertLocalBackup(archiveBlob, this.userId, digest, signal);
+        source = 'local';
+      }
       signal?.throwIfAborted();
       await rm(zipPath);
       const id = randomBytes(32).toString('base64url');
-      const stage = { parsed, byteLength, expires: Date.now() + INSPECTION_TTL, dispose };
+      const stage = { parsed, source, byteLength, expires: Date.now() + INSPECTION_TTL, dispose };
       this.ready.set(id, stage);
       return { id, stage };
     } catch (error) {

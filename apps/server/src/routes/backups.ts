@@ -45,7 +45,7 @@ function restoreOptions(headers: Record<string, string | string[] | undefined>):
 }
 
 export async function registerBackupRoutes(app: FastifyInstance, pool: pg.Pool, config: ServerConfig): Promise<void> {
-  const staging = new BackupStaging(path.join(config.dataDir, 'backup-staging'));
+  const staging = new BackupStaging(path.join(config.dataDir, 'backup-staging'), config.defaultUserId);
   const tickets = new Map<string, number>();
   app.addHook('onClose', async () => {
     tickets.clear();
@@ -160,7 +160,17 @@ export async function registerBackupRoutes(app: FastifyInstance, pool: pg.Pool, 
               received.stage.byteLength,
             );
             abort.signal.throwIfAborted();
-            return reply.header('Cache-Control', 'no-store').send({ ...inspection, stagedId });
+            return reply.header('Cache-Control', 'no-store').send({
+              ...inspection,
+              warnings:
+                received.stage.source === 'local'
+                  ? [
+                      ...inspection.warnings,
+                      '기존 로컬 백업을 서버 저장 형식으로 검증했습니다. 원본 ZIP은 그대로 보존하세요.',
+                    ]
+                  : inspection.warnings,
+              stagedId,
+            });
           }
           if (restoring) throw new Error('다른 백업을 복원 중입니다. 완료 후 다시 시도해 주세요.');
           const stage = staging.take(stagedId);
