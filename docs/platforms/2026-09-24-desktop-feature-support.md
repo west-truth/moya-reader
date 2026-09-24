@@ -1,23 +1,25 @@
 # 내장 서버 앱 기능 연결과 검증 현황
 
-기준: `feat/desktop-embedded-selfhost`, 2026-09-24. [구현 계획](2026-09-23-desktop-embedded-selfhost-plan.md)의 P2 지원표다. 기존 코드가 있다는 것과 후보 앱에서 검증을 통과했다는 것을 구분한다.
+기준: `feat/desktop-embedded-selfhost`, 2026-09-24. [구현 계획](2026-09-23-desktop-embedded-selfhost-plan.md)의 P2 지원표다. 기존 코드가 있다는 것과 후보 앱에서 검증을 통과했다는 것을 구분한다. 수집기 포함 Windows 기본 후보는 [`775a9ff` 실행](https://github.com/west-truth/moya-reader/actions/runs/35929350327)에서 통과했다. 실제 앱 기능과 설치 후보는 [`62514e5` 실행](https://github.com/west-truth/moya-reader/actions/runs/35932538748)에서 통과했다.
 
-다음 구현의 파일·작업 순서·완료 검사는 [실행 지침](2026-09-24-desktop-next-work-handoff.md)을 따른다. 수집기 A1부터 시작하며, 이전/동기화는 C0/D0에서 아직 미확정인 계약을 먼저 확인한다.
+다음 구현의 파일·작업 순서·완료 검사는 [실행 지침](2026-09-24-desktop-next-work-handoff.md)을 따른다. A1~A3은 기존 self-host 수집기와 로그인 브라우저를 앱에 연결하고 실제 Windows 패키지에서 검증했다. C0/D0 조사는 별도 문서에 기록했으며 C1/D1 구현은 남았다.
 
 | 기능 | 연결 상태 | 확인한 범위 / 남은 검사 |
 | --- | --- | --- |
 | 서재·TXT 읽기·읽던 위치 | 기존 서버 경로 사용 | Windows WebView와 별도 브라우저, 앱 재시작 통과 |
 | 만화·대용량 가져오기·원본 내보내기 | 기존 서버 경로 사용, 공통 업로드 제한 수정 | Linux 공통 UI에서 529MiB CBZ 11페이지 가져오기·이미지 표시·원본 SHA-256 일치 통과. Windows 대용량은 별도 대기 |
 | EPUB·PDF 읽기 | 기존 Remote reader/asset 경로 사용 | Linux/Windows 공통 UI에서 작은 EPUB/PDF 가져오기·원본 일치·본문/캔버스 표시 통과. PDF worker `.mjs` MIME 오류 수정 |
-| 검색·주석 | 기존 서버 경로 사용 | 이번 후보의 실제 사용 검증 대기 |
+| 검색·주석 | 기존 서버 경로 사용 | `62514e5` Windows WebView에서 TXT 검색·북마크 저장과 재시작 보존 통과. 문서 주석은 별도 검사 필요 |
 | 숫자 진행률 | 공통 UI와 서버 작업 정보 연결 보완 | 원 중앙 숫자 %, 업로드 바이트와 확정 이미지 저장 수, 단계 전환 때 이전 수치 초기화. 총량 미확정 작업은 단계 표시. 모든 소스 다운로드가 이미지 수를 제공하는 것은 아님 |
-| 서버 백업·복원 | 기존 RemoteBackupRepository/서버 ZIP 경로 사용 | Linux/Windows에서 새 프로필 복원·원본·독서 기록·재시작 통과. 대용량 백업과 Windows 저장 대화상자는 별도 검사 대상 |
+| 서버 백업·복원 | 기존 RemoteBackupRepository/서버 ZIP 경로 사용 | Linux/Windows에서 새 프로필 복원·원본·독서 기록·재시작 통과. 서버 ZIP의 문서/듣기 항목 누락을 보완하고 단위 검사 통과. `62514e5`의 Windows 앱에서 저장한 ZIP을 새 프로필에 복원하고 TXT/EPUB/PDF 3권·원본·북마크 검증 통과. 대용량 백업은 별도 검사 대상 |
 | 기존 로컬 자료 이전 | 기능 보완 필요 | 서버 ZIP은 `backend: hosted`를 요구한다. 이름/버전이 같아도 기존 IDB v1 백업을 그대로 복원할 수 있다고 볼 수 없음. 기존 자료를 보존하며 서버로 변환하는 경로가 남음 |
-| 소스·확장·프록시 | 데스크톱 연결 보완 필요 | `App.tsx`의 일반 확장은 Remote runtime에서 서버 실행을 선택한다. `platform/webnovel-metadata-collector.ts`는 데스크톱이면 native 수집기를 선택하므로 현재 후보의 내장 서버 경로에 맞춰 보완해야 한다. 수집기·브라우저 실행 파일은 현재 런타임에 포함하지 않았으며 실제 소스 검증도 대기 |
+| 소스·확장·프록시 | 기존 self-host gateway와 수집기 재사용 | 명시적 서버 연결을 native 경로보다 우선하고 기존 브라우저/standalone 경로를 유지한다. 동봉 수집기·Chromium 시작, 인증 gateway, 공개 metadata/표지 요청을 `775a9ff` Windows CI에서 통과. 실제 계정 로그인과 사이트별 유료 본문 수집은 미검증 |
 | AI·TTS | 기존 서버/공통 UI 경로 검증 대기 | 공급자 설정·기기 음성 출력·native capability 실제 사용 검사 필요 |
 | 비정상 종료 복구 | 데스크톱 연결 보완 | OS 프로필 잠금과 실제 소유 프로세스 확인 후 복구. 손상된 기록·소유권 불확실 시 자동 삭제하지 않음. 작업 실행 도중 전원 종료, 공유 중 launcher 종료는 추가 검사 대상 |
-| 외부 접속 | 기존 공통 웹과 서버 인증 사용 | Quick Tunnel 기본 선택, 직접 LAN/Tailscale 및 고정 터널 옵션. 같은 PC의 별도 브라우저 및 Linux 실제 Quick Tunnel 통과. 타 기기와 고정 도메인 검증 대기 |
+| 외부 접속 | 기존 공통 웹과 서버 인증 사용 | Quick Tunnel 기본 선택, 직접 LAN/Tailscale 및 고정 터널 옵션. 같은 PC의 별도 브라우저 및 Linux 실제 Quick Tunnel 통과. 직접 연결의 주소 소실과 터널 프로세스 생존 중 공개 경로 실패를 합성 검사로 확인하고 공유 상태를 해제하도록 보완했다. 물리 타 기기와 고정 도메인 검증 대기 |
 | 독립 서버 간 동기화 | 기능 보완 필요 | 공통 v1/v2 이벤트 push/pull 계약은 존재. Remote runtime에 서버 간 복제 실행기가 연결된 상태는 아님. 원본·snapshot·삭제·충돌·재전송 지원표를 확정한 뒤 구현 |
+
+수집기 포함 Windows 설치 후보는 **276,188,625 bytes**이며 설치 후 개발 도구를 PATH에서 제거한 상태에서 동봉 서버 시작·종료를 통과했다. 런타임 payload는 **862,344,665 bytes**이고, 그중 수집기 서비스·라이선스 파일은 **60,525,066 bytes**, 로그인 Chromium은 **286,993,460 bytes**다. payload 수치는 앱 실행 파일·설치 선행 구성을 제외한다. CI runner는 VC/WebView가 이미 있는 환경이므로 필수 구성이 없는 새 PC까지 확인한 결과는 아니다.
 
 ## 대용량 실제 검사
 
