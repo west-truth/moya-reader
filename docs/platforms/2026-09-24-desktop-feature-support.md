@@ -12,9 +12,9 @@
 | 검색·주석 | TXT·PDF 기존 서버 저장 경로 사용 | `62514e5` Windows WebView에서 TXT 검색·북마크 저장과 재시작 보존 통과. PDF 주석은 브라우저 IndexedDB에만 기록되던 결함을 서버 API와 원격 repository로 수정했다. [`fba22b5` Windows 실행](https://github.com/west-truth/moya-reader/actions/runs/35946363523)에서 native 저장·재시작·백업 복원 통과 |
 | 숫자 진행률 | 공통 UI와 서버 작업 정보 연결 보완 | 원 중앙 숫자 %, 업로드 바이트와 확정 이미지 저장 수, 단계 전환 때 이전 수치 초기화. 총량 미확정 작업은 단계 표시. 모든 소스 다운로드가 이미지 수를 제공하는 것은 아님 |
 | 서버 백업·복원 | 기존 RemoteBackupRepository/서버 ZIP 경로 사용 | Linux/Windows에서 새 프로필 복원·원본·독서 기록·재시작 통과. 서버 ZIP의 문서/듣기 항목 누락을 보완하고 단위 검사 통과. `62514e5`의 Windows WebView 백업 버튼에서 저장 파일 선택기를 검사 대역으로 교체해 ZIP 바이트를 받아 새 프로필에 복원하고 TXT/EPUB/PDF 3권·원본·북마크를 검증했다. OS 저장 대화상자 자체와 대용량 백업은 별도 검사 대상 |
-| 기존 로컬 자료 이전 | 기본 v1 ZIP staging 변환·DB 복원 구현 | 실제 로컬 TXT/EPUB/PDF/CBZ ZIP의 원본·자산 변환과 TXT 독서 위치/북마크, PDF 페이지 주석 검사 통과. PostgreSQL·객체 저장소에서 TXT 복원과 skip/replace/copy 통과. 매핑되지 않은 자료가 있으면 전체 ZIP 거부. 실제 앱 이전 UI, 다양한 사용자 자료·중단 재시도는 남음 |
+| 기존 로컬 자료 이전 | 기본 v1 ZIP staging 변환·DB 복원 구현 | 실제 로컬 TXT/EPUB/PDF/CBZ ZIP의 원본·자산 변환과 TXT 독서 위치/북마크, PDF 페이지 주석 검사 통과. PostgreSQL·객체 저장소에서 TXT 복원과 skip/replace/copy 통과. [Windows 앱 창 검사 35948632633](https://github.com/west-truth/moya-reader/actions/runs/35948632633)에서 파일 입력→inspection→복원 후 원본·위치·북마크 확인. 매핑되지 않은 자료가 있으면 전체 ZIP 거부. OS 파일 대화상자, 다양한 사용자 자료·프로세스 중단 재시도는 남음 |
 | 소스·확장·프록시 | 기존 self-host gateway와 수집기 재사용 | 명시적 서버 연결을 native 경로보다 우선하고 기존 브라우저/standalone 경로를 유지한다. 동봉 수집기·Chromium 시작, 인증 gateway, 공개 metadata/표지 요청을 `775a9ff` Windows CI에서 통과. 실제 계정 로그인과 사이트별 유료 본문 수집은 미검증 |
-| AI·TTS | 기존 서버/공통 UI 경로 검증 대기 | 공급자 설정·기기 음성 출력·native capability 실제 사용 검사 필요 |
+| AI·TTS | 연결된 서버의 공통 실행 경로 선택 | `createAppRuntime`은 Remote API가 있으면 서버 provider control·분석 gateway를 택하고 native 분석 host를 중복 실행하지 않는다. runtime/TTS controller 단위 검사는 통과했다. 공급자 키가 없어 실제 외부 AI/TTS 요청과 기기 음성 출력은 미검증 |
 | 비정상 종료 복구 | 데스크톱 연결 보완 | OS 프로필 잠금과 실제 소유 프로세스 확인 후 복구. 손상된 기록·소유권 불확실 시 자동 삭제하지 않음. 작업 실행 도중 전원 종료, 공유 중 launcher 종료는 추가 검사 대상 |
 | 외부 접속 | 기존 공통 웹과 서버 인증 사용 | Quick Tunnel 기본 선택, 직접 LAN/Tailscale 및 고정 터널 옵션. 같은 PC의 별도 브라우저 및 Linux 실제 Quick Tunnel 통과. 직접 연결의 주소 소실과 터널 프로세스 생존 중 공개 경로 실패를 합성 검사로 확인하고 공유 상태를 해제하도록 보완했다. 물리 타 기기와 고정 도메인 검증 대기 |
 | 독립 서버 간 동기화 | 기능 보완 필요 | 공통 v1/v2 이벤트 push/pull 계약은 존재. Remote runtime에 서버 간 복제 실행기가 연결된 상태는 아님. 원본·snapshot·삭제·충돌·재전송 지원표를 확정한 뒤 구현 |
