@@ -36,6 +36,7 @@
 - 인증된 `POST /api/sync/peer`는 `url`, `username`, `password`, `startFromNow: true`를 받는다. **초기 복제는 없으며 연결 시점 이전 이벤트를 명시적으로 제외한다.** 재연결에 같은 옵션을 쓰면 그 사이 처리하지 않은 변경도 제외되므로 사용자가 이 범위를 알고 호출해야 한다. 상대 URL은 HTTPS 또는 같은 기기 loopback HTTP만 허용한다. `GET /api/sync/peer`는 비밀 없이 상태와 cursor를 보여 주고, `POST /api/sync/peer/run`은 즉시 실행, `DELETE /api/sync/peer`는 연결 해제와 가능한 경우 상대 세션 로그아웃을 수행한다. 아직 공통 UI에 동기화 설정은 없다.
 - 각 book ID의 원본 hash·활성 revision ID·정규화 hash·회차 ID 순서가 양쪽에서 같을 때만 `reading_position_updated/deleted`를 교환한다. 다른 사건이 앞에 있으면 cursor를 건너뛰지 않고 `blocked`가 된다. 상대가 accepted ID를 모두 반환한 뒤 outbound cursor를 저장한다. inbound 이벤트 적용과 cursor 저장은 한 DB transaction이다. 같은 ID 재전송은 내용이 같을 때만 성공한다. 같은 timestamp의 다른 독서 위치는 거부해 기존 위치를 보존한다.
 - 서로 다른 기본 사용자 ID(`user_desktop`/`user_dev`)를 둔 두 독립 PostgreSQL DB/실제 HTTP 서버 통합 검사에서 A→B, 상대 서버 일시 중단·동일 주소 재시작 뒤 재연결, API 서버 재시작 후 B→A, 삭제 이벤트, 중복 재전송, 같은 시각 충돌, 미지원 북마크 앞에서 cursor 보존, session 삭제 후 재로그인을 확인했다. 상대 HTTP 요청이 응답 없이 열린 중에도 API 종료가 요청을 취소하고 2초 안에 끝나는 검사도 통과했다. 기존 sync route 32개 회귀 검사와 서버 production build도 통과했다.
+- 독서 위치 REST writer의 위치 변경·삭제와 sync event 기록을 같은 PostgreSQL transaction으로 묶었다. 같은 event ID의 재요청은 내용이 동일할 때만 허용한다. 실제 DB에서 event 기록 실패를 주입해 위치 행이 원상복구되고, 같은 시각·같은 기기에서 내용만 바꾼 재요청이 409로 거부되는 것을 확인했다. 모든 서버 writer의 원자성을 보장하는 변경은 아니다.
 - **아직 없는 기능:** 최초 작품/원본/자산과 기존 읽던 위치 snapshot, 서로 다른 작품 ID·revision 매핑, 주석·메타데이터·삭제·AI/TTS 동기화, 충돌 해결 UI, 일반 사용자 연결 UI, 비 loopback HTTP 사설망 연결, 실제 다른 기기 사용 검증. `서버 서재 열기`를 오프라인 복제와 동일하게 표시하지 않는다.
 
 D1 이후에는 작품·원본 snapshot/자산, 삭제, 주석/메타데이터, 오프라인 변경 순으로 계약을 넓힌다.

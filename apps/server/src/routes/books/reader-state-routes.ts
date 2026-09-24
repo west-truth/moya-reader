@@ -27,8 +27,11 @@ export async function registerReaderStateRoutes(
       const body = parsed.value;
 
       const updatedAt = body.updatedAt;
-      const positionResult = await pool.query(
-        `
+      const client = await pool.connect();
+      try {
+        await client.query('begin');
+        const positionResult = await client.query(
+          `
           with book_write_lock as (
             select pg_advisory_xact_lock(hashtextextended($1, 7319))
           ),
@@ -77,48 +80,58 @@ export async function registerReaderStateRoutes(
                  exists(select 1 from position_write) as applied,
                  exists(select 1 from read_write) as read_applied
         `,
-        [
-          request.params.bookId,
-          config.defaultUserId,
-          body.chapterId,
-          body.paragraphId,
-          body.paragraphIndex ?? 0,
-          body.offsetInParagraph ?? 0,
-          body.chapterProgress ?? 0,
-          body.scrollTop ?? 0,
-          body.deviceId,
-          updatedAt,
-          body.documentSectionId ?? null,
-        ],
-      );
-      if (positionResult.rows[0]?.chapter_found !== true) {
-        return reply.code(404).send({ error: 'book or chapter not found' });
-      }
-      const applied = positionResult.rows[0]?.applied === true;
-      if (!applied && !positionResult.rows[0]?.read_applied) {
-        return { ok: true, applied: false };
-      }
+          [
+            request.params.bookId,
+            config.defaultUserId,
+            body.chapterId,
+            body.paragraphId,
+            body.paragraphIndex ?? 0,
+            body.offsetInParagraph ?? 0,
+            body.chapterProgress ?? 0,
+            body.scrollTop ?? 0,
+            body.deviceId,
+            updatedAt,
+            body.documentSectionId ?? null,
+          ],
+        );
+        if (positionResult.rows[0]?.chapter_found !== true) {
+          await client.query('rollback');
+          return reply.code(404).send({ error: 'book or chapter not found' });
+        }
+        const applied = positionResult.rows[0]?.applied === true;
+        if (!applied && !positionResult.rows[0]?.read_applied) {
+          await client.query('rollback');
+          return { ok: true, applied: false };
+        }
 
-      const positionId = `reading_position_${request.params.bookId}`;
-      const payload = { position: { ...body, bookId: request.params.bookId, updatedAt } };
-      await insertServerSyncEvent(pool, config.defaultUserId, {
-        seed: `reading_position:${request.params.bookId}:${updatedAt}`,
-        type: 'reading_position_updated',
-        bookId: request.params.bookId,
-        entityId: positionId,
-        deviceId: body.deviceId,
-        payload,
-        revision: createServerRevision({
-          entityType: 'reading_position',
+        const positionId = `reading_position_${request.params.bookId}`;
+        const payload = { position: { ...body, bookId: request.params.bookId, updatedAt } };
+        await insertServerSyncEvent(client, config.defaultUserId, {
+          seed: `reading_position:${request.params.bookId}:${updatedAt}`,
+          requireMatchingReplay: true,
+          type: 'reading_position_updated',
+          bookId: request.params.bookId,
           entityId: positionId,
-          novelId: request.params.bookId,
-          updatedAt,
+          deviceId: body.deviceId,
           payload,
-        }),
-        createdAt: updatedAt,
-      });
+          revision: createServerRevision({
+            entityType: 'reading_position',
+            entityId: positionId,
+            novelId: request.params.bookId,
+            updatedAt,
+            payload,
+          }),
+          createdAt: updatedAt,
+        });
 
-      return { ok: true, applied };
+        await client.query('commit');
+        return { ok: true, applied };
+      } catch (error) {
+        await client.query('rollback');
+        throw error;
+      } finally {
+        client.release();
+      }
     },
   );
 
@@ -130,8 +143,12 @@ export async function registerReaderStateRoutes(
       const body = parsed.value;
       const positionId = `reading_position_${request.params.bookId}`;
 
-      const status = await pool.query<{ book_exists: boolean; should_apply: boolean }>(
-        `
+      const client = await pool.connect();
+      try {
+        await client.query('begin');
+        await client.query('select pg_advisory_xact_lock(hashtextextended($1, 7319))', [request.params.bookId]);
+        const status = await client.query<{ book_exists: boolean; should_apply: boolean }>(
+          `
           select
             exists(select 1 from library_books where id = $1 and user_id = $2 and deleted_at is null) as book_exists,
             coalesce(
@@ -153,43 +170,57 @@ export async function registerReaderStateRoutes(
               true
             ) as should_apply
         `,
-        [request.params.bookId, config.defaultUserId, body.updatedAt, positionId],
-      );
-      const row = status.rows[0];
-      if (!row?.book_exists) return reply.code(404).send({ error: 'book not found' });
-      if (!row.should_apply) return { ok: true, applied: false };
+          [request.params.bookId, config.defaultUserId, body.updatedAt, positionId],
+        );
+        const row = status.rows[0];
+        if (!row?.book_exists) {
+          await client.query('rollback');
+          return reply.code(404).send({ error: 'book not found' });
+        }
+        if (!row.should_apply) {
+          await client.query('rollback');
+          return { ok: true, applied: false };
+        }
 
-      await pool.query('delete from reading_positions where book_id = $1 and user_id = $2', [
-        request.params.bookId,
-        config.defaultUserId,
-      ]);
-      await pool.query('delete from fixed_document_section_read_states where book_id = $1 and user_id = $2', [
-        request.params.bookId,
-        config.defaultUserId,
-      ]);
-      const payload = {
-        id: positionId,
-        bookId: request.params.bookId,
-        deletedAt: body.updatedAt,
-      };
-      await insertServerSyncEvent(pool, config.defaultUserId, {
-        seed: `reading_position_deleted:${request.params.bookId}:${body.updatedAt}`,
-        type: 'reading_position_deleted',
-        bookId: request.params.bookId,
-        entityId: positionId,
-        deviceId: body.deviceId,
-        payload,
-        revision: createServerRevision({
-          entityType: 'reading_position',
-          entityId: positionId,
-          novelId: request.params.bookId,
+        await client.query('delete from reading_positions where book_id = $1 and user_id = $2', [
+          request.params.bookId,
+          config.defaultUserId,
+        ]);
+        await client.query('delete from fixed_document_section_read_states where book_id = $1 and user_id = $2', [
+          request.params.bookId,
+          config.defaultUserId,
+        ]);
+        const payload = {
+          id: positionId,
+          bookId: request.params.bookId,
           deletedAt: body.updatedAt,
+        };
+        await insertServerSyncEvent(client, config.defaultUserId, {
+          seed: `reading_position_deleted:${request.params.bookId}:${body.updatedAt}`,
+          requireMatchingReplay: true,
+          type: 'reading_position_deleted',
+          bookId: request.params.bookId,
+          entityId: positionId,
+          deviceId: body.deviceId,
           payload,
-        }),
-        createdAt: body.updatedAt,
-      });
+          revision: createServerRevision({
+            entityType: 'reading_position',
+            entityId: positionId,
+            novelId: request.params.bookId,
+            deletedAt: body.updatedAt,
+            payload,
+          }),
+          createdAt: body.updatedAt,
+        });
 
-      return { ok: true, applied: true };
+        await client.query('commit');
+        return { ok: true, applied: true };
+      } catch (error) {
+        await client.query('rollback');
+        throw error;
+      } finally {
+        client.release();
+      }
     },
   );
 

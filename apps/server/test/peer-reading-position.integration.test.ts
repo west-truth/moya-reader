@@ -13,6 +13,7 @@ import { registerAuthHook } from '../src/auth.js';
 import { migrateDatabase } from '../src/db/migrate.js';
 import type { ServerConfig } from '../src/config.js';
 import { registerSelfHostAuthRoutes } from '../src/routes/auth.js';
+import { registerReaderStateRoutes } from '../src/routes/books/reader-state-routes.js';
 import { registerSyncRoutes } from '../src/routes/sync.js';
 import { PostgresSelfHostAuthStore, SelfHostAuthService } from '../src/services/self-host-auth-service.js';
 import { startPostgresIntegrationHarness } from '../src/services/id-v2-migration/postgres-integration-harness.js';
@@ -107,6 +108,7 @@ async function testServer(pool: pg.Pool, directory: string, token: string, userI
   const auth = new SelfHostAuthService(new PostgresSelfHostAuthStore(pool), userId);
   await registerAuthHook(app, config, auth);
   await registerSelfHostAuthRoutes(app, auth, config);
+  await registerReaderStateRoutes(app, pool, config);
   await registerSyncRoutes(app, pool, config);
   const url = await app.listen({ host: '127.0.0.1', port });
   return { app, url, token };
@@ -132,6 +134,71 @@ async function withTwoDatabases(run: (poolA: pg.Pool, poolB: pg.Pool) => Promise
 }
 
 describe.skipIf(!harness)('two server reading position sync', () => {
+  it('commits a local position and its event together, and rejects a changed replay', async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), 'moya-position-atomic-'));
+    try {
+      await withTwoDatabases(async (pool) => {
+        await fixtureBook(pool, USER_A);
+        const server = await testServer(pool, directory, 'native_a', USER_A);
+        try {
+          const position = {
+            chapterId: 'chapter_1',
+            paragraphId: 'paragraph_1',
+            chapterProgress: 0.25,
+            scrollTop: 120,
+            deviceId: 'device_a',
+            updatedAt: '2026-09-24T01:00:00.000Z',
+          };
+          const request = (method: 'PATCH' | 'DELETE', body: Record<string, unknown>) =>
+            fetch(`${server.url}/api/books/book_1/reading-position`, {
+              method,
+              headers: { Authorization: `Bearer ${server.token}`, 'Content-Type': 'application/json' },
+              body: JSON.stringify(body),
+            });
+          const rejectEvent = async () => {
+            await pool.query(`create function reject_position_event() returns trigger language plpgsql as $$
+              begin raise exception 'injected event write failure'; end $$`);
+            await pool.query(`create trigger reject_position_event before insert on sync_events
+              for each row execute function reject_position_event()`);
+          };
+          const allowEvent = async () => {
+            await pool.query('drop trigger reject_position_event on sync_events');
+            await pool.query('drop function reject_position_event()');
+          };
+          await rejectEvent();
+          expect((await request('PATCH', position)).status).toBe(500);
+          expect((await pool.query('select count(*)::int as count from reading_positions')).rows[0].count).toBe(0);
+          await allowEvent();
+
+          expect((await request('PATCH', position)).status).toBe(200);
+          expect((await request('PATCH', position)).status).toBe(200);
+          expect(
+            (await pool.query("select count(*)::int as count from sync_events where type='reading_position_updated'"))
+              .rows[0].count,
+          ).toBe(1);
+          expect((await request('PATCH', { ...position, scrollTop: 777 })).status).toBe(409);
+          expect((await pool.query('select scroll_top from reading_positions')).rows[0].scroll_top).toBe(120);
+
+          await rejectEvent();
+          const deletion = { deviceId: 'device_a', updatedAt: '2026-09-24T02:00:00.000Z' };
+          expect((await request('DELETE', deletion)).status).toBe(500);
+          expect((await pool.query('select count(*)::int as count from reading_positions')).rows[0].count).toBe(1);
+          await allowEvent();
+          expect((await request('DELETE', deletion)).status).toBe(200);
+          expect((await pool.query('select count(*)::int as count from reading_positions')).rows[0].count).toBe(0);
+          expect(
+            (await pool.query("select count(*)::int as count from sync_events where type='reading_position_deleted'"))
+              .rows[0].count,
+          ).toBe(1);
+        } finally {
+          await server.app.close();
+        }
+      });
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  }, 30_000);
+
   it('pairs with an account session and exchanges new positions in both directions across a restart', async () => {
     const directory = await mkdtemp(path.join(tmpdir(), 'moya-peer-sync-'));
     try {
@@ -175,13 +242,21 @@ describe.skipIf(!harness)('two server reading position sync', () => {
           const secret = await poolA.query('select session_ciphertext from sync_server_peers');
           expect(secret.rows[0].session_ciphertext).not.toContain('moya_session');
 
-          const aPosition = ownedEvent(readingPositionEvent('peer_a_position', '2026-09-24T01:00:00.000Z'), USER_A);
-          const pushA = await fetch(`${a.url}/api/sync/events`, {
-            method: 'POST',
+          const writeA = await fetch(`${a.url}/api/books/book_1/reading-position`, {
+            method: 'PATCH',
             headers: { Authorization: `Bearer ${a.token}`, 'Content-Type': 'application/json' },
-            body: JSON.stringify(v2PushEnvelope([aPosition])),
+            body: JSON.stringify({
+              chapterId: 'chapter_1',
+              paragraphId: 'paragraph_1',
+              paragraphIndex: 12,
+              offsetInParagraph: 3,
+              chapterProgress: 0.42,
+              scrollTop: 240,
+              deviceId: 'device_a',
+              updatedAt: '2026-09-24T01:00:00.000Z',
+            }),
           });
-          expect((await pushA.json()).acceptedIds).toEqual([aPosition.id]);
+          expect(await writeA.json()).toMatchObject({ ok: true, applied: true });
           const identities = await Promise.all([
             fetch(`${a.url}/api/sync/book-identity/book_1`, { headers: { Authorization: `Bearer ${a.token}` } }).then(
               (r) => r.json(),

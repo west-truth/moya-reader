@@ -38,6 +38,8 @@ Windows 초기 성공: [35911331300](https://github.com/west-truth/moya-reader/a
 - **C0/D0:** [로컬 백업 매핑 조사](2026-09-24-local-backup-mapping-audit.md)와 [서버 동기화 계약 조사](2026-09-24-server-sync-contract-audit.md)를 작성했다. 서버 ZIP의 문서·듣기 상태 누락은 `3d3bb9b`에서 보완했다.
 - **C1 기본 ZIP 이전:** 로컬 v1 ZIP을 기존 서버 staging/복원 경계에서 검사·변환한다. TXT/EPUB/PDF/CBZ fixture의 원본·자산·회차·문단과 PDF 페이지 주석을 검증했다. 실제 PostgreSQL/객체 저장소에서 TXT 원본·독서 위치·북마크와 재적용 skip/replace/copy를 통과했다. [Windows 앱 창 검사 35948632633](https://github.com/west-truth/moya-reader/actions/runs/35948632633), 코드 `9fe6097`에서 파일 입력→로컬 ZIP 검사 안내→복원 버튼→서버 원본·위치·북마크 확인도 통과했다. OS 파일 선택 대화상자 조작은 검사 범위 밖이다. 매핑되지 않은 자료가 있으면 부분 복원하지 않고 거부한다. 지원/거부 범위는 [C0 문서](2026-09-24-local-backup-mapping-audit.md)의 구현 기록을 따른다. 기존 사용자의 다양한 ZIP과 프로세스 중단/재시도 검증은 남았다.
 - **D1 독서 위치 첫 범위:** 동일 book/source hash/active revision/chapter ID를 가진 두 독립 서버에서 새 독서 위치만 교환하는 API 실행기를 추가했다. 서버 DB의 방향별 cursor, 암호화한 상대 계정 session, 15초 백그라운드 실행을 사용한다. 두 실제 PostgreSQL DB/HTTP 서버에서 A→B, 재시작 후 B→A, 같은 시각 충돌·미지원 북마크·세션 만료를 검사했다. 초기 작품/원본 복제와 공통 UI 연결은 없다. 세부 계약은 [D0/D1 기록](2026-09-24-server-sync-contract-audit.md)을 따른다.
+- **D1 저장 원자성 보완:** 독서 위치 REST 저장·삭제와 sync event를 한 DB transaction으로 묶었다. 사건 기록 실패를 실제 DB에 주입하여 위치 변경이 남지 않는지 확인했고, 같은 ID에 다른 내용의 재요청은 409로 거부한다. 관련 서버 회귀 검사 33개와 타입 검사가 통과했다. 다른 자료의 writer는 이 검사로 보장되지 않는다.
+- **Windows 복구 재검증:** [실행 35952587865](https://github.com/west-truth/moya-reader/actions/runs/35952587865), 코드 `52fb8d7`에서 PostgreSQL 소유권 조회의 제한된 재시도와 launcher 강제 종료 후 동일 프로필 복구가 통과했다. 같은 실행의 실제 앱 창, 공유·재시작, 패키징 서버 독서도 통과했다. 소유권을 확인할 수 없을 때 기존 자료를 보존하고 복구를 중단한다.
 
 ## 2. 실행 순서
 
