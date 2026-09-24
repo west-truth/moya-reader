@@ -740,9 +740,20 @@ export function registerPeerReadingPositionRoutes(app: FastifyInstance, pool: pg
         'select count(*)::text as count from library_books where user_id = $1',
         [userId],
       );
-      if (Number(localBooks.rows[0].count) !== 0 || (await watermark(pool, userId)) !== Number(row.outbound_cursor)) {
+      if (Number(localBooks.rows[0].count) !== 0) {
         return reply.code(409).send({ error: 'peer_bootstrap_requires_empty_library' });
       }
+      const localCursor = await watermark(pool, userId);
+      const localChanges = await pool.query(
+        `select 1 from sync_events where user_id=$1 and sequence > $2 and sequence <= $3
+           and type <> 'settings_updated' limit 1`,
+        [userId, row.outbound_cursor, localCursor],
+      );
+      if (localChanges.rows.length) return reply.code(409).send({ error: 'peer_bootstrap_library_changed' });
+      // Settings can be saved while opening the native panel after pairing.
+      // Keep those local preferences and establish their initial baseline only
+      // with the successful copy commit; a failed copy must remain retryable.
+      const keepLocalSettings = localCursor !== Number(row.outbound_cursor);
       const reserved = await pool.query(
         `update sync_server_peers set status = 'bootstrapping', bootstrap_required = true, last_error = null, updated_at = now()
           where user_id = $1 and peer_id = $2`,
@@ -815,7 +826,9 @@ export function registerPeerReadingPositionRoutes(app: FastifyInstance, pool: pg
         restored = await restoreHostedBackup(
           pool,
           config,
-          staged.parsed,
+          keepLocalSettings
+            ? { ...staged.parsed, tables: new Map(staged.parsed.tables).set('reader_settings', []) }
+            : staged.parsed,
           { defaultConflictResolution: 'skip' },
           signal,
           {
@@ -837,10 +850,10 @@ export function registerPeerReadingPositionRoutes(app: FastifyInstance, pool: pg
             },
             beforeCommit: async (client) => {
               const updated = await client.query(
-                `update sync_server_peers set inbound_cursor = $3, status = 'ready', bootstrap_required = false, last_error = null,
+                `update sync_server_peers set inbound_cursor = $3, outbound_cursor = $5, status = 'ready', bootstrap_required = false, last_error = null,
                         last_synced_at = now(), updated_at = now()
                   where user_id = $1 and peer_id = $2 and status = 'bootstrapping' and inbound_cursor = $4`,
-                [userId, peerId, before.cursor, row.inbound_cursor],
+                [userId, peerId, before.cursor, row.inbound_cursor, localCursor],
               );
               if (updated.rowCount !== 1) throw new PeerSyncFailure('peer_configuration_changed', 'blocked');
             },

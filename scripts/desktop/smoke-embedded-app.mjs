@@ -203,7 +203,34 @@ try {
   await page.getByRole('button', { name: '설정 닫기', exact: true }).click();
   await page.getByRole('button', { name: '설정 열기', exact: true }).click();
   await page.getByRole('tab', { name: /앱 정보/ }).click();
-  await page.getByRole('button', { name: '빈 서재 복제 다시 시도' }).click();
+  const [bootstrapResult] = await Promise.all([
+    page.waitForResponse(
+      (response) => response.url().endsWith('/api/sync/peer/bootstrap') && response.request().method() === 'POST',
+      { timeout: 60_000 },
+    ),
+    page.getByRole('button', { name: '빈 서재 복제 다시 시도' }).click(),
+  ]);
+  if (bootstrapResult.status() !== 200) {
+    const readTarget = async (resource) =>
+      (
+        await fetch(`${connection.url}/api${resource}`, {
+          headers: { Authorization: `Bearer ${connection.authToken}` },
+        })
+      ).json();
+    const [state, books, watermark] = await Promise.all([
+      readTarget('/sync/peer'),
+      readTarget('/books'),
+      readTarget('/sync/watermark'),
+    ]);
+    evidence.bootstrapFailure = {
+      status: state.status,
+      outboundCursor: state.outboundCursor,
+      localWatermark: watermark.cursor,
+      bookCount: books.books?.length,
+      containsExpectedBook: books.books?.some((book) => book.id === peerBookId),
+    };
+  }
+  assert.equal(bootstrapResult.status(), 200, await bootstrapResult.text());
   const peerCopyDeadline = Date.now() + 60_000;
   let peerCopy;
   while (Date.now() < peerCopyDeadline) {

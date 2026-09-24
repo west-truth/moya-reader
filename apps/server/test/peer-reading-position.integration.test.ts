@@ -454,6 +454,18 @@ describe.skipIf(!harness)('two server reading position sync', () => {
           });
           expect(paired.status).toBe(200);
           expect(await paired.json()).toMatchObject({ status: 'awaiting_bootstrap', bootstrapRequired: true });
+          // Opening/closing native settings can save preferences after pairing,
+          // while the target book shelf is still empty.
+          const preferences = await fetch(`${b.url}/api/settings`, {
+            method: 'PUT',
+            headers: { Authorization: `Bearer ${b.token}`, 'Content-Type': 'application/json' },
+            body: JSON.stringify({ ttsSpeed: 1.25 }),
+          });
+          expect(preferences.status).toBe(200);
+          await poolA.query(
+            'insert into reader_settings (user_id,settings) values ($1,\'{"ttsSpeed":0.75}\') on conflict (user_id) do update set settings=excluded.settings',
+            [USER_A],
+          );
           await b.app.close();
           b = await testServer(poolB, path.join(directory, 'b'), 'native_b', USER_B);
           // Closing the panel between pairing and copying must retain a durable retry state.
@@ -474,6 +486,12 @@ describe.skipIf(!harness)('two server reading position sync', () => {
               method: 'POST',
               headers: { Authorization: `Bearer ${b.token}` },
             });
+          await poolB.query(
+            "insert into sync_events (id,user_id,type,payload,created_at) values ('scope_guard',$1,'shelf_created','{}',now())",
+            [USER_B],
+          );
+          expect(await (await bootstrap()).json()).toMatchObject({ error: 'peer_bootstrap_library_changed' });
+          await poolB.query("delete from sync_events where id='scope_guard'");
           await poolA.query('delete from self_host_sessions');
           expect((await bootstrap()).status).toBe(409);
           const pendingAuth = await fetch(`${b.url}/api/sync/peer`, {
@@ -492,6 +510,10 @@ describe.skipIf(!harness)('two server reading position sync', () => {
           await new FileObjectStore(a.config.objectStorageDir!).put('test', 'fixture/source', source, 'text/plain');
           const seeded = await bootstrap();
           expect(await seeded.json()).toMatchObject({ status: 'ready', restoredBooks: 1 });
+          expect(
+            (await poolB.query('select settings from reader_settings where user_id=$1', [USER_B])).rows[0].settings
+              .ttsSpeed,
+          ).toBe(1.25);
           expect((await poolB.query('select count(*)::int as count from library_books')).rows[0].count).toBe(1);
           const object = (await poolB.query("select storage_key from book_objects where id='source_1'")).rows[0];
           const stored = await new FileObjectStore(b.config.objectStorageDir!).get('test', object.storage_key);

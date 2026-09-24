@@ -24,6 +24,7 @@
 
 ## D2a 구현·로컬 검증 기록
 
+- `938046f`의 Windows 실행 `35962160355`에서는 서버 시작을 통과했지만 초기 복제가 빈 서재 조건으로 거부됐다. 연결 후 설정을 저장하면 책이 없어도 같은 거부가 생기는 것을 실제 DB로 재현했다. 초기 복제에서는 그 사이의 `settings_updated`만 허용하고 대상 설정을 덮어쓰지 않으며, 새 outbound 기준점은 복원과 같은 commit에서 저장한다. 책장 등 다른 변경은 계속 차단한다. 인증 만료→원본 누락→재시도 중에도 대상 설정을 보존하는 검사가 통과했다. Windows 검사도 복제 응답과 공개 상태·책 수를 즉시 남겨 같은 실패를 60초 기다린 뒤 원본 누락으로만 표시하지 않도록 보완했다.
 - 첫 Windows 실행 `35961633992` (`3de9fbf`)은 API 시작에서 실패했다. 운영 서버의 기존 ZIP parser를 새 경로가 중복 등록하는 조건을 로컬에서 `FST_ERR_CTP_ALREADY_PRESENT`로 재현했다. 기존 backup route처럼 새 route scope 안에서 inherited parser를 교체하고 통합 harness도 운영 parser 조건을 갖추도록 수정했다. 수집기 검증 프로필에서 API가 먼저 실패할 때 원인을 남기도록 CI 진단 로그 수집도 보완했다. 새 실행 결과를 확인하기 전 Windows 새 작품 전달 완료로 표시하지 않는다.
 - `hosted-backup-service.ts`의 한 작품 선택 옵션과 `peer-book-content.ts`의 콘텐츠 범위 검사·신규 복원을 연결했다. 별도 ZIP 형식이나 저장소는 없다.
 - 인증된 `/api/sync/book-content/:bookId` GET/POST를 사용하고 peer 실행기가 `book_imported` 앞에서 원본을 전달한다. 같은 ID의 기존 자료는 덮어쓰지 않는다. UI 안내·실행 제한 시간을 실제 범위에 맞췄다.
