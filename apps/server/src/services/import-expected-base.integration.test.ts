@@ -1,7 +1,11 @@
 import { afterAll, describe, expect, test } from 'vitest';
 import { syncPayloadIntegrityHash } from '@noveldesk/text-core/identity/sync';
+import { Readable } from 'node:stream';
+import path from 'node:path';
 import { startPostgresIntegrationHarness, withPostgresSchema } from './id-v2-migration/postgres-integration-harness.js';
 import { withImportPageFixture } from './testing/import-page-fixture.js';
+import { BackupStaging } from './backup-staging.js';
+import { exportHostedBackup } from './hosted-backup-service.js';
 
 const harness = await startPostgresIntegrationHarness();
 afterAll(async () => harness?.stop());
@@ -54,6 +58,27 @@ describeWithPostgres('complete-package expected base with PostgreSQL and loopbac
         expect(contentEvents.rows[1].revision.payloadHash).toBe(
           syncPayloadIntegrityHash(contentEvents.rows[1].payload),
         );
+        const sourceHistory = await pool.query(
+          `select revision.source_object_id, object.storage_key
+             from book_content_revisions revision
+             left join book_objects object on object.id=revision.source_object_id
+            where revision.book_id='book_fixture' order by revision.revision_number`,
+        );
+        expect(sourceHistory.rows).toHaveLength(2);
+        expect(sourceHistory.rows.every((row) => typeof row.storage_key === 'string')).toBe(true);
+        const staging = new BackupStaging(path.join(fixture.config.dataDir, 'history-backup-staging'));
+        try {
+          const backup = await exportHostedBackup(pool, fixture.config);
+          const received = await staging.receive(Readable.fromWeb(backup.readable as never));
+          await backup.completion;
+          expect(received.stage.source).toBe('hosted');
+          if (received.stage.source !== 'hosted') throw new Error('Expected hosted archive');
+          expect(received.stage.parsed.objects.filter((object) => object.asset_kind === 'source')).toHaveLength(2);
+          expect(received.stage.parsed.tables.get('book_content_revisions')).toHaveLength(2);
+          await staging.discard(received.id);
+        } finally {
+          await staging.close();
+        }
         await expect(
           fixture.import(Buffer.from('updated paragraph'), false, 'book_fixture', { ...textOptions, expectedBase }),
         ).rejects.toThrow('import_expected_base_conflict');

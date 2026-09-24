@@ -1432,6 +1432,7 @@ export async function processImportJob(
           `delete from book_objects object
             where object.id = $1
               and not exists (select 1 from library_books book where book.object_id = object.id)
+              and not exists (select 1 from book_content_revisions revision where revision.source_object_id = object.id)
             returning object.storage_key`,
           [previousBookObject.rows[0].object_id],
         );

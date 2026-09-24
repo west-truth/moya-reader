@@ -22,7 +22,7 @@ export const CURRENT_SYNC_CAPABILITIES: SyncCapabilities = {
   ...SYNC_CONTRACT_V2,
   supportedContracts: [SYNC_CONTRACT_V1, SYNC_CONTRACT_V2],
   defaultPullContract: SYNC_CONTRACT_V2,
-  peerFeatures: ['new_book_content_v1', 'reading_positions_v1'],
+  peerFeatures: ['new_book_content_v1', 'reading_positions_v1', 'single_text_replacement_v1'],
 };
 
 export class SyncContractError extends Error {

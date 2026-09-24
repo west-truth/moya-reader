@@ -187,7 +187,12 @@ async function existingBookTitles(
   return new Map(result.rows.map((row) => [String(row.id), String(row.title)]));
 }
 
-async function snapshotHostedData(pool: pg.Pool, userId: string, contentBookId?: string) {
+async function snapshotHostedData(
+  pool: pg.Pool,
+  userId: string,
+  contentBookId?: string,
+  expectedContentRevisionId?: string,
+) {
   const client = await pool.connect();
   try {
     await client.query('begin isolation level repeatable read read only');
@@ -197,9 +202,13 @@ async function snapshotHostedData(pool: pg.Pool, userId: string, contentBookId?:
     );
     if (
       contentBookId !== undefined &&
-      (catalog.rows.length !== 1 || catalog.rows[0].deleted_at || Number(catalog.rows[0].content_revision_number) !== 1)
+      (catalog.rows.length !== 1 ||
+        catalog.rows[0].deleted_at ||
+        (expectedContentRevisionId === undefined && Number(catalog.rows[0].content_revision_number) !== 1) ||
+        (expectedContentRevisionId !== undefined &&
+          catalog.rows[0].active_content_revision_id !== expectedContentRevisionId))
     )
-      throw new Error('peer_book_initial_content_required');
+      throw new Error(expectedContentRevisionId ? 'peer_book_revision_changed' : 'peer_book_initial_content_required');
     const bookIds = catalog.rows.map((row) => String(row.id));
     const tables = new Map<HostedBackupTableName, readonly Record<string, unknown>[]>();
     tables.set('library_books', catalog.rows);
@@ -219,8 +228,10 @@ async function snapshotHostedData(pool: pg.Pool, userId: string, contentBookId?:
                 table === 'book_assets' && contentBookId !== undefined
                   ? " and kind in ('cover','epub_resource','document_page','source_part')"
                   : ''
-              }`,
-              [bookIds],
+              }${table === 'book_content_revisions' && contentBookId !== undefined ? ' and id = $2' : ''}`,
+              table === 'book_content_revisions' && contentBookId !== undefined
+                ? [bookIds, catalog.rows[0].active_content_revision_id]
+                : [bookIds],
             );
       tables.set(table, result.rows);
     }
@@ -232,7 +243,16 @@ async function snapshotHostedData(pool: pg.Pool, userId: string, contentBookId?:
       const result = await client.query(`select * from ${quoteIdentifier(table)} where user_id = $1`, [userId]);
       tables.set(table, result.rows);
     }
-    const objectIds = catalog.rows.map((row) => row.object_id).filter((value): value is string => Boolean(value));
+    const objectIds = [
+      ...new Set(
+        [
+          ...catalog.rows.map((row) => row.object_id),
+          ...(contentBookId === undefined
+            ? (tables.get('book_content_revisions') ?? []).map((row) => row.source_object_id)
+            : []),
+        ].filter((value): value is string => typeof value === 'string' && Boolean(value)),
+      ),
+    ];
     const sourceObjects =
       objectIds.length === 0
         ? []
@@ -243,6 +263,18 @@ async function snapshotHostedData(pool: pg.Pool, userId: string, contentBookId?:
               [objectIds],
             )
           ).rows.map((row) => ({ ...row, asset_kind: 'source' as const }));
+    if (sourceObjects.length !== objectIds.length) {
+      // A historical import may have removed an old source before revisions
+      // became a GC root. Keep its ancestry, but do not claim it is restorable.
+      const present = new Set(sourceObjects.map((row) => row.id));
+      const missing = new Set(objectIds.filter((id) => !present.has(id)));
+      for (const row of tables.get('book_content_revisions') ?? []) {
+        if (missing.has(String(row.source_object_id))) {
+          if (row.status === 'active') throw new Error('Active source object is missing from hosted backup');
+          row.source_object_id = null;
+        }
+      }
+    }
     const embeddedAssets = (tables.get('book_assets') ?? [])
       .filter(
         (row) =>
@@ -301,8 +333,9 @@ export async function exportHostedBackup(
   signal?: AbortSignal,
   bufferedClient = false,
   contentBookId?: string,
+  expectedContentRevisionId?: string,
 ): Promise<HostedBackupStreamResult> {
-  const snapshot = await snapshotHostedData(pool, config.defaultUserId, contentBookId);
+  const snapshot = await snapshotHostedData(pool, config.defaultUserId, contentBookId, expectedContentRevisionId);
   if (bufferedClient && snapshot.objects.reduce((n, o) => n + Number(o.size_bytes), 0) > 512 * 1024 ** 2)
     throw new Error('대용량 백업은 Self-host 웹에서 다운로드해 주세요.');
   const s3 = createS3Client(config);
@@ -353,7 +386,11 @@ export async function inspectHostedBackup(
   };
 }
 
-async function insertRow(client: pg.PoolClient, table: HostedBackupTableName, row: Record<string, unknown>) {
+export async function insertHostedBackupRow(
+  client: pg.PoolClient,
+  table: HostedBackupTableName,
+  row: Record<string, unknown>,
+) {
   const entries = Object.entries(row).filter(([, value]) => value !== undefined);
   if (entries.length === 0) return;
   const columns = entries.map(([column]) => quoteIdentifier(column));
@@ -399,7 +436,7 @@ function sourceObjectsById(objects: readonly HostedBookObjectRow[]): Map<string,
   return result;
 }
 
-async function restoreSourceObjects(
+export async function restoreSourceObjects(
   pool: pg.Pool,
   client: pg.PoolClient,
   config: ServerConfig,
@@ -603,6 +640,7 @@ async function enqueueSupersededRestoreObjects(
       `delete from book_objects o
        where o.id = $1
          and not exists (select 1 from library_books b where b.object_id = o.id)
+         and not exists (select 1 from book_content_revisions r where r.source_object_id = o.id)
        returning o.storage_key`,
       [objectId],
     );
@@ -677,6 +715,14 @@ export async function restoreHostedBackup(
       if (resolutions.get(bookId) === 'skip') continue;
       if (typeof row.object_id === 'string' && row.object_id) requiredObjectIds.add(row.object_id);
     }
+    const archivedSourceIds = new Set(
+      parsed.objects.filter((object) => object.asset_kind === 'source').map((object) => object.id),
+    );
+    for (const row of parsed.tables.get('book_content_revisions') ?? []) {
+      if (resolutions.get(String(row.book_id)) === 'skip') continue;
+      if (typeof row.source_object_id === 'string' && archivedSourceIds.has(row.source_object_id))
+        requiredObjectIds.add(row.source_object_id);
+    }
     const objectIdMap = await restoreSourceObjects(
       pool,
       client,
@@ -730,6 +776,14 @@ export async function restoreHostedBackup(
         // A copied book must rebuild them instead of persisting mechanically rekeyed artifacts.
         if (table === 'voice_casting_states' && copyMap) continue;
         const transformed = rekeyValue(original, [copyMap ?? new Map(), objectIdMap]) as Record<string, unknown>;
+        if (
+          table === 'book_content_revisions' &&
+          typeof original.source_object_id === 'string' &&
+          !objectIdMap.has(original.source_object_id)
+        ) {
+          if (original.status === 'active') throw new Error('Active source object is missing from hosted backup');
+          transformed.source_object_id = null;
+        }
         if ('user_id' in transformed) transformed.user_id = config.defaultUserId;
         if (table === 'voice_casting_states') invalidateRestoredVoiceCasting(transformed);
         if (table === 'library_books') {
@@ -764,7 +818,7 @@ export async function restoreHostedBackup(
         if (table === 'user_corrections' || table === 'label_mutation_operations') {
           transformed.source_review_artifact_id = null;
         }
-        await insertRow(client, table, transformed);
+        await insertHostedBackupRow(client, table, transformed);
         if (table === 'paragraph_pages') restoredParagraphPages.push(transformed);
         if (table === 'library_books') {
           // The normal book-insert trigger creates a fresh initial revision. Restore has its own
