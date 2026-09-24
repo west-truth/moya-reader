@@ -29,6 +29,20 @@ export interface ResolvedSyncContract {
 export interface SyncCapabilities extends ResolvedSyncContract {
   supportedContracts: ResolvedSyncContract[];
   defaultPullContract: ResolvedSyncContract;
+  /** Advertised separately from the browser sync contract; older servers omit it. */
+  peerFeatures?: PeerSyncFeature[];
+}
+
+export type PeerSyncFeature = 'new_book_content_v1' | 'reading_positions_v1';
+
+/** An import worker records this only when it replaced an existing content revision. */
+export interface BookImportContentChangeV1 {
+  kind: 'revision_v1';
+  baseRevisionId: string;
+  targetRevisionId: string;
+  revisionNumber: number;
+  sourceHash: string;
+  normalizedHash: string;
 }
 
 export interface NegotiatedSyncContract {

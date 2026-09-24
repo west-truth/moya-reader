@@ -43,6 +43,8 @@ import type {
   ParsedNovelImportChapterSource,
 } from '@noveldesk/contracts';
 import { integrityHash, persistentId128 } from '@noveldesk/text-core/hash';
+import { syncPayloadIntegrityHash } from '@noveldesk/text-core/identity/sync';
+import type { BookImportContentChangeV1 } from '@noveldesk/contracts/sync';
 import { paragraphPageId, parsedChapterId, parsedParagraphId } from '@noveldesk/text-core/identity/parser';
 import { validateUploadCompleteness } from './upload-validation.js';
 import {
@@ -1559,23 +1561,30 @@ export async function processImportJob(
         );
         if (attempt.executionId && !progressUpdated) throw new ImportExecutionStoppedError('cancelled');
       }
-      if (
-        replacement &&
-        (localArchiveAppend ||
-          (parsed.novel.format === 'image_archive' && parsed.novel.documentSectionCount) ||
-          isRemoteDocumentSeriesImport(parsed))
-      ) {
+      if (replacement) {
         await restoreExactAnchoredReaderState(client, replacement);
       }
       if (replacement) await finalizeBookReplacement(client, replacement);
-      const importPayload = { bookId: parsed.novel.id };
+      const contentChange: BookImportContentChangeV1 | undefined = replacement
+        ? {
+            kind: 'revision_v1',
+            baseRevisionId: replacement.replacement.fromContentRevisionId,
+            targetRevisionId: replacement.replacement.toContentRevisionId,
+            revisionNumber: replacement.replacement.toContentRevisionNumber,
+            sourceHash: rawHash,
+            normalizedHash: parsed.novel.normalizedTextHash,
+          }
+        : undefined;
+      const importPayload = contentChange
+        ? { bookId: parsed.novel.id, content: contentChange }
+        : { bookId: parsed.novel.id };
       const importRevision = {
         entityType: 'book',
         entityId: parsed.novel.id,
         novelId: parsed.novel.id,
         localSequence: 0,
         updatedAt: parsed.novel.updatedAt,
-        payloadHash: integrityHash(JSON.stringify(importPayload)),
+        payloadHash: syncPayloadIntegrityHash(importPayload),
       };
       await client.query(
         `
@@ -1584,7 +1593,13 @@ export async function processImportJob(
           on conflict (id) do nothing
         `,
         [
-          persistentId128('sync_event', [session.user_id, 'book_imported', parsed.novel.id, parsed.novel.updatedAt]),
+          persistentId128('sync_event', [
+            session.user_id,
+            'book_imported',
+            parsed.novel.id,
+            parsed.novel.updatedAt,
+            ...(contentChange ? [contentChange.targetRevisionId] : []),
+          ]),
           session.user_id,
           'book_imported',
           parsed.novel.id,

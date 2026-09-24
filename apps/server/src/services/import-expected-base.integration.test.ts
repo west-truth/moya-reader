@@ -1,4 +1,5 @@
 import { afterAll, describe, expect, test } from 'vitest';
+import { syncPayloadIntegrityHash } from '@noveldesk/text-core/identity/sync';
 import { startPostgresIntegrationHarness, withPostgresSchema } from './id-v2-migration/postgres-integration-harness.js';
 import { withImportPageFixture } from './testing/import-page-fixture.js';
 
@@ -34,6 +35,25 @@ describeWithPostgres('complete-package expected base with PostgreSQL and loopbac
         await fixture.import(Buffer.from('updated paragraph'), false, 'book_fixture', { ...textOptions, expectedBase });
         const updated = await read();
         expect(updated.active_content_revision_id).not.toBe(original.active_content_revision_id);
+        const contentEvents = await pool.query<{
+          payload: { bookId: string; content?: Record<string, unknown> };
+          revision: { payloadHash: string };
+        }>(
+          "select payload, revision from sync_events where book_id='book_fixture' and type='book_imported' order by sequence",
+        );
+        expect(contentEvents.rows).toHaveLength(2);
+        expect(contentEvents.rows[1].payload).toMatchObject({
+          bookId: 'book_fixture',
+          content: {
+            kind: 'revision_v1',
+            baseRevisionId: original.active_content_revision_id,
+            targetRevisionId: updated.active_content_revision_id,
+            revisionNumber: 2,
+          },
+        });
+        expect(contentEvents.rows[1].revision.payloadHash).toBe(
+          syncPayloadIntegrityHash(contentEvents.rows[1].payload),
+        );
         await expect(
           fixture.import(Buffer.from('updated paragraph'), false, 'book_fixture', { ...textOptions, expectedBase }),
         ).rejects.toThrow('import_expected_base_conflict');

@@ -936,6 +936,26 @@ describe.skipIf(!harness)('two server reading position sync', () => {
               outboundCursor: unsupportedBaseline.outboundCursor,
               inboundCursor: unsupportedBaseline.inboundCursor,
             });
+            const unresolved = await fetch(`${restarted.url}/api/sync/peer/conflicts`, {
+              headers: { Authorization: `Bearer ${restarted.token}` },
+            });
+            expect(unresolved.status).toBe(200);
+            expect(await unresolved.json()).toMatchObject({
+              conflicts: [
+                {
+                  direction: 'outbound',
+                  event_id: bookmark.id,
+                  event_type: 'bookmark_created',
+                  book_id: 'book_1',
+                  reason: 'peer_event_type_unsupported',
+                },
+              ],
+            });
+            const persisted = await poolA.query(
+              'select count(*)::int as count from sync_peer_conflicts where event_id=$1 and status=$2',
+              [bookmark.id, 'unresolved'],
+            );
+            expect(persisted.rows[0].count).toBe(1);
             expect((await poolB.query('select count(*)::int as count from bookmarks')).rows[0].count).toBe(0);
 
             const reauthenticated = await fetch(`${restarted.url}/api/sync/peer`, {

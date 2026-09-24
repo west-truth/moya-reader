@@ -51,10 +51,24 @@ interface PullResponse {
   events: Array<Record<string, unknown>>;
 }
 
+interface PeerConflictContext {
+  direction: 'inbound' | 'outbound';
+  eventId: string;
+  eventType: string;
+  bookId?: string;
+  localIdentity?: BookIdentity;
+  remoteIdentity?: BookIdentity;
+}
+
+function eventConflict(event: SyncEvent, direction: PeerConflictContext['direction']): PeerConflictContext {
+  return { direction, eventId: event.id, eventType: event.type, bookId: event.novelId };
+}
+
 class PeerSyncFailure extends Error {
   constructor(
     readonly code: string,
     readonly status: 'offline' | 'needs_login' | 'blocked',
+    readonly conflict?: PeerConflictContext,
   ) {
     super(code);
   }
@@ -239,15 +253,18 @@ function readPeerEvent(row: Record<string, unknown>): SyncEvent {
   return event;
 }
 
-function assertSupportedEvents(events: readonly SyncEvent[]): void {
-  if (events.some((event) => !Number.isSafeInteger(event.sequence) || Number(event.sequence) < 1)) {
-    throw new PeerSyncFailure('peer_cursor_invalid', 'blocked');
+function assertSupportedEvents(events: readonly SyncEvent[], direction: PeerConflictContext['direction']): void {
+  const invalidCursor = events.find((event) => !Number.isSafeInteger(event.sequence) || Number(event.sequence) < 1);
+  if (invalidCursor) {
+    throw new PeerSyncFailure('peer_cursor_invalid', 'blocked', eventConflict(invalidCursor, direction));
   }
-  if (events.some((event) => !SUPPORTED_TYPES.has(event.type))) {
-    throw new PeerSyncFailure('peer_event_type_unsupported', 'blocked');
+  const unsupported = events.find((event) => !SUPPORTED_TYPES.has(event.type));
+  if (unsupported) {
+    throw new PeerSyncFailure('peer_event_type_unsupported', 'blocked', eventConflict(unsupported, direction));
   }
-  if (events.some((event) => !event.novelId || event.contractVersion !== 2)) {
-    throw new PeerSyncFailure('peer_event_contract_unsupported', 'blocked');
+  const invalidContract = events.find((event) => !event.novelId || event.contractVersion !== 2);
+  if (invalidContract) {
+    throw new PeerSyncFailure('peer_event_contract_unsupported', 'blocked', eventConflict(invalidContract, direction));
   }
 }
 
@@ -274,8 +291,14 @@ async function ensurePeerBooks(
     if (local && remote && JSON.stringify(local) === JSON.stringify(remote)) continue;
     const source = direction === 'outbound' ? local : remote;
     const target = direction === 'outbound' ? remote : local;
-    if (!source || target || !events.some((event) => event.novelId === bookId && event.type === 'book_imported'))
-      throw new PeerSyncFailure('peer_book_identity_mismatch', 'blocked');
+    if (!source || target || !events.some((event) => event.novelId === bookId && event.type === 'book_imported')) {
+      const event = events.find((item) => item.novelId === bookId)!;
+      throw new PeerSyncFailure('peer_book_identity_mismatch', 'blocked', {
+        ...eventConflict(event, direction),
+        localIdentity: local,
+        remoteIdentity: remote,
+      });
+    }
     const transferAbort = new AbortController();
     const transferSignal = AbortSignal.any([signal, transferAbort.signal]);
     try {
@@ -417,7 +440,7 @@ export function registerPeerReadingPositionRoutes(app: FastifyInstance, pool: pg
       } finally {
         client.release();
       }
-      assertSupportedEvents(outbound);
+      assertSupportedEvents(outbound, 'outbound');
       if (outbound.length) {
         await ensurePeerBooks(pool, config, row, cookie, outbound, signal, 'outbound', backupStaging);
         const response = (
@@ -426,16 +449,19 @@ export function registerPeerReadingPositionRoutes(app: FastifyInstance, pool: pg
             body: { ...SYNC_CONTRACT_V2, events: outbound },
             signal,
           })
-        ).body as { acceptedIds?: string[]; rejected?: Array<{ reason?: string }> };
+        ).body as { acceptedIds?: string[]; rejected?: Array<{ id?: string; reason?: string }> };
         if (
           response.rejected?.length ||
           JSON.stringify(response.acceptedIds) !== JSON.stringify(outbound.map((e) => e.id))
         ) {
+          const rejectedId = response.rejected?.[0]?.id;
+          const rejectedEvent = outbound.find((event) => event.id === rejectedId) ?? outbound[0];
           throw new PeerSyncFailure(
             response.rejected?.some((item) => item.reason === 'stale')
               ? 'peer_stale_or_conflicting_position'
               : 'peer_rejected_events',
             'blocked',
+            rejectedEvent ? eventConflict(rejectedEvent, 'outbound') : undefined,
           );
         }
         const updated = await pool.query(
@@ -478,7 +504,7 @@ export function registerPeerReadingPositionRoutes(app: FastifyInstance, pool: pg
       ) {
         throw new PeerSyncFailure('peer_cursor_invalid', 'blocked');
       }
-      assertSupportedEvents(inbound);
+      assertSupportedEvents(inbound, 'inbound');
       await ensurePeerBooks(pool, config, row, cookie, inbound, signal, 'inbound', backupStaging);
       if (inbound.length) {
         const transaction = await pool.connect();
@@ -489,11 +515,14 @@ export function registerPeerReadingPositionRoutes(app: FastifyInstance, pool: pg
             result.rejected?.length ||
             JSON.stringify(result.acceptedIds) !== JSON.stringify(inbound.map((e) => e.id))
           ) {
+            const rejectedId = result.rejected?.[0]?.id;
+            const rejectedEvent = inbound.find((event) => event.id === rejectedId) ?? inbound[0];
             throw new PeerSyncFailure(
               result.rejected?.some((item) => item.reason === 'stale')
                 ? 'local_stale_or_conflicting_position'
                 : 'local_rejected_events',
               'blocked',
+              rejectedEvent ? eventConflict(rejectedEvent, 'inbound') : undefined,
             );
           }
           const updated = await transaction.query(
@@ -524,11 +553,43 @@ export function registerPeerReadingPositionRoutes(app: FastifyInstance, pool: pg
           : error instanceof PeerBookContentError
             ? new PeerSyncFailure(error.message, 'blocked')
             : new PeerSyncFailure('peer_sync_failed', 'offline');
-      await pool.query(
-        `update sync_server_peers set status = $3, last_error = $4, updated_at = now()
-          where user_id = $1 and peer_id = $2`,
-        [userId, row.peer_id, failure.status, failure.code],
-      );
+      const client = await pool.connect();
+      try {
+        await client.query('begin');
+        if (failure.status === 'blocked' && failure.conflict) {
+          const conflict = failure.conflict;
+          await client.query(
+            `insert into sync_peer_conflicts (
+               user_id, peer_id, direction, event_id, event_type, book_id, reason, local_identity, remote_identity
+             ) values ($1,$2,$3,$4,$5,$6,$7,$8::jsonb,$9::jsonb)
+             on conflict (user_id, peer_id, direction, event_id) do update set
+               reason=excluded.reason, local_identity=excluded.local_identity,
+               remote_identity=excluded.remote_identity, updated_at=now()`,
+            [
+              userId,
+              row.peer_id,
+              conflict.direction,
+              conflict.eventId,
+              conflict.eventType,
+              conflict.bookId ?? null,
+              failure.code,
+              conflict.localIdentity ? JSON.stringify(conflict.localIdentity) : null,
+              conflict.remoteIdentity ? JSON.stringify(conflict.remoteIdentity) : null,
+            ],
+          );
+        }
+        await client.query(
+          `update sync_server_peers set status = $3, last_error = $4, updated_at = now()
+            where user_id = $1 and peer_id = $2`,
+          [userId, row.peer_id, failure.status, failure.code],
+        );
+        await client.query('commit');
+      } catch (persistError) {
+        await client.query('rollback');
+        throw persistError;
+      } finally {
+        client.release();
+      }
       throw failure;
     }
   }
@@ -543,6 +604,19 @@ export function registerPeerReadingPositionRoutes(app: FastifyInstance, pool: pg
     ...publicPeer(await loadPeer(pool, userId)),
     ...(bootstrapProgress ? { bootstrapProgress } : {}),
   }));
+  app.get('/api/sync/peer/conflicts', async () => {
+    const row = await loadPeer(pool, userId);
+    if (!row) return { conflicts: [] };
+    const result = await pool.query(
+      `select direction, event_id, event_type, book_id, reason, local_identity, remote_identity,
+              created_at, updated_at
+         from sync_peer_conflicts
+        where user_id=$1 and peer_id=$2 and status='unresolved'
+        order by updated_at desc limit 100`,
+      [userId, row.peer_id],
+    );
+    return { conflicts: result.rows };
+  });
   app.post<{
     Body: {
       url?: unknown;
