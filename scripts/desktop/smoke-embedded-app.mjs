@@ -303,7 +303,9 @@ try {
   await page.getByRole('button', { name: '검사한 백업 복원', exact: true }).click();
   await page.getByRole('button', { name: '백업 패널 닫기', exact: true }).waitFor({ state: 'hidden' });
   const localHeaders = { Authorization: `Bearer ${connection.authToken}` };
-  const localManifest = await fetch(`${connection.url}/api/books/${localFixture.bookId}`, { headers: localHeaders });
+  const localManifest = await fetch(`${connection.url}/api/books/${localFixture.bookId}/manifest`, {
+    headers: localHeaders,
+  });
   assert.equal(localManifest.status, 200);
   assert.equal((await localManifest.json()).readingPosition.scroll_top, 19);
   const localBookmarks = await fetch(`${connection.url}/api/books/${localFixture.bookId}/bookmarks`, {

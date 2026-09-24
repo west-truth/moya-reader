@@ -140,4 +140,17 @@ describe('disk staged backup', () => {
       expect(await readdir(directory)).toEqual([]);
     });
   });
+
+  it('reports a full staging disk clearly and removes the partial upload', async () => {
+    await withStaging(async (staging, directory) => {
+      const input = Readable.from(
+        (async function* () {
+          yield Buffer.from('partial zip');
+          throw Object.assign(new Error('write failed'), { code: 'ENOSPC' });
+        })(),
+      );
+      await expect(staging.receive(input)).rejects.toThrow('서버의 임시 저장공간이 부족합니다.');
+      expect(await readdir(directory)).toEqual([]);
+    });
+  });
 });

@@ -4,7 +4,7 @@ import { mkdir, mkdtemp, rm } from 'node:fs/promises';
 import path from 'node:path';
 import { pipeline } from 'node:stream/promises';
 import type { Readable } from 'node:stream';
-import { assertUploadDiskSpace } from './upload-file.js';
+import { assertUploadDiskSpace, UploadSpaceError } from './upload-file.js';
 import {
   MAX_HOSTED_BACKUP_ARCHIVE_BYTES,
   parseHostedBackupArchive,
@@ -111,6 +111,7 @@ export class BackupStaging {
       return { id, stage };
     } catch (error) {
       await dispose();
+      if ((error as NodeJS.ErrnoException).code === 'ENOSPC') throw new UploadSpaceError();
       throw error;
     }
   }
