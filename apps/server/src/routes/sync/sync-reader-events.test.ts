@@ -121,7 +121,14 @@ describe('sync reader event routes', () => {
         quads: [{ x: 0.1, y: 0.2, width: 0.3, height: 0.04 }],
       },
       body: 'memo',
+      quote: 'selected words',
       color: 'yellow',
+      textAnchorRemap: {
+        status: 'remapped',
+        fromTextRevisionId: 'revision-old',
+        targetTextRevisionId: 'revision-1',
+        updatedAt,
+      },
       createdAt: updatedAt,
       updatedAt,
     };
@@ -152,8 +159,10 @@ describe('sync reader event routes', () => {
       2,
       'text_note',
       JSON.stringify(annotation.anchor),
+      'selected words',
       'memo',
       'yellow',
+      JSON.stringify(annotation.textAnchorRemap),
       updatedAt,
       updatedAt,
     ]);
@@ -162,7 +171,10 @@ describe('sync reader event routes', () => {
 
   it('validates fixed-document annotation page ownership before accepting sync', async () => {
     const client = {
-      query: vi.fn(async () => ({ rowCount: 1, rows: [{ page_hash: 'page-hash' }] })),
+      query: vi.fn(async () => ({
+        rowCount: 1,
+        rows: [{ format: 'pdf', raw_text_hash: 'source-hash', chapter_id: 'chapter-3' }],
+      })),
     } as unknown as pg.PoolClient;
     const event: SyncEvent = {
       id: 'event-document-annotation-validation',
@@ -180,7 +192,7 @@ describe('sync reader event routes', () => {
             kind: 'fixed_region',
             bookId: 'book_1',
             pageIndex: 2,
-            pageHash: 'page-hash',
+            pageHash: 'source-hash:pdf-page:2',
             quads: [{ x: 0.1, y: 0.2, width: 0.3, height: 0.4 }],
           },
           createdAt: '2026-08-01T00:00:00.000Z',
@@ -191,7 +203,7 @@ describe('sync reader event routes', () => {
     };
 
     await expect(validateSyncEventPayload(client, event)).resolves.toEqual({ ok: true });
-    expect(client.query).toHaveBeenCalledWith(expect.stringContaining('document_pages'), ['book_1', 2]);
+    expect(client.query).toHaveBeenCalledWith(expect.stringContaining('from library_books'), ['book_1', 2, null]);
     await expect(
       validateSyncEventPayload(client, {
         ...event,
@@ -210,8 +222,8 @@ describe('sync reader event routes', () => {
     const client = {
       query: vi.fn(async (sql: string, params?: unknown[]) => {
         queries.push({ sql, params });
-        if (sql.includes('select page_hash from document_pages')) {
-          return { rowCount: 1, rows: [{ page_hash: 'page-hash' }] };
+        if (sql.includes('from library_books')) {
+          return { rowCount: 1, rows: [{ format: 'pdf', raw_text_hash: 'source-hash', chapter_id: 'chapter-3' }] };
         }
         return { rowCount: 1, rows: [] };
       }),
@@ -221,7 +233,7 @@ describe('sync reader event routes', () => {
       id: 'document-order-1',
       bookId: 'book_1',
       pageIndex: 2,
-      pageHash: 'page-hash',
+      pageHash: 'source-hash:pdf-page:2',
       sourceRevisionId: 'revision-hash',
       orderedBlockFingerprints: ['block-b', 'block-a'],
       excludedBlockFingerprints: ['footer'],
@@ -254,7 +266,7 @@ describe('sync reader event routes', () => {
       'book_1',
       'user_test',
       2,
-      'page-hash',
+      'source-hash:pdf-page:2',
       'revision-hash',
       JSON.stringify(orderOverride.orderedBlockFingerprints),
       JSON.stringify(orderOverride.excludedBlockFingerprints),

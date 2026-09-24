@@ -205,6 +205,7 @@ import { LocalInstalledExtensions } from './extensions/packages/local-installed-
 import { NativePackageExecution } from './platform/tauri/native-package-execution';
 import type { InstalledExtensionManager } from './extensions/packages/installed-extension-manager';
 import { RemoteInstalledExtensions } from './extensions/packages/remote-installed-extensions';
+import { RemoteDocumentAnnotationRepository } from './repositories/remote-document-annotation-repository';
 import { InstalledExtensionsPanel } from './features/extensions/InstalledExtensionsPanel';
 import { DropboxSourceAccountBroker } from './external-sources/dropbox-source-account-broker';
 import { GoogleDriveSourceAccountBroker } from './external-sources/google-drive-source-account-broker';
@@ -445,6 +446,10 @@ export default function App() {
     syncApiClient,
     syncService,
   } = readerRuntime;
+  const remoteDocumentAnnotationRepository = useMemo(
+    () => (remoteApiClient ? new RemoteDocumentAnnotationRepository(remoteApiClient) : undefined),
+    [remoteApiClient],
+  );
   const isDesktopProviderRuntime = providerExecutionRuntime === 'desktop';
   const localDeviceId = useMemo(() => getOrCreateRemoteDeviceId(), []);
   const documentIo = useMemo(() => createPlatformDocumentIo(platformRuntime), [platformRuntime]);
@@ -6405,6 +6410,7 @@ export default function App() {
             listeningPreparationBusy={ttsExecutionController.warmupBusy}
             listeningPosition={ttsPlaying ? ttsListeningPosition : undefined}
             annotationSyncRevision={syncState?.lastSyncedAt}
+            documentAnnotationRepository={remoteDocumentAnnotationRepository}
           />
         </Suspense>
       )}

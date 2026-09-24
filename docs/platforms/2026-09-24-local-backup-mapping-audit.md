@@ -6,6 +6,7 @@
 
 - `IndexedDbBackupRepository.exportBackup()`이 만드는 `noveldesk-backup` v1 ZIP을 사용한다. `stores/<store>.json`, `assets/<storageKey>.bin`, `manifest.json`으로 구성된다. 압축 전 256 MiB, ZIP entry 500개 제한이 있다.
 - `src/storage/indexeddb-backup-repository.test.ts`의 TXT 가져오기 fixture와 같은 합성 소스로 실제 로컬 ZIP을 생성해 row key를 확인했다. 비어 있지 않은 항목은 `novels`, `book_content_revisions`, `book_content_chapters`, `book_content_paragraph_pages`, `book_content_domain_heads`, `book_assets`, source blob이었다. 활성 revision을 쓰는 신규 가져오기에서는 legacy `chapters`/`paragraph_pages`가 비어 있다.
+- 작은 EPUB·PDF·CBZ를 각각 실제 로컬 가져오기 경로로 넣어 ZIP을 생성했다. 세 포맷 모두 위 TXT와 같은 활성 revision/회차/문단 페이지 저장소를 사용한다. EPUB은 `source`·`cover`·`epub_resource` 자산, PDF는 `source` 자산, CBZ는 `source`·`cover`·`document_page` 자산이 들어갔다. 같은 cover/resource 또는 cover/page가 같은 `storageKey`와 blob을 참조할 수 있으므로 객체 ID와 blob 키를 혼동하면 안 된다. CBZ 문단의 `assetId`는 `document_page` 자산을 가리키고, EPUB 문단에는 `sourceLocator`가 남는다. PDF 원본도 복원해야 하며 PDF 페이지가 별도의 로컬 `document_pages` 행으로 백업되는 것은 아니다.
 - 서버 ZIP parser는 `manifest.backend === 'hosted'`와 `hosted/tables/<table>.json`, `hosted/book_objects.json`을 요구한다. 같은 format/version 표기만으로 호환되지 않는다. 서버 복원은 PostgreSQL row와 객체 저장소를 대상으로 한다.
 
 ## 필드별 변환의 기준
@@ -30,12 +31,14 @@
 
 로컬 `comic_profiles`→서버 `comic_reading_profiles`를 포함해, 이 항목들의 camelCase/JSON 필드 변환과 원본 revision 일치 검사도 C1에서 별도로 구현해야 한다. `document_*`의 일부는 기기 캐시/파생 자료라 재생성 가능할 수 있지만, 사용자의 주석·읽던 위치·수정한 텍스트 순서는 그런 가정으로 버릴 수 없다.
 
+원격 PDF 주석 저장 결함을 고치면서 서버 `document_annotations`에 `quote`와 `text_anchor_remap` 열을 추가했다. 새 서버 백업에서는 이 필드도 운반된다. 과거 서버 백업이나 로컬 ZIP에서 값을 자동으로 옮기는 C1 변환은 여전히 구현 전이다.
+
 로컬의 `native_analysis_provenance`, `label_mutation_receipts`, `label_mutation_invalidations`, `label_reanalysis_plans`, `character_*_v2`, `chapter_structure_*`, speaker attribution/workflow, temporal memory 자료는 서버의 동명 또는 유사 테이블과 필드 계약을 아직 확인하지 못했다. 첫 변환기에서 이름만 보고 복사하지 않는다. 해당 row가 있는 ZIP은 항목별 지원/미지원 진단을 보여 주고 원본 ZIP을 보존해야 한다.
 
 `BACKUP_JSON_STORES`에는 sync outbox가 없다. 이미 만들어진 로컬 v1 ZIP에 **미전송 변경 기록은 들어 있지 않다.** 기존 ZIP으로 이 정보를 복원할 수 있다고 표시하지 않는다. 실사용 중인 로컬 서재를 이전할 때는 동결 시점의 별도 상태 추출 또는 사용자에게 확인 가능한 제한이 필요하다.
 
 ## C1 착수 조건
 
-1. 최소 TXT/EPUB/PDF/만화 fixture의 row, 원본 blob, 문서 anchor와 개인화 항목을 각각 만들고 각 값의 서버 열 매핑을 검사한다. 위 TXT fixture만으로 나머지 format을 승인하지 않는다.
+1. TXT/EPUB/PDF/만화 fixture의 기본 row/원본 자산 형태는 확인했다. 다음에는 문서 anchor·개인화 항목을 넣은 각 ZIP을 서버 열에 매핑하고 원본 해시를 검사한다. 기본 자료의 형태 확인만으로 전체 format을 승인하지 않는다.
 2. 서버 백업 staging에 누락된 사용자 소유 테이블을 더할지, 이전 전용 staging을 둘지 결정한다. 둘 다 기존 서버 복원 원자성·참조 검증·원본 보존을 유지해야 한다.
 3. 지원하지 않는 항목이 있는 ZIP을 부분 성공으로 보고하지 않는다. 명시적인 사전 inspection, skip/replace/copy, 같은 ZIP 재실행의 중복 정책을 정한 뒤 변환한다.

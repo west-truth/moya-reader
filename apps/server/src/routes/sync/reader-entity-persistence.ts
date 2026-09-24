@@ -457,16 +457,18 @@ export async function persistReaderSyncEvent(
     await client.query(
       `
         insert into document_annotations (
-          id, book_id, user_id, page_index, annotation_type, anchor, body, color, created_at, updated_at
+          id, book_id, user_id, page_index, annotation_type, anchor, quote, body, color, text_anchor_remap, created_at, updated_at
         )
-        select $1, $2, $3, $4, $5, $6::jsonb, $7, $8, $9, $10
+        select $1, $2, $3, $4, $5, $6::jsonb, $7, $8, $9, $10::jsonb, $11, $12
         where exists (select 1 from library_books where id = $2 and user_id = $3)
         on conflict (id) do update
           set page_index = excluded.page_index,
               annotation_type = excluded.annotation_type,
               anchor = excluded.anchor,
+              quote = excluded.quote,
               body = excluded.body,
               color = excluded.color,
+              text_anchor_remap = excluded.text_anchor_remap,
               updated_at = excluded.updated_at,
               deleted_at = null
           where document_annotations.user_id = excluded.user_id
@@ -479,8 +481,10 @@ export async function persistReaderSyncEvent(
         parsed.pageIndex,
         String(annotation.type),
         JSON.stringify(annotation.anchor),
+        stringValue(annotation.quote) ?? null,
         stringValue(annotation.body) ?? null,
         stringValue(annotation.color) ?? null,
+        annotation.textAnchorRemap ? JSON.stringify(annotation.textAnchorRemap) : null,
         String(annotation.createdAt ?? event.createdAt),
         parsed.updatedAt,
       ],

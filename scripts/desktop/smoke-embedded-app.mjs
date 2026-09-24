@@ -169,6 +169,7 @@ try {
   assert.equal(bookmarks.status, 200);
   assert.equal((await bookmarks.json()).bookmarks.length, 1);
   evidence.nativeBookmark = true;
+  let pdfBookId;
   for (const [format, bytes, contentType, title] of [
     ['epub', await epubFixture(), 'application/epub+zip', 'Moya EPUB proof'],
     ['pdf', pdfFixture(), 'application/pdf', 'Moya PDF proof'],
@@ -200,6 +201,7 @@ try {
       if (job.status !== 'done') await delay(250);
     } while (job.status !== 'done' && Date.now() < deadline);
     assert.equal(job.status, 'done');
+    if (format === 'pdf') pdfBookId = job.book_id;
     const source = await fetch(`${connection.url}/api/books/${job.book_id}/source`, {
       headers: { Authorization: `Bearer ${connection.authToken}` },
     });
@@ -227,6 +229,22 @@ try {
     await page.screenshot({ path: path.join(profile, `native-${format}.png`) });
     evidence.nativeFormats.push(format);
   }
+  const pdfBookmark = page.locator('button[title="현재 페이지 북마크"]:visible');
+  if (await pdfBookmark.count()) await pdfBookmark.click();
+  else await page.getByRole('button', { name: '현재 페이지 북마크', exact: true }).click();
+  const pdfAnnotationUrl = `${connection.url}/api/books/${pdfBookId}/document-annotations`;
+  const annotationHeaders = { Authorization: `Bearer ${connection.authToken}` };
+  let pdfAnnotations;
+  for (let attempt = 0; attempt < 30; attempt++) {
+    const response = await fetch(pdfAnnotationUrl, { headers: annotationHeaders });
+    assert.equal(response.status, 200);
+    pdfAnnotations = (await response.json()).annotations;
+    if (pdfAnnotations.length === 1) break;
+    await delay(100);
+  }
+  assert.equal(pdfAnnotations.length, 1, 'Native PDF bookmark was not saved to the server');
+  assert.equal(pdfAnnotations[0].type, 'page_bookmark');
+  evidence.nativeDocumentAnnotation = true;
   await page.reload();
   const saveCapability = await page.evaluate(() => ({
     secureContext: window.isSecureContext,
@@ -318,6 +336,11 @@ try {
   });
   assert.equal(persistedBookmarks.status, 200);
   assert.equal((await persistedBookmarks.json()).bookmarks.length, 1);
+  const persistedPdfAnnotations = await fetch(pdfAnnotationUrl, {
+    headers: { Authorization: `Bearer ${connection.authToken}` },
+  });
+  assert.equal(persistedPdfAnnotations.status, 200);
+  assert.equal((await persistedPdfAnnotations.json()).annotations.length, 1);
   evidence.nativeBookmarkRestart = true;
   await page.evaluate(() => window.__TAURI_INTERNALS__.invoke('desktop_embedded_server_close', { keepRunning: true }));
   assert.equal((await fetch(`${connection.url}/api/ready`)).status, 200);
@@ -349,6 +372,8 @@ try {
     assert.equal(books.books.length, 3);
     const restoredBookmarks = await restoredRequest(`/books/${textBookId}/bookmarks`);
     assert.equal(restoredBookmarks.bookmarks.length, 1);
+    const restoredPdfAnnotations = await restoredRequest(`/books/${pdfBookId}/document-annotations`);
+    assert.equal(restoredPdfAnnotations.annotations.length, 1);
     const restoredSource = await fetch(`${restoredServer.url}/api/books/${textBookId}/source`, {
       headers: { Authorization: `Bearer ${restoredServer.authToken}` },
     });

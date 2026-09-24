@@ -9,9 +9,9 @@
 | 서재·TXT 읽기·읽던 위치 | 기존 서버 경로 사용 | Windows WebView와 별도 브라우저, 앱 재시작 통과 |
 | 만화·대용량 가져오기·원본 내보내기 | 기존 서버 경로 사용, 공통 업로드 제한 수정 | Linux 공통 UI에서 529MiB CBZ 11페이지 가져오기·이미지 표시·원본 SHA-256 일치 통과. Windows 대용량은 별도 대기 |
 | EPUB·PDF 읽기 | 기존 Remote reader/asset 경로 사용 | Linux/Windows 공통 UI에서 작은 EPUB/PDF 가져오기·원본 일치·본문/캔버스 표시 통과. PDF worker `.mjs` MIME 오류 수정 |
-| 검색·주석 | 기존 서버 경로 사용 | `62514e5` Windows WebView에서 TXT 검색·북마크 저장과 재시작 보존 통과. 문서 주석은 별도 검사 필요 |
+| 검색·주석 | TXT는 기존 서버 경로, PDF 주석의 원격 저장 경로 보완 중 | `62514e5` Windows WebView에서 TXT 검색·북마크 저장과 재시작 보존 통과. PDF 주석은 브라우저 IndexedDB에만 기록되던 결함을 발견해 서버 API와 원격 repository를 연결했다. 실제 native 저장·재시작·백업 복원은 다음 Windows 검사 대기 |
 | 숫자 진행률 | 공통 UI와 서버 작업 정보 연결 보완 | 원 중앙 숫자 %, 업로드 바이트와 확정 이미지 저장 수, 단계 전환 때 이전 수치 초기화. 총량 미확정 작업은 단계 표시. 모든 소스 다운로드가 이미지 수를 제공하는 것은 아님 |
-| 서버 백업·복원 | 기존 RemoteBackupRepository/서버 ZIP 경로 사용 | Linux/Windows에서 새 프로필 복원·원본·독서 기록·재시작 통과. 서버 ZIP의 문서/듣기 항목 누락을 보완하고 단위 검사 통과. `62514e5`의 Windows 앱에서 저장한 ZIP을 새 프로필에 복원하고 TXT/EPUB/PDF 3권·원본·북마크 검증 통과. 대용량 백업은 별도 검사 대상 |
+| 서버 백업·복원 | 기존 RemoteBackupRepository/서버 ZIP 경로 사용 | Linux/Windows에서 새 프로필 복원·원본·독서 기록·재시작 통과. 서버 ZIP의 문서/듣기 항목 누락을 보완하고 단위 검사 통과. `62514e5`의 Windows WebView 백업 버튼에서 저장 파일 선택기를 검사 대역으로 교체해 ZIP 바이트를 받아 새 프로필에 복원하고 TXT/EPUB/PDF 3권·원본·북마크를 검증했다. OS 저장 대화상자 자체와 대용량 백업은 별도 검사 대상 |
 | 기존 로컬 자료 이전 | 기능 보완 필요 | 서버 ZIP은 `backend: hosted`를 요구한다. 이름/버전이 같아도 기존 IDB v1 백업을 그대로 복원할 수 있다고 볼 수 없음. 기존 자료를 보존하며 서버로 변환하는 경로가 남음 |
 | 소스·확장·프록시 | 기존 self-host gateway와 수집기 재사용 | 명시적 서버 연결을 native 경로보다 우선하고 기존 브라우저/standalone 경로를 유지한다. 동봉 수집기·Chromium 시작, 인증 gateway, 공개 metadata/표지 요청을 `775a9ff` Windows CI에서 통과. 실제 계정 로그인과 사이트별 유료 본문 수집은 미검증 |
 | AI·TTS | 기존 서버/공통 UI 경로 검증 대기 | 공급자 설정·기기 음성 출력·native capability 실제 사용 검사 필요 |

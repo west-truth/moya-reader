@@ -13,6 +13,7 @@ import { registerLibraryManagementRoutes } from './books/library-management-rout
 import { registerReaderPersonalizationRoutes } from './books/personalization-routes.js';
 import { registerEpubResourceRoutes } from './books/epub-resource-routes.js';
 import { registerDocumentTextRoutes } from './books/document-text-routes.js';
+import { registerDocumentAnnotationRoutes } from './books/document-annotation-routes.js';
 import { registerOriginalFileRoutes } from './books/original-file-routes.js';
 
 export async function registerBookRoutes(app: FastifyInstance, pool: pg.Pool, config: ServerConfig): Promise<void> {
@@ -29,4 +30,5 @@ export async function registerBookRoutes(app: FastifyInstance, pool: pg.Pool, co
   await registerReaderPersonalizationRoutes(app, pool, config);
   await registerEpubResourceRoutes(app, pool, config);
   await registerDocumentTextRoutes(app, pool, config);
+  await registerDocumentAnnotationRoutes(app, pool, config);
 }

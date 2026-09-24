@@ -3,6 +3,7 @@ import type { AnalysisStatus, Character, LabeledSegment, SegmentType } from '@no
 import { matchesIntegrityHash } from '@noveldesk/text-core/hash';
 import type { CharacterRelation } from '../../../../../src/providers/ai.js';
 import type { SyncEvent } from '@noveldesk/contracts/sync';
+import { documentPageHash } from '../books/document-page-identity.js';
 import { hasSecretLikeKey as hasSecretLikeKeyOrValue } from '../../providers/server-provider-settings.js';
 import {
   parseVoiceCastingUpdatedPayload as parseSharedVoiceCastingUpdatedPayload,
@@ -151,7 +152,7 @@ export function parseVoiceProfilesPayload(
 }
 
 export function parseDocumentAnnotationPayload(
-  event: SyncEvent,
+  event: Pick<SyncEvent, 'novelId' | 'entityId' | 'revision' | 'createdAt'> & { payload: unknown },
 ):
   | { ok: true; bookId: string; id: string; pageIndex: number; annotation: Record<string, unknown>; updatedAt: string }
   | { ok: false; message: string } {
@@ -815,14 +816,11 @@ export async function validateSyncEventPayload(
   if (event.type === 'document_annotation_updated') {
     const parsed = parseDocumentAnnotationPayload(event);
     if (!parsed.ok) return parsed;
-    const page = await client.query<{ page_hash: string }>(
-      'select page_hash from document_pages where book_id = $1 and page_index = $2',
-      [parsed.bookId, parsed.pageIndex],
-    );
-    if (!page.rows[0]) return { ok: false, message: 'document annotation page does not exist in the book' };
+    const pageHash = await documentPageHash(client, parsed.bookId, parsed.pageIndex);
+    if (!pageHash) return { ok: false, message: 'document annotation page does not exist in the book' };
     const anchor = record(parsed.annotation.anchor);
-    const pageHash = stringValue(anchor.pageHash);
-    if (pageHash && pageHash !== page.rows[0].page_hash) {
+    const anchorPageHash = stringValue(anchor.pageHash);
+    if (anchorPageHash && anchorPageHash !== pageHash) {
       return { ok: false, message: 'document annotation page hash does not match the synced source' };
     }
   }
@@ -833,12 +831,9 @@ export async function validateSyncEventPayload(
   if (event.type === 'document_text_order_override_updated') {
     const parsed = parseDocumentTextOrderOverridePayload(event);
     if (!parsed.ok) return parsed;
-    const page = await client.query<{ page_hash: string }>(
-      'select page_hash from document_pages where book_id = $1 and page_index = $2',
-      [parsed.bookId, parsed.pageIndex],
-    );
-    if (!page.rows[0]) return { ok: false, message: 'document text order override page does not exist in the book' };
-    if (parsed.pageHash !== page.rows[0].page_hash) {
+    const pageHash = await documentPageHash(client, parsed.bookId, parsed.pageIndex);
+    if (!pageHash) return { ok: false, message: 'document text order override page does not exist in the book' };
+    if (parsed.pageHash !== pageHash) {
       return { ok: false, message: 'document text order override page hash does not match the synced source' };
     }
   }
