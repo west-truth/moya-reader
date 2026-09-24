@@ -1,6 +1,6 @@
 # 직전 에이전트 변경 검토와 수정
 
-검토 기준: `feat/desktop-embedded-selfhost`, `72e0e6e`. 수정은 이 커밋 이후 작업 트리에 있다.
+검토 기준: `feat/desktop-embedded-selfhost`, `72e0e6e`. 수정은 `a59cc9f`와 Windows 검사 보정 `19a0d65`로 커밋·푸시했다.
 
 ## 결론
 

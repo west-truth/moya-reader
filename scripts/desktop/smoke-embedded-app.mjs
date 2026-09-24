@@ -14,6 +14,8 @@ import { epubFixture, pdfFixture } from './embedded-format-fixtures.mjs';
 const { Client } = createRequire(new URL('../../apps/server/package.json', import.meta.url))('pg');
 const executable = path.resolve(process.argv[2]);
 const profile = await mkdtemp(path.join(tmpdir(), 'Moya app proof 한글 '));
+// Initial peer copy, newly synced peer book, native TXT, EPUB and PDF.
+const expectedBackupBookCount = 5;
 const listener = createServer();
 await new Promise((resolve) => listener.listen(0, '127.0.0.1', resolve));
 const port = listener.address().port;
@@ -25,6 +27,7 @@ const evidence = {
   nativePeerCopied: false,
   nativePeerCopyResumed: false,
   nativePeerReauthenticated: false,
+  nativePeerNewBook: false,
   collectorGateway: false,
   nativeFormats: [],
   sharingRevoked: false,
@@ -153,34 +156,38 @@ try {
     body: JSON.stringify({ username: 'peer-source', password: peerPassword, setupCode: peerSource.authToken }),
   });
   const peerBytes = Buffer.from('1화 시작\n\n서버 간 복제 검증 원본입니다.\n', 'utf8');
-  const peerUpload = await peerSourceRequest('/uploads/init', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      fileName: '서버 간 복제 검증.txt',
-      sizeBytes: peerBytes.length,
-      contentType: 'text/plain',
-      totalChunks: 1,
-    }),
-  });
-  await peerSourceRequest(`/uploads/${peerUpload.uploadId}/chunks/0`, {
-    method: 'PUT',
-    headers: { 'Content-Type': 'application/octet-stream' },
-    body: peerBytes,
-  });
-  const peerJob = await peerSourceRequest(`/uploads/${peerUpload.uploadId}/complete`, { method: 'POST' });
-  let peerBookId;
-  const peerImportDeadline = Date.now() + 30_000;
-  while (Date.now() < peerImportDeadline) {
-    const result = await peerSourceRequest(`/import-jobs/${peerJob.jobId}`);
-    assert.notEqual(result.status, 'failed', JSON.stringify(result));
-    if (result.status === 'done') {
-      peerBookId = result.book_id;
-      break;
+  const importPeerText = async (fileName, bytes) => {
+    const peerUpload = await peerSourceRequest('/uploads/init', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        fileName,
+        sizeBytes: bytes.length,
+        contentType: 'text/plain',
+        totalChunks: 1,
+      }),
+    });
+    await peerSourceRequest(`/uploads/${peerUpload.uploadId}/chunks/0`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/octet-stream' },
+      body: bytes,
+    });
+    const peerJob = await peerSourceRequest(`/uploads/${peerUpload.uploadId}/complete`, { method: 'POST' });
+    let peerBookId;
+    const peerImportDeadline = Date.now() + 30_000;
+    while (Date.now() < peerImportDeadline) {
+      const result = await peerSourceRequest(`/import-jobs/${peerJob.jobId}`);
+      assert.notEqual(result.status, 'failed', JSON.stringify(result));
+      if (result.status === 'done') {
+        peerBookId = result.book_id;
+        break;
+      }
+      await delay(150);
     }
-    await delay(150);
-  }
-  assert(peerBookId, 'Peer source import timed out');
+    assert(peerBookId, 'Peer source import timed out');
+    return peerBookId;
+  };
+  const peerBookId = await importPeerText('서버 간 복제 검증.txt', peerBytes);
   await page.getByRole('button', { name: '설정 열기', exact: true }).click();
   await page.getByRole('tab', { name: /앱 정보/ }).click();
   await page.getByRole('heading', { name: '다른 서버의 서재를 이 서버에 보관' }).waitFor();
@@ -231,7 +238,7 @@ try {
   } finally {
     await sourceDatabase.end();
   }
-  await page.getByRole('button', { name: '독서 위치 지금 동기화' }).click();
+  await page.getByRole('button', { name: '새 작품·독서 위치 지금 동기화' }).click();
   await page.getByRole('button', { name: '기존 연결에 다시 로그인' }).waitFor();
   await page.getByLabel('기존 서버 계정').fill('peer-source');
   await page.getByLabel('비밀번호', { exact: true }).fill(peerPassword);
@@ -246,6 +253,24 @@ try {
   assert.equal(resumedState.inboundCursor, pairedState.inboundCursor);
   assert.equal(resumedState.outboundCursor, pairedState.outboundCursor);
   evidence.nativePeerReauthenticated = true;
+  const addedBytes = Buffer.from('1화 새 작품\n\n연결 후 추가한 원본을 전달합니다.\n', 'utf8');
+  const addedBookId = await importPeerText('연결 후 새 작품.txt', addedBytes);
+  const [synced] = await Promise.all([
+    page.waitForResponse(
+      (response) => response.url().endsWith('/api/sync/peer/run') && response.request().method() === 'POST',
+      { timeout: 60_000 },
+    ),
+    page.getByRole('button', { name: '새 작품·독서 위치 지금 동기화' }).click(),
+  ]);
+  assert.equal(synced.status(), 200);
+  const afterNewBook = await synced.json();
+  assert.equal(afterNewBook.status, 'ready', JSON.stringify(afterNewBook));
+  const addedCopy = await fetch(`${connection.url}/api/books/${addedBookId}/source`, {
+    headers: { Authorization: `Bearer ${connection.authToken}` },
+  });
+  assert.equal(addedCopy.status, 200);
+  assert.deepEqual(Buffer.from(await addedCopy.arrayBuffer()), addedBytes);
+  evidence.nativePeerNewBook = true;
   await page.getByRole('button', { name: '서버 연결 해제' }).click();
   await page.getByRole('button', { name: '빈 서재에 복제하고 연결' }).waitFor();
   await peerSource.stop();
@@ -432,7 +457,7 @@ try {
     assert(manifestEntry?.getData, 'Native backup download did not contain a manifest');
     const manifest = JSON.parse(await manifestEntry.getData(new TextWriter()));
     assert.equal(manifest.backend, 'hosted');
-    assert.equal(manifest.books.length, 4);
+    assert.equal(manifest.books.length, expectedBackupBookCount);
   } finally {
     await backupReader.close();
   }
@@ -546,9 +571,9 @@ try {
     });
     assert(inspection.stagedId);
     const result = await restoredRequest(`/backups/staged/${inspection.stagedId}/restore`, { method: 'POST' });
-    assert.equal(result.restoredBooks, 4);
+    assert.equal(result.restoredBooks, expectedBackupBookCount);
     const books = await restoredRequest('/books');
-    assert.equal(books.books.length, 4);
+    assert.equal(books.books.length, expectedBackupBookCount);
     const restoredBookmarks = await restoredRequest(`/books/${textBookId}/bookmarks`);
     assert.equal(restoredBookmarks.bookmarks.length, 1);
     const restoredPdfAnnotations = await restoredRequest(`/books/${pdfBookId}/document-annotations`);

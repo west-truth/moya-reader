@@ -64,6 +64,18 @@ interface SupersededRestoreObjects {
 
 const APP_VERSION = '0.1.0';
 
+// Initial content transfer between servers; user state travels via sync events.
+export const PEER_BOOK_CONTENT_TABLES = new Set<HostedBackupTableName>([
+  'library_books',
+  'book_assets',
+  'document_pages',
+  'document_text_revisions',
+  'document_text_blocks',
+  'book_content_revisions',
+  'chapters',
+  'paragraph_pages',
+]);
+
 function quoteIdentifier(value: string): string {
   if (!/^[a-z][a-z0-9_]*$/.test(value)) throw new Error(`Unsafe SQL identifier: ${value}`);
   return `"${value}"`;
@@ -175,30 +187,48 @@ async function existingBookTitles(
   return new Map(result.rows.map((row) => [String(row.id), String(row.title)]));
 }
 
-async function snapshotHostedData(pool: pg.Pool, userId: string) {
+async function snapshotHostedData(pool: pg.Pool, userId: string, contentBookId?: string) {
   const client = await pool.connect();
   try {
     await client.query('begin isolation level repeatable read read only');
-    const catalog = await client.query('select * from library_books where user_id = $1 order by created_at, id', [
-      userId,
-    ]);
+    const catalog = await client.query(
+      `select * from library_books where user_id = $1${contentBookId === undefined ? '' : ' and id = $2'} order by created_at, id`,
+      contentBookId === undefined ? [userId] : [userId, contentBookId],
+    );
+    if (
+      contentBookId !== undefined &&
+      (catalog.rows.length !== 1 || catalog.rows[0].deleted_at || Number(catalog.rows[0].content_revision_number) !== 1)
+    )
+      throw new Error('peer_book_initial_content_required');
     const bookIds = catalog.rows.map((row) => String(row.id));
     const tables = new Map<HostedBackupTableName, readonly Record<string, unknown>[]>();
     tables.set('library_books', catalog.rows);
     for (const table of HOSTED_BACKUP_BOOK_TABLES) {
       if (table === 'library_books') continue;
+      if (contentBookId !== undefined && !PEER_BOOK_CONTENT_TABLES.has(table)) {
+        tables.set(table, []);
+        continue;
+      }
       const result =
         bookIds.length === 0
           ? { rows: [] }
           : await client.query(
               `select * from ${quoteIdentifier(table)} where book_id = any($1::text[])${
                 table === 'book_assets' ? " and status = 'active'" : ''
+              }${
+                table === 'book_assets' && contentBookId !== undefined
+                  ? " and kind in ('cover','epub_resource','document_page','source_part')"
+                  : ''
               }`,
               [bookIds],
             );
       tables.set(table, result.rows);
     }
     for (const table of HOSTED_BACKUP_GLOBAL_TABLES) {
+      if (contentBookId !== undefined) {
+        tables.set(table, []);
+        continue;
+      }
       const result = await client.query(`select * from ${quoteIdentifier(table)} where user_id = $1`, [userId]);
       tables.set(table, result.rows);
     }
@@ -270,8 +300,9 @@ export async function exportHostedBackup(
   config: ServerConfig,
   signal?: AbortSignal,
   bufferedClient = false,
+  contentBookId?: string,
 ): Promise<HostedBackupStreamResult> {
-  const snapshot = await snapshotHostedData(pool, config.defaultUserId);
+  const snapshot = await snapshotHostedData(pool, config.defaultUserId, contentBookId);
   if (bufferedClient && snapshot.objects.reduce((n, o) => n + Number(o.size_bytes), 0) > 512 * 1024 ** 2)
     throw new Error('대용량 백업은 Self-host 웹에서 다운로드해 주세요.');
   const s3 = createS3Client(config);

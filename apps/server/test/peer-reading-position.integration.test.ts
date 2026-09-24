@@ -144,6 +144,214 @@ async function withTwoDatabases(run: (poolA: pg.Pool, poolB: pg.Pool) => Promise
 }
 
 describe.skipIf(!harness)('two server reading position sync', () => {
+  it('transfers new book content in both directions without replacing user state, and retries an interrupted transfer', async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), 'moya-peer-books-'));
+    try {
+      await withTwoDatabases(async (poolA, poolB) => {
+        await fixtureBook(poolA, USER_A);
+        await fixtureBook(poolB, USER_B);
+        const a = await testServer(poolA, path.join(directory, 'a'), 'native_a', USER_A);
+        const b = await testServer(poolB, path.join(directory, 'b'), 'native_b', USER_B);
+        const request = (server: typeof a, resource: string, body?: unknown) =>
+          fetch(`${server.url}/api${resource}`, {
+            method: body === undefined ? 'GET' : 'POST',
+            headers: { Authorization: `Bearer ${server.token}`, 'Content-Type': 'application/json' },
+            ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+          });
+        const addBook = async (server: typeof a, pool: pg.Pool, suffix: string, publish = true) => {
+          const bytes = Buffer.from(`New book content ${suffix}`);
+          const hash = `sha256:${createHash('sha256').update(bytes).digest('hex')}`;
+          const bookId = `book_${suffix}`;
+          await pool.query(
+            `insert into book_objects (id,raw_text_hash,storage_key,file_name,content_type,size_bytes)
+            values ($1,$2,$3,'new.txt','text/plain',$4)`,
+            [`source_${suffix}`, hash, `fixture/${suffix}`, bytes.length],
+          );
+          await pool.query(
+            `insert into library_books (id,user_id,object_id,title,source_file_name,normalized_text_hash,total_chapters,total_characters,total_paragraphs)
+            values ($1,$2,$3,$4,'new.txt',$5,1,$6,1)`,
+            [bookId, server.config.defaultUserId, `source_${suffix}`, suffix, hash, bytes.length],
+          );
+          await pool.query(
+            `insert into chapters (id,book_id,chapter_index,title,text_hash,raw_start_offset,raw_end_offset,character_count,paragraph_count)
+            values ($1,$2,0,'Chapter',$3,0,$4,$4,1)`,
+            [`chapter_${suffix}`, bookId, hash, bytes.length],
+          );
+          await pool.query(
+            `insert into paragraph_pages (id,book_id,chapter_id,page_index,start_paragraph_index,end_paragraph_index,paragraphs,text_hash)
+            values ($1,$2,$3,0,0,0,$4::jsonb,$5)`,
+            [
+              `page_${suffix}`,
+              bookId,
+              `chapter_${suffix}`,
+              JSON.stringify([{ id: `paragraph_${suffix}`, index: 0, text: bytes.toString() }]),
+              hash,
+            ],
+          );
+          if (publish)
+            await new FileObjectStore(server.config.objectStorageDir!).put(
+              'test',
+              `fixture/${suffix}`,
+              bytes,
+              'text/plain',
+            );
+          const event = ownedEvent(
+            canonicalV2Event({
+              id: `import_${suffix}`,
+              type: 'book_imported',
+              novelId: bookId,
+              entityId: bookId,
+              deviceId: 'server',
+              payload: { bookId },
+              createdAt: '2026-09-24T00:00:00.000Z',
+              revision: {
+                entityType: 'book',
+                entityId: bookId,
+                novelId: bookId,
+                localSequence: 0,
+                updatedAt: '2026-09-24T00:00:00.000Z',
+                payloadHash: 'canonicalized-by-fixture',
+              },
+            }),
+            server.config.defaultUserId,
+          );
+          const emitted = await request(server, '/sync/events', v2PushEnvelope([event]));
+          expect(await emitted.json()).toMatchObject({ acceptedIds: [event.id] });
+          // The existing import worker emits a book revision with no device_id.
+          await pool.query('update sync_events set device_id=null where id=$1', [event.id]);
+          return { bookId, bytes };
+        };
+        const copiedBytes = async (server: typeof a, pool: pg.Pool, bookId: string) => {
+          const stored = await pool.query(
+            'select o.storage_key from library_books b join book_objects o on o.id=b.object_id where b.id=$1',
+            [bookId],
+          );
+          const object = await new FileObjectStore(server.config.objectStorageDir!).get(
+            'test',
+            stored.rows[0].storage_key,
+          );
+          const chunks: Buffer[] = [];
+          for await (const chunk of object.body) chunks.push(Buffer.from(chunk));
+          return Buffer.concat(chunks);
+        };
+        try {
+          expect(
+            (
+              await request(b, '/auth/register', {
+                username: 'peer',
+                password: 'long peer test password',
+                setupCode: b.token,
+              })
+            ).status,
+          ).toBe(201);
+          expect(
+            (
+              await request(a, '/sync/peer', {
+                url: b.url,
+                username: 'peer',
+                password: 'long peer test password',
+                startFromNow: true,
+              })
+            ).status,
+          ).toBe(200);
+          await poolA.query(
+            'insert into reader_settings (user_id,settings) values ($1, \'{"fontSize":17}\') on conflict (user_id) do update set settings=excluded.settings',
+            [USER_A],
+          );
+          await poolB.query(
+            'insert into reader_settings (user_id,settings) values ($1, \'{"fontSize":23}\') on conflict (user_id) do update set settings=excluded.settings',
+            [USER_B],
+          );
+          const first = await addBook(a, poolA, 'new_a');
+          const reading = await fetch(`${a.url}/api/books/${first.bookId}/reading-position`, {
+            method: 'PATCH',
+            headers: { Authorization: `Bearer ${a.token}`, 'Content-Type': 'application/json' },
+            body: JSON.stringify({ chapterId: 'chapter_new_a', updatedAt: '2026-09-24T01:00:00.000Z', scrollTop: 19 }),
+          });
+          expect(reading.status).toBe(200);
+          const firstRun = await request(a, '/sync/peer/run', {});
+          expect(await firstRun.json()).toMatchObject({ status: 'ready' });
+          expect(await copiedBytes(b, poolB, first.bookId)).toEqual(first.bytes);
+          expect(
+            (await poolB.query('select scroll_top from reading_positions where book_id=$1', [first.bookId])).rows[0]
+              .scroll_top,
+          ).toBe(19);
+          expect(
+            (await poolB.query('select count(*)::int as n from paragraph_search where book_id=$1', [first.bookId]))
+              .rows[0].n,
+          ).toBe(1);
+          expect(
+            (await poolB.query('select settings from reader_settings where user_id=$1', [USER_B])).rows[0].settings,
+          ).toEqual({ fontSize: 23 });
+          const archiveResponse = await request(a, `/sync/book-content/${first.bookId}`);
+          expect(archiveResponse.status).toBe(200);
+          const archive = Buffer.from(await archiveResponse.arrayBuffer());
+          const replayArchive = () =>
+            fetch(`${b.url}/api/sync/book-content/${first.bookId}`, {
+              method: 'POST',
+              headers: { Authorization: `Bearer ${b.token}`, 'Content-Type': 'application/zip' },
+              body: archive,
+            });
+          expect(await (await replayArchive()).json()).toMatchObject({ installed: false });
+          expect(
+            (await poolB.query('select scroll_top from reading_positions where book_id=$1', [first.bookId])).rows[0]
+              .scroll_top,
+          ).toBe(19);
+          const unauthenticated = await fetch(`${b.url}/api/sync/book-content/${first.bookId}`);
+          expect(unauthenticated.status).toBe(401);
+          // Simulate loss of the acknowledgement/cursor after the receiver committed.
+          await poolA.query('update sync_server_peers set outbound_cursor=0');
+          expect(await (await request(a, '/sync/peer/run', {})).json()).toMatchObject({ status: 'ready' });
+          expect(
+            (await poolB.query('select count(*)::int as n from library_books where id=$1', [first.bookId])).rows[0].n,
+          ).toBe(1);
+          const second = await addBook(b, poolB, 'new_b');
+          expect(await (await request(a, '/sync/peer/run', {})).json()).toMatchObject({ status: 'ready' });
+          expect(await copiedBytes(a, poolA, second.bookId)).toEqual(second.bytes);
+          expect(
+            (await poolA.query('select settings from reader_settings where user_id=$1', [USER_A])).rows[0].settings,
+          ).toEqual({ fontSize: 17 });
+          const before = (await poolA.query('select inbound_cursor from sync_server_peers')).rows[0].inbound_cursor;
+          const missing = await addBook(b, poolB, 'missing', false);
+          expect(await (await request(a, '/sync/peer/run', {})).json()).toMatchObject({ status: 'offline' });
+          expect((await poolA.query('select inbound_cursor from sync_server_peers')).rows[0].inbound_cursor).toBe(
+            before,
+          );
+          expect((await poolA.query('select id from library_books where id=$1', [missing.bookId])).rows).toHaveLength(
+            0,
+          );
+          await new FileObjectStore(b.config.objectStorageDir!).put(
+            'test',
+            'fixture/missing',
+            missing.bytes,
+            'text/plain',
+          );
+          expect(await (await request(a, '/sync/peer/run', {})).json()).toMatchObject({ status: 'ready' });
+          expect(await copiedBytes(a, poolA, missing.bookId)).toEqual(missing.bytes);
+          // A collision preserves the target book and leaves the next event pending.
+          await poolB.query("update book_objects set raw_text_hash='sha256:different' where id='source_new_a'");
+          const cursor = (await poolA.query('select outbound_cursor from sync_server_peers')).rows[0].outbound_cursor;
+          await poolA.query('update sync_server_peers set outbound_cursor=0');
+          expect(await (await request(a, '/sync/peer/run', {})).json()).toMatchObject({
+            status: 'blocked',
+            lastError: 'peer_book_identity_mismatch',
+            outboundCursor: 0,
+          });
+          expect(Number(cursor)).toBeGreaterThan(0);
+          expect(
+            (await poolB.query("select raw_text_hash from book_objects where id='source_new_a'")).rows[0].raw_text_hash,
+          ).toBe('sha256:different');
+          expect((await replayArchive()).status).toBe(409);
+        } finally {
+          await a.app.close();
+          await b.app.close();
+        }
+      });
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  }, 40_000);
+
   it('seeds an empty peer from the existing streamed server backup and then syncs new positions', async () => {
     const directory = await mkdtemp(path.join(tmpdir(), 'moya-peer-bootstrap-'));
     try {

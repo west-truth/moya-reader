@@ -38,6 +38,10 @@ const errorText: Record<string, string> = {
   peer_bootstrap_failed: '서재 복제에 실패했습니다. 두 서버의 저장 공간과 연결 상태를 확인해 주세요.',
   peer_bootstrap_library_changed: '복제 중 이 서버의 책장이 바뀌어 기존 자료를 보존하고 중단했습니다.',
   peer_book_identity_mismatch: '두 서버에 같은 ID로 다른 내용의 작품이 있어 동기화를 중단했습니다.',
+  peer_book_transfer_rejected: '작품 전송을 진행할 수 없습니다. 상대 서버 버전과 원본 교체 여부를 확인해 주세요.',
+  peer_book_identity_changed: '전송 중 작품 내용이 바뀌어 동기화를 중단했습니다.',
+  peer_book_target_changed: '전송 중 이 서버의 서재가 바뀌어 기존 작품을 보존하고 중단했습니다.',
+  peer_book_archive_unavailable: '작품 원본을 받지 못했습니다. 상대 서버의 연결과 파일 상태를 확인해 주세요.',
   peer_event_type_unsupported: '아직 지원하지 않는 종류의 변경이 있어 동기화를 중단했습니다.',
   peer_auth_required: '기존 서버에 다시 로그인해 연결해 주세요.',
   invalid_peer_url: '서버 기본 주소를 /api 없이 입력해 주세요. HTTPS 또는 같은 PC의 localhost 주소를 지원합니다.',
@@ -157,9 +161,13 @@ export function ServerPeerSyncSettings({ client }: { readonly client: Pick<Remot
     try {
       if (action === 'bootstrap') await bootstrap();
       else {
-        await client.request(`/sync/peer${action === 'run' ? '/run' : ''}`, {
-          method: action === 'run' ? 'POST' : 'DELETE',
-        });
+        await client.request(
+          `/sync/peer${action === 'run' ? '/run' : ''}`,
+          {
+            method: action === 'run' ? 'POST' : 'DELETE',
+          },
+          action === 'run' ? 60 * 60_000 + 30_000 : 90_000,
+        );
         await refresh();
       }
     } catch (error) {
@@ -191,8 +199,8 @@ export function ServerPeerSyncSettings({ client }: { readonly client: Pick<Remot
     <section aria-labelledby="server-peer-sync-title">
       <h3 id="server-peer-sync-title">다른 서버의 서재를 이 서버에 보관</h3>
       <p>
-        현재 서버의 책장이 비어 있으면 기존 self-host 서재를 한 번 복제할 수 있습니다. 이후에는 새 독서 위치만
-        양방향으로 동기화합니다. 새 작품·원본 변경·주석은 아직 자동으로 따라오지 않습니다.
+        현재 서버의 책장이 비어 있으면 기존 self-host 서재를 한 번 복제할 수 있습니다. 이후에는 새 작품의 원본·회차와
+        독서 위치를 양방향으로 동기화합니다. 기존 작품의 원본 교체·주석 변경은 아직 자동으로 따라오지 않습니다.
       </p>
       {loadError && <p role="alert">{loadError}</p>}
       {peer === undefined && !loadError && <p role="status">서버 연결 상태를 불러오는 중입니다.</p>}
@@ -267,7 +275,7 @@ export function ServerPeerSyncSettings({ client }: { readonly client: Pick<Remot
             }
             onClick={() => void run('run')}
           >
-            독서 위치 지금 동기화
+            새 작품·독서 위치 지금 동기화
           </button>
           <button
             type="button"

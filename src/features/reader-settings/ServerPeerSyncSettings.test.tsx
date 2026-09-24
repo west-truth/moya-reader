@@ -144,7 +144,7 @@ describe('server peer sync settings', () => {
     });
     const buttons = renderer!.root.findAllByType('button');
     expect(buttons.some((button) => button.children.join('') === '빈 서재 복제 다시 시도')).toBe(state.canRetryCopy);
-    expect(buttons.find((button) => button.children.join('') === '독서 위치 지금 동기화')!.props.disabled).toBe(
+    expect(buttons.find((button) => button.children.join('') === '새 작품·독서 위치 지금 동기화')!.props.disabled).toBe(
       state.bootstrapRequired,
     );
   });
