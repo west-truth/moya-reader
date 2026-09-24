@@ -34,37 +34,24 @@ pnpm check:desktop
 pnpm tauri:dev
 ```
 
-로컬 release와 NSIS installer를 만들려면 다음 명령을 사용합니다.
+### 현재 내장 self-host 후보
+
+현재 데스크톱의 구조·남은 범위는 [desktop.md](desktop.md)를 따릅니다. 위 `tauri:dev`는 일반 shell 개발 명령입니다.
+내장 서버 후보는 Windows x64에서 다음 전용 스크립트로 빌드합니다.
 
 ```powershell
-pnpm tauri:build
+node scripts/desktop/build-embedded-runtime.mjs
+node scripts/desktop/build-embedded-app.mjs
+node scripts/desktop/smoke-embedded-app.mjs ".tmp/Moya app 한글/Moya.exe"
 ```
 
-결과물은 `src-tauri/target/release/bundle/nsis/`에 생성됩니다. `src-tauri/target/`과 installer는 Git에서
-제외됩니다. 이 로컬 build 성공은 코드 조합을 확인하는 개발 gate이며 공식 서명·배포 승인을 의미하지 않습니다.
+실행 파일과 `embedded-server/`를 함께 배포하는 구조입니다. 원본·DB는 서버 profile에 보관합니다.
+이전 WebView/IndexedDB 포터블 후보와 데이터를 자동으로 공유한다고 가정하지 마십시오.
+이전 단일 EXE 사용법은 [보관 문서](../archive/desktop-2026-09/windows-portable-user-guide-ko.md)에 있습니다.
 
-### 포터블 EXE 후보
-
-Windows x64에서 단일 파일 후보를 만들려면 `pnpm desktop:portable:win`을 실행합니다. 출력은
-`release/Moya.exe`입니다. 설치 프로그램은 생성하지 않습니다. 첫 실행 시 EXE 옆에
-`MoyaData/`가 생기며 WebView 데이터, 네이티브 작업 기록과 동봉한 Node·메타데이터 실행기가 이곳에 놓입니다.
-포터블 빌드의 앱 식별자는 `app.moya.reader`입니다. 이전 내부 시험용 EXE와 데이터 호환성은 보장하지 않습니다.
-EXE를 교체할 때는 앱을 종료하고 `MoyaData/`는 그대로 둡니다.
-Windows 후보 workflow는 수동 실행합니다. 매 push마다 전체 Windows 빌드를 반복하지 않습니다.
-`artifact_run`을 주면 기존 후보를 다시 빌드하지 않고 실행 검사만 합니다. 오래된 후보에는 새 smoke 준비 신호가 없으므로 현재 형식의 후보를 지정해야 합니다.
-검사는 실제 WebView의 React 화면 준비, 중복 실행 차단, 전체 폴더 이동 뒤 작은 설정 값 보존을 확인합니다.
-이는 전체 서재 이동이나 실제 사이트 로그인을 대신하지 않습니다.
-
-이 명령은 Python 수집기와 Windows Node 런타임을 빌드 중에 묶습니다. 기본 빌드는 JS 소스를 대상으로 하며
-APK/Java 실행기 포함은 `MOYA_BUNDLE_APK=1`로 별도 선택합니다.
-WebView2는 EXE에 넣지 않고 PC에 설치된 Evergreen Runtime을 사용합니다. 없으면 공식 설치 안내를 표시합니다.
-CAB 다운로드·EXE 뒤 부착·자체 WebView2 해제 경로는 제거했습니다.
-
-포터블 수집기는 내부적으로 PyInstaller `--onedir`를 사용하여 실행할 때마다 Python을 임시 폴더에 다시 풀지 않습니다.
-배포물은 여전히 단일 Moya.exe입니다. Python Playwright의 중복 Node를 제거하고 `PLAYWRIGHT_NODEJS_PATH`로
-동봉 소스 실행기의 Node를 공유합니다. 후보 검사에서 실제 수집기 EXE의 `--check-runtime`으로 이 연결을 확인합니다.
-기존 설치형 수집기는 `--onefile`을 유지합니다.
-[Playwright 실행기 선택](https://github.com/microsoft/playwright-python/blob/main/playwright/_impl/_driver.py).
+설치 후보는 `scripts/desktop/build-embedded-installer.mjs`, 전체 Windows 검사는
+`.github/workflows/desktop-embedded.yml`을 참고합니다. 서명된 공식 배포물의 제공 여부와
+미검증 범위는 현재 구조 문서에서 구분합니다. 작은 수정마다 전체 Windows 패키징을 반복하지 않습니다.
 
 ## Android
 

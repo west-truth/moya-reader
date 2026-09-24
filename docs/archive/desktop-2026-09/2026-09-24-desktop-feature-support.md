@@ -1,5 +1,8 @@
 # 내장 서버 앱 기능 연결과 검증 현황
 
+> **보관 문서 — 현재 실행 계획이 아닙니다.** 아래 지시·상태·검증 결과는 당시 기록입니다.
+> 현재 기준은 [데스크톱 구조와 작업 범위](../../platforms/desktop.md)입니다. 이전 W01~W12 계획을 이어서 구현하지 않습니다.
+
 기준: `feat/desktop-embedded-selfhost`, 2026-09-24. [구현 계획](2026-09-23-desktop-embedded-selfhost-plan.md)의 P2 지원표다. 기존 코드가 있다는 것과 후보 앱에서 검증을 통과했다는 것을 구분한다. 수집기 포함 Windows 기본 후보는 [`775a9ff` 실행](https://github.com/west-truth/moya-reader/actions/runs/35929350327)에서 통과했다. 실제 앱 기능과 설치 후보는 [`62514e5` 실행](https://github.com/west-truth/moya-reader/actions/runs/35932538748)에서 통과했다. 최신 코드 `abb418c`의 Windows 앱·복구·공통 독서 회귀는 [실행 35953318186](https://github.com/west-truth/moya-reader/actions/runs/35953318186)에서 통과했다(설치본 생성 옵션 제외).
 
 다음 구현의 파일·작업 순서·완료 검사는 [남은 전체 작업 계획 W01~W12](2026-09-24-desktop-remaining-work-plan.md)을 따른다. 물리 타 기기 검증은 사용자 요청으로 이번 실행 범위에서 제외했다. A1~A3은 기존 self-host 수집기와 로그인 브라우저를 앱에 연결하고 실제 Windows 패키지에서 검증했다. C0/D0 조사는 별도 문서에 기록했다. C1의 기본 로컬 ZIP 이전과 D1의 빈 서재 최초 복제·신규 독서 위치 교환을 검증했다. D2a는 이후 새 작품 콘텐츠의 양방향 전달을 구현하고 두 DB로 검증했다. 기존 작품 원본 교체와 나머지 동기화 항목은 남았다.

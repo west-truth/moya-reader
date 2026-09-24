@@ -1,5 +1,8 @@
 # 데스크톱 내장 self-host 구현 계획
 
+> **보관 문서 — 현재 실행 계획이 아닙니다.** 아래 지시·상태·검증 결과는 당시 기록입니다.
+> 현재 기준은 [데스크톱 구조와 작업 범위](../../platforms/desktop.md)입니다. 이전 W01~W12 계획을 이어서 구현하지 않습니다.
+
 작성: 2026-09-23. 갱신: 2026-09-24. 상태: **P0 완료. P1 복구·설치 후보의 Windows 검증 통과. P2 공통 숫자 진행률과 대용량·백업·EPUB/PDF 대표 경로 검증 추가. C1 기본 로컬 ZIP 이전, D1 빈 서재 초기 복제와 신규 독서 위치 동기화 첫 범위 검증. 일반 배포·전체 이전·전체 동기화는 미완료**.
 새 작업 브랜치: `feat/desktop-embedded-selfhost`. 제품 코드 기준: `f5613f3`.
 이 문서가 데스크톱 구현 순서를 정한다. 기존 로컬 완성 → 서버화 계획은 [보관 기록](2026-09-23-desktop-indexeddb-archive.md)으로 전환했다.
@@ -46,16 +49,16 @@ flowchart TD
 
 아래는 `f5613f3` 코드 확인 결과다. 기존 기능의 Windows 서버 동봉 성공을 뜻하지 않는다.
 
-| 영역         | 확인된 코드                                                                                                          | 계획에 주는 제약                                                                                                                                                           |
-| ------------ | -------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| API와 서비스 | [`buildServer`](../../apps/server/src/server.ts), [`worker`](../../apps/server/src/worker.ts)                        | 기존 서버와 worker를 실행할 수 있는 구성을 먼저 만든다. 서버 업무 규칙을 새로 작성하지 않는다.                                                                             |
-| DB           | [`pg.Pool`](../../apps/server/src/db/pool.ts), [`SQL migration`](../../apps/server/src/db/migrations)                | PostgreSQL 쿼리·JSONB 등에 결합되어 있다. SQLite 교체를 작은 작업으로 가정하지 않는다.                                                                                     |
-| 큐           | [`queue.ts`](../../apps/server/src/queue.ts)                                                                         | import/provider가 BullMQ·Redis와 연결된다. Windows에서 제공할 실행 구성 또는 실제 호출 범위의 대체 비용을 확인해야 한다.                                                   |
-| 객체 저장    | [`object-storage.ts`](../../apps/server/src/services/object-storage.ts)                                              | 현재 S3 client/명령을 사용한다. 파일 디렉터리 설정만으로 동작하는 상태가 아니다.                                                                                           |
-| 배포         | [`compose.yaml`](../../compose.yaml)                                                                                 | API·worker·PostgreSQL·Redis·MinIO 등의 책임을 앱 실행 구성에서 충족해야 한다. Docker 배포는 계속 지원한다.                                                                 |
-| 클라이언트   | [`reader-runtime.ts`](../../src/repositories/reader-runtime.ts)                                                      | RemoteReaderRepository, RemoteBookAssetRepository, ServerUploadImportService, RemoteBackupRepository를 재사용할 수 있다. 데스크톱용 실행 중 endpoint/auth 주입이 필요하다. |
-| 실행기       | [`extension_runtime.rs`](../../src-tauri/src/extension_runtime.rs), [`portable.rs`](../../src-tauri/src/portable.rs) | 동봉 실행기·프로필·중복 실행·종료 기반이 있다. 확장 host를 완성된 서재 서버로 취급하지 않는다.                                                                             |
-| 동기화       | [`서버 route`](../../apps/server/src/routes/sync.ts), [`계약`](../../src/sync/contract.ts)                           | 기존 계약과 구현을 조사해 지원표를 만든다. 모든 자료의 서버 간 동기화가 완성됐다고 가정하지 않는다.                                                                        |
+| 영역         | 확인된 코드                                                                                                                | 계획에 주는 제약                                                                                                                                                           |
+| ------------ | -------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| API와 서비스 | [`buildServer`](../../../apps/server/src/server.ts), [`worker`](../../../apps/server/src/worker.ts)                        | 기존 서버와 worker를 실행할 수 있는 구성을 먼저 만든다. 서버 업무 규칙을 새로 작성하지 않는다.                                                                             |
+| DB           | [`pg.Pool`](../../../apps/server/src/db/pool.ts), [`SQL migration`](../../../apps/server/src/db/migrations)                | PostgreSQL 쿼리·JSONB 등에 결합되어 있다. SQLite 교체를 작은 작업으로 가정하지 않는다.                                                                                     |
+| 큐           | [`queue.ts`](../../../apps/server/src/queue.ts)                                                                            | import/provider가 BullMQ·Redis와 연결된다. Windows에서 제공할 실행 구성 또는 실제 호출 범위의 대체 비용을 확인해야 한다.                                                   |
+| 객체 저장    | [`object-storage.ts`](../../../apps/server/src/services/object-storage.ts)                                                 | 현재 S3 client/명령을 사용한다. 파일 디렉터리 설정만으로 동작하는 상태가 아니다.                                                                                           |
+| 배포         | [`compose.yaml`](../../../compose.yaml)                                                                                    | API·worker·PostgreSQL·Redis·MinIO 등의 책임을 앱 실행 구성에서 충족해야 한다. Docker 배포는 계속 지원한다.                                                                 |
+| 클라이언트   | [`reader-runtime.ts`](../../../src/repositories/reader-runtime.ts)                                                         | RemoteReaderRepository, RemoteBookAssetRepository, ServerUploadImportService, RemoteBackupRepository를 재사용할 수 있다. 데스크톱용 실행 중 endpoint/auth 주입이 필요하다. |
+| 실행기       | [`extension_runtime.rs`](../../../src-tauri/src/extension_runtime.rs), [`portable.rs`](../../../src-tauri/src/portable.rs) | 동봉 실행기·프로필·중복 실행·종료 기반이 있다. 확장 host를 완성된 서재 서버로 취급하지 않는다.                                                                             |
+| 동기화       | [`서버 route`](../../../apps/server/src/routes/sync.ts), [`계약`](../../../src/sync/contract.ts)                           | 기존 계약과 구현을 조사해 지원표를 만든다. 모든 자료의 서버 간 동기화가 완성됐다고 가정하지 않는다.                                                                        |
 
 서버 쪽 대용량·백업 구현도 전부 무제한/무결하다고 가정하지 않는다. 실제 데스크톱 사용자 경로에서 드러난 누락을 공통 서버 경로에서 고친다.
 

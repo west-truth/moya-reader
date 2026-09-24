@@ -1,6 +1,6 @@
 # 대용량 파일 처리와 크로스 디바이스 동기화 설계
 
-> 2026-09-23: 데스크톱의 현재 목표·순서는 [내장 self-host 계획](../platforms/2026-09-23-desktop-embedded-selfhost-plan.md)이 정한다. 아래의 “로컬 대용량 구조를 먼저 완성” 권고는 당시 설계 기록이며 새 데스크톱의 선행 조건이 아니다. 서버 처리·클라이언트 cache·동기화의 기술 배경만 현재 코드와 대조해 참고한다.
+> 데스크톱의 현재 기준은 [데스크톱 구조·작업 범위](../platforms/desktop.md)입니다. 아래 로컬 대용량·동기화 설계는 기술 배경으로만 참고합니다. 독립 서버 간 양방향 복제나 IndexedDB 확장을 데스크톱의 선행 과제로 삼지 않습니다.
 
 Status: partially implemented living design
 Last verified: 2026-07-06
@@ -65,14 +65,7 @@ File input
 파일 가져오기는 즉시 `ParsedNovel` 전체를 반환하지 말고 job으로 처리한다.
 
 ```ts
-type ImportJobStatus =
-  | 'queued'
-  | 'reading'
-  | 'decoding'
-  | 'splitting_chapters'
-  | 'writing'
-  | 'ready'
-  | 'failed';
+type ImportJobStatus = 'queued' | 'reading' | 'decoding' | 'splitting_chapters' | 'writing' | 'ready' | 'failed';
 
 interface ImportProgress {
   jobId: string;
@@ -269,7 +262,7 @@ services:
       context: .
       dockerfile: deploy/web.Dockerfile
     ports:
-      - "8080:80"
+      - '8080:80'
     depends_on:
       - api
 
@@ -284,7 +277,7 @@ services:
       S3_BUCKET: noveldesk-uploads
       S3_ACCESS_KEY_ID: minio
       S3_SECRET_ACCESS_KEY: minio-password
-      S3_FORCE_PATH_STYLE: "true"
+      S3_FORCE_PATH_STYLE: 'true'
     depends_on:
       - postgres
       - redis
@@ -302,7 +295,7 @@ services:
       S3_BUCKET: noveldesk-uploads
       S3_ACCESS_KEY_ID: minio
       S3_SECRET_ACCESS_KEY: minio-password
-      S3_FORCE_PATH_STYLE: "true"
+      S3_FORCE_PATH_STYLE: 'true'
     depends_on:
       - api
       - postgres
@@ -330,7 +323,7 @@ services:
     volumes:
       - minio-data:/data
     ports:
-      - "9001:9001"
+      - '9001:9001'
 
 volumes:
   postgres-data:
@@ -444,6 +437,7 @@ POST /api/sync/events
 - user corrections
 
 Current implemented AI/TTS sync scope includes user-authored `voice_profiles_updated`, `user_correction_created`, and `user_correction_deleted` events plus generated `character_graph_updated` and `chapter_segments_updated` events. Hosted audio cache metadata intentionally stays in server/object storage rather than the sync event loop. The browser sync panel groups pending/failed AI/TTS rows by entity, explains the current materialization policy, fetches remote AI/TTS snapshots when a sync API client is configured, includes Character Graph relations through the hosted graph read route, compares them with the queued local payload through `src/sync/ai-tts-sync-diff.ts`, can apply the loaded server snapshot for voice/graph/segment groups through `src/sync/ai-tts-sync-apply.ts`, and can rewrite a merged local snapshot that starts from the server snapshot while preserving selected local fields/items for those same snapshot groups. User-correction deletion removes the correction hint row without rolling back already-materialized segment labels, and local tombstones prevent stale remote correction creates from resurrecting deleted hints.
+
 - 향후 hosted audio cache reuse strategy and broader non-AI/TTS entity merge UI
 
 ## 충돌 처리

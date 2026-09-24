@@ -402,28 +402,12 @@ docker compose -f compose.yaml -f compose.public.yaml -f compose.local-tts.yaml 
 
 ## Windows 데스크톱 앱
 
-Windows 앱은 같은 React Reader를 Tauri v2 shell에 넣은 구조입니다. 로컬 파일 접근, OS secure store,
-네이티브 provider/TTS 경계가 구현되어 있고 optimized release 실행 파일과 NSIS installer build·실행 smoke를
-통과했습니다.
+현재 개발 기준과 남은 작업은 [데스크톱 구조·작업 범위](docs/platforms/desktop.md)를 확인하세요.
 
-`src-tauri/` 소스는 이 저장소에 포함되어 있습니다. 개발자 build 기준은 다음과 같습니다.
+Windows 앱은 기존 self-host 서버와 같은 React Reader를 함께 실행하는 구조입니다. 서버의 저장·가져오기·수집기·백업을 재사용합니다.
+기존 self-host 직접 접속을 선택하는 앱 화면은 후속 작업이며, 독립 서버 간 자동 복제는 현재 제품 범위에서 제외합니다.
 
-- Windows 10/11과 WebView2
-- Node.js 22, pnpm 11
-- Rust stable MSVC toolchain
-- Visual Studio C++ Build Tools
-- `pnpm install` 후 `pnpm tauri:dev` 또는 `pnpm tauri:build`
-- NSIS 결과물: `src-tauri/target/release/bundle/nsis/`
-
-```powershell
-corepack enable
-pnpm install --frozen-lockfile
-pnpm check:desktop
-pnpm tauri:dev
-
-# 로컬 NSIS installer 생성
-pnpm tauri:build
-```
+개발자 빌드 준비와 현재 내장 서버 후보 명령은 [Windows·Android 네이티브 빌드 가이드](docs/platforms/native-build-guide-ko.md)를 따릅니다.
 
 빌드된 installer와 `src-tauri/target/`은 Git에 포함되지 않습니다. 공식 서명 installer가 GitHub Releases에
 올라오기 전까지 일반 사용자는 웹 서버 설치를 권장합니다.

@@ -1,5 +1,8 @@
 # 데스크톱 포터블 단독 실행과 공개 릴리즈 계획
 
+> **보관 문서 — 현재 실행 계획이 아닙니다.** 아래 지시·상태·검증 결과는 당시 기록입니다.
+> 현재 기준은 [데스크톱 구조와 작업 범위](../../platforms/desktop.md)입니다. 이전 W01~W12 계획을 이어서 구현하지 않습니다.
+
 > 2026-09-23 우선순위 갱신: 현재 제품 목표와 구현 순서는 [내장 self-host 계획](2026-09-23-desktop-embedded-selfhost-plan.md)을 따른다. 이 문서는 기존 포터블 배포 구현·Windows 검사 기록으로 참고한다. 아래의 로컬 저장 선행 과제와 단일 EXE 조건을 새 구현의 선행 조건으로 사용하지 않는다.
 
 작성일: 2026-09-23. 검토 기준: `40ee131` (PR #61 병합 상태).
@@ -49,12 +52,12 @@
 
 주요 근거:
 
-- [앱 실행 대상 결정](../../src/app/runtime/app-runtime.ts), [로컬/서버 저장소 구성](../../src/repositories/reader-runtime.ts), [확장 manager 선택](../../src/App.tsx)
-- [로컬 확장 관리](../../src/extensions/packages/local-installed-extensions.ts), [native 전송](../../src/platform/tauri/native-package-execution.ts), [실행기 진입점](../../scripts/extensions/native-entry.ts), [loopback host](../../scripts/extensions/native-host.ts)
-- [Rust 프로세스 관리](../../src-tauri/src/extension_runtime.rs), [Windows 번들 생성](../../scripts/extensions/bundle-native.mjs), [APK 번들 의존성](../../scripts/extensions/bundle-apk-runtime.mjs)
-- [기능 확장 등록](../../src/extensions/app-extension-runtime.ts), [기능 확장 신뢰 경계](../../src/extensions/app-extension-manager.ts), [소스 브라우저](../../apps/server/src/extensions/source-webview.ts)
-- [파일 IO](../../src/platform/document-io.ts), [가져오기 worker](../../src/services/import/import-worker.ts), [로컬 백업](../../src/storage/indexeddb-backup-repository.ts), [합본 내보내기](../../src/repositories/comic-source-export.ts)
-- [Windows 설정](../../src-tauri/tauri.windows.conf.json), [CI](../../.github/workflows/quality.yml), [기존 네이티브 빌드 안내](native-build-guide-ko.md)
+- [앱 실행 대상 결정](../../../src/app/runtime/app-runtime.ts), [로컬/서버 저장소 구성](../../../src/repositories/reader-runtime.ts), [확장 manager 선택](../../../src/App.tsx)
+- [로컬 확장 관리](../../../src/extensions/packages/local-installed-extensions.ts), [native 전송](../../../src/platform/tauri/native-package-execution.ts), [실행기 진입점](../../../scripts/extensions/native-entry.ts), [loopback host](../../../scripts/extensions/native-host.ts)
+- [Rust 프로세스 관리](../../../src-tauri/src/extension_runtime.rs), [Windows 번들 생성](../../../scripts/extensions/bundle-native.mjs), [APK 번들 의존성](../../../scripts/extensions/bundle-apk-runtime.mjs)
+- [기능 확장 등록](../../../src/extensions/app-extension-runtime.ts), [기능 확장 신뢰 경계](../../../src/extensions/app-extension-manager.ts), [소스 브라우저](../../../apps/server/src/extensions/source-webview.ts)
+- [파일 IO](../../../src/platform/document-io.ts), [가져오기 worker](../../../src/services/import/import-worker.ts), [로컬 백업](../../../src/storage/indexeddb-backup-repository.ts), [합본 내보내기](../../../src/repositories/comic-source-export.ts)
+- [Windows 설정](../../../src-tauri/tauri.windows.conf.json), [CI](../../../.github/workflows/quality.yml), [기존 네이티브 빌드 안내](../../platforms/native-build-guide-ko.md)
 
 ## 3. 첫 릴리즈의 지원 범위
 

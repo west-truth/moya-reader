@@ -1,5 +1,8 @@
 # 포터블 데스크톱 구현 검토
 
+> **보관 문서 — 현재 실행 계획이 아닙니다.** 아래 지시·상태·검증 결과는 당시 기록입니다.
+> 현재 기준은 [데스크톱 구조와 작업 범위](../../platforms/desktop.md)입니다. 이전 W01~W12 계획을 이어서 구현하지 않습니다.
+
 > 현재 데스크톱 목표와 구현 순서는 [내장 self-host 계획](2026-09-23-desktop-embedded-selfhost-plan.md)을 따른다. 이 문서는 과거 포터블 후보의 검토 기록이며, 아래의 로컬 저장 완성과 단일 EXE 관련 권고를 새 구현의 선행 조건으로 사용하지 않는다.
 
 검토일: 2026-09-23. 대상: `40ee131..62a8e7b`, 작업 폴더의 `src-tauri/src/app.rs` 로그 순서 변경 포함.
@@ -39,7 +42,7 @@ Windows 빌드와 일반 시작 단계는 진행됐지만 강제 fixed-runtime �
 
 또 CAB 쓰기 핸들을 유지한 채 `expand.exe`를 시작한다. 이를 닫은 뒤 넘기는지와 실제 expand 종료 코드·stderr를 확인해야 한다. Windows 파일 공유 충돌 가능성은 아직 원인으로 입증되지 않았다. 환경변수 전달 역시 확정 원인이 아니다.
 
-근거: [CAB 기록·해제](../../src-tauri/src/portable.rs), [초기 오류 처리](../../src-tauri/src/app.rs).
+근거: [CAB 기록·해제](../../../src-tauri/src/portable.rs), [초기 오류 처리](../../../src-tauri/src/app.rs).
 
 ### 2. 보관소 생성·잠금 해제로 설정이 사라질 수 있음
 
@@ -47,7 +50,7 @@ Windows 빌드와 일반 시작 단계는 진행됐지만 강제 fixed-runtime �
 
 네트워크 설정 패널도 이미 읽은 snapshot을 보관하므로 실제 설정이 바뀌어도 기존 주소가 화면에 남을 수 있다. “저장” 성공 후의 기대와 다르다. 비밀이 아닌 설정의 수명과 로그인 비밀값의 잠금을 분리하거나, 전환 시 필요한 설정을 명시적으로 유지해야 한다.
 
-근거: [native vault 선택](../../scripts/extensions/native-entry.ts), [네트워크 설정 저장](../../apps/server/src/extensions/source-network-settings.ts), [설정 패널](../../src/features/extensions/SourceNetworkSettingsPanel.tsx).
+근거: [native vault 선택](../../../scripts/extensions/native-entry.ts), [네트워크 설정 저장](../../../apps/server/src/extensions/source-network-settings.ts), [설정 패널](../../../src/features/extensions/SourceNetworkSettingsPanel.tsx).
 
 ### 3. 보관소 잠금 버튼이 진행 중인 소스 작업을 끊음
 
@@ -55,7 +58,7 @@ Windows 빌드와 일반 시작 단계는 진행됐지만 강제 fixed-runtime �
 
 전환 전에 작업을 정리하거나 작업 중 전환을 보류하는 작은 조정이 필요하다. 잠금은 키 상태 변경과 실행기 종료·재시작을 하나의 전환으로 묶어, 동시에 들어온 시작 요청이 이전 키를 가진 host를 다시 만들지 못하게 해야 한다. 동시성 재현 검사는 아직 하지 않았다.
 
-근거: [잠금 명령](../../src-tauri/src/portable_vault.rs), [host 종료](../../src-tauri/src/extension_runtime.rs), [버튼](../../src/features/extensions/PortableSourceVault.tsx).
+근거: [잠금 명령](../../../src-tauri/src/portable_vault.rs), [host 종료](../../../src-tauri/src/extension_runtime.rs), [버튼](../../../src/features/extensions/PortableSourceVault.tsx).
 
 ### 4. Mangayomi 초기화 실패가 정상적인 미지원 상태로 가려짐
 
@@ -63,7 +66,7 @@ Windows 빌드와 일반 시작 단계는 진행됐지만 강제 fixed-runtime �
 
 의도적으로 제외한 APK와 필수 JS host의 실패를 구별하고, 실패 원인의 안전한 코드·재시도만 제공하면 된다. 별도 대형 진단 시스템은 필요하지 않다.
 
-근거: [초기화](../../scripts/extensions/native-entry.ts), [목록 갱신](../../src/extensions/packages/local-installed-extensions.ts).
+근거: [초기화](../../../scripts/extensions/native-entry.ts), [목록 갱신](../../../src/extensions/packages/local-installed-extensions.ts).
 
 ### 5. 현재 smoke 성공 기준이 실제 앱 사용보다 약함
 
@@ -71,7 +74,7 @@ Windows 빌드와 일반 시작 단계는 진행됐지만 강제 fixed-runtime �
 
 따라서 “정상 UI 실행·데이터 이동 확인”으로 보고하면 안 된다. UI 준비 신호 하나, 작은 서재/설정 저장 후 재실행·폴더 이동 하나 정도로 기준을 보강하면 된다. 전체 브라우저 테스트를 반복할 이유는 없다. 두 번째 프로세스 종료가 실제 기존 창 포커스까지 증명하는 것도 아니다.
 
-근거: [Windows smoke](../../scripts/desktop/smoke-portable-windows.ps1).
+근거: [Windows smoke](../../../scripts/desktop/smoke-portable-windows.ps1).
 
 ## 줄일 수 있는 비용과 복잡성
 
