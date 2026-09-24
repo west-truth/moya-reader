@@ -427,6 +427,8 @@ export function successfulInsertClient(onMaterialize: (sql: string, params?: unk
         sql === 'begin' ||
         sql === 'commit' ||
         sql === 'rollback' ||
+        sql === "set local lock_timeout = '2s'" ||
+        sql === 'lock table sync_events in share mode' ||
         sql.startsWith('savepoint ') ||
         sql.startsWith('rollback to savepoint ') ||
         sql.startsWith('release savepoint ')
@@ -483,7 +485,14 @@ export function syncRoundTripPool() {
 
   const client = {
     query: vi.fn(async (sql: string, params?: unknown[]) => {
-      if (sql === 'begin' || sql === 'commit' || sql === 'rollback') return { rowCount: 0, rows: [] };
+      if (
+        sql === 'begin' ||
+        sql === 'commit' ||
+        sql === 'rollback' ||
+        sql === "set local lock_timeout = '2s'" ||
+        sql === 'lock table sync_events in share mode'
+      )
+        return { rowCount: 0, rows: [] };
 
       if (sql.includes('where user_id = $1 and sequence > $2')) {
         expect(params?.[0]).toBe('user_test');

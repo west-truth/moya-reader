@@ -23,7 +23,14 @@ describe('sync route composition', () => {
   it('pulls sync events after a cursor and returns the next cursor', async () => {
     const client = {
       query: vi.fn(async (sql: string) => {
-        if (sql === 'begin' || sql === 'commit' || sql === 'rollback') return { rows: [], rowCount: 0 };
+        if (
+          sql === 'begin' ||
+          sql === 'commit' ||
+          sql === 'rollback' ||
+          sql === "set local lock_timeout = '2s'" ||
+          sql === 'lock table sync_events in share mode'
+        )
+          return { rows: [], rowCount: 0 };
         return {
           rows: [
             {

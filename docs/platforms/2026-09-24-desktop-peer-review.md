@@ -17,11 +17,12 @@
 
 ## 검증 결과
 
+- 후속 Windows: [`19a0d65`, 실행 35960786910](https://github.com/west-truth/moya-reader/actions/runs/35960786910) 전체 성공. 실제 WebView에서 복제 전 요청 중단→설정창 다시 열기→재시도, source session 만료→기존 연결 재로그인→cursor 유지까지 확인했다. `app-smoke-result.json`의 `nativePeerCopyResumed`, `nativePeerReauthenticated`가 모두 true다. 설치본 생성 옵션은 켜지 않았다.
 - 관련 8개 파일에서 **49개 통과, 1개 의도적 제외**. 변경하지 않은 513MiB 백업 왕복 검사를 반복하지 않았다.
 - 실제 PostgreSQL/HTTP 통합 검사: 두 서버 최초 복제, 재시작, 인증 만료/복구, 독서 위치 교환·충돌, event 실패 시 rollback, 삭제/과거 저장 동시 실행.
 - 관련 단위 검사: books, sync, sync-reader-events, sync-contract-matrix, 공통 설정 화면, backup staging.
 - 서버·웹 TypeScript 검사, 변경 TypeScript/TSX 파일 ESLint 통과.
-- 이번 수정으로 Windows 실행기/설치 패키지는 바꾸지 않았다. 새 수정본의 Windows WebView·설치본 실검증은 이번 로컬 검사에 포함하지 않는다. 종전 Windows 성공 기록을 새 수정본의 실행 증거로 사용하지 않는다.
+- 이번 수정으로 Windows 실행기/설치 패키지는 바꾸지 않았다. Windows WebView 검증은 위 후속 실행으로 완료했고 새 설치본의 최초 설치 검증은 포함하지 않는다.
 
 ## 남은 범위
 

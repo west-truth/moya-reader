@@ -144,6 +144,77 @@ async function withTwoDatabases(run: (poolA: pg.Pool, poolB: pg.Pool) => Promise
 }
 
 describe.skipIf(!harness)('two server reading position sync', () => {
+  it('does not skip an earlier event when transactions commit in the opposite sequence order', async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), 'moya-peer-cursor-'));
+    try {
+      await withTwoDatabases(async (pool) => {
+        await fixtureBook(pool, USER_A);
+        const server = await testServer(pool, directory, 'native_a', USER_A);
+        const writer = await pool.connect();
+        let pending: Promise<{ cursor: number; events: Array<{ id: string }> }> | undefined;
+        try {
+          const event = (id: string) =>
+            ownedEvent(
+              canonicalV2Event({
+                id,
+                type: 'book_imported',
+                deviceId: 'server',
+                novelId: 'book_1',
+                entityId: 'book_1',
+                payload: { bookId: 'book_1' },
+                createdAt: '2026-09-24T00:00:00.000Z',
+              }),
+              USER_A,
+            );
+          const earlier = event('earlier');
+          const later = event('later');
+          const sql = `insert into sync_events (id,user_id,type,book_id,entity_id,payload,created_at,id_contract,hash_contract)
+            values ($1,$2,'book_imported','book_1','book_1',$3,$4,'v2-sha256-128','v2-sha256-tagged')`;
+          const args = (e: SyncEvent) => [e.id, USER_A, JSON.stringify(e.payload), e.createdAt];
+          await writer.query('begin');
+          await writer.query(sql, args(earlier));
+          await pool.query(sql, args(later));
+          const pull = async (since: number) => {
+            const response = await fetch(
+              `${server.url}/api/sync?since=${since}&contractVersion=2&idContract=v2-sha256-128&hashContract=v2-sha256-tagged`,
+              {
+                headers: { Authorization: `Bearer ${server.token}` },
+              },
+            );
+            expect(response.status).toBe(200);
+            return response.json() as Promise<{ cursor: number; events: Array<{ id: string }> }>;
+          };
+          let settled = false;
+          pending = pull(0).finally(() => {
+            settled = true;
+          });
+          // Either the old SELECT returns too early, or the fixed pull queues its
+          // table read lock behind the uncommitted writer. Do not rely on sleeps.
+          const deadline = Date.now() + 3_000;
+          while (!settled) {
+            const queued = await pool.query(
+              "select 1 from pg_locks where relation='sync_events'::regclass and mode='ShareLock' and not granted",
+            );
+            if (queued.rows.length) break;
+            if (Date.now() > deadline) throw new Error('Sync pull did not reach its snapshot boundary');
+            await delay(10);
+          }
+          await writer.query('commit');
+          const first = await pending;
+          const second = await pull(first.cursor);
+          expect([...first.events, ...second.events].map((row) => row.id)).toEqual([earlier.id, later.id]);
+        } finally {
+          await writer.query('rollback');
+          writer.release();
+          await pending?.catch(() => undefined);
+          await server.app.close();
+        }
+      });
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  }, 20_000);
+
   it('transfers new book content in both directions without replacing user state, and retries an interrupted transfer', async () => {
     const directory = await mkdtemp(path.join(tmpdir(), 'moya-peer-books-'));
     try {

@@ -17,7 +17,7 @@ import {
   restorePeerBookContent,
   type BookIdentity,
 } from '../../services/peer-book-content.js';
-import { querySyncEventsAfter } from './pull-query.js';
+import { querySyncEventsAfter, waitForSyncWriters } from './pull-query.js';
 import { applySyncEventsInTransaction } from './push-route.js';
 import { mapSyncEventRow } from './row-mappers.js';
 
@@ -200,13 +200,24 @@ async function serverId(pool: pg.Pool): Promise<string> {
 }
 
 async function watermark(pool: pg.Pool, userId: string): Promise<number> {
-  const result = await pool.query<{ cursor: string }>(
-    'select coalesce(max(sequence), 0)::text as cursor from sync_events where user_id = $1',
-    [userId],
-  );
-  const cursor = Number(result.rows[0].cursor);
-  if (!Number.isSafeInteger(cursor) || cursor < 0) throw new PeerSyncFailure('peer_cursor_invalid', 'blocked');
-  return cursor;
+  const client = await pool.connect();
+  try {
+    await client.query('begin');
+    await waitForSyncWriters(client);
+    const result = await client.query<{ cursor: string }>(
+      'select coalesce(max(sequence), 0)::text as cursor from sync_events where user_id = $1',
+      [userId],
+    );
+    const cursor = Number(result.rows[0].cursor);
+    if (!Number.isSafeInteger(cursor) || cursor < 0) throw new PeerSyncFailure('peer_cursor_invalid', 'blocked');
+    await client.query('commit');
+    return cursor;
+  } catch (error) {
+    await client.query('rollback');
+    throw error;
+  } finally {
+    client.release();
+  }
 }
 
 function readPeerEvent(row: Record<string, unknown>): SyncEvent {
@@ -396,8 +407,13 @@ export function registerPeerReadingPositionRoutes(app: FastifyInstance, pool: pg
       const client = await pool.connect();
       let outbound: SyncEvent[];
       try {
+        await client.query('begin');
         const rows = await querySyncEventsAfter(client, userId, Number(row.outbound_cursor));
         outbound = rows.map(mapSyncEventRow);
+        await client.query('commit');
+      } catch (error) {
+        await client.query('rollback');
+        throw error;
       } finally {
         client.release();
       }

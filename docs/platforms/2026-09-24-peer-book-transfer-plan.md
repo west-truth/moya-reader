@@ -29,3 +29,15 @@
 - 두 실제 DB/HTTP 서버의 작은 TXT A→B/B→A, 원본 바이트, 검색 데이터, 뒤따르는 독서 위치, 전역 설정 보존, 응답 유실을 가정한 cursor 재전송, archive 중복, 원본 누락→복구 후 재시도, 같은 ID 다른 원본의 거부를 검사했다. 가져오기 worker처럼 device ID가 없는 book revision 이벤트도 사용했다.
 - 전역 설정·책장·독서 위치·북마크·다른 작품 회차·허용하지 않은 자산을 archive에 넣으면 DB 접근 전에 거부하는 6개 검사도 통과했다. 기존 백업·동기화를 포함한 관련 45개 검사와 서버·웹 타입 검사를 통과했다.
 - Windows 검사에는 실제 source 서버 가져오기 worker로 새 TXT를 추가한 뒤 native 공통 UI에서 동기화하고 대상 원본 바이트를 확인하는 흐름을 추가했다. 결과는 실행 완료 후 기록한다. 다른 형식의 증분 전달·대용량·물리 타 기기는 아직 검증하지 않았다.
+
+### 변경 번호와 commit 순서 보완
+
+- 새 작품 경로 검토 중 기존 공통 pull에도 있던 누락을 재현했다. transaction A가 낮은 sequence를 받은 채 commit하지 않고 B의 높은 sequence만 먼저 commit되면, SELECT가 B만 반환하고 cursor가 A를 영구히 건너뛴다.
+- `pull-query.ts`에서 짧은 transaction의 `SHARE` table lock을 얻은 후 별도 SELECT로 목록을 읽는다. 진행 중인 event writer가 먼저 끝나므로 반환한 cursor 이전 사건이 나중에 나타나지 않는다. 동시 pull끼리는 공유할 수 있고, 잠금 대기는 2초로 제한해 오래 걸리는 writer 앞에서는 실패 후 다시 시도한다. 일반 클라이언트 pull, peer outbound와 초기 연결/복제 watermark에 같은 경계를 적용했다.
+- 실제 PostgreSQL에서 commit 순서를 뒤집은 검사로 수정 전 누락과 수정 후 두 사건 수신을 확인했다. 새 작품·복구를 포함한 통합 5개와 기존 sync 단위 23개가 통과했다. 대규모 동시 writer 부하 검사는 별도이며 이 수정으로 전체 동기화 기능 완료를 주장하지 않는다.
+
+### D2b 재사용 경계 조사
+
+- 기존 원본 교체는 `book-revision/service.ts`의 `prepareBookReplacement` → 콘텐츠 교체 → `restoreExactAnchoredReaderState` → `finalizeBookReplacement`를 사용한다. 관련 검사 출발점은 `book-revision/reader-state-restore.integration.test.ts`다.
+- 다음 구현은 상대와 마지막으로 같았던 content revision을 확인한 뒤 이 경계를 사용해야 한다. 현재 `book_imported`의 payload는 book ID만 있으므로 이전 revision을 증명하는 계약을 먼저 추가한다. 같은 ID라는 이유만으로 수신 서버의 다른 원본을 교체하지 않는다.
+- archive 범위를 기존 작품에 넓히기 전, 과거 revision이 참조하는 source object까지 보존되는지 확인한다. 현 exporter는 현재 catalog의 source object만 수집한다. 새 작품 전달은 initial revision만 허용하므로 이 조건을 건드리지 않는다.
