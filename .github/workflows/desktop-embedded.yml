@@ -120,6 +120,9 @@ jobs:
             foreach ($name in @('collector.log', 'collector-startup.log')) {
               Copy-Item (Join-Path $collectorProfile.FullName $name) .tmp/embedded-evidence/ -ErrorAction SilentlyContinue
             }
+            foreach ($name in @('api.log', 'worker.log', 'postgres.log')) {
+              Copy-Item (Join-Path $collectorProfile.FullName $name) (Join-Path .tmp/embedded-evidence "collector-profile-$name") -ErrorAction SilentlyContinue
+            }
           }
       - uses: actions/upload-artifact@v4
         if: always()

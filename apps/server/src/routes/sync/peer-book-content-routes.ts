@@ -44,6 +44,9 @@ export async function registerPeerBookContentRoutes(app: FastifyInstance, pool: 
     }
   });
   await app.register(async (scope) => {
+    // Production has a bounded ZIP parser for other routes. Override it only
+    // in this streaming scope, as the existing backup routes do.
+    if (scope.hasContentTypeParser('application/zip')) scope.removeContentTypeParser('application/zip');
     scope.addContentTypeParser('application/zip', (_request, payload, done) => done(null, payload));
     scope.post<{ Params: { bookId: string } }>('/api/sync/book-content/:bookId', async (request, reply) => {
       if (receiving) return reply.code(503).send({ error: 'peer_book_transfer_busy' });

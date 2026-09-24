@@ -114,6 +114,8 @@ async function testServer(pool: pg.Pool, directory: string, token: string, userI
     },
   };
   const app = Fastify({ logger: false });
+  // Match production's inherited parser so streaming route registration is tested.
+  app.addContentTypeParser('application/zip', { parseAs: 'buffer' }, (_request, body, done) => done(null, body));
   const auth = new SelfHostAuthService(new PostgresSelfHostAuthStore(pool), userId);
   await registerAuthHook(app, config, auth);
   await registerSelfHostAuthRoutes(app, auth, config);

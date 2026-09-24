@@ -24,6 +24,7 @@
 
 ## D2a 구현·로컬 검증 기록
 
+- 첫 Windows 실행 `35961633992` (`3de9fbf`)은 API 시작에서 실패했다. 운영 서버의 기존 ZIP parser를 새 경로가 중복 등록하는 조건을 로컬에서 `FST_ERR_CTP_ALREADY_PRESENT`로 재현했다. 기존 backup route처럼 새 route scope 안에서 inherited parser를 교체하고 통합 harness도 운영 parser 조건을 갖추도록 수정했다. 수집기 검증 프로필에서 API가 먼저 실패할 때 원인을 남기도록 CI 진단 로그 수집도 보완했다. 새 실행 결과를 확인하기 전 Windows 새 작품 전달 완료로 표시하지 않는다.
 - `hosted-backup-service.ts`의 한 작품 선택 옵션과 `peer-book-content.ts`의 콘텐츠 범위 검사·신규 복원을 연결했다. 별도 ZIP 형식이나 저장소는 없다.
 - 인증된 `/api/sync/book-content/:bookId` GET/POST를 사용하고 peer 실행기가 `book_imported` 앞에서 원본을 전달한다. 같은 ID의 기존 자료는 덮어쓰지 않는다. UI 안내·실행 제한 시간을 실제 범위에 맞췄다.
 - 두 실제 DB/HTTP 서버의 작은 TXT A→B/B→A, 원본 바이트, 검색 데이터, 뒤따르는 독서 위치, 전역 설정 보존, 응답 유실을 가정한 cursor 재전송, archive 중복, 원본 누락→복구 후 재시도, 같은 ID 다른 원본의 거부를 검사했다. 가져오기 worker처럼 device ID가 없는 book revision 이벤트도 사용했다.
