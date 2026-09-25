@@ -49,6 +49,23 @@ describe('platform runtime detection', () => {
     expect(runtime).toMatchObject({ kind: 'tauri-desktop', hasTauri: true });
   });
 
+  it('treats external server pages as web pages even when the Tauri bridge is injected', () => {
+    expect(
+      detectPlatformRuntime({
+        __TAURI_INTERNALS__: {},
+        location: { hostname: 'reader.example', protocol: 'https:' },
+        navigator: { userAgent: 'Windows NT 10.0' },
+      }),
+    ).toMatchObject({ kind: 'browser', hasTauri: false });
+    expect(
+      detectPlatformRuntime({
+        __TAURI_INTERNALS__: {},
+        location: { hostname: '127.0.0.1', protocol: 'http:', port: '48888' },
+        navigator: { userAgent: 'Windows NT 10.0' },
+      }),
+    ).toMatchObject({ kind: 'browser', hasTauri: false });
+  });
+
   it('does not treat Android Tauri WebView as the desktop secure-store runtime', () => {
     const runtime = detectPlatformRuntime({
       __TAURI__: {},

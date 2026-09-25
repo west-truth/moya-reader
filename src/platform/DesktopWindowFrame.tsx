@@ -15,17 +15,26 @@ function handleTitlebarPointer(event: MouseEvent<HTMLElement>): void {
   runWindowAction((window) => (event.detail === 2 ? window.toggleMaximize() : window.startDragging()));
 }
 
-function DesktopWindowFrame() {
+function DesktopWindowFrame({ showSharing }: { readonly showSharing: boolean }) {
   return (
     <header className="desktop-window-frame" onMouseDown={handleTitlebarPointer}>
       <span className="desktop-window-title">모야</span>
-      {import.meta.env.VITE_DESKTOP_EMBEDDED_SERVER === 'true' && (
+      {showSharing && import.meta.env.VITE_DESKTOP_EMBEDDED_SERVER === 'true' && (
         <button
           className="desktop-server-sharing"
           type="button"
           onClick={() => window.dispatchEvent(new Event('moya-open-server-sharing'))}
         >
           다른 기기 접속
+        </button>
+      )}
+      {import.meta.env.VITE_DESKTOP_EMBEDDED_SERVER === 'true' && (
+        <button
+          className="desktop-server-sharing"
+          type="button"
+          onClick={() => window.dispatchEvent(new Event('moya-open-server-choice'))}
+        >
+          서재 선택
         </button>
       )}
       <div className="desktop-window-controls" aria-label="창 제어">
@@ -59,7 +68,13 @@ function DesktopWindowFrame() {
   );
 }
 
-export function DesktopWindowShell({ children }: { readonly children: ReactNode }) {
+export function DesktopWindowShell({
+  children,
+  showSharing = true,
+}: {
+  readonly children: ReactNode;
+  readonly showSharing?: boolean;
+}) {
   const runtime = detectPlatformRuntime();
   const enabled =
     runtime.kind === 'tauri-desktop' &&
@@ -67,7 +82,7 @@ export function DesktopWindowShell({ children }: { readonly children: ReactNode 
   if (!enabled) return children;
   return (
     <div className="desktop-window-shell">
-      <DesktopWindowFrame />
+      <DesktopWindowFrame showSharing={showSharing} />
       <div className="desktop-window-content">{children}</div>
     </div>
   );

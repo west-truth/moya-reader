@@ -103,6 +103,12 @@ pub fn run() {
                     {
                         api.prevent_close();
                         let _ = window.emit("embedded-server-close-requested", ());
+                    } else if let Some(remote) =
+                        window.app_handle().get_webview_window("remote-server")
+                    {
+                        // The local selector belongs to the app, not the external server.
+                        // Closing it also closes the external view; the server keeps running.
+                        let _ = remote.close();
                     }
                 }
             }
@@ -148,61 +154,72 @@ pub fn run() {
                 .map_err(std::io::Error::other)?;
             Ok(())
         })
-        .invoke_handler(tauri::generate_handler![
-            crate::embedded_server::desktop_embedded_server_start,
-            crate::embedded_server::desktop_embedded_server_status,
-            crate::embedded_server::desktop_embedded_server_close,
-            crate::embedded_server::desktop_embedded_server_share,
-            crate::desktop_remote_window::desktop_remote_server_open,
-            crate::provider_secrets::provider_secret_set,
-            crate::provider_secrets::provider_secret_status,
-            crate::provider_secrets::provider_secret_delete,
-            crate::provider_secrets::provider_secret_test,
-            crate::secure_credentials::app_credential_set,
-            crate::secure_credentials::app_credential_get,
-            crate::secure_credentials::app_credential_status,
-            crate::secure_credentials::app_credential_delete,
-            crate::desktop_oauth::desktop_dropbox_oauth_authorize,
-            crate::google_oauth::desktop_google_oauth,
-            crate::metadata_collector::desktop_metadata_collector_start,
-            crate::extension_runtime::desktop_extension_runtime_start,
-            crate::portable_vault::desktop_portable_vault_status,
-            crate::portable::desktop_portable_smoke_ready,
-            crate::portable_vault::desktop_portable_vault_unlock,
-            crate::portable_vault::desktop_portable_vault_lock,
-            crate::metadata_collector::desktop_metadata_collector_stop,
-            crate::android_document_io::android_document_io_pick,
-            crate::android_document_io::android_document_io_pick_folder,
-            crate::android_document_io::android_document_io_scan_folder,
-            crate::android_document_io::android_document_io_open_folder_file,
-            crate::android_document_io::android_document_io_forget_folder,
-            crate::android_document_io::android_document_io_read_chunk,
-            crate::android_document_io::android_document_io_release,
-            crate::android_document_io::android_document_io_begin_save,
-            crate::android_document_io::android_document_io_write_chunk,
-            crate::android_document_io::android_document_io_finish_save,
-            crate::android_document_io::android_document_io_abort_save,
-            crate::ai::bridge::desktop_ai_generate_json,
-            crate::workflow::bridge::native_book_workflow_submit,
-            crate::workflow::bridge::native_book_workflow_get,
-            crate::workflow::bridge::native_book_workflow_active_get,
-            crate::workflow::bridge::native_book_workflow_materialize,
-            crate::workflow::bridge::native_book_workflow_finalize_readiness,
-            crate::workflow::bridge::native_book_workflow_require_review,
-            crate::workflow::bridge::native_book_workflow_label_mutation_prepare,
-            crate::workflow::bridge::native_book_workflow_label_mutation_finalize,
-            crate::workflow::bridge::native_book_workflow_resume,
-            crate::workflow::bridge::native_book_workflow_cancel,
-            crate::workflow::bridge::native_book_workflow_checkpoint_get,
-            crate::tts::bridge::desktop_tts_synthesize,
-            crate::tts::render_cache::native_tts_render_cached,
-            crate::tts::render_cache::native_tts_cache_readiness,
-            crate::tts::render_cache::native_tts_cache_prune,
-            crate::tts::render_cache::native_tts_cache_evidence,
-            crate::tts::render_cache::native_tts_operation_cancel,
-            crate::tts::render_cache::native_tts_pending_jobs,
-            crate::tts::bridge::desktop_tts_list_voices
-        ])
+        .invoke_handler(|invoke: tauri::ipc::Invoke<tauri::Wry>| {
+            // App commands are callable outside the plugin capability ACL. The external
+            // self-host WebView receives a bridge, so reject every app command here.
+            if invoke.message.webview_ref().label() != "main" {
+                invoke
+                    .resolver
+                    .reject("이 창에서는 로컬 앱 명령을 사용할 수 없습니다.");
+                return true;
+            }
+            let handler: fn(tauri::ipc::Invoke<tauri::Wry>) -> bool = tauri::generate_handler![
+                crate::embedded_server::desktop_embedded_server_start,
+                crate::embedded_server::desktop_embedded_server_status,
+                crate::embedded_server::desktop_embedded_server_close,
+                crate::embedded_server::desktop_embedded_server_share,
+                crate::desktop_remote_window::desktop_remote_server_open,
+                crate::provider_secrets::provider_secret_set,
+                crate::provider_secrets::provider_secret_status,
+                crate::provider_secrets::provider_secret_delete,
+                crate::provider_secrets::provider_secret_test,
+                crate::secure_credentials::app_credential_set,
+                crate::secure_credentials::app_credential_get,
+                crate::secure_credentials::app_credential_status,
+                crate::secure_credentials::app_credential_delete,
+                crate::desktop_oauth::desktop_dropbox_oauth_authorize,
+                crate::google_oauth::desktop_google_oauth,
+                crate::metadata_collector::desktop_metadata_collector_start,
+                crate::extension_runtime::desktop_extension_runtime_start,
+                crate::portable_vault::desktop_portable_vault_status,
+                crate::portable::desktop_portable_smoke_ready,
+                crate::portable_vault::desktop_portable_vault_unlock,
+                crate::portable_vault::desktop_portable_vault_lock,
+                crate::metadata_collector::desktop_metadata_collector_stop,
+                crate::android_document_io::android_document_io_pick,
+                crate::android_document_io::android_document_io_pick_folder,
+                crate::android_document_io::android_document_io_scan_folder,
+                crate::android_document_io::android_document_io_open_folder_file,
+                crate::android_document_io::android_document_io_forget_folder,
+                crate::android_document_io::android_document_io_read_chunk,
+                crate::android_document_io::android_document_io_release,
+                crate::android_document_io::android_document_io_begin_save,
+                crate::android_document_io::android_document_io_write_chunk,
+                crate::android_document_io::android_document_io_finish_save,
+                crate::android_document_io::android_document_io_abort_save,
+                crate::ai::bridge::desktop_ai_generate_json,
+                crate::workflow::bridge::native_book_workflow_submit,
+                crate::workflow::bridge::native_book_workflow_get,
+                crate::workflow::bridge::native_book_workflow_active_get,
+                crate::workflow::bridge::native_book_workflow_materialize,
+                crate::workflow::bridge::native_book_workflow_finalize_readiness,
+                crate::workflow::bridge::native_book_workflow_require_review,
+                crate::workflow::bridge::native_book_workflow_label_mutation_prepare,
+                crate::workflow::bridge::native_book_workflow_label_mutation_finalize,
+                crate::workflow::bridge::native_book_workflow_resume,
+                crate::workflow::bridge::native_book_workflow_cancel,
+                crate::workflow::bridge::native_book_workflow_checkpoint_get,
+                crate::tts::bridge::desktop_tts_synthesize,
+                crate::tts::render_cache::native_tts_render_cached,
+                crate::tts::render_cache::native_tts_cache_readiness,
+                crate::tts::render_cache::native_tts_cache_prune,
+                crate::tts::render_cache::native_tts_cache_evidence,
+                crate::tts::render_cache::native_tts_operation_cancel,
+                crate::tts::render_cache::native_tts_pending_jobs,
+                crate::tts::bridge::desktop_tts_list_voices
+            ];
+            handler(invoke)
+        })
         .build(context)
         .expect("error while building Moya");
     app.run(|app_handle, event| {

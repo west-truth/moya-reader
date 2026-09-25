@@ -28,6 +28,8 @@ const evidence = {
   nativeWindow: false,
   serverReady: false,
   collectorGateway: false,
+  remoteWindowAccountLogin: false,
+  remoteSelectionAndReturn: false,
   nativeFormats: [],
   sharingRevoked: false,
   restart: false,
@@ -37,8 +39,7 @@ let browser;
 let remoteBrowser;
 let page;
 let connection;
-async function launch() {
-  console.log('Starting native app');
+function spawnNativeApp() {
   app = spawn(executable, [], {
     env: {
       ...process.env,
@@ -49,6 +50,8 @@ async function launch() {
     stdio: ['ignore', 'ignore', 'pipe'],
   });
   app.stderr.on('data', (bytes) => console.error(bytes.toString()));
+}
+async function connectMainWindow() {
   let connectionError;
   const deadline = Date.now() + 90_000;
   while (Date.now() < deadline) {
@@ -67,6 +70,11 @@ async function launch() {
   while (!context.pages().length && Date.now() < deadline) await delay(100);
   page = context.pages()[0];
   await page.waitForFunction(() => Boolean(window.__TAURI_INTERNALS__), { timeout: 30_000 });
+}
+async function launch() {
+  console.log('Starting native app');
+  spawnNativeApp();
+  await connectMainWindow();
   await page
     .getByRole('button', { name: '다른 기기 접속', exact: true })
     .waitFor({ timeout: 90_000 })
@@ -89,6 +97,30 @@ async function launch() {
   assert.equal(collectorHealth.status, 200, 'Native WebView could not reach the managed collector gateway');
   assert.equal(collectorHealth.body.service, 'webnovel-metadata-collector');
   evidence.collectorGateway = true;
+}
+async function launchRemoteSelection(address) {
+  console.log('Starting native app with an external server selected');
+  spawnNativeApp();
+  await connectMainWindow();
+  await page.getByRole('heading', { name: '기존 서버에 접속' }).waitFor({ timeout: 30_000 });
+  const status = await page.evaluate(() => window.__TAURI_INTERNALS__.invoke('desktop_embedded_server_status'));
+  assert.equal(status.running, false, 'Remote selection started the embedded server');
+  let remotePage;
+  const deadline = Date.now() + 30_000;
+  while (!remotePage && Date.now() < deadline) {
+    try {
+      remoteBrowser ??= await chromium.connectOverCDP(`http://127.0.0.1:${remoteDebugPort}`, { timeout: 2000 });
+      remotePage = remoteBrowser
+        .contexts()
+        .flatMap((entry) => entry.pages())
+        .find((entry) => entry.url().startsWith(address));
+    } catch {
+      // WebView2 creates the external server profile after the local selector appears.
+    }
+    if (!remotePage) await delay(200);
+  }
+  assert(remotePage, 'Saved external server was not opened');
+  return remotePage;
 }
 async function close(fromTray = false) {
   const exited = new Promise((resolve) => app.once('exit', resolve));
@@ -224,19 +256,55 @@ try {
   assert(remotePage, 'External server WebView did not appear in the native app');
   console.log('Remote WebView is visible to the browser probe');
   await remotePage.getByRole('heading', { name: '모야에 로그인' }).waitFor({ timeout: 30_000 });
-  assert.equal(await remotePage.evaluate(() => typeof window.__TAURI_INTERNALS__), 'undefined');
+  const remoteNativeAccess = await remotePage.evaluate(async () => {
+    const results = [];
+    for (const [command, args] of [
+      ['desktop_embedded_server_status', undefined],
+      ['app_credential_status', { key: 'server_api_token' }],
+    ]) {
+      try {
+        await window.__TAURI_INTERNALS__.invoke(command, args);
+        results.push('allowed');
+      } catch {
+        results.push('denied');
+      }
+    }
+    return results;
+  });
+  assert.deepEqual(remoteNativeAccess, ['denied', 'denied'], 'External server page must not access native commands');
+  assert.equal(await remotePage.locator('.desktop-window-frame').count(), 0, 'External page must use its web UI');
   await remotePage.getByLabel('아이디').fill('remote-window-proof');
   await remotePage.getByLabel('비밀번호').fill(remotePassword);
   await remotePage.getByRole('button', { name: '로그인', exact: true }).click();
   await remotePage.getByText('앱 연결 검증', { exact: true }).first().waitFor({ timeout: 30_000 });
   await remotePage.locator('.book-continue-action').first().click();
   await remotePage.getByText('앱 창에서 내장 서버의 작품을 읽습니다.', { exact: false }).first().waitFor();
+  await remotePage.evaluate((bookId) => {
+    const link = document.createElement('a');
+    link.id = 'moya-smoke-source-download';
+    link.href = `/api/books/${bookId}/source`;
+    link.textContent = 'Download source proof';
+    document.body.append(link);
+  }, textBookId);
+  const remoteDownload = remotePage.waitForEvent('download');
+  await remotePage.locator('#moya-smoke-source-download').click();
+  const sourceDownload = await remoteDownload;
+  const sourceDownloadPath = path.join(profile, 'remote-source.txt');
+  await sourceDownload.saveAs(sourceDownloadPath);
+  assert.deepEqual(
+    await readFile(sourceDownloadPath),
+    Buffer.from('1화 시작\n\n앱 창에서 내장 서버의 작품을 읽습니다.\n'),
+  );
   const remoteLogout = await remotePage.evaluate(async () =>
     fetch('/api/auth/logout', { method: 'POST', credentials: 'same-origin' }).then((response) => response.status),
   );
   assert.equal(remoteLogout, 200);
   await remotePage.reload();
   await remotePage.getByRole('heading', { name: '모야에 로그인' }).waitFor();
+  await remotePage.getByLabel('아이디').fill('remote-window-proof');
+  await remotePage.getByLabel('비밀번호').fill(remotePassword);
+  await remotePage.getByRole('button', { name: '로그인', exact: true }).click();
+  await remotePage.getByText('앱 연결 검증', { exact: true }).first().waitFor();
   await remotePage.close();
   await remoteBrowser.close();
   remoteBrowser = undefined;
@@ -474,12 +542,15 @@ try {
   assert.equal((await fetch(`${connection.url}/api/ready`)).status, 200);
   evidence.trayMaintainsServer = true;
   evidence.restart = true;
-  await close(true);
   const restoredProfile = await mkdtemp(path.join(tmpdir(), 'Moya native backup restored '));
   const runtimeFile = path.join(path.dirname(executable), 'embedded-server', 'runtime.json');
   let restoredServer;
   try {
     restoredServer = await startEmbeddedServer({ runtimeFile, profileDir: restoredProfile });
+    await page.evaluate((serverUrl) => {
+      localStorage.setItem('moya.desktopServerSelection', JSON.stringify({ version: 1, mode: 'remote', serverUrl }));
+    }, restoredServer.url);
+    await close(true);
     const restoredRequest = async (resource, options = {}) => {
       const response = await fetch(`${restoredServer.url}/api${resource}`, {
         ...options,
@@ -511,6 +582,46 @@ try {
       Buffer.from('1화 시작\n\n앱 창에서 내장 서버의 작품을 읽습니다.\n'),
     );
     evidence.nativeBackupRestored = true;
+
+    const remoteRegistration = await fetch(`${restoredServer.url}/api/auth/register`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        username: 'restored-server-proof',
+        password: remotePassword,
+        setupCode: restoredServer.authToken,
+      }),
+    });
+    assert.equal(remoteRegistration.status, 201);
+    const selectedPage = await launchRemoteSelection(restoredServer.url);
+    await selectedPage.getByRole('heading', { name: '모야에 로그인' }).waitFor({ timeout: 30_000 });
+    assert.equal(await selectedPage.locator('.desktop-window-frame').count(), 0);
+    await selectedPage.getByLabel('아이디').fill('restored-server-proof');
+    await selectedPage.getByLabel('비밀번호').fill(remotePassword);
+    await selectedPage.getByRole('button', { name: '로그인', exact: true }).click();
+    await selectedPage.getByText('앱 연결 검증', { exact: true }).first().waitFor({ timeout: 30_000 });
+    const selectedBooks = await selectedPage.evaluate(async () => {
+      const response = await fetch('/api/books', { credentials: 'same-origin' });
+      return (await response.json()).books.length;
+    });
+    assert.equal(selectedBooks, expectedBackupBookCount, 'External server did not show its own library');
+    await selectedPage.close();
+    assert.equal((await fetch(`${restoredServer.url}/api/ready`)).status, 200);
+    await page.getByRole('button', { name: '서재 선택', exact: true }).click();
+    await page.getByLabel('이 PC의 서재').check();
+    await page.getByRole('button', { name: '다음 시작에 적용' }).click();
+    await page.getByText('선택을 저장했습니다.', { exact: false }).waitFor();
+    await remoteBrowser?.close();
+    remoteBrowser = undefined;
+    await close(true);
+    await launch();
+    await page.getByText('앱 연결 검증', { exact: true }).first().waitFor({ timeout: 30_000 });
+    const returnedBookmarks = await fetch(`${connection.url}/api/books/${textBookId}/bookmarks`, {
+      headers: { Authorization: `Bearer ${connection.authToken}` },
+    });
+    assert.equal((await returnedBookmarks.json()).bookmarks.length, 1);
+    evidence.remoteSelectionAndReturn = true;
+    await close(true);
   } finally {
     await restoredServer?.stop();
   }

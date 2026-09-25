@@ -31,9 +31,23 @@ body:has(.desktop-window-shell) {
 
 .desktop-window-title {
   padding-inline-start: 13px;
+  margin-inline-end: auto;
   font-size: 12px;
   font-weight: 650;
   letter-spacing: -0.01em;
+}
+
+.desktop-window-frame > .desktop-server-sharing {
+  align-self: stretch;
+  padding: 0 12px;
+  color: var(--app-text-muted);
+  background: transparent;
+  cursor: pointer;
+}
+
+.desktop-window-frame > .desktop-server-sharing:hover {
+  color: var(--app-text-strong);
+  background: var(--app-surface-hover);
 }
 
 .desktop-window-controls {

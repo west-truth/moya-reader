@@ -30,6 +30,39 @@ pub(crate) async fn desktop_remote_server_open(
 ) -> Result<(), String> {
     crate::embedded_server::require_local_window(&window)?;
     let url = remote_origin(&address)?;
+    let status_url = url
+        .join("api/auth/status")
+        .map_err(|_| "서버 주소를 확인해 주세요.")?;
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(8))
+        .redirect(reqwest::redirect::Policy::none())
+        .build()
+        .map_err(|_| "서버 연결을 준비하지 못했습니다.")?;
+    let response =
+        client.get(status_url).send().await.map_err(|_| {
+            "서버에 연결하지 못했습니다. 주소와 인증서를 확인한 뒤 다시 시도해 주세요."
+        })?;
+    if !response.status().is_success() {
+        return Err(
+            "서버의 로그인 화면을 확인하지 못했습니다. 모야 self-host 주소인지 확인해 주세요."
+                .into(),
+        );
+    }
+    let status: serde_json::Value = response
+        .json()
+        .await
+        .map_err(|_| "서버의 로그인 응답을 읽지 못했습니다.")?;
+    if !status
+        .get("authenticated")
+        .is_some_and(serde_json::Value::is_boolean)
+        || !status
+            .get("setupRequired")
+            .is_some_and(serde_json::Value::is_boolean)
+    {
+        return Err(
+            "서버가 이 앱의 로그인 방식과 맞지 않습니다. 서버 버전을 확인해 주세요.".into(),
+        );
+    }
     if let Some(existing) = app.get_webview_window(WINDOW_LABEL) {
         let current = existing
             .url()

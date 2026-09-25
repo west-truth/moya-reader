@@ -10,6 +10,8 @@ import { relayDropboxOAuthPopup } from './cloud-vault/dropbox-oauth';
 import { initializeAppCredentialStore } from './platform/secure-credentials';
 import { SelfHostAccountGate } from './features/auth/SelfHostAccountGate';
 import { DesktopWindowShell } from './platform/DesktopWindowFrame';
+import { DesktopRemoteHome, DesktopServerChoice } from './platform/DesktopServerChoice';
+import { readDesktopServerSelection, type DesktopServerSelection } from './platform/desktop-server-selection';
 import { detectPlatformRuntime } from './platform/runtime';
 import { desktopGoogleSession } from './platform/desktop-google-session';
 import { googleSession } from './cloud-vault/google/google-session';
@@ -73,10 +75,22 @@ function registerWebAppServiceWorker(): void {
 
 async function startApp(): Promise<void> {
   const platformRuntime = detectPlatformRuntime();
-  try {
-    await initializeAppCredentialStore();
-  } catch (error) {
-    console.warn('Secure credential initialization failed; authenticated server features are unavailable.', error);
+  const embedded = platformRuntime.kind === 'tauri-desktop' && import.meta.env.VITE_DESKTOP_EMBEDDED_SERVER === 'true';
+  let desktopSelection: DesktopServerSelection | undefined;
+  let selectionError: string | undefined;
+  if (embedded) {
+    try {
+      desktopSelection = readDesktopServerSelection(window.localStorage);
+    } catch (error) {
+      selectionError = String(error instanceof Error ? error.message : error);
+    }
+  }
+  if (!embedded || desktopSelection?.mode === 'embedded') {
+    try {
+      await initializeAppCredentialStore();
+    } catch (error) {
+      console.warn('Secure credential initialization failed; authenticated server features are unavailable.', error);
+    }
   }
   let additionalTrustedRegistrations:
     | NonNullable<NonNullable<Parameters<typeof createAppExtensionRuntime>[0]>['additionalTrustedRegistrations']>
@@ -143,10 +157,20 @@ async function startApp(): Promise<void> {
       </RuntimeProvider>
     );
   };
-  const embedded = platformRuntime.kind === 'tauri-desktop' && import.meta.env.VITE_DESKTOP_EMBEDDED_SERVER === 'true';
   ReactDOM.createRoot(document.getElementById('root') as HTMLElement).render(
     <React.StrictMode>
-      {embedded ? <EmbeddedServerGate>{renderReader}</EmbeddedServerGate> : renderReader()}
+      {embedded ? (
+        desktopSelection?.mode === 'embedded' ? (
+          <>
+            <EmbeddedServerGate>{renderReader}</EmbeddedServerGate>
+            <DesktopServerChoice current={desktopSelection} />
+          </>
+        ) : (
+          <DesktopRemoteHome selection={desktopSelection} configurationError={selectionError} />
+        )
+      ) : (
+        renderReader()
+      )}
     </React.StrictMode>,
   );
 }

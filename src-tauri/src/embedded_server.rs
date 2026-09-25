@@ -335,10 +335,10 @@ pub(crate) fn setup_tray(app: &AppHandle) -> tauri::Result<()> {
         tray::TrayIconBuilder,
     };
     let open = MenuItem::with_id(app, "open", "모야 열기", true, None::<&str>)?;
-    let quit = MenuItem::with_id(app, "quit", "서버와 모야 종료", true, None::<&str>)?;
+    let quit = MenuItem::with_id(app, "quit", "모야 종료", true, None::<&str>)?;
     let menu = Menu::with_items(app, &[&open, &quit])?;
     let mut tray = TrayIconBuilder::with_id("embedded-server")
-        .tooltip("모야 서재 서버")
+        .tooltip("모야")
         .menu(&menu)
         .on_menu_event(|app, event| {
             if let Some(window) = app.get_webview_window("main") {
@@ -346,7 +346,11 @@ pub(crate) fn setup_tray(app: &AppHandle) -> tauri::Result<()> {
                 let _ = window.unminimize();
                 let _ = window.set_focus();
                 if event.id.as_ref() == "quit" {
-                    let _ = window.emit("embedded-server-close-requested", ());
+                    if app.state::<EmbeddedServerManager>().running() {
+                        let _ = window.emit("embedded-server-close-requested", ());
+                    } else {
+                        app.exit(0);
+                    }
                 }
             }
         });

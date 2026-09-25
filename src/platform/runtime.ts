@@ -24,7 +24,7 @@ interface RuntimeWindowLike {
   readonly isTauri?: boolean;
   readonly __TAURI__?: unknown;
   readonly __TAURI_INTERNALS__?: unknown;
-  readonly location?: { readonly hostname?: string; readonly protocol?: string };
+  readonly location?: { readonly hostname?: string; readonly protocol?: string; readonly port?: string };
   readonly navigator?: {
     readonly userAgent?: string;
     readonly platform?: string;
@@ -36,6 +36,17 @@ interface RuntimeWindowLike {
 }
 
 function runtimeHasTauri(windowLike: RuntimeWindowLike | undefined): boolean {
+  const location = windowLike?.location;
+  // An external server page in a Tauri-owned WebView may see the injected bridge.
+  // Only the bundled app origin may opt into native behavior.
+  if (location && (location.protocol === 'http:' || location.protocol === 'https:')) {
+    const bundled = location.hostname === 'tauri.localhost';
+    const desktopDev =
+      import.meta.env.DEV &&
+      (location.hostname === '127.0.0.1' || location.hostname === 'localhost') &&
+      location.port === '1421';
+    if (!bundled && !desktopDev) return false;
+  }
   return Boolean(
     windowLike?.isTauri ||
     windowLike?.__TAURI_INTERNALS__ ||
