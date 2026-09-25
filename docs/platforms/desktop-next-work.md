@@ -1,6 +1,6 @@
 # 데스크톱 다음 작업: 정리본 검증과 기존 서버 직접 접속
 
-상태: **A 완료 · B 진행 전** · 2026-09-25.
+상태: **A·B 완료 · C 설치 후보 검사 완료, 공개 배포 조건 미완료** · 2026-09-25.
 제품 구조의 기준은 [desktop.md](desktop.md)입니다. 이 문서는 그 구조를 구현·검증할 다음 워커의 실행 순서를 정합니다.
 진행 결과는 이 문서에 갱신하며, 별도 날짜별 계획을 계속 만들지 않습니다.
 
@@ -109,7 +109,7 @@ node scripts/desktop/smoke-embedded-formats.mjs ".tmp/Moya app 한글/embedded-s
 ### B1. 먼저 로그인 방식의 작은 실행 검증
 
 권장안은 **기존 서버가 제공하는 웹 페이지를 앱의 별도 WebView 창에서 열어, 그 서버의 일반 웹 로그인과 API를 그대로 사용하는 방식**입니다.
-같은 origin에서 동작하므로 기존 cookie 인증을 재사용할 수 있는 방향이며, 구현 가능 여부는 아래 검증으로 확정합니다. 현재 이미 구현된 기능은 아닙니다.
+같은 origin에서 동작하므로 기존 cookie 인증을 재사용할 수 있는 방향입니다. 아래는 구현 당시의 검증 순서이며 실제 결과는 8절에 기록했습니다.
 
 1. 같은 PC의 격리 self-host 하나를 띄우고 native 창에서 해당 서버 웹 주소를 엽니다. 기존 계정 등록/로그인 → 서재 읽기 → 위치 저장 → 로그아웃 → 다시 로그인까지 확인합니다.
 2. 외부 페이지에는 로컬 파일·provider key·내장 서버 제어 등 native 권한을 부여하지 않습니다. 로컬 선택 화면은 기존 `main`, 외부 페이지는 별도 label로 분리하는 구성을 먼저 확인합니다.
@@ -198,12 +198,12 @@ git diff --check
 
 큰 구현을 시작하기 전에 사용자에게 **필요한 사용 흐름 → 현재 코드 재사용 → 변경할 범위 → 유지 비용**을 짧게 설명합니다. 이 계획을 넘어서는 기능은 필요성을 먼저 판단합니다.
 
-| 단위                           | 상태   | 커밋 / 검사 증거 / 남은 문제                                             |
-| ------------------------------ | ------ | ------------------------------------------------------------------------ |
-| A 정리본 Windows 실행          | 완료   | 아래 실행 36118626358, `ea7fca5`; 실제 앱 창·별도 profile 백업 복원 통과 |
-| B1 기존 웹 로그인 WebView 검증 | 미실행 | 인증·플랫폼 판별·다운로드·로컬 창 복귀부터 확인                          |
-| B2~B3 접속 선택·전환·격리      | 미구현 | 재시작 적용, 한 번에 한 서재                                             |
-| C 최종 후보 / 설치·업데이트    | 미실행 | 실행 가능한 환경과 실제 필요한 연동을 구분                               |
+| 단위                           | 상태      | 커밋 / 검사 증거 / 남은 문제                                              |
+| ------------------------------ | --------- | ------------------------------------------------------------------------- |
+| A 정리본 Windows 실행          | 완료      | 아래 실행 36118626358, `ea7fca5`; 실제 앱 창·별도 profile 백업 복원 통과  |
+| B1 기존 웹 로그인 WebView 검증 | 완료      | 아래 Windows 실행 36126788910; 일반 로그인·원본 다운로드·native 명령 차단 |
+| B2~B3 접속 선택·전환·격리      | 완료      | Windows 실행 36131029201에서 설정창 입력·재시작·가져오기·복귀 확인        |
+| C 최종 후보 / 설치·업데이트    | 부분 완료 | 설치 후보 기동 통과; 기존 설치본 승계·공개 배포 고지 검사는 남음          |
 
 각 단위의 코드 SHA, 검사 명령/통과·실패·skip, Windows run URL·`headSha`·artifact, 실제 확인한 기능, 미검증 항목을 기록합니다.
 코드와 문서는 검토 가능한 단위로 커밋하고 같은 `desktop.md`와 이 문서를 갱신합니다. 로그에 인증값·사용자 파일을 포함하지 않습니다.
@@ -214,6 +214,22 @@ git diff --check
 - 검사 스크립트에 누락된 import 한 줄을 추가한 `ea7fca5`로 [36118626358](https://github.com/west-truth/moya-reader/actions/runs/36118626358)을 재실행해 전체 성공했습니다. artifact `app-smoke-result.json`은 `nativeBackupRestored: true`, `nativeLocalBackupRestored: true`, `nativeBookmarkRestart: true`, `trayMaintainsServer: true`, EPUB/PDF를 기록했습니다. 패키징 서버 읽기·재시작·EPUB/PDF 단계도 성공했습니다.
 - 이 결과는 **정리본 내장 서버 후보**의 검증입니다. B의 외부 서버 접속, installer와 기존 설치본 업데이트는 이 run의 검사 범위에 없습니다.
 
+### B 실행 결과
+
+- 구현 코드 `6e347a0`의 [Windows 실행 36126788910](https://github.com/west-truth/moya-reader/actions/runs/36126788910)이 전체 성공했습니다. `app-smoke-result.json`의 `remoteWindowAccountLogin`, `remoteSelectionAndReturn`, `remoteFileImportAndBackup`가 모두 `true`입니다. 일반 계정 로그인·로그아웃·재로그인, 원본 다운로드 바이트, 외부 페이지의 native 명령 거부를 실제 외부 WebView에서 확인했습니다.
+- 설치 설정이 없던 기존 사용자는 이 PC의 내장 서버로 시작합니다. 기존 서버를 선택하면 다음 앱 시작에 해당 서버의 별도 WebView profile에서 로그인합니다. 내장 서버와 로컬 작업은 시작하지 않으며, 로컬로 돌아온 뒤 기존 책·북마크가 유지됐습니다. 원격 서버에서 가져온 새 작품은 로컬 서재에 생기지 않았습니다.
+- 같은 Windows 실행에서 로컬 공유·해제, TXT/EPUB/PDF 읽기, 주석, 백업 저장·복원, 트레이, 강제 종료 복구와 재시작도 통과했습니다. 외부 접속 주소는 공개 HTTP를 거부하고 HTTPS를 요구하며, 로컬·LAN·Tailscale HTTP는 허용합니다.
+- 주소·계정 선택만 저장하며, 서버 간 작품 자동 복사·병합 API는 추가하지 않았습니다. 외부 서버와 앱의 UI 버전이 다를 때는 해당 서버가 제공하는 웹 화면이 사용됩니다.
+- 검사 스크립트가 선택값을 직접 주입하던 부분을 실제 설정창의 라디오·주소 입력으로 바꾼 `4966302`의 [Windows 실행 36131029201](https://github.com/west-truth/moya-reader/actions/runs/36131029201)도 전체 성공했습니다. 이 실행의 `remoteSelectionAndReturn`, `remoteFileImportAndBackup`가 모두 `true`이며 패키징 서버 EPUB/PDF 검사도 통과했습니다. 연결 실패 화면의 주소 변경·재시도는 별도 React 회귀 검사로 확인했습니다.
+
+### C 검증 중 확인한 경계
+
+- `6e347a0`의 첫 설치 후보 [36127820072](https://github.com/west-truth/moya-reader/actions/runs/36127820072)은 설치 빌드 이전의 강제 종료 복구 검사에서 **최초 준비 90초 시간 초과**로 실패했습니다. 같은 SHA의 전체 Windows 실행 36126788910은 해당 검사를 통과했습니다. 복구 검사에 단계·프로세스 진단을 추가한 `c6dac1d`의 [재실행 36128734373](https://github.com/west-truth/moya-reader/actions/runs/36128734373)은 복구와 전체 앱·서버 회귀, 설치 후보 빌드 및 설치 후 기동까지 성공했습니다. 첫 시간 초과 원인은 재현되지 않아 미확정입니다.
+- 재실행 산출물 `installer-smoke-result.json`은 `installedRelease`, `bundledServer`, `developerPathRemoved`가 `true`, `cleanMachine`이 `false`입니다. 설치 파일은 276,154,534바이트이며 CI 러너의 임시 설치 경로에서 앱·서버가 실행됐습니다. 물리적 새 PC 검증이나 공식 릴리즈 게시를 뜻하지 않습니다.
+- `4966302`는 제품 구현을 바꾸지 않고 Windows smoke의 입력 동작과 실패 재시도 단위 검사만 추가했습니다. 따라서 위 설치 후보 검사는 같은 제품 코드의 근거이며, 새 Windows 실행 36131029201은 실제 UI 선택 경로의 별도 근거입니다.
+- `corepack pnpm check:licenses`는 통과했습니다. `corepack pnpm check:licenses:release`는 기존 정책의 `7z-wasm` 대응 소스·재링크 제공, `libarchive-wasm` 바이너리/소스 확인, Cargo·Android 및 컨테이너·Python 의존성 목록, 최종 설치물 고지 검사 미완료로 **차단**됩니다. 설치 후보 검사는 공식 공개 배포 승인이 아닙니다.
+- 후보 installer의 앱 식별자는 `app.moya.reader.embedded-candidate`이며 기본 Tauri 설정의 `com.local.noveldeskreader`와 다릅니다. 확인된 이전 GitHub Release 설치물이 없어 자동 업데이트·기존 profile 승계를 검증하지 못했습니다. 이전 설치본의 자료를 건드리지 않는 별도 후보로 취급합니다.
+
 다음 워커 전달문:
 
-> `refactor/desktop-single-server`에서 `docs/platforms/desktop.md`와 `desktop-next-work.md`를 읽고 시작한다. 먼저 정리본 Windows 회귀를 확인한다. 그 뒤 기존 서버 웹 UI·로그인을 앱 창에서 사용하는 작은 검증을 거쳐 직접 접속 선택을 구현한다. 전환은 우선 재시작 시 적용한다. 서버 간 자동 복제와 과거 W01~W12는 재개하지 않는다. 공통 self-host 계약은 보존하고, 실제 필요한 변경만 재현·검증해 남긴다. 각 단위의 결과와 미검증 범위를 같은 문서에 기록한다.
+> `refactor/desktop-single-server`에서 `docs/platforms/desktop.md`와 이 문서의 A·B·C 결과를 읽고 시작한다. 직접 접속과 CI 설치 후보는 이미 검증했으므로 다시 구현하지 않는다. 다음 배포 판단에는 실제 이전 설치본·profile 식별, 자료 승계 검사, `check:licenses:release` 차단 항목 해소가 필요하다. 실제 사용할 기존 백업·연동 계정이 확인된 범위만 추가 검증한다. 서버 간 자동 복제와 과거 W01~W12는 재개하지 않는다.
