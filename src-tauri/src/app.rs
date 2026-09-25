@@ -158,7 +158,14 @@ pub fn run() {
         .invoke_handler(|invoke: tauri::ipc::Invoke<tauri::Wry>| {
             // App commands are callable outside the plugin capability ACL. The external
             // self-host WebView receives a bridge, so reject every app command here.
-            if invoke.message.webview_ref().label() != "main" {
+            let webview = invoke.message.webview_ref();
+            #[cfg(desktop)]
+            let trusted = webview.url().ok().is_some_and(|url| {
+                crate::embedded_server::is_local_app_origin(webview.label(), &url)
+            });
+            #[cfg(not(desktop))]
+            let trusted = webview.label() == "main";
+            if !trusted {
                 invoke
                     .resolver
                     .reject("이 창에서는 로컬 앱 명령을 사용할 수 없습니다.");

@@ -54,18 +54,36 @@ struct ServerMessage {
     tunnel_origin: Option<String>,
 }
 
-pub(crate) fn require_local_window(window: &WebviewWindow) -> Result<(), String> {
-    let url = window
-        .url()
-        .map_err(|_| "앱 창의 주소를 확인하지 못했습니다.")?;
-    if window.label() == "main"
+pub(crate) fn is_local_app_origin(label: &str, url: &tauri::Url) -> bool {
+    label == "main"
         && ((url.scheme() == "tauri" && url.host_str() == Some("localhost"))
             || (matches!(url.scheme(), "http" | "https")
                 && url.host_str() == Some("tauri.localhost")
                 && url.port().is_none())
             || (cfg!(debug_assertions)
                 && url.origin().ascii_serialization() == "http://127.0.0.1:1421"))
-    {
+}
+
+#[cfg(test)]
+mod origin_tests {
+    use super::is_local_app_origin;
+
+    #[test]
+    fn app_commands_require_the_bundled_main_origin() {
+        let bundled = tauri::Url::parse("http://tauri.localhost/").unwrap();
+        let external = tauri::Url::parse("https://reader.example/").unwrap();
+        assert!(is_local_app_origin("main", &bundled));
+        assert!(!is_local_app_origin("remote-server", &bundled));
+        assert!(!is_local_app_origin("main", &external));
+        assert!(!is_local_app_origin("remote-server", &external));
+    }
+}
+
+pub(crate) fn require_local_window(window: &WebviewWindow) -> Result<(), String> {
+    let url = window
+        .url()
+        .map_err(|_| "앱 창의 주소를 확인하지 못했습니다.")?;
+    if is_local_app_origin(window.label(), &url) {
         Ok(())
     } else {
         Err("내장 서버는 모야 앱 창에서만 제어할 수 있습니다.".into())
