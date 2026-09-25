@@ -8,6 +8,7 @@ import { setTimeout as delay } from 'node:timers/promises';
 import { chromium } from 'playwright-core';
 import { BlobReader, TextWriter, ZipReader } from '@zip.js/zip.js';
 import { epubFixture, pdfFixture } from './embedded-format-fixtures.mjs';
+import { startEmbeddedServer } from './embedded-server.mjs';
 
 const executable = path.resolve(process.argv[2]);
 const profile = await mkdtemp(path.join(tmpdir(), 'Moya app proof 한글 '));
