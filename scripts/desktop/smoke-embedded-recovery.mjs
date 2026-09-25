@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
-import { mkdtemp, readFile } from 'node:fs/promises';
+import { mkdtemp, readFile, readdir } from 'node:fs/promises';
 import { createInterface } from 'node:readline';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -21,8 +21,19 @@ function start() {
   });
   const events = [];
   createInterface({ input: child.stdout }).on('line', (line) => events.push(JSON.parse(line)));
+  let stderr = '';
+  child.stderr.on('data', (bytes) => {
+    stderr = (stderr + bytes.toString()).slice(-4096);
+  });
   const exited = new Promise((resolve) => child.once('exit', resolve));
-  const value = { child, events, exited };
+  const value = {
+    child,
+    events,
+    exited,
+    get stderr() {
+      return stderr;
+    },
+  };
   children.push(value);
   return value;
 }
@@ -36,7 +47,14 @@ async function ready(server) {
     assert.equal(server.child.exitCode, null, 'Guard exited before readiness');
     await delay(100);
   }
-  throw new Error('Recovery timed out');
+  const files = await readdir(profile).catch(() => []);
+  const diagnostics = {
+    exitCode: server.child.exitCode,
+    phases: server.events.map(({ event, phase }) => ({ event, phase })),
+    files,
+    stderr: server.stderr.replace(/[a-f0-9]{64}/gi, '[redacted]').slice(-2000),
+  };
+  throw new Error(`Recovery timed out: ${JSON.stringify(diagnostics)}`);
 }
 try {
   const first = start();
