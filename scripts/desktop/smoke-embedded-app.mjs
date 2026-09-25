@@ -45,7 +45,6 @@ async function launch() {
       MOYA_EMBEDDED_PROFILE: profile,
       MOYA_EMBEDDED_CDP_PORT: String(port),
       MOYA_EMBEDDED_REMOTE_CDP_PORT: String(remoteDebugPort),
-      WEBVIEW2_USER_DATA_FOLDER: path.join(profile, 'webview'),
     },
     stdio: ['ignore', 'ignore', 'pipe'],
   });
