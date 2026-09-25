@@ -46,7 +46,6 @@ async function launch() {
       MOYA_EMBEDDED_CDP_PORT: String(port),
       MOYA_EMBEDDED_REMOTE_CDP_PORT: String(remoteDebugPort),
       WEBVIEW2_USER_DATA_FOLDER: path.join(profile, 'webview'),
-      WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS: `--remote-debugging-port=${port}`,
     },
     stdio: ['ignore', 'ignore', 'pipe'],
   });
@@ -202,6 +201,7 @@ try {
   );
   console.log('Native remote WebView command completed');
   let remotePage;
+  let remoteProbeError;
   const remoteDeadline = Date.now() + 30_000;
   while (!remotePage && Date.now() < remoteDeadline) {
     try {
@@ -210,10 +210,17 @@ try {
         .contexts()
         .flatMap((entry) => entry.pages())
         .find((entry) => entry.url().startsWith(connection.url));
-    } catch {
+    } catch (error) {
+      remoteProbeError = error instanceof Error ? error.message : String(error);
       // WebView2 creates the separate profile and debugging endpoint after the command returns.
     }
     if (!remotePage) await delay(200);
+  }
+  if (!remotePage) {
+    console.error('Remote WebView debug probe:', {
+      error: remoteProbeError,
+      pages: remoteBrowser?.contexts().flatMap((entry) => entry.pages().map((entry) => entry.url())) ?? [],
+    });
   }
   assert(remotePage, 'External server WebView did not appear in the native app');
   console.log('Remote WebView is visible to the browser probe');
