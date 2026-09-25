@@ -15,6 +15,7 @@
 ## 데스크톱과 Android
 
 - [현재 데스크톱 구조·작업 범위](platforms/desktop.md) — 데스크톱 작업은 이 문서에서 시작합니다.
+- [다음 워커 작업 지시서](platforms/desktop-next-work.md) — 정리본 Windows 검증, 기존 서버 직접 접속, 완료 기준.
 - [보관된 데스크톱 계획·검토 기록](archive/desktop-2026-09/README.md) — 과거 기록이며 실행 지시가 아닙니다.
 - [Windows·Android 네이티브 빌드 가이드](platforms/native-build-guide-ko.md)
 - [Tauri v2 Android shell 결정](decisions/2026-08-01-tauri-v2-android-shell.md)
