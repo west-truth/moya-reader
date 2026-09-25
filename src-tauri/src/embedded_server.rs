@@ -54,7 +54,7 @@ struct ServerMessage {
     tunnel_origin: Option<String>,
 }
 
-fn require_local_window(window: &WebviewWindow) -> Result<(), String> {
+pub(crate) fn require_local_window(window: &WebviewWindow) -> Result<(), String> {
     let url = window
         .url()
         .map_err(|_| "앱 창의 주소를 확인하지 못했습니다.")?;

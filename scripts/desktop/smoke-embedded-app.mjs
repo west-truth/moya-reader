@@ -171,6 +171,48 @@ try {
   await page.getByText('앱 연결 검증', { exact: true }).first().waitFor({ timeout: 30_000 });
   await page.locator('.book-continue-action').first().click();
   await page.getByText('앱 창에서 내장 서버의 작품을 읽습니다.', { exact: false }).first().waitFor();
+  const remotePassword = 'moya-remote-window-proof-password';
+  const registration = await fetch(`${connection.url}/api/auth/register`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      username: 'remote-window-proof',
+      password: remotePassword,
+      setupCode: connection.authToken,
+    }),
+  });
+  assert.equal(registration.status, 201, 'Could not prepare the isolated account login proof');
+  await page.evaluate(
+    (address) => window.__TAURI_INTERNALS__.invoke('desktop_remote_server_open', { address }),
+    connection.url,
+  );
+  let remotePage;
+  const remoteDeadline = Date.now() + 30_000;
+  while (!remotePage && Date.now() < remoteDeadline) {
+    remotePage = browser
+      .contexts()
+      .flatMap((entry) => entry.pages())
+      .find((entry) => entry !== page && entry.url().startsWith(connection.url));
+    if (!remotePage) await delay(200);
+  }
+  assert(remotePage, 'External server WebView did not appear in the native app');
+  await remotePage.getByRole('heading', { name: '모야에 로그인' }).waitFor({ timeout: 30_000 });
+  assert.equal(await remotePage.evaluate(() => typeof window.__TAURI_INTERNALS__), 'undefined');
+  await remotePage.getByLabel('아이디').fill('remote-window-proof');
+  await remotePage.getByLabel('비밀번호').fill(remotePassword);
+  await remotePage.getByRole('button', { name: '로그인', exact: true }).click();
+  await remotePage.getByText('앱 연결 검증', { exact: true }).first().waitFor({ timeout: 30_000 });
+  await remotePage.locator('.book-continue-action').first().click();
+  await remotePage.getByText('앱 창에서 내장 서버의 작품을 읽습니다.', { exact: false }).first().waitFor();
+  const remoteLogout = await remotePage.evaluate(async () =>
+    fetch('/api/auth/logout', { method: 'POST', credentials: 'same-origin' }).then((response) => response.status),
+  );
+  assert.equal(remoteLogout, 200);
+  await remotePage.reload();
+  await remotePage.getByRole('heading', { name: '모야에 로그인' }).waitFor();
+  await remotePage.close();
+  await page.bringToFront();
+  evidence.remoteWindowAccountLogin = true;
   evidence.nativeReader = true;
   const reader = page.locator('.reader-scroll.is-active');
   const readerBounds = await reader.boundingBox();
