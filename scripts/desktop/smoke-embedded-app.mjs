@@ -546,9 +546,11 @@ try {
   try {
     restoredServer = await startEmbeddedServer({ runtimeFile, profileDir: restoredProfile });
     assert.notEqual(restoredServer.url, connection.url, 'Independent servers must have different ports');
-    await page.evaluate((serverUrl) => {
-      localStorage.setItem('moya.desktopServerSelection', JSON.stringify({ version: 1, mode: 'remote', serverUrl }));
-    }, restoredServer.url);
+    await page.getByRole('button', { name: '서재 선택', exact: true }).click();
+    await page.getByLabel('기존 서버에 접속').check();
+    await page.getByLabel('서버 첫 화면 주소').fill(restoredServer.url);
+    await page.getByRole('button', { name: '다음 시작에 적용' }).click();
+    await page.getByText('선택을 저장했습니다.', { exact: false }).waitFor();
     await close(true);
     const restoredRequest = async (resource, options = {}) => {
       const response = await fetch(`${restoredServer.url}/api${resource}`, {
