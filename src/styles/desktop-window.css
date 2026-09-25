@@ -50,6 +50,27 @@ body:has(.desktop-window-shell) {
   background: var(--app-surface-hover);
 }
 
+.desktop-server-choice label:has(input[type='radio']) {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.desktop-server-choice input[type='radio'] {
+  width: 18px;
+  height: 18px;
+  min-height: 0;
+  padding: 0;
+  flex: none;
+}
+
+.desktop-remote-home-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 18px;
+}
+
 .desktop-window-controls {
   align-self: stretch;
   display: flex;

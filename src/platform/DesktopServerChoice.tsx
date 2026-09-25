@@ -37,7 +37,7 @@ function SelectionForm({
   return (
     <div className="modal-backdrop">
       <section
-        className="self-host-auth-card"
+        className="self-host-auth-card desktop-server-choice"
         role="dialog"
         aria-modal="true"
         aria-labelledby="desktop-server-choice-title"
@@ -156,26 +156,28 @@ export function DesktopRemoteHome({
   return (
     <DesktopWindowShell showSharing={false}>
       <main className="self-host-auth-screen">
-        <section className="self-host-auth-card">
+        <section className="self-host-auth-card desktop-remote-home">
           <h1>기존 서버에 접속</h1>
           {address && <p>{address}</p>}
           <p>서버의 기존 로그인 화면을 별도 창에서 엽니다. 서버의 서재 자료는 이 PC로 복사하지 않습니다.</p>
           {error && <p role="alert">{error}</p>}
           {ready && !error && <p role="status">서버 창을 열었습니다. 닫아도 이 화면에서 다시 열 수 있습니다.</p>}
-          {address && (
-            <button className="primary-btn" disabled={opening} onClick={() => void open()}>
-              {opening ? '연결 중…' : '서버 창 열기'}
+          <div className="desktop-remote-home-actions">
+            {address && (
+              <button className="primary-btn" disabled={opening} onClick={() => void open()}>
+                {opening ? '연결 중…' : '서버 창 열기'}
+              </button>
+            )}
+            <button className="secondary-btn" onClick={() => window.dispatchEvent(new Event(CHOICE_EVENT))}>
+              사용할 서재 변경
             </button>
-          )}
-          <button className="secondary-btn" onClick={() => window.dispatchEvent(new Event(CHOICE_EVENT))}>
-            사용할 서재 변경
-          </button>
-          <button
-            className="secondary-btn"
-            onClick={() => void invoke('desktop_embedded_server_close', { keepRunning: false })}
-          >
-            모야 종료
-          </button>
+            <button
+              className="secondary-btn"
+              onClick={() => void invoke('desktop_embedded_server_close', { keepRunning: false })}
+            >
+              모야 종료
+            </button>
+          </div>
         </section>
       </main>
       <DesktopServerChoice current={selection} />
