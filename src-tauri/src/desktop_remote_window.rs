@@ -50,14 +50,26 @@ pub(crate) async fn desktop_remote_server_open(
         .join(format!("{digest:x}"));
     std::fs::create_dir_all(&profile).map_err(|_| "서버별 브라우저 저장소를 만들지 못했습니다.")?;
     let allowed_origin = url.origin();
-    WebviewWindowBuilder::new(&app, WINDOW_LABEL, WebviewUrl::External(url))
+    let builder = WebviewWindowBuilder::new(&app, WINDOW_LABEL, WebviewUrl::External(url))
         .title("모야 - 기존 서버")
         .inner_size(1280.0, 820.0)
         .min_inner_size(720.0, 640.0)
         .data_directory(profile)
-        .on_navigation(move |next| next.origin() == allowed_origin)
-        .build()
-        .map_err(|_| "서버 창을 열지 못했습니다.")?;
+        .on_navigation(move |next| next.origin() == allowed_origin);
+    #[cfg(all(debug_assertions, target_os = "windows", moya_embedded_server))]
+    let builder = if let Ok(port) = std::env::var("MOYA_EMBEDDED_REMOTE_CDP_PORT")
+        .unwrap_or_default()
+        .parse::<u16>()
+    {
+        if port != 0 {
+            builder.additional_browser_args(&format!("--remote-debugging-port={port}"))
+        } else {
+            builder
+        }
+    } else {
+        builder
+    };
+    builder.build().map_err(|_| "서버 창을 열지 못했습니다.")?;
     Ok(())
 }
 

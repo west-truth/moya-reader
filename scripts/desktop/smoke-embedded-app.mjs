@@ -17,7 +17,13 @@ const expectedBackupBookCount = 3;
 const listener = createServer();
 await new Promise((resolve) => listener.listen(0, '127.0.0.1', resolve));
 const port = listener.address().port;
-await new Promise((resolve) => listener.close(resolve));
+const remoteListener = createServer();
+await new Promise((resolve) => remoteListener.listen(0, '127.0.0.1', resolve));
+const remoteDebugPort = remoteListener.address().port;
+await Promise.all([
+  new Promise((resolve) => listener.close(resolve)),
+  new Promise((resolve) => remoteListener.close(resolve)),
+]);
 const evidence = {
   nativeWindow: false,
   serverReady: false,
@@ -28,6 +34,7 @@ const evidence = {
 };
 let app;
 let browser;
+let remoteBrowser;
 let page;
 let connection;
 async function launch() {
@@ -37,6 +44,7 @@ async function launch() {
       ...process.env,
       MOYA_EMBEDDED_PROFILE: profile,
       MOYA_EMBEDDED_CDP_PORT: String(port),
+      MOYA_EMBEDDED_REMOTE_CDP_PORT: String(remoteDebugPort),
       WEBVIEW2_USER_DATA_FOLDER: path.join(profile, 'webview'),
       WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS: `--remote-debugging-port=${port}`,
     },
@@ -196,10 +204,15 @@ try {
   let remotePage;
   const remoteDeadline = Date.now() + 30_000;
   while (!remotePage && Date.now() < remoteDeadline) {
-    remotePage = browser
-      .contexts()
-      .flatMap((entry) => entry.pages())
-      .find((entry) => entry !== page && entry.url().startsWith(connection.url));
+    try {
+      remoteBrowser ??= await chromium.connectOverCDP(`http://127.0.0.1:${remoteDebugPort}`, { timeout: 2000 });
+      remotePage = remoteBrowser
+        .contexts()
+        .flatMap((entry) => entry.pages())
+        .find((entry) => entry.url().startsWith(connection.url));
+    } catch {
+      // WebView2 creates the separate profile and debugging endpoint after the command returns.
+    }
     if (!remotePage) await delay(200);
   }
   assert(remotePage, 'External server WebView did not appear in the native app');
@@ -219,6 +232,8 @@ try {
   await remotePage.reload();
   await remotePage.getByRole('heading', { name: '모야에 로그인' }).waitFor();
   await remotePage.close();
+  await remoteBrowser.close();
+  remoteBrowser = undefined;
   await page.bringToFront();
   evidence.remoteWindowAccountLogin = true;
   console.log('Remote account login, reading and logout passed');
@@ -539,6 +554,7 @@ try {
     if (app.exitCode === null) app.kill();
   }
   await browser?.close().catch(() => {});
+  await remoteBrowser?.close().catch(() => {});
   await writeFile(path.join(profile, 'app-smoke-result.json'), JSON.stringify(evidence, null, 2));
 }
 console.log(JSON.stringify({ ...evidence, profile }, null, 2));
