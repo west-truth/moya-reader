@@ -3,6 +3,36 @@ use tauri::{AppHandle, Manager, WebviewUrl, WebviewWindow, WebviewWindowBuilder}
 
 const WINDOW_LABEL: &str = "remote-server";
 
+fn is_local_http_host(host: &str) -> bool {
+    use std::net::IpAddr;
+
+    let host = host.trim_start_matches('[').trim_end_matches(']');
+    let domain = host.to_ascii_lowercase();
+    if domain == "localhost"
+        || domain.ends_with(".localhost")
+        || domain.ends_with(".local")
+        || domain.ends_with(".lan")
+        || domain.ends_with(".home.arpa")
+        || (!domain.contains('.') && !domain.contains(':'))
+    {
+        return true;
+    }
+    match host.parse::<IpAddr>() {
+        Ok(IpAddr::V4(address)) => {
+            let octets = address.octets();
+            address.is_private()
+                || address.is_loopback()
+                || address.is_link_local()
+                || (octets[0] == 100 && (64..=127).contains(&octets[1]))
+        }
+        Ok(IpAddr::V6(address)) => {
+            let first = address.segments()[0];
+            address.is_loopback() || (first & 0xfe00 == 0xfc00) || (first & 0xffc0 == 0xfe80)
+        }
+        Err(_) => false,
+    }
+}
+
 fn remote_origin(input: &str) -> Result<tauri::Url, String> {
     let url = tauri::Url::parse(input.trim()).map_err(|_| "서버 주소를 확인해 주세요.")?;
     if !matches!(url.scheme(), "http" | "https")
@@ -16,6 +46,9 @@ fn remote_origin(input: &str) -> Result<tauri::Url, String> {
         return Err(
             "서버의 첫 화면 주소를 입력해 주세요. 계정 정보와 /api 경로는 넣지 않습니다.".into(),
         );
+    }
+    if url.scheme() == "http" && !is_local_http_host(url.host_str().unwrap_or_default()) {
+        return Err("공개 서버 주소에는 HTTPS를 사용해 주세요. HTTP는 로컬·LAN·Tailscale 주소만 허용합니다.".into());
     }
     let mut origin = url;
     origin.set_path("/");
@@ -122,5 +155,9 @@ mod tests {
         assert!(remote_origin("https://user:pass@reader.example/").is_err());
         assert!(remote_origin("https://reader.example/?token=secret").is_err());
         assert!(remote_origin("file:///tmp/index.html").is_err());
+        assert!(remote_origin("http://reader.example.com/").is_err());
+        assert!(remote_origin("http://192.168.1.10/").is_ok());
+        assert!(remote_origin("http://100.100.1.3/").is_ok());
+        assert!(remote_origin("http://[fd00::1]/").is_ok());
     }
 }

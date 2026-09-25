@@ -487,10 +487,7 @@ try {
   assert.deepEqual(Buffer.from(await localSource.arrayBuffer()), Buffer.from(localFixture.source, 'base64'));
   evidence.nativeLocalBackupRestored = true;
   await page.getByRole('button', { name: '다른 기기 접속', exact: true }).click();
-  await page.getByLabel('아이디', { exact: true }).fill('desktop-proof');
-  await page.getByLabel('비밀번호', { exact: true }).fill('desktop proof account password');
-  await page.getByLabel('비밀번호 확인', { exact: true }).fill('desktop proof account password');
-  await page.getByRole('button', { name: '계정 만들기', exact: true }).click();
+  // The remote-window proof registered this server's normal account earlier in the same profile.
   await page.getByRole('button', { name: '다른 기기 접속 허용', exact: true }).waitFor();
   assert.equal(await page.getByLabel('접속 방식', { exact: true }).inputValue(), 'cloudflare');
   if (connection.interfaces?.length) {
@@ -505,7 +502,7 @@ try {
     const login = await fetch(`${url}/api/auth/login`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ username: 'desktop-proof', password: 'desktop proof account password' }),
+      body: JSON.stringify({ username: 'remote-window-proof', password: remotePassword }),
     });
     assert.equal(login.status, 200);
     const cookie = login.headers.get('set-cookie').split(';')[0];

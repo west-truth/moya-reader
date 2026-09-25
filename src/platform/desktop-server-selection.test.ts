@@ -40,6 +40,14 @@ describe('desktop server selection', () => {
     expect(() => normalizeDesktopServerUrl(value)).toThrow();
   });
 
+  it('allows local HTTP and requires HTTPS for public server names', () => {
+    expect(normalizeDesktopServerUrl('http://127.0.0.1:34721')).toBe('http://127.0.0.1:34721/');
+    expect(normalizeDesktopServerUrl('http://192.168.1.10')).toBe('http://192.168.1.10/');
+    expect(normalizeDesktopServerUrl('http://100.100.1.3')).toBe('http://100.100.1.3/');
+    expect(() => normalizeDesktopServerUrl('http://reader.example.com')).toThrow('HTTPS');
+    expect(normalizeDesktopServerUrl('https://reader.example.com')).toBe('https://reader.example.com/');
+  });
+
   it('does not silently switch to an empty embedded library when saved remote settings are damaged', () => {
     const storage = memoryStorage();
     storage.setItem(DESKTOP_SERVER_SELECTION_KEY, '{broken');
