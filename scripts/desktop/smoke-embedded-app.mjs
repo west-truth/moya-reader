@@ -30,6 +30,7 @@ const evidence = {
   collectorGateway: false,
   remoteWindowAccountLogin: false,
   remoteSelectionAndReturn: false,
+  remoteFileImportAndBackup: false,
   nativeFormats: [],
   sharingRevoked: false,
   restart: false,
@@ -547,6 +548,7 @@ try {
   let restoredServer;
   try {
     restoredServer = await startEmbeddedServer({ runtimeFile, profileDir: restoredProfile });
+    assert.notEqual(restoredServer.url, connection.url, 'Independent servers must have different ports');
     await page.evaluate((serverUrl) => {
       localStorage.setItem('moya.desktopServerSelection', JSON.stringify({ version: 1, mode: 'remote', serverUrl }));
     }, restoredServer.url);
@@ -602,9 +604,68 @@ try {
     await selectedPage.getByText('앱 연결 검증', { exact: true }).first().waitFor({ timeout: 30_000 });
     const selectedBooks = await selectedPage.evaluate(async () => {
       const response = await fetch('/api/books', { credentials: 'same-origin' });
-      return (await response.json()).books.length;
+      return (await response.json()).books;
     });
-    assert.equal(selectedBooks, expectedBackupBookCount, 'External server did not show its own library');
+    assert.equal(selectedBooks.length, expectedBackupBookCount, 'External server did not show its own library');
+    const remoteFileBytes = Buffer.from('1화\n\n이 작품은 기존 서버에서만 가져왔습니다.\n');
+    const remoteFilePath = path.join(profile, 'remote-only.txt');
+    await writeFile(remoteFilePath, remoteFileBytes);
+    await selectedPage.getByRole('button', { name: '책 가져오기', exact: true }).click();
+    await selectedPage.locator('.import-dialog input[type="file"]').setInputFiles(remoteFilePath);
+    await selectedPage.getByRole('button', { name: '가져오기 시작', exact: true }).click({ timeout: 30_000 });
+    await selectedPage.getByRole('button', { name: '가져오기 닫기', exact: true }).click();
+    let importedBooks;
+    for (let attempt = 0; attempt < 120; attempt++) {
+      importedBooks = await selectedPage.evaluate(async () => {
+        const response = await fetch('/api/books', { credentials: 'same-origin' });
+        return (await response.json()).books;
+      });
+      if (importedBooks.length === expectedBackupBookCount + 1) break;
+      await delay(250);
+    }
+    assert.equal(importedBooks.length, expectedBackupBookCount + 1, 'External WebView file import did not finish');
+    const oldBookIds = new Set(selectedBooks.map((entry) => entry.id));
+    const remoteBookId = importedBooks.find((entry) => !oldBookIds.has(entry.id))?.id;
+    assert(remoteBookId, 'Imported book was not found in the selected external server');
+    const remoteSourceBytes = await selectedPage.evaluate(async (bookId) => {
+      const response = await fetch(`/api/books/${bookId}/source`, { credentials: 'same-origin' });
+      return Array.from(new Uint8Array(await response.arrayBuffer()));
+    }, remoteBookId);
+    assert.deepEqual(Buffer.from(remoteSourceBytes), remoteFileBytes);
+    await selectedPage.evaluate(() => {
+      const chunks = [];
+      window.__moyaRemoteBackupProof = { chunks, saved: false };
+      Object.defineProperty(window, 'showSaveFilePicker', {
+        configurable: true,
+        value: async () => ({
+          createWritable: async () =>
+            new WritableStream({
+              write(chunk) {
+                chunks.push(chunk.slice());
+              },
+              close() {
+                window.__moyaRemoteBackupProof.saved = true;
+              },
+            }),
+        }),
+      });
+    });
+    await selectedPage.getByRole('button', { name: '백업 및 복원 열기', exact: true }).click();
+    await selectedPage.getByRole('button', { name: '백업 만들기', exact: true }).click();
+    await selectedPage.waitForFunction(() => window.__moyaRemoteBackupProof?.saved, undefined, { timeout: 30_000 });
+    const remoteBackupBytes = await selectedPage.evaluate(async () =>
+      Array.from(new Uint8Array(await new Blob(window.__moyaRemoteBackupProof.chunks).arrayBuffer())),
+    );
+    const remoteBackupReader = new ZipReader(new BlobReader(new Blob([Buffer.from(remoteBackupBytes)])));
+    try {
+      const manifestEntry = (await remoteBackupReader.getEntries()).find((entry) => entry.filename === 'manifest.json');
+      assert(manifestEntry?.getData, 'External server backup did not contain a manifest');
+      const manifest = JSON.parse(await manifestEntry.getData(new TextWriter()));
+      assert.equal(manifest.books.length, expectedBackupBookCount + 1);
+    } finally {
+      await remoteBackupReader.close();
+    }
+    evidence.remoteFileImportAndBackup = true;
     await selectedPage.close();
     assert.equal((await fetch(`${restoredServer.url}/api/ready`)).status, 200);
     await page.getByRole('button', { name: '서재 선택', exact: true }).click();
@@ -620,6 +681,14 @@ try {
       headers: { Authorization: `Bearer ${connection.authToken}` },
     });
     assert.equal((await returnedBookmarks.json()).bookmarks.length, 1);
+    const localBooksAfterReturn = await fetch(`${connection.url}/api/books`, {
+      headers: { Authorization: `Bearer ${connection.authToken}` },
+    });
+    assert.equal(localBooksAfterReturn.status, 200);
+    assert.equal(
+      (await localBooksAfterReturn.json()).books.some((book) => book.id === remoteBookId),
+      false,
+    );
     evidence.remoteSelectionAndReturn = true;
     await close(true);
   } finally {
