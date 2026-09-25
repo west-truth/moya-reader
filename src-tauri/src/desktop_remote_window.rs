@@ -23,7 +23,7 @@ fn remote_origin(input: &str) -> Result<tauri::Url, String> {
 }
 
 #[tauri::command]
-pub(crate) fn desktop_remote_server_open(
+pub(crate) async fn desktop_remote_server_open(
     app: AppHandle,
     window: WebviewWindow,
     address: String,

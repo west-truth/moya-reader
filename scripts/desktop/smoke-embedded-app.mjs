@@ -171,6 +171,7 @@ try {
   await page.getByText('앱 연결 검증', { exact: true }).first().waitFor({ timeout: 30_000 });
   await page.locator('.book-continue-action').first().click();
   await page.getByText('앱 창에서 내장 서버의 작품을 읽습니다.', { exact: false }).first().waitFor();
+  console.log('Preparing normal server account in the isolated test profile');
   const remotePassword = 'moya-remote-window-proof-password';
   const registration = await fetch(`${connection.url}/api/auth/register`, {
     method: 'POST',
@@ -182,10 +183,16 @@ try {
     }),
   });
   assert.equal(registration.status, 201, 'Could not prepare the isolated account login proof');
+  console.log('Opening remote WebView from the trusted app window');
   await page.evaluate(
-    (address) => window.__TAURI_INTERNALS__.invoke('desktop_remote_server_open', { address }),
+    (address) =>
+      Promise.race([
+        window.__TAURI_INTERNALS__.invoke('desktop_remote_server_open', { address }),
+        new Promise((_, reject) => setTimeout(() => reject(new Error('Remote WebView command timed out')), 15_000)),
+      ]),
     connection.url,
   );
+  console.log('Native remote WebView command completed');
   let remotePage;
   const remoteDeadline = Date.now() + 30_000;
   while (!remotePage && Date.now() < remoteDeadline) {
@@ -196,6 +203,7 @@ try {
     if (!remotePage) await delay(200);
   }
   assert(remotePage, 'External server WebView did not appear in the native app');
+  console.log('Remote WebView is visible to the browser probe');
   await remotePage.getByRole('heading', { name: '모야에 로그인' }).waitFor({ timeout: 30_000 });
   assert.equal(await remotePage.evaluate(() => typeof window.__TAURI_INTERNALS__), 'undefined');
   await remotePage.getByLabel('아이디').fill('remote-window-proof');
@@ -213,6 +221,7 @@ try {
   await remotePage.close();
   await page.bringToFront();
   evidence.remoteWindowAccountLogin = true;
+  console.log('Remote account login, reading and logout passed');
   evidence.nativeReader = true;
   const reader = page.locator('.reader-scroll.is-active');
   const readerBounds = await reader.boundingBox();
