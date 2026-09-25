@@ -149,6 +149,7 @@ pub fn run() {
             let runtime = crate::workflow::NativeWorkflowRuntime::open(app.handle())
                 .map_err(std::io::Error::other)?;
             app.manage(runtime.clone());
+            #[cfg(not(moya_embedded_server))]
             runtime
                 .recover_and_spawn(app.handle().clone())
                 .map_err(std::io::Error::other)?;

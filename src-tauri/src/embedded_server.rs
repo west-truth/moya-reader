@@ -265,6 +265,19 @@ pub(crate) fn desktop_embedded_server_start(
     state: State<'_, EmbeddedServerManager>,
 ) -> Result<ServerStatus, String> {
     require_local_window(&window)?;
+    #[cfg(moya_embedded_server)]
+    {
+        // An external-server selection must not resume queued local AI work.
+        // StrictMode can request startup twice; recover only once per process.
+        static RECOVERY: std::sync::OnceLock<Result<(), String>> = std::sync::OnceLock::new();
+        RECOVERY
+            .get_or_init(|| {
+                window
+                    .state::<crate::workflow::NativeWorkflowRuntime>()
+                    .recover_and_spawn(app.clone())
+            })
+            .clone()?;
+    }
     state.start(&app)
 }
 
