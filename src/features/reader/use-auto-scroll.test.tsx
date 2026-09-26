@@ -61,6 +61,49 @@ describe('automatic text scrolling', () => {
     vi.unstubAllGlobals();
   });
 
+  it('keeps an opted-in overlay paused and resumes from the current viewport', () => {
+    expect(controller.overlayVisible).toBe(false);
+    act(() => controller.setAlwaysShowOverlay(true));
+    expect(controller.overlayVisible).toBe(false);
+    expect(localStorage.setItem).toHaveBeenLastCalledWith('moya.text-auto-overlay.v1', 'true');
+    act(() => controller.start());
+    advance(3);
+    expect(controller.overlayVisible).toBe(true);
+    act(() => controller.stop());
+    const calls = step.mock.calls.length;
+    advance(3);
+    expect(step.mock.calls).toHaveLength(calls);
+    expect(controller.running).toBe(false);
+    expect(controller.overlayVisible).toBe(true);
+    act(() => controller.start());
+    advance(3);
+    expect(step.mock.calls.length).toBeGreaterThan(calls);
+    act(() => controller.stop());
+    act(() => controller.setAlwaysShowOverlay(false));
+    expect(controller.overlayVisible).toBe(false);
+  });
+
+  it('remembers the overlay preference without starting automatically on remount', () => {
+    act(() => renderer.unmount());
+    vi.stubGlobal('localStorage', {
+      getItem: (key: string) => (key === 'moya.text-auto-overlay.v1' ? 'true' : null),
+      setItem: vi.fn(),
+    });
+    act(() => {
+      renderer = create(<Harness />);
+    });
+    expect(controller.alwaysShowOverlay).toBe(true);
+    expect(controller.running).toBe(false);
+    expect(controller.overlayVisible).toBe(false);
+    act(() => controller.start());
+    allowed = false;
+    render();
+    expect(controller.running).toBe(false);
+    expect(controller.overlayVisible).toBe(true);
+    act(() => controller.start());
+    expect(controller.running).toBe(false);
+  });
+
   it('supports 1200px/s while keeping other reading modes at their previous speed', () => {
     act(() => controller.setSpeed(240));
     expect(controller.speed).toBe(240);
