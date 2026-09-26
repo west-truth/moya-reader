@@ -33,21 +33,66 @@
   min-height: 44px;
 }
 
-.reader-auto-scroll-stop {
+.reader-auto-scroll-dock {
   position: fixed;
-  right: 16px;
-  bottom: calc(100px + env(safe-area-inset-bottom, 0px));
-  z-index: var(--layer-floating);
+  inset: auto 0 0;
+  height: calc(56px + env(safe-area-inset-bottom, 0px));
+  padding: 6px max(12px, env(safe-area-inset-right, 0px)) calc(6px + env(safe-area-inset-bottom, 0px));
   display: flex;
-  align-items: center;
-  gap: 6px;
-  min-height: 44px;
-  max-width: calc(100vw - 32px);
-  padding: 8px 12px;
+  justify-content: flex-end;
+  background: var(--reading-background, var(--reader-canvas));
+  z-index: var(--layer-floating);
+}
+
+.reader-auto-scroll-stop {
+  display: grid;
+  place-items: center;
+  flex: 0 0 44px;
+  width: 44px;
+  height: 44px;
+  padding: 0;
   color: var(--text);
   background: var(--surface);
   border: 1px solid var(--border);
-  border-radius: var(--radius-control);
+  border-radius: 50%;
   box-shadow: var(--shadow);
   cursor: pointer;
+}
+
+.reader-auto-scroll-stop:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+/* Keep text/images above the control rather than drawing a button over them. */
+.reader-screen:has(.reader-auto-scroll-dock) .reader-viewport-stack {
+  height: calc(100dvh - 56px - env(safe-area-inset-bottom, 0px));
+}
+
+.reader-screen:has(.reader-auto-scroll-dock) .reader-scroll {
+  height: 100%;
+}
+
+.fixed-doc-screen:has(.reader-auto-scroll-dock) .fixed-doc-workspace {
+  bottom: calc(56px + env(safe-area-inset-bottom, 0px));
+}
+
+.fixed-doc-screen .reader-auto-scroll-dock {
+  background: var(--fixed-doc-stage);
+}
+
+.reader-screen.chrome-visible .reader-auto-scroll-dock {
+  bottom: calc(64px + env(safe-area-inset-bottom, 0px));
+}
+
+.fixed-doc-screen:not(.is-immersive) .reader-auto-scroll-dock {
+  bottom: var(--fixed-doc-footer-height);
+}
+
+.reader-screen.chrome-visible:has(.reader-auto-scroll-dock) .reader-viewport-stack {
+  height: calc(100dvh - 120px - env(safe-area-inset-bottom, 0px) - env(safe-area-inset-bottom, 0px));
+}
+
+.fixed-doc-screen:not(.is-immersive):has(.reader-auto-scroll-dock) .fixed-doc-workspace {
+  bottom: calc(var(--fixed-doc-footer-height) + 56px + env(safe-area-inset-bottom, 0px));
 }

@@ -61,6 +61,23 @@ export function useAutoScroll(
   });
   const [continueChapter, setContinueChapter] = useState(false);
   const [started, setStarted] = useState(false);
+  const [hasStarted, setHasStarted] = useState(false);
+  const overlayKey = `moya.${kind}-auto-overlay.v1`;
+  const [alwaysShowOverlay, setAlwaysShowOverlayState] = useState(() => {
+    try {
+      return localStorage.getItem(overlayKey) === 'true';
+    } catch {
+      return false;
+    }
+  });
+  const setAlwaysShowOverlay = (value: boolean) => {
+    setAlwaysShowOverlayState(value);
+    try {
+      localStorage.setItem(overlayKey, String(value));
+    } catch {
+      /* Optional preference. */
+    }
+  };
   const flow = viewport.current?.flow;
   const supportedModes =
     flow === 'paginated'
@@ -249,6 +266,9 @@ export function useAutoScroll(
 
   return {
     running,
+    overlayVisible: running || (alwaysShowOverlay && hasStarted),
+    alwaysShowOverlay,
+    setAlwaysShowOverlay,
     modeAllowed,
     supportedModes,
     interval,
@@ -264,6 +284,7 @@ export function useAutoScroll(
     start: () => {
       if (allowed && modeAllowed && ready && !document.hidden) {
         owner.current = scope;
+        setHasStarted(true);
         setStarted(true);
       }
     },
