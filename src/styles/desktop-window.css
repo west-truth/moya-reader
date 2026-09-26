@@ -140,3 +140,29 @@ body:has(.desktop-window-shell) {
 :is(.desktop-server-choice, .desktop-remote-home, .embedded-server-dialog) :is(.primary-btn, .ghost-btn) {
   min-height: 44px;
 }
+
+.desktop-connection-diagnostics {
+  margin-block: 16px;
+  border: 1px solid var(--app-line);
+  border-radius: var(--radius-control);
+  background: var(--app-surface);
+  padding: 12px;
+}
+.desktop-connection-diagnostics summary {
+  min-height: 44px;
+  padding: 12px;
+  border: 1px solid var(--app-line);
+  border-radius: var(--radius-control);
+  cursor: pointer;
+}
+.desktop-connection-diagnostics summary:hover {
+  background: var(--app-surface-hover);
+}
+.desktop-connection-diagnostics pre {
+  max-height: 220px;
+  overflow: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  user-select: text;
+  font-size: 12px;
+}

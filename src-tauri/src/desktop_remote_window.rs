@@ -4,31 +4,117 @@ use tauri::{AppHandle, Manager, WebviewUrl, WebviewWindow, WebviewWindowBuilder}
 const WINDOW_LABEL: &str = "remote-server";
 const WEBVIEW_COMPATIBILITY_MARKER: &str = "name=\"moya-desktop-webview\" content=\"browser-v1\"";
 
+#[derive(Debug, serde::Serialize)]
+pub(crate) struct ConnectionFailure {
+    message: String,
+    stage: &'static str,
+    code: &'static str,
+    detail: String,
+}
+impl ConnectionFailure {
+    fn new(
+        stage: &'static str,
+        code: &'static str,
+        message: impl Into<String>,
+        detail: impl Into<String>,
+    ) -> Self {
+        Self {
+            stage,
+            code,
+            message: message.into(),
+            detail: detail.into(),
+        }
+    }
+}
+impl From<String> for ConnectionFailure {
+    fn from(message: String) -> Self {
+        Self::new("창 열기", "window_error", message, "")
+    }
+}
+impl From<&str> for ConnectionFailure {
+    fn from(message: &str) -> Self {
+        Self::from(message.to_string())
+    }
+}
+fn request_failure(stage: &'static str, error: reqwest::Error) -> ConnectionFailure {
+    use std::error::Error;
+    let timeout = error.is_timeout();
+    let error = error.without_url();
+    let mut details = vec![error.to_string()];
+    let mut cause = error.source();
+    for _ in 0..4 {
+        let Some(current) = cause else {
+            break;
+        };
+        details.push(current.to_string());
+        cause = current.source();
+    }
+    // Only transport errors, never response bodies, account data or headers.
+    let detail: String = details.join(" → ").chars().take(1024).collect();
+    let lower = detail.to_ascii_lowercase();
+    let (code, message) = if timeout {
+        (
+            "request_timeout",
+            "서버 응답 시간이 초과되었습니다. 서버 주소와 네트워크 연결을 확인해 주세요.",
+        )
+    } else if lower.contains("certificate") || lower.contains("cert") || lower.contains("tls") {
+        (
+            "tls_error",
+            "서버의 보안 연결을 확인하지 못했습니다. HTTPS 인증서를 확인해 주세요.",
+        )
+    } else {
+        (
+            "request_failed",
+            "서버에 연결하지 못했습니다. 서버 실행 상태와 주소를 확인해 주세요.",
+        )
+    };
+    ConnectionFailure::new(stage, code, message, detail)
+}
+
 async fn require_browser_frontend(
     client: &reqwest::Client,
     url: &tauri::Url,
-) -> Result<(), String> {
+) -> Result<(), ConnectionFailure> {
     const INCOMPATIBLE: &str = "이 서버의 웹 화면은 앱 내 접속을 지원하지 않습니다. 서버를 업데이트하거나 일반 브라우저에서 접속해 주세요.";
     let mut response = client
         .get(url.clone())
         .send()
         .await
-        .map_err(|_| "서버 웹 화면의 호환성을 확인하지 못했습니다. 다시 시도해 주세요.")?;
+        .map_err(|error| request_failure("웹 화면 확인", error))?;
     if !response.status().is_success() {
-        return Err(INCOMPATIBLE.into());
+        return Err(ConnectionFailure::new(
+            "웹 화면 확인",
+            "http_status",
+            "서버 웹 화면을 읽지 못했습니다.",
+            format!("GET / → HTTP {}", response.status().as_u16()),
+        ));
     }
     // Check the served frontend, not the API version: older pages treat Tauri's
     // injected, non-configurable globals as permission to invoke native commands.
     // The small bundled index declares that it handles external WebViews as web.
     let mut bytes = Vec::new();
-    while let Some(chunk) = response.chunk().await.map_err(|_| INCOMPATIBLE)? {
+    while let Some(chunk) = response
+        .chunk()
+        .await
+        .map_err(|error| request_failure("웹 화면 읽기", error))?
+    {
         if bytes.len() + chunk.len() > 64 * 1024 {
-            return Err(INCOMPATIBLE.into());
+            return Err(ConnectionFailure::new(
+                "웹 화면 확인",
+                "frontend_too_large",
+                "서버 웹 화면의 크기가 확인 한도를 초과했습니다.",
+                "최대 64 KiB",
+            ));
         }
         bytes.extend_from_slice(&chunk);
     }
     if !String::from_utf8_lossy(&bytes).contains(WEBVIEW_COMPATIBILITY_MARKER) {
-        return Err(INCOMPATIBLE.into());
+        return Err(ConnectionFailure::new(
+            "웹 화면 호환성",
+            "frontend_incompatible",
+            INCOMPATIBLE,
+            "로그인 API 확인 성공. 웹 화면에 moya-desktop-webview=browser-v1 표식이 없습니다.",
+        ));
     }
     Ok(())
 }
@@ -102,9 +188,10 @@ pub(crate) async fn desktop_remote_server_open(
     app: AppHandle,
     window: WebviewWindow,
     address: String,
-) -> Result<(), String> {
+) -> Result<(), ConnectionFailure> {
     crate::embedded_server::require_local_window(&window)?;
-    let url = remote_origin(&address)?;
+    let url = remote_origin(&address)
+        .map_err(|message| ConnectionFailure::new("주소 확인", "invalid_address", message, ""))?;
     let status_url = url
         .join("api/auth/status")
         .map_err(|_| "서버 주소를 확인해 주세요.")?;
@@ -113,20 +200,31 @@ pub(crate) async fn desktop_remote_server_open(
         .redirect(reqwest::redirect::Policy::none())
         .build()
         .map_err(|_| "서버 연결을 준비하지 못했습니다.")?;
-    let response =
-        client.get(status_url).send().await.map_err(|_| {
-            "서버에 연결하지 못했습니다. 주소와 인증서를 확인한 뒤 다시 시도해 주세요."
-        })?;
-    if !response.status().is_success() {
-        return Err(
-            "서버의 로그인 화면을 확인하지 못했습니다. 모야 self-host 주소인지 확인해 주세요."
-                .into(),
-        );
-    }
-    let status: serde_json::Value = response
-        .json()
+    let response = client
+        .get(status_url)
+        .send()
         .await
-        .map_err(|_| "서버의 로그인 응답을 읽지 못했습니다.")?;
+        .map_err(|error| request_failure("로그인 API 연결", error))?;
+    let status_code = response.status().as_u16();
+    if !response.status().is_success() {
+        return Err(ConnectionFailure::new(
+            "로그인 API 응답",
+            "http_status",
+            "서버의 로그인 API를 확인하지 못했습니다. 모야 self-host 주소인지 확인해 주세요.",
+            format!("GET /api/auth/status → HTTP {status_code}"),
+        ));
+    }
+    let status: serde_json::Value = response.json().await.map_err(|error| {
+        if error.is_timeout() || error.is_body() {
+            return request_failure("로그인 API 응답 읽기", error);
+        }
+        ConnectionFailure::new(
+            "로그인 API 응답",
+            "invalid_json",
+            "서버의 로그인 응답 형식이 맞지 않습니다.",
+            format!("GET /api/auth/status → HTTP {status_code}; JSON 응답을 읽을 수 없음"),
+        )
+    })?;
     if !status
         .get("authenticated")
         .is_some_and(serde_json::Value::is_boolean)
@@ -134,9 +232,12 @@ pub(crate) async fn desktop_remote_server_open(
             .get("setupRequired")
             .is_some_and(serde_json::Value::is_boolean)
     {
-        return Err(
-            "서버가 이 앱의 로그인 방식과 맞지 않습니다. 서버 버전을 확인해 주세요.".into(),
-        );
+        return Err(ConnectionFailure::new(
+            "로그인 API 호환성",
+            "auth_incompatible",
+            "서버가 이 앱의 로그인 방식과 맞지 않습니다. 서버 버전을 확인해 주세요.",
+            "authenticated/setupRequired 필드가 boolean이 아닙니다.",
+        ));
     }
     if let Some(existing) = app.get_webview_window(WINDOW_LABEL) {
         let current = existing
@@ -201,15 +302,15 @@ mod tests {
             super::WEBVIEW_COMPATIBILITY_MARKER,
             "name=\"description\" content=\"old UI\"",
         );
-        for (body, status, accepted) in [
-            (current.to_string(), "200 OK", true),
-            (old, "200 OK", false),
-            ("{}".to_string(), "200 OK", false),
-            (current.to_string(), "302 Found", false),
+        for (body, status, code) in [
+            (current.to_string(), "200 OK", None),
+            (old, "200 OK", Some("frontend_incompatible")),
+            ("{}".to_string(), "200 OK", Some("frontend_incompatible")),
+            (current.to_string(), "302 Found", Some("http_status")),
             (
                 format!("{}{}", current, "x".repeat(64 * 1024)),
                 "200 OK",
-                false,
+                Some("frontend_too_large"),
             ),
         ] {
             let listener = TcpListener::bind("127.0.0.1:0").unwrap();
@@ -241,7 +342,12 @@ mod tests {
                 .unwrap();
             let result = runtime.block_on(super::require_browser_frontend(&client, &url));
             server.join().unwrap();
-            assert_eq!(result.is_ok(), accepted, "{result:?}");
+            assert_eq!(result.as_ref().err().map(|error| error.code), code);
+            if let Err(error) = result {
+                assert!(!error.stage.is_empty());
+                assert!(!error.message.is_empty());
+                assert!(!error.detail.is_empty());
+            }
         }
     }
 

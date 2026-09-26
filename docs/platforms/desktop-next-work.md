@@ -285,3 +285,10 @@ gh workflow run desktop-embedded.yml --ref refactor/desktop-single-server -f bui
 ```
 
 이 경로는 `desktop-test-build.yml`을 호출해 Windows 런타임과 release 설치 EXE만 만든다. debug 앱 빌드·단위/실사용 smoke·설치 검증은 생략한다. 결과는 실행의 **moya-windows-x64-build-only** artifact이며 14일 보관한다. 일반 검증 경로는 `build_only=false`로 유지한다. GitHub Release에 공개하지 않는다.
+
+### 연결 진단·회차 방향키·픽셀 스크롤 (2026-09-26)
+
+- 외부 서버 연결 실패 시 기존 화면에서 원인과 실패 단계·오류 코드·HTTP 상태 또는 전송 오류를 펼쳐 보고 복사한다. 구형 웹 화면의 호환성 거부와 네트워크 timeout을 구분한다. 서버 응답 본문·인증 헤더는 기록하지 않으며 잘못된 URL의 자격 증명을 진단에 표시하지 않는다.
+- 공통 회차 페이지 버튼에 좌우 방향키를 연결했다. 현재 보이는 최상위 목록만 처리하며 입력창·slider·다른 dialog·조합/수정 키·키 반복은 제외한다. 기존 클릭 경로의 페이지 범위 검사와 스크롤 위치 보존을 재사용한다. 데스크톱과 self-host 웹에서 같은 UI를 사용한다.
+- 픽셀 스크롤을 기존 5~~60px/초에서 **5~~1,200px/초**로 확대했다. 슬라이더와 직접 입력에 실제 단위를 표시한다. 기존 기본값/저속 설정은 유지하고 텍스트·만화의 픽셀 속도는 별도로 저장한다. 줄/페이지/가림 읽기 속도는 기존 범위로 유지해 고속 픽셀 설정이 다른 방식에 전달되지 않게 했다.
+- 검증: 관련 React/읽기 검사 48개, 웹 타입·변경 파일 lint·CSS 검사 통과. Rust 원격 화면 호환성·origin 검사 2개 통과. 실제 Chromium에서 방향키 이동, 입력창/dialog 키 격리, 1,200px/초 조절과 390px 가로 넘침 부재를 확인했다. Windows 산출물은 build-only로 별도 생성하며 실제 Windows 조작 검증과 구분한다.

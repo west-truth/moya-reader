@@ -92,3 +92,26 @@ it('opens an older server in the system browser without native frontend compatib
   });
   expect(JSON.stringify(renderer.toJSON())).toContain('기본 브라우저에서 서버를 열었습니다.');
 });
+
+it('shows the failed connection stage and a copyable diagnostic without response bodies', async () => {
+  invoke.mockRejectedValueOnce({
+    message: '서버 화면이 앱 내 접속을 지원하지 않습니다.',
+    stage: '웹 화면 호환성',
+    code: 'frontend_incompatible',
+    detail: '로그인 API 확인 성공. 호환 표식이 없습니다.',
+  });
+  const writeText = vi.fn().mockResolvedValue(undefined);
+  vi.stubGlobal('navigator', { clipboard: { writeText } });
+  await act(async () => {
+    renderer = create(
+      <DesktopRemoteHome selection={{ version: 1, mode: 'remote', serverUrl: 'https://reader.example:18443/' }} />,
+    );
+  });
+  const tree = JSON.stringify(renderer.toJSON());
+  expect(tree).toContain('웹 화면 호환성');
+  expect(tree).toContain('frontend_incompatible');
+  expect(tree).not.toContain('[object Object]');
+  const copy = renderer.root.findAllByType('button').find((button) => button.props.children === '진단 복사');
+  await act(async () => copy?.props.onClick());
+  expect(writeText).toHaveBeenCalledWith(expect.stringContaining('로그인 API 확인 성공'));
+});

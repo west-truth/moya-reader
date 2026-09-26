@@ -132,6 +132,26 @@ export function DesktopServerChoice({ current }: { readonly current?: DesktopSer
   return open ? <SelectionForm current={shownSelection} onClose={() => setOpen(false)} /> : null;
 }
 
+function connectionFailure(value: unknown, address?: string) {
+  const row = typeof value === 'object' && value !== null ? (value as Record<string, unknown>) : undefined;
+  const message = typeof row?.message === 'string' ? row.message : String(value);
+  const stage = typeof row?.stage === 'string' ? row.stage : '서버 창 열기';
+  const code = typeof row?.code === 'string' ? row.code : 'connection_error';
+  const detail = typeof row?.detail === 'string' ? row.detail : '';
+  let origin = '주소 확인 실패';
+  try {
+    if (address) origin = normalizeDesktopServerUrl(address);
+  } catch {
+    /* Do not echo credentials from invalid URLs. */
+  }
+  return {
+    message,
+    diagnostic: [new Date().toISOString(), `서버: ${origin}`, `단계: ${stage}`, `코드: ${code}`, message, detail]
+      .filter(Boolean)
+      .join('\n'),
+  };
+}
+
 export function DesktopRemoteHome({
   selection,
   configurationError,
@@ -140,6 +160,8 @@ export function DesktopRemoteHome({
   readonly configurationError?: string;
 }) {
   const [error, setError] = useState(configurationError ?? '');
+  const [diagnostic, setDiagnostic] = useState('');
+  const [copyStatus, setCopyStatus] = useState('');
   const [opening, setOpening] = useState(false);
   const [ready, setReady] = useState(false);
   const [browserOpened, setBrowserOpened] = useState(false);
@@ -149,12 +171,17 @@ export function DesktopRemoteHome({
   const open = useCallback(async () => {
     if (!address || opening) return;
     setOpening(true);
+    setReady(false);
     setError('');
+    setDiagnostic('');
+    setCopyStatus('');
     try {
       await invoke('desktop_remote_server_open', { address });
       setReady(true);
     } catch (failure) {
-      setError(String(failure instanceof Error ? failure.message : failure));
+      const result = connectionFailure(failure, address);
+      setError(result.message);
+      setDiagnostic(result.diagnostic);
     } finally {
       setOpening(false);
     }
@@ -174,6 +201,27 @@ export function DesktopRemoteHome({
           {address && <p>{address}</p>}
           <p>서버의 기존 로그인 화면을 별도 창에서 엽니다. 서버의 서재 자료는 이 PC로 복사하지 않습니다.</p>
           {error && <p role="alert">{error}</p>}
+          {diagnostic && (
+            <details className="desktop-connection-diagnostics">
+              <summary>연결 진단 보기</summary>
+              <pre tabIndex={0}>{diagnostic}</pre>
+              <button
+                type="button"
+                className="ghost-btn"
+                onClick={async () => {
+                  try {
+                    await navigator.clipboard.writeText(diagnostic);
+                    setCopyStatus('진단 내용을 복사했습니다.');
+                  } catch {
+                    setCopyStatus('자동 복사가 지원되지 않습니다. 위 내용을 선택해 복사해 주세요.');
+                  }
+                }}
+              >
+                진단 복사
+              </button>
+              {copyStatus && <p role="status">{copyStatus}</p>}
+            </details>
+          )}
           {browserOpened && <p role="status">기본 브라우저에서 서버를 열었습니다.</p>}
           {error && (
             <p>
@@ -198,7 +246,9 @@ export function DesktopRemoteHome({
                     await invoke('desktop_remote_server_open_browser', { address });
                     setBrowserOpened(true);
                   } catch (failure) {
-                    setError(String(failure));
+                    const result = connectionFailure(failure, address);
+                    setError(result.message);
+                    setDiagnostic(result.diagnostic);
                   } finally {
                     setOpening(false);
                   }

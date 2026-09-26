@@ -61,6 +61,49 @@ describe('automatic text scrolling', () => {
     vi.unstubAllGlobals();
   });
 
+  it('supports 1200px/s while keeping other reading modes at their previous speed', () => {
+    act(() => controller.setSpeed(240));
+    expect(controller.speed).toBe(240);
+    expect(controller.maxSpeed).toBe(240);
+    expect(localStorage.setItem).toHaveBeenLastCalledWith('moya.text-auto-pixel-speed.v2', '240');
+    act(() => controller.start());
+    advance(21);
+    expect(step.mock.calls.reduce((sum, [delta]) => sum + delta, 0)).toBe(1200);
+    act(() => controller.setMode('page'));
+    expect(controller.speed).toBe(4);
+    expect(controller.maxSpeed).toBe(12);
+    act(() => controller.setSpeed(240));
+    expect(controller.speed).toBe(4);
+    act(() => controller.setMode('pixel'));
+    expect(controller.speed).toBe(240);
+    act(() => controller.setSpeed(241));
+    expect(controller.speed).toBe(240);
+  });
+
+  it('restores a separate comic pixel preference without overwriting legacy text speeds', () => {
+    act(() => renderer.unmount());
+    vi.stubGlobal('localStorage', {
+      getItem: (key: string) =>
+        key === 'moya.reader-auto-scroll-speed.v1' ? '12' : key === 'moya.comic-auto-pixel-speed.v2' ? '120' : null,
+      setItem: vi.fn(),
+    });
+    function Comic() {
+      controller = useAutoScroll(viewport, scope, allowed, ready, next, 'comic');
+      return null;
+    }
+    act(() => {
+      renderer = create(<Comic />);
+    });
+    expect(controller.speed).toBe(120);
+    act(() => controller.setSpeed(200));
+    expect(localStorage.setItem).toHaveBeenLastCalledWith('moya.comic-auto-pixel-speed.v2', '200');
+    act(() => renderer.unmount());
+    act(() => {
+      renderer = create(<Harness />);
+    });
+    expect(controller.speed).toBe(12);
+  });
+
   it('allows blind modes in pagination and keeps scrolling modes disabled', () => {
     const advanceAutoReading = vi.fn(() => 'moving' as const);
     viewport.current = { ...viewport.current, flow: 'paginated', advanceAutoReading };

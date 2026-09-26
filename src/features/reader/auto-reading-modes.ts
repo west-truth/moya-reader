@@ -37,6 +37,7 @@ export function autoReadingRate(mode: AutoReadingMode, speed: number): number {
   return speed * 5;
 }
 export function autoReadingSpeedLabel(mode: AutoReadingMode, speed: number): string {
+  if (mode === 'pixel') return `${autoReadingRate(mode, speed)}px/초`;
   if (mode === 'page') return `${13 - speed}초마다`;
   if (mode === 'rsvp') return `분당 ${60 + speed * 30}어절`;
   if (mode === 'line' || mode === 'blind-line') return `분당 ${speed * 10}줄`;

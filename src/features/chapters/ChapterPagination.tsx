@@ -1,5 +1,5 @@
 import { ChevronLeft, ChevronRight } from 'lucide-react';
-import { useLayoutEffect, useRef } from 'react';
+import { useEffect, useLayoutEffect, useRef } from 'react';
 
 interface ChapterPaginationProps {
   page: number;
@@ -33,7 +33,7 @@ export function ChapterPagination({ page, pageCount, onPage }: ChapterPagination
   }, [page]);
 
   const choosePage = (next: number) => {
-    if (next === page) return;
+    if (next === page || next < 1 || next > pageCount) return;
     const nav = navigation.current;
     if (nav) {
       let scroller = nav.parentElement;
@@ -44,9 +44,58 @@ export function ChapterPagination({ page, pageCount, onPage }: ChapterPagination
     onPage(next);
   };
 
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const onKey = (event: KeyboardEvent) => {
+      const nav = navigation.current;
+      if (
+        !nav ||
+        event.defaultPrevented ||
+        event.isComposing ||
+        event.repeat ||
+        event.ctrlKey ||
+        event.altKey ||
+        event.metaKey ||
+        event.shiftKey ||
+        !['ArrowLeft', 'ArrowRight'].includes(event.key) ||
+        !nav.getClientRects().length
+      )
+        return;
+      const target = event.target instanceof Element ? event.target : null;
+      if (
+        target?.closest(
+          'input,textarea,select,[contenteditable]:not([contenteditable="false"]),[role="slider"],[role="tablist"],[role="menu"],[role="listbox"]',
+        )
+      )
+        return;
+      // A dialog/drawer owns its own keys. Never page the underlying book.
+      const dialogs = [...document.querySelectorAll('[role="dialog"],[role="alertdialog"],dialog[open]')].filter(
+        (dialog) => dialog.getClientRects().length,
+      );
+      if (dialogs.length && !dialogs.at(-1)!.contains(nav)) return;
+      const pagers = [...document.querySelectorAll<HTMLElement>('.chapter-pagination')].filter(
+        (pager) => pager.getClientRects().length && (!dialogs.length || dialogs.at(-1)!.contains(pager)),
+      );
+      if (pagers.at(-1) !== nav) return;
+      const next = page + (event.key === 'ArrowLeft' ? -1 : 1);
+      if (next < 1 || next > pageCount) return;
+      event.preventDefault();
+      choosePage(next);
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  });
+
   return (
     <nav ref={navigation} className="chapter-pagination" aria-label="회차 페이지">
-      <button type="button" onClick={() => choosePage(page - 1)} disabled={page === 1} aria-label="이전 페이지">
+      <button
+        type="button"
+        onClick={() => choosePage(page - 1)}
+        disabled={page === 1}
+        aria-label="이전 페이지"
+        title="이전 페이지 (←)"
+        aria-keyshortcuts="ArrowLeft"
+      >
         <ChevronLeft size={16} />
       </button>
       {paginationItems(page, pageCount).map((item) =>
@@ -67,7 +116,14 @@ export function ChapterPagination({ page, pageCount, onPage }: ChapterPagination
           </span>
         ),
       )}
-      <button type="button" onClick={() => choosePage(page + 1)} disabled={page === pageCount} aria-label="다음 페이지">
+      <button
+        type="button"
+        onClick={() => choosePage(page + 1)}
+        disabled={page === pageCount}
+        aria-label="다음 페이지"
+        title="다음 페이지 (→)"
+        aria-keyshortcuts="ArrowRight"
+      >
         <ChevronRight size={16} />
       </button>
     </nav>
