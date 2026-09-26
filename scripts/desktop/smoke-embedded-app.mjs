@@ -15,6 +15,8 @@ const executable = path.resolve(process.argv[2]);
 const profile = await mkdtemp(path.join(tmpdir(), 'Moya app proof 한글 '));
 // Native TXT, EPUB and PDF stored in the single embedded server.
 const expectedBackupBookCount = 3;
+const readerFixtureText =
+  '1화 시작\n\n앱 창에서 내장 서버의 작품을 읽습니다.\n\n두 번째 문단에서도 하이라이트와 사용자 글꼴을 확인합니다.\n';
 const listener = createServer();
 await new Promise((resolve) => listener.listen(0, '127.0.0.1', resolve));
 const port = listener.address().port;
@@ -178,45 +180,46 @@ async function close(fromTray = false) {
 }
 try {
   await launch();
-  const textBookId = await page.evaluate(async ({ url, authToken }) => {
-    const request = async (resource, options = {}) => {
-      const response = await fetch(`${url}/api${resource}`, {
-        ...options,
-        headers: { Authorization: `Bearer ${authToken}`, ...options.headers },
+  const textBookId = await page.evaluate(
+    async ({ url, authToken, sourceText }) => {
+      const request = async (resource, options = {}) => {
+        const response = await fetch(`${url}/api${resource}`, {
+          ...options,
+          headers: { Authorization: `Bearer ${authToken}`, ...options.headers },
+        });
+        if (!response.ok) throw new Error(`Native import failed: ${response.status}`);
+        return response.json();
+      };
+      const bytes = new TextEncoder().encode(sourceText);
+      const upload = await request('/uploads/init', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          fileName: '앱 연결 검증.txt',
+          sizeBytes: bytes.length,
+          contentType: 'text/plain',
+          encoding: 'utf-8',
+          chapterSplitMode: 'auto',
+          totalChunks: 1,
+        }),
       });
-      if (!response.ok) throw new Error(`Native import failed: ${response.status}`);
-      return response.json();
-    };
-    const bytes = new TextEncoder().encode(
-      '1화 시작\n\n앱 창에서 내장 서버의 작품을 읽습니다.\n\n두 번째 문단에서도 하이라이트와 사용자 글꼴을 확인합니다.\n',
-    );
-    const upload = await request('/uploads/init', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        fileName: '앱 연결 검증.txt',
-        sizeBytes: bytes.length,
-        contentType: 'text/plain',
-        encoding: 'utf-8',
-        chapterSplitMode: 'auto',
-        totalChunks: 1,
-      }),
-    });
-    await request(`/uploads/${upload.uploadId}/chunks/0`, {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/octet-stream' },
-      body: bytes,
-    });
-    const job = await request(`/uploads/${upload.uploadId}/complete`, { method: 'POST' });
-    const deadline = Date.now() + 30_000;
-    while (Date.now() < deadline) {
-      const result = await request(`/import-jobs/${job.jobId}`);
-      if (result.status === 'done') return result.book_id;
-      if (result.status === 'failed') throw new Error('Native import job failed');
-      await new Promise((resolve) => setTimeout(resolve, 100));
-    }
-    throw new Error('Native import timed out');
-  }, connection);
+      await request(`/uploads/${upload.uploadId}/chunks/0`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/octet-stream' },
+        body: bytes,
+      });
+      const job = await request(`/uploads/${upload.uploadId}/complete`, { method: 'POST' });
+      const deadline = Date.now() + 30_000;
+      while (Date.now() < deadline) {
+        const result = await request(`/import-jobs/${job.jobId}`);
+        if (result.status === 'done') return result.book_id;
+        if (result.status === 'failed') throw new Error('Native import job failed');
+        await new Promise((resolve) => setTimeout(resolve, 100));
+      }
+      throw new Error('Native import timed out');
+    },
+    { ...connection, sourceText: readerFixtureText },
+  );
   await page.reload();
   await page.getByText('앱 연결 검증', { exact: true }).first().waitFor({ timeout: 30_000 });
   await page.locator('.book-continue-action').first().click();
@@ -304,10 +307,7 @@ try {
   const sourceDownload = await remoteDownload;
   const sourceDownloadPath = path.join(profile, 'remote-source.txt');
   await sourceDownload.saveAs(sourceDownloadPath);
-  assert.deepEqual(
-    await readFile(sourceDownloadPath),
-    Buffer.from('1화 시작\n\n앱 창에서 내장 서버의 작품을 읽습니다.\n'),
-  );
+  assert.deepEqual(await readFile(sourceDownloadPath), Buffer.from(readerFixtureText));
   const remoteLogout = await remotePage.evaluate(async () =>
     fetch('/api/auth/logout', { method: 'POST', credentials: 'same-origin' }).then((response) => response.status),
   );
@@ -592,10 +592,7 @@ try {
       headers: { Authorization: `Bearer ${restoredServer.authToken}` },
     });
     assert.equal(restoredSource.status, 200);
-    assert.deepEqual(
-      Buffer.from(await restoredSource.arrayBuffer()),
-      Buffer.from('1화 시작\n\n앱 창에서 내장 서버의 작품을 읽습니다.\n'),
-    );
+    assert.deepEqual(Buffer.from(await restoredSource.arrayBuffer()), Buffer.from(readerFixtureText));
     evidence.nativeBackupRestored = true;
 
     const remoteRegistration = await fetch(`${restoredServer.url}/api/auth/register`, {
