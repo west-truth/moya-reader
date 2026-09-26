@@ -30,7 +30,9 @@ async function assertPortAvailable(port, service) {
     });
   } catch (error) {
     if (error.code === 'EADDRINUSE') {
-      throw new Error(`${service} 포트 ${port}번을 다른 프로그램이 사용 중입니다. 기존 서재 데이터는 보존했습니다.`);
+      throw new Error(`${service} 포트 ${port}번을 다른 프로그램이 사용 중입니다. 기존 서재 데이터는 보존했습니다.`, {
+        cause: error,
+      });
     }
     throw error;
   } finally {

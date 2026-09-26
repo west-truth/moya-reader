@@ -96,6 +96,14 @@ jobs:
       - name: Install and start with developer tools removed from PATH
         if: ${{ success() && inputs.build_installer && steps.installer.outcome == 'success' }}
         run: ./scripts/desktop/smoke-embedded-installer.ps1
+      - name: Upload tested Windows installer
+        if: ${{ success() && inputs.build_installer }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: moya-windows-x64-test-installer
+          path: src-tauri/target/release/bundle/nsis/*-setup.exe
+          if-no-files-found: error
+          retention-days: 14
       - name: Collect evidence without credentials or server data
         if: always()
         shell: pwsh
