@@ -126,9 +126,17 @@ async function launchRemoteSelection(address) {
 async function close(fromTray = false) {
   const exited = new Promise((resolve) => app.once('exit', resolve));
   if (fromTray) {
-    await page.evaluate(() =>
-      window.__TAURI_INTERNALS__.invoke('desktop_embedded_server_close', { keepRunning: false }),
-    );
+    try {
+      await page.evaluate(() =>
+        window.__TAURI_INTERNALS__.invoke('desktop_embedded_server_close', { keepRunning: false }),
+      );
+    } catch (error) {
+      // In external-server mode there is no local server to drain. The app can
+      // close its WebView before the IPC reply arrives. Still require the process
+      // to exit with code 0 and the server lock to be gone below.
+      if (!String(error).includes('Target page, context or browser has been closed')) throw error;
+      console.log('Close request ended the WebView; waiting for clean process exit');
+    }
   } else {
     await page.getByRole('button', { name: '창 닫기', exact: true }).click();
     await page.getByRole('button', { name: '서버와 모야 종료', exact: true }).click();
