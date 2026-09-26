@@ -328,7 +328,9 @@ try {
   const reader = page.locator('.reader-scroll.is-active');
   const readerBounds = await reader.boundingBox();
   assert(readerBounds, 'Native reader viewport is missing');
-  await reader.click({ position: { x: readerBounds.width / 2, y: readerBounds.height / 2 } });
+  if (await page.locator('.reader-screen.immersive').count()) {
+    await reader.click({ position: { x: readerBounds.width / 2, y: readerBounds.height / 2 } });
+  }
   await page.locator('.reader-screen:not(.immersive)').waitFor();
   const mobileSearch = page.getByRole('button', { name: '본문 검색 열기', exact: true });
   if (await mobileSearch.isVisible()) {
