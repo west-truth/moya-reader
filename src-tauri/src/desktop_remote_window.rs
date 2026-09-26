@@ -85,6 +85,18 @@ fn remote_origin(input: &str) -> Result<tauri::Url, String> {
     Ok(origin)
 }
 
+/// Explicit fallback for older self-host frontends. Keep credentials and native
+/// IPC out of the external page; reuse the system browser used by OAuth.
+#[tauri::command]
+pub(crate) async fn desktop_remote_server_open_browser(
+    window: WebviewWindow,
+    address: String,
+) -> Result<(), String> {
+    crate::embedded_server::require_local_window(&window)?;
+    let url = remote_origin(&address)?;
+    crate::desktop_oauth::open_system_browser(url.as_str())
+}
+
 #[tauri::command]
 pub(crate) async fn desktop_remote_server_open(
     app: AppHandle,

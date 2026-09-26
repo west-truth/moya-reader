@@ -77,7 +77,7 @@ async function launch() {
   spawnNativeApp();
   await connectMainWindow();
   await page
-    .getByRole('button', { name: '다른 기기 접속', exact: true })
+    .getByRole('button', { name: '설정 열기', exact: true })
     .waitFor({ timeout: 90_000 })
     .catch(async (error) => {
       console.error('Native startup screen:', (await page.locator('body').innerText()).slice(0, 2000));
@@ -494,7 +494,8 @@ try {
   assert.equal(localSource.status, 200);
   assert.deepEqual(Buffer.from(await localSource.arrayBuffer()), Buffer.from(localFixture.source, 'base64'));
   evidence.nativeLocalBackupRestored = true;
-  await page.getByRole('button', { name: '다른 기기 접속', exact: true }).click();
+  await page.getByRole('button', { name: '설정 열기', exact: true }).click();
+  await page.getByRole('tab', { name: /원격 접속/ }).click();
   // The remote-window proof registered this server's normal account earlier in the same profile.
   await page.getByRole('button', { name: '다른 기기 접속 허용', exact: true }).waitFor();
   assert.equal(await page.getByLabel('접속 방식', { exact: true }).inputValue(), 'cloudflare');
@@ -525,7 +526,7 @@ try {
     assert.equal((await fetch(`${connection.url}/api/ready`)).status, 200);
     evidence.sharingRevoked = true;
   }
-  await page.getByRole('button', { name: '닫기', exact: true }).click();
+  await page.getByRole('button', { name: '설정 닫기', exact: true }).click();
   await page.screenshot({ path: path.join(profile, 'native-reader.png') });
   const firstUrl = connection.url;
   await close();
@@ -554,7 +555,8 @@ try {
   try {
     restoredServer = await startEmbeddedServer({ runtimeFile, profileDir: restoredProfile });
     assert.notEqual(restoredServer.url, connection.url, 'Independent servers must have different ports');
-    await page.getByRole('button', { name: '서재 선택', exact: true }).click();
+    await page.getByRole('button', { name: '설정 열기', exact: true }).click();
+    await page.getByRole('tab', { name: /동기화/ }).click();
     await page.getByLabel('기존 서버에 접속').check();
     await page.getByLabel('서버 첫 화면 주소').fill(restoredServer.url);
     await page.getByRole('button', { name: '다음 시작에 적용' }).click();
@@ -675,7 +677,7 @@ try {
     evidence.remoteFileImportAndBackup = true;
     await selectedPage.close();
     assert.equal((await fetch(`${restoredServer.url}/api/ready`)).status, 200);
-    await page.getByRole('button', { name: '서재 선택', exact: true }).click();
+    await page.getByRole('button', { name: '사용할 서재 변경', exact: true }).click();
     await page.getByLabel('이 PC의 서재').check();
     await page.getByRole('button', { name: '다음 시작에 적용' }).click();
     await page.getByText('선택을 저장했습니다.', { exact: false }).waitFor();

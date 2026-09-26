@@ -6542,6 +6542,7 @@ export default function App() {
       {settingsOpen && (
         <Suspense fallback={null}>
           <ReaderSettingsPanel
+            serverApiBaseUrl={readerRuntime.mode === 'remote' ? readerRuntime.apiBaseUrl : undefined}
             controller={readerSettingsController}
             profile={readingProfile}
             bookOverrideEnabled={readingBookOverrideEnabled}

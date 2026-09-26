@@ -1,0 +1,43 @@
+name: Windows test EXE (build only)
+
+on:
+  workflow_dispatch:
+  workflow_call:
+
+permissions:
+  contents: read
+
+jobs:
+  installer:
+    runs-on: windows-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v7
+      - uses: pnpm/action-setup@v6
+        with:
+          version: 11.7.0
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: pnpm
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+          cache-on-failure: true
+      - run: pnpm install --frozen-lockfile
+      - uses: actions/cache@v4
+        with:
+          path: .tmp/embedded-downloads
+          key: embedded-win-node22.23.2-pg16.15-redis7.2.16-cloudflared2026.9.1
+      - run: node scripts/desktop/build-embedded-runtime.mjs
+      - run: node scripts/desktop/build-embedded-installer.mjs --standalone
+      - uses: actions/upload-artifact@v4
+        with:
+          name: moya-windows-x64-build-only
+          path: src-tauri/target/release/bundle/nsis/*-setup.exe
+          if-no-files-found: error
+          retention-days: 14

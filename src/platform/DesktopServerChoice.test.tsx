@@ -75,3 +75,20 @@ it('saves a new server for the next app start without switching the running libr
   expect(invoke).not.toHaveBeenCalled();
   expect(JSON.stringify(renderer.toJSON())).toContain('다음 앱 시작에 적용됩니다');
 });
+
+it('opens an older server in the system browser without native frontend compatibility', async () => {
+  invoke.mockRejectedValueOnce(new Error('이 서버의 웹 화면은 앱 내 접속을 지원하지 않습니다.'));
+  await act(async () => {
+    renderer = create(
+      <DesktopRemoteHome selection={{ version: 1, mode: 'remote', serverUrl: 'https://reader.example:18443/' }} />,
+    );
+  });
+  const fallback = renderer.root
+    .findAllByType('button')
+    .find((button) => button.props.children === '일반 브라우저에서 열기');
+  await act(async () => fallback?.props.onClick());
+  expect(invoke).toHaveBeenLastCalledWith('desktop_remote_server_open_browser', {
+    address: 'https://reader.example:18443/',
+  });
+  expect(JSON.stringify(renderer.toJSON())).toContain('기본 브라우저에서 서버를 열었습니다.');
+});

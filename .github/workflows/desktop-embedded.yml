@@ -3,6 +3,10 @@ name: Desktop embedded server proof
 on:
   workflow_dispatch:
     inputs:
+      build_only:
+        description: Build a test EXE without smoke tests or PR CI
+        type: boolean
+        default: false
       build_installer:
         description: Build and install the release candidate, including runtime prerequisites
         type: boolean
@@ -26,7 +30,11 @@ permissions:
   contents: read
 
 jobs:
+  test-installer:
+    if: ${{ inputs.build_only }}
+    uses: ./.github/workflows/desktop-test-build.yml
   windows-server:
+    if: ${{ !inputs.build_only }}
     runs-on: windows-latest
     timeout-minutes: 45
     steps:
@@ -77,6 +85,8 @@ jobs:
         run: node scripts/desktop/smoke-embedded-collector.mjs ".tmp/embedded-windows/runtime.json" --live
       - run: node scripts/desktop/build-embedded-app.mjs
       - run: node node_modules/playwright-core/cli.js install chromium
+      - name: Verify downloaded cover persistence under native CSP
+        run: node --test scripts/desktop/source-cover-csp.test.mjs
       - name: Recover the same profile after killing its launcher
         run: node scripts/desktop/smoke-embedded-recovery.mjs ".tmp/Moya app 한글/embedded-server/runtime.json"
       - name: Open native window, connect automatically, share, revoke and restart

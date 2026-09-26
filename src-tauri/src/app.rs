@@ -179,6 +179,7 @@ pub fn run() {
                 crate::embedded_server::desktop_embedded_server_close,
                 crate::embedded_server::desktop_embedded_server_share,
                 crate::desktop_remote_window::desktop_remote_server_open,
+                crate::desktop_remote_window::desktop_remote_server_open_browser,
                 crate::provider_secrets::provider_secret_set,
                 crate::provider_secrets::provider_secret_status,
                 crate::provider_secrets::provider_secret_delete,

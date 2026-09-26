@@ -265,3 +265,23 @@ git diff --check
 - 외부 서버의 웹 화면에 `browser-v1` 호환 선언이 없으면 앱은 업데이트 또는 일반 브라우저 사용을 안내합니다. 모든 과거 릴리즈 서버를 native WebView에서 그대로 지원한다는 뜻이 아닙니다.
 - 소스 배포 라이선스 검사는 통과했고 공개 설치본 배포 검사는 앞서 C에 적은 자료 미완료로 계속 차단됩니다. 기존 정식 설치본의 profile 승계·업데이트 검증도 남아 있습니다. 검토 PR과 공식 릴리즈 판단을 분리합니다.
 - 이번 재검토에서는 PR 생성·커밋·push·Windows CI 실행을 하지 않았습니다. 수정과 검토 결과는 작업 트리에 남겼습니다. 검토용 PR 준비는 가능하지만 최신 Windows 실행 전에는 앱 검증 완료나 병합 준비 완료로 표시하지 않습니다.
+
+## 2026-09-26 설정 정리·표지 저장 수정
+
+- 데스크톱 상단의 서재 선택·공유 버튼을 제거했다. 서재 선택은 **설정 → 동기화**, 접속 허용·해제와 주소·QR은 **설정 → 원격 접속**에서 조작한다. 서재 선택은 다음 앱 시작에 적용한다.
+- self-host 웹도 원격 접속 탭에서 현재 서버 주소·QR을 제공한다. localhost는 다른 기기용 QR로 안내하지 않는다. native 터널 제어와 내장 인증 정보는 데스크톱 provider 안에만 둔다.
+- native 보조 버튼의 미정의 `secondary-btn`을 공통 `ghost-btn`으로 교체했다. 배경·테두리·hover와 44px 높이를 적용하고 서재 선택 radio 항목도 선택 상태를 구분했다.
+- 다운로드한 소스 표지를 저장할 때 `fetch(blob:)`가 native CSP에 막히는 오류를 Chromium에서 재현했다. `connect-src`에 `blob:`만 추가했다. 실제 `persistSourceCover`의 디코딩·hash·저장 호출을 검사하는 `scripts/desktop/source-cover-csp.test.mjs`를 추가했다. 외부 페이지의 native 접근 권한을 늘리지 않았다.
+- 공개 굿툰 Mangayomi 0.1.9에서 목록과 표지 3장의 수신은 확인했다. 이미 다운로드한 책의 표지를 소급 일괄 변경하지 않으며, 기존 동일 회차 다운로드/표지 보완 경로를 다시 실행할 수 있다.
+- 구버전 self-host 화면에는 native WebView 호환 표식이 없다. 호환 검사와 origin 격리는 유지하며, 기존 서버 선택 화면에 **일반 브라우저에서 열기**를 추가했다. 주소는 동일하게 검증하고 토큰은 URL에 넣지 않는다. 보고된 개별 서버는 검토 환경에서 TCP 연결 timeout으로 실제 인증·화면 접속을 확인하지 못했다.
+- 검증: 관련 컴포넌트·표지 단위 검사 27개, CSP 브라우저 검사, 웹 타입 검사, native 구성 Rust check, 변경 파일 린트·CSS 검사 통과. 1280px/390px 화면 배치와 가로 넘침을 확인했다. 이번 Windows 산출물은 아래 build-only 경로로 만들며 Windows 실사용 smoke 통과를 의미하지 않는다.
+
+### 테스트 EXE만 만들기
+
+기존 PR이나 전체 CI 결과를 기다릴 필요 없이 원하는 ref에서 실행한다.
+
+```sh
+gh workflow run desktop-embedded.yml --ref refactor/desktop-single-server -f build_only=true
+```
+
+이 경로는 `desktop-test-build.yml`을 호출해 Windows 런타임과 release 설치 EXE만 만든다. debug 앱 빌드·단위/실사용 smoke·설치 검증은 생략한다. 결과는 실행의 **moya-windows-x64-build-only** artifact이며 14일 보관한다. 일반 검증 경로는 `build_only=false`로 유지한다. GitHub Release에 공개하지 않는다.

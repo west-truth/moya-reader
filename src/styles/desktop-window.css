@@ -37,23 +37,21 @@ body:has(.desktop-window-shell) {
   letter-spacing: -0.01em;
 }
 
-.desktop-window-frame > .desktop-server-sharing {
-  align-self: stretch;
-  padding: 0 12px;
-  color: var(--app-text-muted);
-  background: transparent;
-  cursor: pointer;
-}
-
-.desktop-window-frame > .desktop-server-sharing:hover {
-  color: var(--app-text-strong);
-  background: var(--app-surface-hover);
-}
-
 .desktop-server-choice label:has(input[type='radio']) {
   display: flex;
   align-items: center;
   gap: 10px;
+  min-height: 48px;
+  padding: 12px;
+  border: 1px solid var(--app-line);
+  border-radius: var(--radius-control);
+  background: var(--app-surface);
+  cursor: pointer;
+}
+
+.desktop-server-choice label:has(input[type='radio']:checked) {
+  border-color: var(--primary);
+  background: color-mix(in srgb, var(--primary) 12%, var(--app-surface));
 }
 
 .desktop-server-choice input[type='radio'] {
@@ -137,4 +135,8 @@ body:has(.desktop-window-shell) {
 
 .desktop-window-content .fixed-doc-screen {
   top: var(--desktop-titlebar-height);
+}
+
+:is(.desktop-server-choice, .desktop-remote-home, .embedded-server-dialog) :is(.primary-btn, .ghost-btn) {
+  min-height: 44px;
 }

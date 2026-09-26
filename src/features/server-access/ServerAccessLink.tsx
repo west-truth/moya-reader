@@ -57,7 +57,7 @@ export function ServerAccessLink({ url }: { readonly url: string }) {
           value={url}
           onFocus={(event) => event.target.select()}
         />
-        <button type="button" className="secondary-btn" aria-label="접속 주소 복사" onClick={() => void copy()}>
+        <button type="button" className="ghost-btn" aria-label="접속 주소 복사" onClick={() => void copy()}>
           <Copy size={20} />
         </button>
       </div>

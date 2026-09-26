@@ -1,8 +1,9 @@
 import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
-import { EmbeddedServerSharing, type EmbeddedSharingStatus } from './EmbeddedServerSharing';
+import { type EmbeddedSharingStatus } from './EmbeddedServerSharing';
 import { DesktopWindowShell } from './DesktopWindowFrame';
+import { EmbeddedAccessContext } from './embedded-access-context';
 import { ToastHost } from '../shared/ui/ToastHost';
 
 export interface EmbeddedServerConnection {
@@ -34,7 +35,6 @@ export function EmbeddedServerGate({ children }: { children: (connection: Embedd
   const [error, setError] = useState('');
   const [connectionError, setConnectionError] = useState('');
   const [closeRequested, setCloseRequested] = useState(false);
-  const [showSharing, setShowSharing] = useState(false);
   const [attempt, setAttempt] = useState(0);
 
   useEffect(() => {
@@ -65,11 +65,8 @@ export function EmbeddedServerGate({ children }: { children: (connection: Embedd
 
   useEffect(() => {
     const unlisten = listen('embedded-server-close-requested', () => setCloseRequested(true));
-    const openSharing = () => setShowSharing(true);
-    window.addEventListener('moya-open-server-sharing', openSharing);
     return () => {
       void unlisten.then((dispose) => dispose());
-      window.removeEventListener('moya-open-server-sharing', openSharing);
     };
   }, []);
 
@@ -94,9 +91,13 @@ export function EmbeddedServerGate({ children }: { children: (connection: Embedd
   return (
     <>
       {readerReady ? (
-        content
+        <EmbeddedAccessContext.Provider
+          value={{ connection: { url: status.url!, authToken: status.authToken! }, status }}
+        >
+          {content}
+        </EmbeddedAccessContext.Provider>
       ) : (
-        <DesktopWindowShell showSharing={false}>
+        <DesktopWindowShell>
           <main className="self-host-auth-screen">
             <section className="self-host-auth-card" aria-live="polite">
               <h1>
@@ -105,6 +106,9 @@ export function EmbeddedServerGate({ children }: { children: (connection: Embedd
               <p role={failure ? 'alert' : 'status'}>
                 {failure || phases[status.phase] || '서재 서버가 종료되었습니다.'}
               </p>
+              <button className="ghost-btn" onClick={() => window.dispatchEvent(new Event('moya-open-server-choice'))}>
+                서재 선택
+              </button>
               {failure && !status.running && (
                 <button
                   className="primary-btn"
@@ -119,7 +123,7 @@ export function EmbeddedServerGate({ children }: { children: (connection: Embedd
                 </button>
               )}
               {status.phase !== 'stopping' && (
-                <button className="secondary-btn" onClick={() => void close(false)}>
+                <button className="ghost-btn" onClick={() => void close(false)}>
                   모야 종료
                 </button>
               )}
@@ -140,13 +144,6 @@ export function EmbeddedServerGate({ children }: { children: (connection: Embedd
           addonOpen={false}
         />
       )}
-      {showSharing && status.phase === 'ready' && status.url && status.authToken && (
-        <EmbeddedServerSharing
-          connection={{ url: status.url, authToken: status.authToken }}
-          status={status}
-          onClose={() => setShowSharing(false)}
-        />
-      )}
       {closeRequested && status.phase !== 'stopping' && (
         <div className="modal-backdrop">
           <section
@@ -161,10 +158,10 @@ export function EmbeddedServerGate({ children }: { children: (connection: Embedd
               없습니다.
             </p>
             <div className="dialog-actions">
-              <button className="secondary-btn" onClick={() => setCloseRequested(false)}>
+              <button className="ghost-btn" onClick={() => setCloseRequested(false)}>
                 돌아가기
               </button>
-              <button className="secondary-btn" onClick={() => void close(true)}>
+              <button className="ghost-btn" onClick={() => void close(true)}>
                 트레이에서 유지
               </button>
               <button className="primary-btn" onClick={() => void close(false)}>

@@ -45,6 +45,19 @@ await writeFile(
   ),
 );
 const env = { ...process.env, MOYA_EMBEDDED_SERVER_BUILD: '1', VITE_DESKTOP_EMBEDDED_SERVER: 'true' };
+// Build-only candidates do not need the debug app or any smoke-test prerequisites.
+if (process.argv.includes('--standalone')) {
+  const web = spawnSync(process.execPath, ['node_modules/vite/bin/vite.js', 'build'], {
+    cwd: root,
+    env,
+    stdio: 'inherit',
+  });
+  if (web.error || web.status !== 0) throw new Error('Desktop frontend build failed');
+  await cp(path.join(root, '.tmp/embedded-windows'), path.join(root, '.tmp/Moya app 한글/embedded-server'), {
+    recursive: true,
+  });
+}
+
 const guard = spawnSync(
   'cargo',
   ['build', '--release', '--manifest-path', 'src-tauri/Cargo.toml', '--bin', 'moya-server-guard'],
