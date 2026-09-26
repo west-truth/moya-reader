@@ -80,17 +80,17 @@ describe('useReaderChrome immersive mode', () => {
     view.renderer.unmount();
   });
 
-  it('reveals auto-hidden controls on the next center toggle instead of hiding them again', () => {
+  it('keeps explicitly opened controls visible until the next center toggle', () => {
     const view = renderChrome(false);
 
     act(() => view.controller().toggleImmersive());
     act(() => {
-      vi.advanceTimersByTime(2600);
+      vi.advanceTimersByTime(60_000);
     });
-    expect(view.controller()).toMatchObject({ immersive: false, visible: false });
+    expect(view.controller()).toMatchObject({ immersive: false, visible: true });
 
     act(() => view.controller().toggleImmersive());
-    expect(view.controller()).toMatchObject({ immersive: false, visible: true });
+    expect(view.controller()).toMatchObject({ immersive: true, visible: false });
 
     view.renderer.unmount();
   });

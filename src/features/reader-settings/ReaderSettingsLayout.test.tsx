@@ -33,6 +33,6 @@ describe('ReaderSettingsLayout', () => {
     expect(markup).toContain('aria-label="페이지 조판"');
     expect(markup).toContain('>두 쪽<');
     expect(markup).toContain('>책장 넘김<');
-    expect(markup).toContain('도구 모음 항상 표시');
+    expect(markup).not.toContain('도구 모음 항상 표시');
   });
 });

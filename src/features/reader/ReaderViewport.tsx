@@ -1,3 +1,4 @@
+import { readReaderSelection, useReaderSelectionChanges } from './reader-selection';
 import { useVirtualizer } from '@tanstack/react-virtual';
 import { sentenceRanges } from '@noveldesk/text-core/sentence-boundaries';
 import { SkipBack, SkipForward } from 'lucide-react';
@@ -476,18 +477,10 @@ function VirtualizedReaderViewportComponent({
   });
 
   const getSelection = useCallback((): ReaderSelection | undefined => {
-    const selection = window.getSelection();
-    const text = selection?.toString().trim() ?? '';
-    const root = rootRef.current;
-    if (!text || !root) return undefined;
-    const anchor =
-      selection?.anchorNode instanceof Element ? selection.anchorNode : selection?.anchorNode?.parentElement;
-    const focus = selection?.focusNode instanceof Element ? selection.focusNode : selection?.focusNode?.parentElement;
-    const paragraph =
-      anchor?.closest<HTMLElement>('[data-paragraph-id]') ?? focus?.closest<HTMLElement>('[data-paragraph-id]');
-    const paragraphId = paragraph?.dataset.paragraphId;
-    return paragraph && paragraphId && root.contains(paragraph) ? { text, paragraphId } : undefined;
+    return readReaderSelection(rootRef.current);
   }, []);
+
+  useReaderSelectionChanges(getSelection, onSelectionChanged, isActive && !opening);
 
   const updateSelection = useCallback(() => {
     window.setTimeout(() => onSelectionChanged(getSelection()), 0);
@@ -924,6 +917,7 @@ function VirtualizedReaderViewportComponent({
         onWheel={scrollChapterBoundary.onWheel}
         onKeyUp={updateSelection}
         onMouseUp={updateSelection}
+        onTouchEnd={updateSelection}
         onPointerDown={(event) => {
           const shouldCaptureBoundaryGesture = scrollChapterBoundary.onPointerDown(event.clientY, event.pointerType);
           gestureHandlers.onPointerDown(event);

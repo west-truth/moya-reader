@@ -5843,12 +5843,12 @@ export default function App() {
     setReadingBookOverride: setReadingBookOverrideEnabled,
     toggleBookmark: (location: ReaderLocationSnapshot) => toggleBookmark(location),
     addHighlight: (location: ReaderLocationSnapshot, selection?: ReaderSelection) =>
-      void addHighlight('yellow', location, selection),
+      addHighlight('yellow', location, selection),
     highlightSelection: (
       location: ReaderLocationSnapshot,
       selection: ReaderSelection,
-      color: ReaderHighlight['color'],
-    ) => void addHighlight(color, location, selection),
+      color: ReaderHighlight['color'] | 'remove',
+    ) => addHighlight(color, location, selection),
     openSelectionNote,
     previewSelectionTTS: (selection: ReaderSelection) => {
       const text = selection.text.trim();

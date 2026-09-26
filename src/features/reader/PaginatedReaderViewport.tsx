@@ -1,3 +1,4 @@
+import { readReaderSelection, useReaderSelectionChanges } from './reader-selection';
 import { AutoReadingPresentation } from './auto-reading-modes';
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
 import type { Paragraph, ReaderAnchor, ReaderPageBoundary } from '../../domain/types';
@@ -809,13 +810,7 @@ export function PaginatedReaderViewport(
       getParagraphAtIndex,
       getCachedParagraphById: (id) => [...paragraphCacheRef.current.values()].find((p) => p.id === id),
       getLocation: () => location,
-      getSelection: () => {
-        const selection = window.getSelection();
-        if (!selection || selection.isCollapsed || !selection.toString().trim()) return;
-        const id =
-          selection.anchorNode?.parentElement?.closest<HTMLElement>('[data-paragraph-id]')?.dataset.paragraphId;
-        return id ? { text: selection.toString(), paragraphId: id } : undefined;
-      },
+      getSelection: () => readReaderSelection(pageRef.current?.parentElement ?? null),
     }),
     [
       chapter.id,
@@ -849,6 +844,8 @@ export function PaginatedReaderViewport(
       onApiReady(undefined);
     };
   }, [api, apiRef, dimensions.height, dimensions.width, onApiReady]);
+  useReaderSelectionChanges(api.getSelection, onSelectionChanged, isActive && !preparing);
+
   const paginationStyle = useMemo(
     () =>
       dimensions.height > 0
@@ -914,6 +911,7 @@ export function PaginatedReaderViewport(
                 key={`${fragment.paragraph.id}:${fragment.startOffset}:${index}`}
                 paragraph={sliceParagraphForPage(fragment.paragraph, fragment.startOffset, fragment.endOffset)}
                 sourceOffset={fragment.startOffset}
+                sourceText={fragment.paragraph.text}
                 virtualIndex={fragment.paragraphIndex}
                 start={0}
                 staticLayout
@@ -939,6 +937,7 @@ export function PaginatedReaderViewport(
                 key={`${fragment.paragraph.id}:${fragment.startOffset}:${index}`}
                 paragraph={sliceParagraphForPage(fragment.paragraph, fragment.startOffset, fragment.endOffset)}
                 sourceOffset={fragment.startOffset}
+                sourceText={fragment.paragraph.text}
                 virtualIndex={fragment.paragraphIndex}
                 start={0}
                 staticLayout
@@ -964,6 +963,8 @@ export function PaginatedReaderViewport(
           data-page-end-index={currentBoundary?.end.blockIndex}
           data-page-end-offset={currentBoundary?.end.offset}
           onMouseUp={() => onSelectionChanged(api.getSelection())}
+          onKeyUp={() => onSelectionChanged(api.getSelection())}
+          onTouchEnd={() => onSelectionChanged(api.getSelection())}
         >
           {currentShowsChapterHeading && <ReaderChapterHeading chapter={chapterHeading} />}
           {pageFragments.map((fragment, index) => (
@@ -971,6 +972,7 @@ export function PaginatedReaderViewport(
               key={`${fragment.paragraph.id}:${fragment.startOffset}:${index}`}
               paragraph={sliceParagraphForPage(fragment.paragraph, fragment.startOffset, fragment.endOffset)}
               sourceOffset={fragment.startOffset}
+              sourceText={fragment.paragraph.text}
               virtualIndex={fragment.paragraphIndex}
               start={0}
               staticLayout
@@ -995,6 +997,8 @@ export function PaginatedReaderViewport(
             data-page-end-index={secondaryBoundary.end.blockIndex}
             data-page-end-offset={secondaryBoundary.end.offset}
             onMouseUp={() => onSelectionChanged(api.getSelection())}
+            onKeyUp={() => onSelectionChanged(api.getSelection())}
+            onTouchEnd={() => onSelectionChanged(api.getSelection())}
           >
             {secondaryShowsChapterHeading && <ReaderChapterHeading chapter={chapterHeading} />}
             {secondaryFragments.map((fragment, index) => (
@@ -1002,6 +1006,7 @@ export function PaginatedReaderViewport(
                 key={`${fragment.paragraph.id}:${fragment.startOffset}:${index}`}
                 paragraph={sliceParagraphForPage(fragment.paragraph, fragment.startOffset, fragment.endOffset)}
                 sourceOffset={fragment.startOffset}
+                sourceText={fragment.paragraph.text}
                 virtualIndex={fragment.paragraphIndex}
                 start={0}
                 staticLayout

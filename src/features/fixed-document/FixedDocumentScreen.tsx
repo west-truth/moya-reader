@@ -16,7 +16,6 @@ import {
   Download,
   EyeOff,
   Expand,
-  Focus,
   Highlighter,
   ListOrdered,
   Maximize2,
@@ -2642,15 +2641,6 @@ export default function FixedDocumentScreen({
           </button>
           <button
             type="button"
-            onClick={toggleImmersive}
-            aria-pressed={immersive}
-            aria-label={immersive ? '몰입 모드 종료' : '몰입 모드 시작'}
-            title="몰입 모드"
-          >
-            <Focus size={17} />
-          </button>
-          <button
-            type="button"
             className={novel.format === 'image_archive' ? 'fixed-doc-mobile-top-action' : undefined}
             onClick={() => void toggleFullscreen()}
             aria-pressed={fullscreen}
@@ -3162,15 +3152,6 @@ export default function FixedDocumentScreen({
               }}
             >
               <RotateCw size={16} /> 회전
-            </button>
-            <button
-              type="button"
-              onClick={() => {
-                toggleImmersive();
-                setMobileMenuOpen(false);
-              }}
-            >
-              <Focus size={16} /> 몰입 모드
             </button>
             {novel.format !== 'image_archive' && (
               <button

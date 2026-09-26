@@ -66,14 +66,29 @@ function splitSearchSegments(
   let index = lower.indexOf(target, cursor);
   while (index >= 0) {
     if (index > cursor) {
-      segments.push({ text: text.slice(cursor, index), searchHit: false, highlightColor: options.highlightColor, ttsActive: options.ttsActive });
+      segments.push({
+        text: text.slice(cursor, index),
+        searchHit: false,
+        highlightColor: options.highlightColor,
+        ttsActive: options.ttsActive,
+      });
     }
-    segments.push({ text: text.slice(index, index + query.length), searchHit: true, highlightColor: options.highlightColor, ttsActive: options.ttsActive });
+    segments.push({
+      text: text.slice(index, index + query.length),
+      searchHit: true,
+      highlightColor: options.highlightColor,
+      ttsActive: options.ttsActive,
+    });
     cursor = index + query.length;
     index = lower.indexOf(target, cursor);
   }
   if (cursor < text.length) {
-    segments.push({ text: text.slice(cursor), searchHit: false, highlightColor: options.highlightColor, ttsActive: options.ttsActive });
+    segments.push({
+      text: text.slice(cursor),
+      searchHit: false,
+      highlightColor: options.highlightColor,
+      ttsActive: options.ttsActive,
+    });
   }
   return segments;
 }
@@ -101,8 +116,15 @@ export function decorateReaderText(
   highlights: ReaderTextDecorationHighlight[],
   searchQuery: string,
   ttsActiveRanges: ReaderTextDecorationRange[] = [],
+  source?: { text: string; offset: number },
 ): ReaderTextDecorationSegment[] {
-  const highlightRanges = readerInlineHighlightRanges(text, highlights);
+  const highlightRanges = readerInlineHighlightRanges(source?.text ?? text, highlights)
+    .map((range) => ({
+      ...range,
+      start: Math.max(0, range.start - (source?.offset ?? 0)),
+      end: Math.min(text.length, range.end - (source?.offset ?? 0)),
+    }))
+    .filter((range) => range.end > range.start);
   const activeRanges = normalizedDecorationRanges(text, ttsActiveRanges);
   if (!highlightRanges.length && !activeRanges.length) return splitSearchSegments(text, searchQuery);
 
@@ -117,10 +139,12 @@ export function decorateReaderText(
     const start = orderedBoundaries[index];
     const end = orderedBoundaries[index + 1];
     if (end <= start) continue;
-    segments.push(...splitSearchSegments(text.slice(start, end), searchQuery, {
-      highlightColor: highlightColorAt(highlightRanges, start),
-      ttsActive: activeAt(activeRanges, start),
-    }));
+    segments.push(
+      ...splitSearchSegments(text.slice(start, end), searchQuery, {
+        highlightColor: highlightColorAt(highlightRanges, start),
+        ttsActive: activeAt(activeRanges, start),
+      }),
+    );
   }
   return segments;
 }

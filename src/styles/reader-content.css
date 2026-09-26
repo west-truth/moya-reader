@@ -738,6 +738,8 @@ mark.reader-inline-highlight {
 }
 
 .selection-action-bar {
+  flex-wrap: wrap;
+  justify-content: center;
   position: fixed;
   left: 50%;
   bottom: 76px;
@@ -756,6 +758,8 @@ mark.reader-inline-highlight {
 }
 
 .reader-screen.addon-open .selection-action-bar {
+  flex-wrap: wrap;
+  justify-content: center;
   left: 16px;
   right: calc(var(--reader-panel-width) + 32px);
   width: max-content;

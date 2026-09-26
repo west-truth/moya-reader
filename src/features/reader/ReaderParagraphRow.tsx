@@ -39,6 +39,7 @@ export interface ReaderParagraphRowProps {
   readonly onDocumentLink?: (href: string, footnote: boolean) => void;
   readonly staticLayout?: boolean;
   readonly sourceOffset?: number;
+  readonly sourceText?: string;
 }
 
 function EpubImage({
@@ -171,6 +172,7 @@ function ReaderParagraphRowComponent({
   onDocumentLink = () => undefined,
   staticLayout = false,
   sourceOffset = 0,
+  sourceText,
 }: ReaderParagraphRowProps) {
   const [imageReady, setImageReady] = useState(false);
   const subscribe = useCallback(
@@ -186,9 +188,9 @@ function ReaderParagraphRowComponent({
     [...decoration.highlights],
     searchQuery,
     decoration.activeRanges.map((range) => ({ start: range.start - sourceOffset, end: range.end - sourceOffset })),
+    sourceText === undefined ? undefined : { text: sourceText, offset: sourceOffset },
   );
   const hasInlineHighlight = decoratedText.some((part) => part.highlightColor);
-  const paragraphHighlight = hasInlineHighlight ? undefined : decoration.highlights[0];
   const useDocumentInline =
     Boolean(paragraph.inlineMarks?.length || paragraph.inlineSemantics?.length) && !searchQuery && !hasInlineHighlight;
   const textContent = useMemo(
@@ -232,11 +234,16 @@ function ReaderParagraphRowComponent({
         />
       );
     }
-    if (paragraph.documentKind === 'heading') return <h2>{textContent}</h2>;
-    if (paragraph.documentKind === 'blockquote') return <blockquote>{textContent}</blockquote>;
-    if (paragraph.documentKind === 'list_item') return <p className="reader-list-item">{textContent}</p>;
+    if (paragraph.documentKind === 'heading') return <h2 data-reader-text>{textContent}</h2>;
+    if (paragraph.documentKind === 'blockquote') return <blockquote data-reader-text>{textContent}</blockquote>;
+    if (paragraph.documentKind === 'list_item')
+      return (
+        <p data-reader-text className="reader-list-item">
+          {textContent}
+        </p>
+      );
     if (paragraph.documentKind === 'separator') return <hr />;
-    return <p>{textContent}</p>;
+    return <p data-reader-text>{textContent}</p>;
   })();
 
   return (
@@ -260,8 +267,6 @@ function ReaderParagraphRowComponent({
         className={classNames(
           'reader-paragraph',
           isSpeaking && 'is-speaking',
-          paragraphHighlight && 'has-highlight',
-          paragraphHighlight && `highlight-${paragraphHighlight.color}`,
           needsReview && showMeta && 'low-confidence',
           showMeta && 'with-meta',
           sourceOffset > 0 && 'is-continuation',
