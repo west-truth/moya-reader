@@ -167,6 +167,10 @@ jobs:
           SUWAYOMI_AUTH_USERNAME: ci-suwayomi-config-check-only
           SUWAYOMI_AUTH_PASSWORD: ci-suwayomi-password-config-check-only
           TEXT_SOURCE_SERVER_KEY: ci-text-source-config-check-only
+      - name: Build pinned MinIO source for the isolated Compose test
+        # The historical registry image is unavailable. Build the same official
+        # release locally; Compose uses this tag without changing deployment defaults.
+        run: docker build -f scripts/ci/minio.Dockerfile -t quay.io/minio/minio:RELEASE.2025-09-07T16-13-09Z scripts/ci
       - name: Protected Compose import E2E
         run: pnpm check:hosted:e2e -- --public --project-name moya-ci-${{ github.run_id }}-${{ github.run_attempt }}
 
