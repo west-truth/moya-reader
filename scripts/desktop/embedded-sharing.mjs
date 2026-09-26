@@ -53,6 +53,38 @@ export async function startSharing({
   return { ...listener, stop };
 }
 
+// A tunnel may send an empty command with chunked framing and no media type.
+// Distinguish an actually empty stream from an untyped body without buffering it.
+function requestIsEmpty(request) {
+  return new Promise((resolve, reject) => {
+    const cleanup = () => {
+      request.off('data', onData);
+      request.off('end', onEnd);
+      request.off('error', onError);
+      request.off('aborted', onAborted);
+    };
+    const onData = (chunk) => {
+      request.pause();
+      cleanup();
+      request.unshift(chunk);
+      resolve(false);
+    };
+    const onEnd = () => {
+      cleanup();
+      resolve(true);
+    };
+    const onError = (error) => {
+      cleanup();
+      reject(error);
+    };
+    const onAborted = () => onError(new Error('Request aborted'));
+    request.once('data', onData);
+    request.once('end', onEnd);
+    request.once('error', onError);
+    request.once('aborted', onAborted);
+  });
+}
+
 export async function createSharingListener({ url, host = '127.0.0.1', port = 0, publicOrigin }) {
   const status = await fetch(`${url}/api/auth/status`, { signal: AbortSignal.timeout(3000) }).then((response) => {
     if (!response.ok) throw new Error('계정 상태를 확인하지 못했습니다.');
@@ -64,7 +96,7 @@ export async function createSharingListener({ url, host = '127.0.0.1', port = 0,
   const upstreams = new Set();
   let origin = publicOrigin;
   let authority;
-  const server = createServer((request, response) => {
+  const server = createServer(async (request, response) => {
     // Bound address only: reject rebinding/Host spoofing, proxy credentials and setup/recovery.
     if (request.headers.host !== authority || !request.url?.startsWith('/') || request.url.startsWith('//')) {
       response.writeHead(403).end();
@@ -82,6 +114,18 @@ export async function createSharingListener({ url, host = '127.0.0.1', port = 0,
     for (const key of Object.keys(headers)) {
       if (key.startsWith('x-forwarded-') || ['forwarded', 'connection', 'upgrade', 'proxy-authorization'].includes(key))
         delete headers[key];
+    }
+    if (headers['transfer-encoding'] && !headers['content-type']) {
+      try {
+        if (await requestIsEmpty(request)) {
+          delete headers['transfer-encoding'];
+          headers['content-length'] = '0';
+        }
+      } catch {
+        response.destroy();
+        return;
+      }
+      if (response.destroyed) return;
     }
     if (origin?.startsWith('https://')) headers['x-forwarded-proto'] = 'https';
     const upstream = httpRequest(
