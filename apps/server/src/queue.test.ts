@@ -137,6 +137,9 @@ describe('provider queue helpers', () => {
   it('persists an attempt and outbox before publishing an attempt-specific BullMQ job', async () => {
     const events: string[] = [];
     const pool = {
+      async connect(this: { query: pg.Pool['query'] }) {
+        return { query: this.query, release: vi.fn() };
+      },
       query: vi.fn(async (sql: string, params?: unknown[]) => {
         events.push(sql.includes('with target as materialized') ? 'prepare' : 'persist');
         if (sql.includes('with target as materialized')) {
@@ -167,6 +170,9 @@ describe('provider queue helpers', () => {
     async (retainedState) => {
       const retainedJobs = new Map<string, { id: string; data: unknown; state: string }>();
       const pool = {
+        async connect(this: { query: pg.Pool['query'] }) {
+          return { query: this.query, release: vi.fn() };
+        },
         query: vi.fn(async (sql: string, params?: unknown[]) => {
           if (sql.includes('with target as materialized')) {
             return { rows: [{ attempt_id: params?.[1], bullmq_job_id: params?.[2] }] };
@@ -208,6 +214,9 @@ describe('provider queue helpers', () => {
 
   it('requeues queued database provider jobs on worker startup', async () => {
     const pool = {
+      async connect(this: { query: pg.Pool['query'] }) {
+        return { query: this.query, release: vi.fn() };
+      },
       query: vi.fn(async (sql: string, params?: unknown[]) => {
         if (sql.includes('select j.id') && sql.includes('left join provider_job_attempts')) {
           return {
@@ -240,6 +249,9 @@ describe('provider queue helpers', () => {
   it('recovers stale running provider jobs before requeueing startup work', async () => {
     const queries: Array<{ sql: string; params?: unknown[] }> = [];
     const pool = {
+      async connect(this: { query: pg.Pool['query'] }) {
+        return { query: this.query, release: vi.fn() };
+      },
       query: vi.fn(async (sql: string, params?: unknown[]) => {
         queries.push({ sql, params });
         if (sql.includes('select j.id') && sql.includes('left join provider_job_attempts')) {
@@ -272,6 +284,9 @@ describe('provider queue helpers', () => {
   it('publishes a pending provider attempt outbox row during startup reconciliation', async () => {
     const queries: string[] = [];
     const pool = {
+      async connect(this: { query: pg.Pool['query'] }) {
+        return { query: this.query, release: vi.fn() };
+      },
       query: vi.fn(async (sql: string) => {
         queries.push(sql);
         if (sql.includes('select j.id') && sql.includes('left join provider_job_attempts')) {

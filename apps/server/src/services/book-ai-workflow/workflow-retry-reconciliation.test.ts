@@ -320,7 +320,10 @@ describe('book AI workflow service', () => {
 
     const resumed = await resumeBookAIWorkflow(pool, testConfig(), queue, 'workflow_1');
 
-    expect(resumed).toEqual({ row: workflow, links: [reviewedLink] });
+    expect(resumed).toEqual({
+      row: { ...workflow, workflow_definition_id: 'moya.ai.tts.book-preparation', workflow_version: '1.0.0' },
+      links: [reviewedLink],
+    });
     expect(workflow.status).toBe('needs_review');
     expect(queue.add).not.toHaveBeenCalled();
     expect(pool.query).toHaveBeenCalledTimes(2);

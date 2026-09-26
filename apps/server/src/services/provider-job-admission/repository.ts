@@ -27,15 +27,22 @@ export async function admitProviderJobAttempt(
     readonly limits: ProviderJobAdmissionLimits;
   },
 ): Promise<ProviderJobAdmissionDecision> {
-  const result = await pool.query<AdmissionRow>(
-    `
+  const client = await pool.connect();
+  let result: pg.QueryResult<AdmissionRow>;
+  try {
+    await client.query('begin');
+    // Acquire the user lock in its own statement: a statement snapshot taken
+    // before waiting cannot see attempts committed by the previous lock owner.
+    await client.query(
+      'select pg_advisory_xact_lock(hashtextextended(user_id, 764173)) from provider_jobs where id = $1',
+      [input.jobId],
+    );
+    result = await client.query<AdmissionRow>(
+      `
       with target as materialized (
         select job.id, job.user_id, job.book_id, job.status, job.current_attempt_id,
-               job.attempt_count, job.progress, admission_lock.acquired
+               job.attempt_count, job.progress
         from provider_jobs job
-        cross join lateral (
-          select pg_advisory_xact_lock(hashtextextended(job.user_id, 764173)) as acquired
-        ) admission_lock
         where job.id = $1
         for update of job
       ),
@@ -221,17 +228,25 @@ export async function admitProviderJobAttempt(
       from rejected_job
       limit 1
     `,
-    [
-      input.jobId,
-      input.attempt.attemptId,
-      input.attempt.bullmqJobId,
-      input.outboxId,
-      input.limits.maxActiveAttempts,
-      input.limits.maxAttemptsPerMinute,
-      input.limits.maxAttemptsPerUtcDay,
-      admissionMessage,
-    ],
-  );
+      [
+        input.jobId,
+        input.attempt.attemptId,
+        input.attempt.bullmqJobId,
+        input.outboxId,
+        input.limits.maxActiveAttempts,
+        input.limits.maxAttemptsPerMinute,
+        input.limits.maxAttemptsPerUtcDay,
+        admissionMessage,
+      ],
+    );
+
+    await client.query('commit');
+  } catch (error) {
+    await client.query('rollback');
+    throw error;
+  } finally {
+    client.release();
+  }
 
   const row = result.rows[0];
   if (!row) return { kind: 'not_queued' };

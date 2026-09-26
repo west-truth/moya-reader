@@ -569,10 +569,33 @@ describeWithPostgres('versioned PostgreSQL migrations', () => {
       await migrateDatabase(pool);
       await seedAdmissionJobs(pool, ['job-a', 'job-b']);
 
-      const settled = await Promise.allSettled([
-        prepareAdmittedProviderAttempt(pool, 'job-a', admissionLimits({ maxActiveAttempts: 1 })),
-        prepareAdmittedProviderAttempt(pool, 'job-b', admissionLimits({ maxActiveAttempts: 1 })),
-      ]);
+      const blocker = await pool.connect();
+      let pending: Promise<PromiseSettledResult<unknown>[]>;
+      try {
+        await blocker.query('begin');
+        await blocker.query("select pg_advisory_xact_lock(hashtextextended('admission-user', 764173))");
+        pending = Promise.allSettled([
+          prepareAdmittedProviderAttempt(pool, 'job-a', admissionLimits({ maxActiveAttempts: 1 })),
+          prepareAdmittedProviderAttempt(pool, 'job-b', admissionLimits({ maxActiveAttempts: 1 })),
+        ]);
+        const deadline = Date.now() + 5_000;
+        let waiting = 0;
+        while (waiting < 2 && Date.now() < deadline) {
+          const locks = await blocker.query(`select count(*)::integer as waiting from pg_locks l
+            where l.locktype='advisory' and not l.granted
+              and (l.classid,l.objid,l.objsubid) in (
+                select classid,objid,objsubid from pg_locks
+                where locktype='advisory' and pid=pg_backend_pid() and granted
+              )`);
+          waiting = locks.rows[0].waiting;
+          if (waiting < 2) await delay(10);
+        }
+        expect(waiting).toBe(2);
+      } finally {
+        await blocker.query('commit');
+        blocker.release();
+      }
+      const settled = await pending!;
       const attempts = await pool.query('select provider_job_id from provider_job_attempts order by provider_job_id');
       const jobs = await pool.query('select id, status, error_code from provider_jobs order by id');
 
