@@ -14,7 +14,14 @@ export async function verifyReaderControls(page, { font = false } = {}) {
   if (await page.locator('.reader-screen.immersive').count()) await center();
   await page.waitForTimeout(3000);
   assert.equal(await page.locator('.reader-screen.chrome-visible').count(), 1, 'Reader controls auto-hid');
-  assert.equal(await page.getByRole('button', { name: '선택 문장 하이라이트', exact: true }).isEnabled(), false);
+  const highlight = page.getByRole('button', { name: '선택 문장 하이라이트', exact: true });
+  if (await highlight.isVisible()) {
+    assert.equal(await highlight.isEnabled(), false);
+  } else {
+    await page.getByRole('button', { name: '리더 추가 메뉴', exact: true }).click();
+    assert.equal(await page.getByRole('menuitem', { name: '선택 문장 하이라이트', exact: true }).isEnabled(), false);
+    await page.keyboard.press('Escape');
+  }
   await page.getByRole('button', { name: '자동 스크롤 설정', exact: true }).click();
   const dialog = page.getByRole('dialog', { name: '자동 읽기', exact: true });
   await dialog.waitFor();

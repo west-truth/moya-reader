@@ -73,6 +73,8 @@ docker compose up -d --build
 브라우저에서 **http://127.0.0.1:8080**을 엽니다.
 기본 설정은 로컬 접속용입니다. 다른 기기에서 접속하려면 HTTPS와 로그인 설정을 추가하세요.
 
+Nginx Proxy Manager를 사용하는 경우 [compose.npm.yaml](compose.npm.yaml)을 함께 적용합니다.
+
 [설치·외부 접속·업데이트·백업 안내 →](docs/operations/docker-compose-guide-ko.md)
 
 ## 사용 안내
