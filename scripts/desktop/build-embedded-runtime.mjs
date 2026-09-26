@@ -194,6 +194,8 @@ for (const script of ['embedded-server.mjs', 'embedded-sharing.mjs', 'embedded-t
 }
 await cp(path.join(root, 'third_party/licenses/cloudflared/LICENSE'), path.join(output, 'cloudflared/LICENSE'));
 for (const name of ['LICENSE', 'THIRD_PARTY_NOTICES.md']) await cp(path.join(root, name), path.join(output, name));
+for (const name of ['windows-source-manifest.json', 'windows-cargo-inventory.json', 'windows-sources.md'])
+  await cp(path.join(root, 'third_party', name), path.join(output, name));
 await writeFile(
   path.join(output, 'runtime.json'),
   JSON.stringify(

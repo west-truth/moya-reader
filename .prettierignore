@@ -3,3 +3,6 @@ apps/server/dist
 node_modules
 screenshots
 pnpm-lock.yaml
+
+# Keep upstream license texts verbatim.
+third_party/licenses

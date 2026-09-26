@@ -4,3 +4,6 @@
 *.ico binary
 *.icns binary
 *.zip binary
+
+# Preserve upstream license bytes used by the notice inventory.
+third_party/licenses/** -text
