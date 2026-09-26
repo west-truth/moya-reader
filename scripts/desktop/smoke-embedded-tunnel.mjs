@@ -58,6 +58,14 @@ try {
   const cookie = login.headers.get('set-cookie');
   assert(cookie?.includes('Secure'), 'HTTPS session cookie must be Secure');
   assert.equal((await request('/api/books', { headers: { Cookie: cookie.split(';')[0] } })).status, 200);
+  // A bodyless browser POST can arrive from cloudflared with chunked framing.
+  // Login alone (JSON body) does not exercise this regression.
+  const logout = await request('/api/auth/logout', {
+    method: 'POST',
+    headers: { Cookie: cookie.split(';')[0], Origin: sharing.url },
+  });
+  assert.equal(logout.status, 200, `Quick Tunnel logout: ${await logout.text()}`);
+  assert.equal((await request('/api/books', { headers: { Cookie: cookie.split(';')[0] } })).status, 401);
   await sharing.stop();
   const revoked = await request('/api/books').catch(() => undefined);
   assert(!revoked?.ok, 'Revoked tunnel must not serve the library');
@@ -70,6 +78,7 @@ try {
       quickTunnel: true,
       httpsLogin: true,
       secureCookie: true,
+      emptyCommandThroughTunnel: true,
       ownerTokenBlocked: true,
       revoked: true,
       localStillAvailable: true,
