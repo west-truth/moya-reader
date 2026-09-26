@@ -60,6 +60,8 @@ jobs:
         env:
           WEB_BASE_PATH: /moya-reader/
       - run: pnpm exec playwright-core install --with-deps chromium
+      - name: Verify native CSP for local covers and user fonts
+        run: node --test --test-concurrency=1 scripts/desktop/source-cover-csp.test.mjs scripts/desktop/user-font-csp.test.mjs
       - run: pnpm check:web-pages:browser
         env:
           READER_UI_BROWSER_CHANNEL: chromium
