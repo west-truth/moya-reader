@@ -1,6 +1,7 @@
 import Fastify from 'fastify';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { loadConfig } from '../config.js';
+import { registerAuthHook } from '../auth.js';
 import { registerWebNovelMetadataCollectorGateway } from './webnovel-metadata-collector-gateway.js';
 
 const apps: ReturnType<typeof Fastify>[] = [];
@@ -9,7 +10,7 @@ afterEach(async () => {
   await Promise.all(apps.splice(0).map((app) => app.close()));
 });
 
-async function appWith(fetchImpl: typeof fetch, configured = true, remoteAuth = false) {
+async function appWith(fetchImpl: typeof fetch, configured = true, remoteAuth = false, token?: string) {
   const app = Fastify();
   apps.push(app);
   const config = loadConfig(
@@ -17,6 +18,7 @@ async function appWith(fetchImpl: typeof fetch, configured = true, remoteAuth = 
       ? {
           WEBNOVEL_METADATA_COLLECTOR_URL: 'http://metadata-collector:8000',
           WEBNOVEL_METADATA_COLLECTOR_REMOTE_AUTH_ENABLED: String(remoteAuth),
+          WEBNOVEL_METADATA_COLLECTOR_SESSION_TOKEN: token,
         }
       : {},
   );
@@ -77,6 +79,37 @@ describe('webnovel metadata collector gateway', () => {
     expect(String(url)).toBe('http://metadata-collector:8000/health');
     expect(init?.credentials).toBe('omit');
     expect(new Headers(init?.headers).has('authorization')).toBe(false);
+  });
+
+  it('adds only the configured collector session token to internal requests', async () => {
+    const fetchImpl = vi.fn<typeof fetch>(async () => Response.json(healthBody()));
+    const app = await appWith(fetchImpl, true, false, 'internal-secret');
+    const response = await app.inject({
+      method: 'GET',
+      url: '/api/integrations/webnovel-metadata/health',
+      headers: { 'x-moya-collector-token': 'attacker-token', authorization: 'Bearer owner-token' },
+    });
+    expect(response.statusCode).toBe(200);
+    expect(new Headers(fetchImpl.mock.calls[0]?.[1]?.headers).get('x-moya-collector-token')).toBe('internal-secret');
+    expect(new Headers(fetchImpl.mock.calls[0]?.[1]?.headers).has('authorization')).toBe(false);
+    expect(response.body).not.toContain('internal-secret');
+  });
+
+  it('retains the existing bearer gate before reaching the collector', async () => {
+    const fetchImpl = vi.fn<typeof fetch>(async () => Response.json(healthBody()));
+    const app = Fastify();
+    apps.push(app);
+    const config = loadConfig({
+      READER_AUTH_TOKEN: 'owner-token',
+      WEBNOVEL_METADATA_COLLECTOR_URL: 'http://metadata-collector:8000',
+      WEBNOVEL_METADATA_COLLECTOR_SESSION_TOKEN: 'internal-secret',
+    });
+    await registerAuthHook(app, config);
+    await registerWebNovelMetadataCollectorGateway(app, config, { fetchImpl });
+    expect((await app.inject({ method: 'GET', url: '/api/integrations/webnovel-metadata/health' })).statusCode).toBe(
+      401,
+    );
+    expect(fetchImpl).not.toHaveBeenCalled();
   });
 
   it('advertises adult auth only for an explicitly enabled remote-frame collector', async () => {

@@ -3,6 +3,19 @@ import pg from 'pg';
 import { resourceEntityRevision } from '@noveldesk/text-core/identity/sync';
 import { appWithBooks } from './books/books-route-test-harness.js';
 
+function mockPositionTransaction(pool: pg.Pool) {
+  const client = {
+    query: vi.fn(async (sql: string, params?: unknown[]) => {
+      if (['begin', 'commit', 'rollback'].includes(sql) || sql.startsWith('select pg_advisory_xact_lock'))
+        return { rows: [], rowCount: 0 };
+      return pool.query(sql, params);
+    }),
+    release: vi.fn(),
+  };
+  pool.connect = vi.fn(async () => client) as unknown as pg.Pool['connect'];
+  return client;
+}
+
 describe('book routes', () => {
   afterEach(() => {
     vi.restoreAllMocks();
@@ -286,7 +299,6 @@ describe('book routes', () => {
     const pool = {
       query: vi.fn(async (sql: string, params?: unknown[]) => {
         if (sql.includes('insert into reading_positions')) {
-          expect(sql).toContain('pg_advisory_xact_lock(hashtextextended($1, 7319))');
           expect(sql).toContain('requested_chapter');
           expect(sql).toContain('insert into fixed_document_section_read_states');
           expect(sql).toContain('on conflict (book_id, user_id, document_section_id)');
@@ -335,6 +347,7 @@ describe('book routes', () => {
         throw new Error(`unexpected query: ${sql}`);
       }),
     } as unknown as pg.Pool;
+    const transaction = mockPositionTransaction(pool);
     const app = await appWithBooks(pool);
 
     const response = await app.inject({
@@ -356,6 +369,17 @@ describe('book routes', () => {
     expect(response.statusCode).toBe(200);
     expect(response.json()).toEqual({ ok: true, applied: true });
     expect(pool.query).toHaveBeenCalledTimes(2);
+    expect(transaction.query.mock.calls.map(([sql]) => sql.trim().split(/\s+/)[0])).toEqual([
+      'begin',
+      'select',
+      'with',
+      'insert',
+      'commit',
+    ]);
+    expect(transaction.query).toHaveBeenNthCalledWith(2, 'select pg_advisory_xact_lock(hashtextextended($1, 7319))', [
+      'book_1',
+    ]);
+    expect(transaction.release).toHaveBeenCalledOnce();
 
     await app.close();
   });
@@ -364,7 +388,6 @@ describe('book routes', () => {
     const pool = {
       query: vi.fn(async (sql: string, params?: unknown[]) => {
         expect(sql).toContain('insert into reading_positions');
-        expect(sql).toContain('pg_advisory_xact_lock(hashtextextended($1, 7319))');
         expect(params).toEqual([
           'book_1',
           'user_test',
@@ -381,6 +404,7 @@ describe('book routes', () => {
         return { rows: [{ chapter_found: true, applied: false, read_applied: false }] };
       }),
     } as unknown as pg.Pool;
+    const transaction = mockPositionTransaction(pool);
     const app = await appWithBooks(pool);
 
     const response = await app.inject({
@@ -395,6 +419,8 @@ describe('book routes', () => {
     expect(response.statusCode).toBe(200);
     expect(response.json()).toEqual({ ok: true, applied: false });
     expect(pool.query).toHaveBeenCalledTimes(1);
+    expect(transaction.query).toHaveBeenLastCalledWith('rollback');
+    expect(transaction.release).toHaveBeenCalledOnce();
 
     await app.close();
   });
@@ -776,7 +802,6 @@ describe('book routes', () => {
     const pool = {
       query: vi.fn(async (sql: string, params?: unknown[]) => {
         if (sql.includes('insert into reading_positions')) {
-          expect(sql).toContain('pg_advisory_xact_lock(hashtextextended($1, 7319))');
           expect(params?.[0]).toBe('missing_book');
           expect(params?.[1]).toBe('user_test');
           expect(params?.[2]).toBe('missing_chapter');
@@ -790,6 +815,7 @@ describe('book routes', () => {
         return { rows: [{ exists: false }] };
       }),
     } as unknown as pg.Pool;
+    const transaction = mockPositionTransaction(pool);
     const app = await appWithBooks(pool);
     const timestamp = '2026-07-05T00:08:00.000Z';
 
@@ -849,6 +875,8 @@ describe('book routes', () => {
       expect(response.json()).toEqual({ error: 'book or chapter not found' });
     }
     expect(pool.query).toHaveBeenCalledTimes(cases.length);
+    expect(transaction.query).toHaveBeenLastCalledWith('rollback');
+    expect(transaction.release).toHaveBeenCalledOnce();
 
     await app.close();
   });

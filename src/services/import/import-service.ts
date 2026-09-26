@@ -31,6 +31,10 @@ export interface ImportProgress {
   chaptersDetected: number;
   paragraphsWritten: number;
   message?: string;
+  /** Confirmed completion within the current stage, not an overall weighted estimate. */
+  completedUnits?: number;
+  totalUnits?: number;
+  progressUnit?: 'images';
 }
 
 export interface ImportFileInput {

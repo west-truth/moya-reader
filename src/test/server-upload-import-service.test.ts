@@ -1253,7 +1253,7 @@ describe('ServerUploadImportService', () => {
     }
   });
 
-  it('treats changing asset progress messages as import activity', async () => {
+  it.each(['message', 'counter'])('treats changing asset progress %s as import activity', async (activity) => {
     vi.restoreAllMocks();
     vi.useFakeTimers({ now: new Date('2026-08-21T00:00:00.000Z') });
     try {
@@ -1262,7 +1262,7 @@ describe('ServerUploadImportService', () => {
         write: vi.fn(),
         remove: vi.fn(),
       };
-      const progressJob = (message: string) => ({
+      const progressJob = (completed: number) => ({
         id: 'job_assets',
         upload_id: 'upload_1',
         status: 'processing' as const,
@@ -1271,7 +1271,10 @@ describe('ServerUploadImportService', () => {
         total_bytes: 6,
         chapters_detected: 1,
         paragraphs_written: 0,
-        message,
+        message: activity === 'message' ? `이미지 저장 ${completed}/12` : '이미지 저장 중',
+        ...(activity === 'counter'
+          ? { progress_completed: completed, progress_total: 12, progress_unit: 'images' as const }
+          : {}),
         book_id: null,
       });
       const client = {
@@ -1281,11 +1284,11 @@ describe('ServerUploadImportService', () => {
         completeUpload: vi.fn(async () => ({ jobId: 'job_assets', statusUrl: '/import-jobs/job_assets' })),
         getImportJob: vi
           .fn()
-          .mockResolvedValueOnce(progressJob('EPUB 삽화와 표지를 저장하는 중입니다. 4 / 12개'))
-          .mockResolvedValueOnce(progressJob('EPUB 삽화와 표지를 저장하는 중입니다. 8 / 12개'))
-          .mockResolvedValueOnce(progressJob('EPUB 삽화와 표지를 저장하는 중입니다. 12 / 12개'))
+          .mockResolvedValueOnce(progressJob(4))
+          .mockResolvedValueOnce(progressJob(8))
+          .mockResolvedValueOnce(progressJob(12))
           .mockResolvedValueOnce({
-            ...progressJob('done'),
+            ...progressJob(12),
             status: 'done' as const,
             stage: 'ready' as const,
             paragraphs_written: 3,

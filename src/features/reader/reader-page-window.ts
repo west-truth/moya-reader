@@ -43,7 +43,15 @@ export class ReaderPageWindow {
     const key = `${direction}:${edgeKey(edge)}`;
     let pending = this.pending.get(key);
     if (!pending) {
-      pending = this.measure(edge, direction).then((page) => page && this.remember(page));
+      pending = this.measure(edge, direction).then(async (page) => {
+        // Backward fitting can leave only one character beside the chapter heading.
+        // At the opening, rebuild forward so the title and body share a full page.
+        if (page && direction < 0 && (page.start.blockIndex ?? 0) === 0) {
+          const opening = await this.adjacent({ ...page.start, offset: 0 }, 1);
+          if (opening && compareReaderAnchors(page.start, opening.end) < 0) page = opening;
+        }
+        return page && this.remember(page);
+      });
       this.pending.set(key, pending);
     }
     try {

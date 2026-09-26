@@ -1,3 +1,4 @@
+import { withRequestProgress } from '../../services/remote/request-progress';
 import { SessionCoverCache } from '../../external-sources/session-cover-cache';
 import { compatibilityFileUpload } from './compatibility-file';
 import type {
@@ -115,8 +116,14 @@ export class RemoteInstalledExtensions implements InstalledExtensionManager {
     if (!this.getExternalSources().some((source) => source.descriptor.id === id)) return undefined;
     const prefix = `/extensions/sources/${encodeURIComponent(id)}/prepared-images`;
     return {
-      download: (ref, signal) =>
-        this.api.request(prefix, { method: 'POST', body: JSON.stringify(ref), signal }, SOURCE_DOWNLOAD_TIMEOUT_MS),
+      download: (ref, signal, onProgress) =>
+        withRequestProgress(
+          this.api.request.bind(this.api),
+          prefix,
+          { method: 'POST', body: JSON.stringify(ref), signal },
+          SOURCE_DOWNLOAD_TIMEOUT_MS,
+          onProgress,
+        ),
       assemble: (input, signal) =>
         this.api.request(
           `${prefix}/assemble`,

@@ -1,3 +1,4 @@
+import { randomUuid } from '../../utils/random-uuid';
 import { MoyaPackageError, verifyMoyaExtension, type VerifiedMoyaPackage } from './package-archive';
 import type { InstalledPackageRecord, InstalledPackageVersion, PackageInstallStore } from './package-install-store';
 
@@ -107,7 +108,7 @@ export class PackageInstaller {
       credentialEpoch:
         previous?.active && !fresh.publisherChanged && previous.credentialEpoch
           ? previous.credentialEpoch
-          : crypto.randomUUID(),
+          : randomUuid(),
       id: pkg.manifest.extension.id,
       revision: fresh.expectedRevision + 1,
       publisherPin: pkg.publisherFingerprint ?? 'unsigned',
@@ -143,7 +144,7 @@ export class PackageInstaller {
       credentialEpoch:
         current.publisherPin === (current.previous.publisherFingerprint ?? 'unsigned')
           ? current.credentialEpoch
-          : crypto.randomUUID(),
+          : randomUuid(),
       publisherPin: current.previous.publisherFingerprint ?? 'unsigned',
       active: current.previous,
       previous: current.active,

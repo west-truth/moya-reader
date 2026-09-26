@@ -42,6 +42,7 @@ export interface BrowserImportPipelineInput {
   expectedNormalizedTextHash?: string;
   archivePassword?: string;
   shouldCancel?: () => boolean;
+  signal?: AbortSignal;
   onProgress: (progress: ImportProgress) => void;
   yieldControl?: () => Promise<void>;
 }
@@ -348,26 +349,38 @@ export async function runBrowserImportPipeline(input: BrowserImportPipelineInput
 
 export async function runBrowserEpubImportPipeline(input: BrowserImportPipelineInput): Promise<ImportResult> {
   assertBrowserImportMode(input);
-  const bytes = new Uint8Array(input.buffer);
+  const source = input.sourceBlob;
+  if (!source) throw new Error('EPUB 원본 파일을 읽을 수 없습니다.');
+  const sourceContentHash = await hashBlobInChunks(source, {
+    shouldCancel: input.shouldCancel,
+    onProgress: ({ bytesRead }) =>
+      input.onProgress(
+        pipelineProgress(input, bytesRead, 'reading', 'hashing_source', {
+          message: `EPUB 파일을 확인하는 중입니다. ${bytesRead.toLocaleString()} / ${input.totalBytes.toLocaleString()} 바이트`,
+        }),
+      ),
+  });
+  throwIfCancelled(input);
   await reportAndYield(
     input,
-    pipelineProgress(input, bytes.byteLength, 'decoding', 'decoding_text', {
+    pipelineProgress(input, input.totalBytes, 'decoding', 'decoding_text', {
       message: 'EPUB 목차와 본문 구조를 해석하는 중입니다.',
     }),
   );
-  const { materializeEpubImport, parseEpub } = await import('@noveldesk/epub-core');
-  const document = await parseEpub(new Blob([bytes], { type: 'application/epub+zip' }));
-  throwIfCancelled(input);
-  const parsed = materializeEpubImport(document, {
+  const { materializeStreamingEpubImport } = await import('@noveldesk/epub-core');
+  const parsed = await materializeStreamingEpubImport(source, {
     fileName: input.fileName,
-    sourceBytes: bytes,
+    sourceContentHash,
     clientBookId: input.clientBookId,
+    maxExpandedBytes: 4 * 1024 ** 3,
+    signal: input.signal,
   });
+  throwIfCancelled(input);
   assertExpectedSourceContentHash(input, parsed.novel.rawTextHash);
   assertExpectedNormalizedTextHash(input, parsed.novel.normalizedTextHash);
   input.buffer = new ArrayBuffer(0);
   input.onProgress(
-    pipelineProgress(input, bytes.byteLength, 'writing', 'staging_chapters', {
+    pipelineProgress(input, input.totalBytes, 'writing', 'staging_chapters', {
       chaptersDetected: parsed.chapters.length,
       message: 'EPUB 본문과 내장 이미지를 임시 저장하는 중입니다.',
     }),
@@ -376,18 +389,16 @@ export async function runBrowserEpubImportPipeline(input: BrowserImportPipelineI
     expectedBase: input.expectedBase,
     batchPageCount: BROWSER_IMPORT_WRITE_BATCH_PAGES,
     shouldCancel: input.shouldCancel,
-    sourceAsset: input.sourceBlob
-      ? {
-          blob: input.sourceBlob,
-          fileName: input.fileName,
-          contentType: 'application/epub+zip',
-          contentHash: parsed.novel.rawTextHash,
-        }
-      : undefined,
+    sourceAsset: {
+      blob: source,
+      fileName: input.fileName,
+      contentType: 'application/epub+zip',
+      contentHash: parsed.novel.rawTextHash,
+    },
     onProgress: (writeProgress) => {
       throwIfCancelled(input);
       input.onProgress(
-        pipelineProgress(input, bytes.byteLength, 'writing', writeProgress.phase, {
+        pipelineProgress(input, input.totalBytes, 'writing', writeProgress.phase, {
           chaptersDetected: writeProgress.totalChapters,
           paragraphsWritten: writeProgress.paragraphsWritten,
           message:
@@ -399,7 +410,7 @@ export async function runBrowserEpubImportPipeline(input: BrowserImportPipelineI
     },
   });
   input.onProgress(
-    pipelineProgress(input, bytes.byteLength, 'ready', 'complete', {
+    pipelineProgress(input, input.totalBytes, 'ready', 'complete', {
       chaptersDetected: parsed.chapters.length,
       paragraphsWritten: parsed.novel.totalParagraphs,
       message: 'EPUB 가져오기가 완료되었습니다.',

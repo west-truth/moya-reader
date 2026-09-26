@@ -1,7 +1,29 @@
 import { describe, expect, it } from 'vitest';
-import { importTaskIsActive, importTaskLabel, projectImportProgress } from './import-task-projection';
+import {
+  importTaskIsActive,
+  importTaskLabel,
+  importTaskStageLabel,
+  projectImportProgress,
+} from './import-task-projection';
 
 describe('import task projection', () => {
+  it('shows confirmed image saves and does not round unfinished work to 100%', () => {
+    const progress = {
+      jobId: 'images',
+      status: 'writing' as const,
+      subphase: 'server_processing' as const,
+      bytesRead: 100,
+      totalBytes: 100,
+      chaptersDetected: 0,
+      paragraphsWritten: 0,
+      progressUnit: 'images' as const,
+      completedUnits: 999,
+      totalUnits: 1000,
+    };
+    expect(projectImportProgress(progress)).toMatchObject({ phase: 'saving', percent: 99 });
+    expect(projectImportProgress({ ...progress, totalUnits: 0 }).percent).toBeUndefined();
+    expect(projectImportProgress({ ...progress, progressUnit: undefined }).percent).toBeUndefined();
+  });
   it('does not treat completed upload bytes as whole-job progress', () => {
     expect(
       projectImportProgress({
@@ -13,7 +35,7 @@ describe('import task projection', () => {
         chaptersDetected: 0,
         paragraphsWritten: 0,
       }),
-    ).toEqual({ phase: 'uploading', percent: 25 });
+    ).toMatchObject({ phase: 'uploading', percent: 25 });
 
     expect(
       projectImportProgress({
@@ -25,7 +47,7 @@ describe('import task projection', () => {
         chaptersDetected: 1,
         paragraphsWritten: 10,
       }),
-    ).toEqual({ phase: 'saving' });
+    ).toMatchObject({ phase: 'saving', finalizing: false });
   });
 
   it('keeps server completion in the final catalog-refresh phase', () => {
@@ -38,7 +60,8 @@ describe('import task projection', () => {
       chaptersDetected: 1,
       paragraphsWritten: 10,
     });
-    expect(projection).toEqual({ phase: 'saving', percent: 100 });
+    expect(projection).toMatchObject({ phase: 'saving', finalizing: true });
+    expect(projection.percent).toBeUndefined();
     expect(
       importTaskLabel({
         id: 'task',
@@ -92,4 +115,10 @@ it('shows a short server activity in place and clears it for later client work',
   ).toBe('업로드 25%');
   expect(importTaskLabel({ ...task, phase: 'complete' })).toBe('완료');
   expect(projectImportProgress({ ...progress, message: '긴 서버 설명'.repeat(20) }).activity).toBeUndefined();
+});
+
+it('does not label unmeasured saving as finalizing', () => {
+  const task = { id: 'x', batchId: 'x', source: 'local_file' as const, title: '책', phase: 'saving' as const };
+  expect(importTaskStageLabel(task)).toBe('저장 중');
+  expect(importTaskStageLabel({ ...task, finalizing: true })).toBe('마무리 중');
 });

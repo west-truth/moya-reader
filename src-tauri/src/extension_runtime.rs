@@ -3,12 +3,14 @@ use std::io::{BufRead, BufReader, Read, Write};
 use std::process::{Child, Command, Stdio};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
-use tauri::{AppHandle, Manager, State, WebviewWindow};
+use tauri::{AppHandle, State, WebviewWindow};
 
 struct ManagedProcess {
     child: Child,
     token: String,
     endpoint: String,
+    features: Option<RuntimeFeatures>,
+    replies: Option<std::sync::mpsc::Receiver<Result<String, std::io::Error>>>,
 }
 impl Drop for ManagedProcess {
     fn drop(&mut self) {
@@ -42,6 +44,59 @@ pub(crate) struct ExtensionRuntimeManager {
     process: Arc<Mutex<Option<ManagedProcess>>>,
 }
 impl ExtensionRuntimeManager {
+    #[cfg(moya_portable)]
+    pub(crate) fn change_vault(
+        &self,
+        prepare: impl FnOnce() -> Result<Option<String>, String>,
+        commit: impl FnOnce() -> Result<(), String>,
+    ) -> Result<(), String> {
+        // Starting a host and changing its vault use the same lock.
+        let mut process = self
+            .process
+            .lock()
+            .map_err(|_| "확장 실행기에 연결하지 못했습니다.")?;
+        let key = prepare()?;
+        if let Some(running) = process.as_mut() {
+            let message = serde_json::json!({"command":"vault", "key":key}).to_string() + "\n";
+            let result = (|| -> Result<(), String> {
+                running
+                    .child
+                    .stdin
+                    .as_mut()
+                    .ok_or("source_vault_unavailable")?
+                    .write_all(message.as_bytes())
+                    .map_err(|_| "source_vault_unavailable")?;
+                let line = running
+                    .replies
+                    .as_ref()
+                    .ok_or("source_vault_unavailable")?
+                    .recv_timeout(Duration::from_secs(5))
+                    .map_err(|_| "source_vault_unavailable")?
+                    .map_err(|_| "source_vault_unavailable")?;
+                let response: serde_json::Value =
+                    serde_json::from_str(&line).map_err(|_| "source_vault_unavailable")?;
+                if response["error"] == "source_vault_busy" {
+                    return Err("source_vault_busy".into());
+                }
+                if response["ok"] != true {
+                    return Err("source_vault_unavailable".into());
+                }
+                Ok(())
+            })();
+            if let Err(error) = result {
+                if error == "source_vault_busy" {
+                    return Err("소스 작업이 진행 중입니다. 완료 후 다시 시도해 주세요.".into());
+                }
+                // An unacknowledged key must never be reused by a later host.
+                process.take();
+                return Err("보관소를 전환하지 못했습니다. 다시 시도해 주세요.".into());
+            }
+            if let Some(features) = running.features.as_mut() {
+                features.credential_vault = key.is_some();
+            }
+        }
+        commit()
+    }
     pub(crate) fn stop_before_exit(&self) {
         if let Ok(mut process) = self.process.lock() {
             process.take();
@@ -51,6 +106,15 @@ impl ExtensionRuntimeManager {
 #[derive(Clone, Serialize, Deserialize)]
 pub(crate) struct ExtensionRuntimeConnection {
     endpoint: String,
+    #[serde(default)]
+    features: Option<RuntimeFeatures>,
+}
+#[derive(Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct RuntimeFeatures {
+    credential_vault: bool,
+    mangayomi: bool,
+    apk: bool,
 }
 fn valid_token(token: &str) -> bool {
     (43..=128).contains(&token.len())
@@ -69,7 +133,11 @@ fn hide(command: &mut Command) {
         let _ = command;
     }
 }
-#[cfg(not(any(target_os = "android", target_os = "ios")))]
+#[cfg(moya_portable)]
+fn credential_key() -> Result<String, String> {
+    crate::portable_vault::key_hex()
+}
+#[cfg(all(not(moya_portable), not(any(target_os = "android", target_os = "ios"))))]
 fn credential_key() -> Result<String, String> {
     let entry = keyring::Entry::new("Moya Extension Credentials", "vault-master-v1")
         .map_err(|_| "source_vault_unavailable")?;
@@ -90,7 +158,7 @@ fn credential_key() -> Result<String, String> {
     }
     Ok(bytes.iter().map(|byte| format!("{byte:02x}")).collect())
 }
-#[cfg(any(target_os = "android", target_os = "ios"))]
+#[cfg(all(not(moya_portable), any(target_os = "android", target_os = "ios")))]
 fn credential_key() -> Result<String, String> {
     Err("source_vault_unavailable".into())
 }
@@ -113,20 +181,13 @@ pub(crate) async fn desktop_extension_runtime_start(
     } else {
         url.origin().ascii_serialization()
     };
-    let directory = if cfg!(debug_assertions) {
+    let directory = if cfg!(debug_assertions) && !cfg!(moya_portable) {
         std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("extension-sidecar")
     } else {
-        app.path()
-            .resource_dir()
-            .map_err(|_| "native_resources_unavailable")?
-            .join("extension-sidecar")
+        crate::portable::runtime_dir(&app)?.join("extension-sidecar")
     };
     let manager = state.inner().clone();
-    let vault_directory = app
-        .path()
-        .app_data_dir()
-        .map_err(|_| "native_storage_unavailable")?
-        .join("extension-credentials");
+    let vault_directory = crate::portable::data_dir(&app)?.join("extension-credentials");
     tauri::async_runtime::spawn_blocking(move || {
         let mut process = manager
             .process
@@ -136,6 +197,7 @@ pub(crate) async fn desktop_extension_runtime_start(
             if running.token == session_token && matches!(running.child.try_wait(), Ok(None)) {
                 return Ok(ExtensionRuntimeConnection {
                     endpoint: running.endpoint.clone(),
+                    features: running.features.clone(),
                 });
             }
         }
@@ -160,7 +222,12 @@ pub(crate) async fn desktop_extension_runtime_start(
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::null());
-        for key in ["SystemRoot", "WINDIR", "TMP", "TEMP"] {
+        // Playwright locates installed Edge/Chrome from these Windows directories.
+        // Keep the allowlist: arbitrary host environment (e.g. NODE_OPTIONS) stays excluded.
+        for key in [
+            "SystemRoot", "WINDIR", "TMP", "TEMP", "LOCALAPPDATA", "PROGRAMFILES",
+            "PROGRAMFILES(X86)", "USERPROFILE", "HOMEDRIVE",
+        ] {
             if let Some(value) = std::env::var_os(key) {
                 command.env(key, value);
             }
@@ -170,11 +237,13 @@ pub(crate) async fn desktop_extension_runtime_start(
             child,
             token: session_token.clone(),
             endpoint: String::new(),
+            features: None,
+            replies: None,
         };
         // The protected key travels only over the inherited pipe, never through WebView IPC or command arguments.
-        // A locked credential store does not prevent unauthenticated sources from running.
+        // Before vault creation, public sources can use a session store; saved locked settings never fall back.
         let vault_key = credential_key().ok();
-        let input = serde_json::json!({"token":session_token,"origin":origin,"vaultDirectory":vault_directory,"vaultKey":vault_key}).to_string() + "\n";
+        let input = serde_json::json!({"token":session_token,"origin":origin,"vaultDirectory":vault_directory,"vaultKey":vault_key,"vaultConfigured":crate::portable_vault::desktop_portable_vault_status()?.configured}).to_string() + "\n";
         running
             .child
             .stdin
@@ -189,18 +258,24 @@ pub(crate) async fn desktop_extension_runtime_start(
             .ok_or("native_runtime_pipe_failed")?;
         let (send, receive) = std::sync::mpsc::channel();
         std::thread::spawn(move || {
-            let mut line = String::new();
-            let result = BufReader::new(stdout.take(1024))
-                .read_line(&mut line)
-                .map(|_| line);
-            let _ = send.send(result);
+            let mut stdout = BufReader::new(stdout);
+            loop {
+                let mut line = String::new();
+                match (&mut stdout).take(4096).read_line(&mut line) {
+                    Ok(0) => break,
+                    Ok(_) => {
+                        if !line.ends_with('\n') || send.send(Ok(line)).is_err() { break; }
+                    }
+                    Err(error) => { let _ = send.send(Err(error)); break; }
+                }
+            }
         });
         let line = receive
             .recv_timeout(Duration::from_secs(10))
             .map_err(|_| "native_runtime_start_timeout")?
             .map_err(|_| "native_runtime_pipe_failed")?;
         let ready: ExtensionRuntimeConnection =
-            serde_json::from_str(&line).map_err(|_| "native_runtime_invalid_ready")?;
+            serde_json::from_str(&line).map_err(|_| "확장 실행기를 시작하지 못했습니다. 앱을 다시 실행하거나 최신 버전으로 교체해 주세요.")?;
         let parsed: tauri::Url = ready
             .endpoint
             .parse()
@@ -216,7 +291,9 @@ pub(crate) async fn desktop_extension_runtime_start(
         {
             return Err("native_runtime_invalid_endpoint".into());
         }
+        running.replies = Some(receive);
         running.endpoint = ready.endpoint.clone();
+        running.features = ready.features.clone();
         *process = Some(running);
         Ok(ready)
     })

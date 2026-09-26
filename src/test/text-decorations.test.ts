@@ -2,13 +2,35 @@ import { describe, expect, it } from 'vitest';
 import { decorateReaderText, readerInlineHighlightRanges } from '../reader/text-decorations';
 
 describe('reader text decorations', () => {
+  it('clips a highlight across page fragments to the text actually displayed', () => {
+    const full = 'alpha beta gamma';
+    const highlights = [{ quote: 'ha beta ga', color: 'yellow' as const }];
+    const first = decorateReaderText(full.slice(0, 8), highlights, '', [], { text: full, offset: 0 });
+    const second = decorateReaderText(full.slice(8), highlights, '', [], { text: full, offset: 8 });
+    expect(
+      first
+        .filter((part) => part.highlightColor)
+        .map((part) => part.text)
+        .join(''),
+    ).toBe('ha be');
+    expect(
+      second
+        .filter((part) => part.highlightColor)
+        .map((part) => part.text)
+        .join(''),
+    ).toBe('ta ga');
+    expect(
+      decorateReaderText('unrelated', [{ quote: 'missing', color: 'blue' }], '').some((part) => part.highlightColor),
+    ).toBe(false);
+  });
+
   it('marks only the stored quote instead of the full paragraph', () => {
     expect(
       readerInlineHighlightRanges('첫 문장과 두 번째 문장입니다.', [{ quote: '두 번째 문장', color: 'yellow' }]),
     ).toEqual([{ start: 6, end: 13, color: 'yellow' }]);
   });
 
-  it('skips missing quotes so the caller can keep the paragraph fallback', () => {
+  it('skips missing quotes without painting unrelated text', () => {
     expect(readerInlineHighlightRanges('본문입니다.', [{ quote: '없는 문장', color: 'green' }])).toEqual([]);
   });
 

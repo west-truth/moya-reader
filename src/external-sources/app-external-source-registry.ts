@@ -1,3 +1,4 @@
+import type { TaskProgressCallback } from '@noveldesk/contracts';
 import type { ExtensionContributionId, ExternalSourceContributionDescriptor } from '@noveldesk/extension-contracts';
 import type {
   DownloadedExternalSource,
@@ -69,6 +70,7 @@ export interface ExternalSourceRegistryPort {
     context: TrustedExternalSourceHostContext,
     ref: ExternalSourceDownloadRef,
     signal: AbortSignal,
+    onProgress?: TaskProgressCallback,
   ): Promise<DownloadedExternalSource>;
   canPickExternalSource?(contributionId: ExtensionContributionId, context: TrustedExternalSourceHostContext): boolean;
   pickExternalSource?(
@@ -98,6 +100,7 @@ export interface ExternalSourceProviderRegistryPort extends Omit<ExternalSourceR
     context: TrustedExternalSourceHostContext,
     ref: ExternalSourceDownloadRef,
     signal: AbortSignal,
+    onProgress?: TaskProgressCallback,
   ): Promise<ExternalSourceDownloadResult>;
 }
 
@@ -231,6 +234,7 @@ export class AppExternalSourceRegistry implements ExternalSourceRegistryPort {
     context: TrustedExternalSourceHostContext,
     ref: ExternalSourceDownloadRef,
     signal: AbortSignal,
+    onProgress?: TaskProgressCallback,
   ): Promise<NormalizedDownloadedExternalSource> {
     signal.throwIfAborted();
     if (ref.key.connectorId !== contributionId) throw new Error('외부 소스 요청의 연결 정보가 다릅니다.');
@@ -243,7 +247,13 @@ export class AppExternalSourceRegistry implements ExternalSourceRegistryPort {
     const builtIn = this.builtIns.get(contributionId);
     const result = builtIn
       ? await this.requireBroker(builtIn, context).download(ref, signal)
-      : await this.requirePluginSources(contributionId).downloadExternalSource(contributionId, context, ref, signal);
+      : await this.requirePluginSources(contributionId).downloadExternalSource(
+          contributionId,
+          context,
+          ref,
+          signal,
+          onProgress,
+        );
     signal.throwIfAborted();
     this.assertConnectionSnapshot(contributionId, context, before);
     const normalized = await normalizeExternalSourceDownload(

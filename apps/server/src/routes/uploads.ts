@@ -332,13 +332,14 @@ export async function registerUploadRoutes(
         );
         const nextAcceptedBytes = Number(acceptedResult.rows[0]?.accepted_bytes ?? 0) + request.body.length;
         const declaredBytes = Number(session.size_bytes);
-        if (nextAcceptedBytes > declaredBytes || nextAcceptedBytes > config.maxUploadBytes) {
+        const maxUploadBytes = localUploadLimit(config, session.file_name ?? '', session.import_mode);
+        if (nextAcceptedBytes > declaredBytes || nextAcceptedBytes > maxUploadBytes) {
           await client.query('rollback');
           return reply.code(413).send({
             error: 'accepted upload bytes would exceed the declared or configured upload size',
             acceptedBytes: nextAcceptedBytes,
             sizeBytes: declaredBytes,
-            maxUploadBytes: config.maxUploadBytes,
+            maxUploadBytes,
           });
         }
 
@@ -576,7 +577,7 @@ export async function registerUploadRoutes(
       `
         select
           id, upload_id, status, stage, bytes_read, total_bytes, chapters_detected,
-          paragraphs_written, message, book_id, error_message, cancel_requested_at,
+          paragraphs_written, progress_completed, progress_total, progress_unit, message, book_id, error_message, cancel_requested_at,
           queue_generation, active_queue_job_id, created_at, updated_at
         from import_jobs
         where id = $1

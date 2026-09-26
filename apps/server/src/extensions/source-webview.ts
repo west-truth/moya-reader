@@ -1,7 +1,7 @@
 import { openSourceBrowserProxy } from './source-browser-proxy.js';
 import { sourceBrowserLimits } from './source-browser-limits.js';
 import { readBrowserSession, mergeBrowserSession } from './source-browser-session.js';
-import { access } from 'node:fs/promises';
+import { launchSourceBrowser } from './source-browser-launch.js';
 import { chromium, type Browser, type BrowserContext } from 'playwright-core';
 import {
   validSourceWebViewRequest,
@@ -42,23 +42,7 @@ export class SourceWebViewHost {
           const launcher =
             engine === 'patchright' ? ((await import('patchright')).chromium as unknown as typeof chromium) : chromium;
           const args = ['--disable-quic', '--force-webrtc-ip-handling-policy=disable_non_proxied_udp'];
-          const configured = process.env.MOYA_SOURCE_BROWSER_EXECUTABLE;
-          if (configured) return launcher.launch({ executablePath: configured, headless: true, args });
-          if (process.platform === 'win32') return launcher.launch({ channel: 'msedge', headless: true, args });
-          for (const executablePath of [
-            '/usr/bin/chromium',
-            '/usr/bin/chromium-browser',
-            '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',
-          ]) {
-            if (
-              await access(executablePath).then(
-                () => true,
-                () => false,
-              )
-            )
-              return launcher.launch({ executablePath, headless: true, args });
-          }
-          return launcher.launch({ headless: true, args });
+          return launchSourceBrowser(launcher, args);
         })().catch((error) => {
           this.browsers.delete(engine);
           throw new Error('source_browser_unavailable', { cause: error });

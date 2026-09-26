@@ -1,8 +1,13 @@
+import { useContext } from 'react';
+import { EmbeddedAccessContext } from '../../platform/embedded-access-context';
+import { DesktopServerSelectionSettings } from '../../platform/DesktopServerChoice';
 import { RefreshCw } from 'lucide-react';
 
 export function SyncSettings({ openSync }: { readonly openSync: () => void }) {
+  const embedded = useContext(EmbeddedAccessContext);
   return (
     <div className="reader-settings-destination-sections">
+      {embedded && <DesktopServerSelectionSettings />}
       <section className="settings-section-card reader-settings-destination-card">
         <div className="settings-section-heading">
           <RefreshCw size={18} aria-hidden="true" />

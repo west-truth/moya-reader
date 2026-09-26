@@ -486,21 +486,21 @@ export async function registerTTSCacheRoutes(
               and (
                 c.voice_entry_fingerprint is null
                 or not exists (
-                  select 1 from voice_catalog_snapshots current_catalog
-                  where current_catalog.book_id = c.book_id
-                    and current_catalog.provider_id = c.provider_id
-                    and (current_catalog.model_id is null or current_catalog.model_id is not distinct from c.provider_model)
+                  select 1 from voice_catalog_snapshots active_catalog
+                  where active_catalog.book_id = c.book_id
+                    and active_catalog.provider_id = c.provider_id
+                    and (active_catalog.model_id is null or active_catalog.model_id is not distinct from c.provider_model)
                 )
                 or exists (
                   select 1
                   from voice_catalog_entries current_voice
-                  join voice_catalog_snapshots current_catalog on current_catalog.id = current_voice.snapshot_id
+                  join voice_catalog_snapshots active_catalog on active_catalog.id = current_voice.snapshot_id
                   where current_voice.book_id = c.book_id
                     and current_voice.provider_id = c.provider_id
                     and current_voice.voice_id = vp.provider_voice_id
                     and current_voice.fingerprint = c.voice_entry_fingerprint
                     and current_voice.available
-                    and (current_catalog.model_id is null or current_catalog.model_id is not distinct from c.provider_model)
+                    and (active_catalog.model_id is null or active_catalog.model_id is not distinct from c.provider_model)
                 )
               )
           `,

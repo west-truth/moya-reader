@@ -14,8 +14,7 @@ Its license is included at `third_party/licenses/jose/LICENSE.md` in the static 
 
 `packages/extension-runtime` uses `quickjs-emscripten-core` and the release-sync QuickJS WebAssembly variant at
 0.32.0 (MIT), including the QuickJS engine notices. The copied license text is under
-`third_party/licenses/quickjs/`. This initial execution boundary is not yet included in Desktop installers or
-application startup; future runtime packaging must carry these notices and the runtime binary's own notices.
+`third_party/licenses/quickjs/`. The desktop embedded server includes this execution boundary. Its notices and the runtime binary's own notices must accompany the installer.
 
 ## Bundled Desktop metadata collector
 
@@ -105,6 +104,11 @@ Their npm license texts are included with the packaged dependencies. Windows use
 the self-host image uses Debian's Chromium and CJK font packages, whose notices remain in the image's package inventory.
 No Mangayomi application source or private extension code is redistributed as part of this adapter.
 
+The Windows portable executable uses the system Microsoft Edge WebView2 Evergreen Runtime.
+It does not redistribute a Fixed Version Runtime. If missing, users are directed to Microsoft's
+runtime installation page. The portable Python collector uses the bundled source runtime's Node
+through Playwright's `PLAYWRIGHT_NODEJS_PATH`; Node's license remains in extension-sidecar.
+
 ## Source cover thumbnails
 
 Hosted source-cover thumbnails use `sharp@0.34.5` (Apache-2.0) and its platform-specific libvips 8.17.3
@@ -128,3 +132,18 @@ intentionally remains blocked until the binary redistribution items in `third_pa
 resolved. Passing either automated inventory check is not legal approval.
 
 This inventory records engineering provenance and is not legal advice.
+
+## Cloudflare Tunnel desktop connector
+
+The embedded desktop runtime includes cloudflared 2026.9.1 for optional remote access.
+Copyright Cloudflare, Inc. Distributed under the Apache License, Version 2.0.
+Source: https://github.com/cloudflare/cloudflared/tree/2026.9.1
+License: `third_party/licenses/cloudflared/LICENSE` (also copied beside the bundled executable).
+The Cloudflare service's terms and availability are separate from the software license.
+
+## Windows candidate source capture
+
+Windows Cargo notices and pinned archive, Redis/Cygwin and libvips sources are recorded in
+`third_party/windows-cargo-inventory.json` and `third_party/windows-source-manifest.json`.
+See `third_party/windows-sources.md` for capture scope, rebuild information and the companion source archive.
+This capture does not close the final binary redistribution gate described above.

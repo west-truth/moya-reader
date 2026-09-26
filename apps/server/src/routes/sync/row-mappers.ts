@@ -4,6 +4,7 @@ import type { JsonValue, SyncEvent } from '@noveldesk/contracts/sync';
 export interface SyncEventRow {
   sequence: number | string;
   id: string;
+  user_id?: string;
   device_id: string;
   type: SyncEvent['type'];
   book_id: string | null;

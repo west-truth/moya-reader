@@ -1,3 +1,4 @@
+import type { TaskProgress } from '@noveldesk/contracts';
 import type { ExtensionContributionId } from '@noveldesk/extension-contracts';
 import type { ExternalSourceRegistryPort } from '../app-external-source-registry';
 import type { ExternalItemSummary, TrustedExternalSourceHostContext } from '../contracts';
@@ -15,6 +16,7 @@ export function createHostedImageDownloadQueue(options: {
   items: readonly Item[];
   signal: AbortSignal;
   onStage(item: Item, phase: 'downloading' | 'downloaded'): void;
+  onProgress?(item: Item, progress: TaskProgress): void;
 }) {
   const initial = options.registry.getExternalSourceStatus(options.sourceId, options.hostContext);
   const assertConnection = () => {
@@ -43,7 +45,13 @@ export function createHostedImageDownloadQueue(options: {
       assertConnection();
       const item = options.items[i]!;
       options.onStage(item, 'downloading');
-      const receipt = await options.port.download(seriesDownloadRef(item, initial.connectionGeneration), signal);
+      const receipt = await options.port.download(
+        seriesDownloadRef(item, initial.connectionGeneration),
+        signal,
+        (progress) => {
+          if (!signal.aborted && !closed) options.onProgress?.(item, progress);
+        },
+      );
       receipts.add(receipt.artifactId);
       try {
         signal.throwIfAborted();

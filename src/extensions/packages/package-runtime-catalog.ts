@@ -215,7 +215,11 @@ export class PackageRuntimeCatalog {
     method: M,
     input: Record<string, unknown>,
     signal: AbortSignal,
-    _cache?: { cacheMode?: 'reload'; refreshCovers?: boolean },
+    _cache?: {
+      cacheMode?: 'reload';
+      refreshCovers?: boolean;
+      onProgress?: import('@noveldesk/contracts').TaskProgressCallback;
+    },
   ): Promise<{
     result: SourceResults[M];
     assets: ReadonlyMap<string, Blob>;

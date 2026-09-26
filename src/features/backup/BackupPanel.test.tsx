@@ -56,3 +56,20 @@ describe('BackupPanel', () => {
     expect(markup).not.toContain('백업 파일 선택');
   });
 });
+
+it('shows the operation and measured bytes inline without a progress details action', () => {
+  const markup = renderToStaticMarkup(
+    <BackupPanel
+      controller={controller({
+        busy: true,
+        operation: 'inspect',
+        progress: { phase: 'uploading', completed: 1024, total: 2048, unit: 'bytes' },
+      })}
+    />,
+  );
+  expect(markup).toContain('50%');
+  expect(markup).toContain('백업 확인');
+  expect(markup).toContain('업로드 중');
+  expect(markup).toContain('1 KB / 2 KB');
+  expect(markup).not.toContain('상세 보기');
+});

@@ -1,0 +1,178 @@
+name: Desktop embedded server proof
+
+on:
+  workflow_dispatch:
+    inputs:
+      build_only:
+        description: Build a test EXE without smoke tests or PR CI
+        type: boolean
+        default: false
+      upgrade_baseline_run:
+        description: Optional build-only workflow run with the previous installer
+        type: string
+        default: ''
+      upgrade_baseline_sha256:
+        description: Required SHA-256 when upgrade_baseline_run is supplied
+        type: string
+        default: ''
+      build_installer:
+        description: Build and install the release candidate, including runtime prerequisites
+        type: boolean
+        default: false
+  push:
+    branches: [feat/desktop-embedded-selfhost]
+    paths:
+      - '.github/workflows/desktop-embedded.yml'
+      - 'scripts/desktop/*embedded*'
+      - 'apps/server/src/**'
+      - 'src-tauri/src/embedded_server.rs'
+      - 'src-tauri/src/bin/moya-server-guard.rs'
+      - 'src-tauri/src/app.rs'
+      - 'src/platform/EmbeddedServer*.tsx'
+      - 'src/main.tsx'
+      - 'src/platform/webnovel-metadata-collector*'
+      - 'services/webnovel-metadata-collector/**'
+      - 'scripts/build-webnovel-metadata-collector-sidecar.mjs'
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  test-installer:
+    if: ${{ inputs.build_only }}
+    uses: ./.github/workflows/desktop-test-build.yml
+  windows-server:
+    if: ${{ !inputs.build_only }}
+    runs-on: windows-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v7
+      - uses: pnpm/action-setup@v6
+        with:
+          version: 11.7.0
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: pnpm
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+          cache-on-failure: true
+      - run: pnpm install --frozen-lockfile
+      - name: Check sharing lifecycle and native status recovery
+        run: |
+          node --test scripts/desktop/embedded-sharing.test.mjs scripts/desktop/embedded-tunnel.test.mjs
+          if ($LASTEXITCODE -ne 0) { throw 'Sharing lifecycle tests failed' }
+          node node_modules/vitest/vitest.mjs run src/platform/EmbeddedServerGate.test.tsx src/platform/EmbeddedServerSharing.test.tsx src/features/backup/useBackupController.test.tsx
+          if ($LASTEXITCODE -ne 0) { throw 'Native status recovery tests failed' }
+      - uses: actions/cache@v4
+        with:
+          path: .tmp/embedded-downloads
+          key: embedded-win-node22.23.2-pg16.15-redis7.2.16-cloudflared2026.9.1
+      - run: node scripts/desktop/build-embedded-runtime.mjs
+      - name: Check existing collector auth, frame input and session recovery
+        shell: pwsh
+        run: |
+          $python = '.tmp/webnovel-metadata-collector-bundle-environment/Scripts/python.exe'
+          & $python -m pip install --disable-pip-version-check 'pytest>=8.4,<10'
+          if ($LASTEXITCODE -ne 0) { throw 'Collector test dependency install failed' }
+          $env:MOYA_TEST_AUTH_BROWSER = '1'
+          $env:PLAYWRIGHT_BROWSERS_PATH = (Resolve-Path 'src-tauri/collector-sidecar/browsers').Path
+          & $python -m pytest -q services/webnovel-metadata-collector/tests/test_remote_auth_browser.py services/webnovel-metadata-collector/tests/test_remote_auth_browser_live.py services/webnovel-metadata-collector/tests/test_companion_service.py
+          if ($LASTEXITCODE -ne 0) { throw 'Collector auth and session tests failed' }
+      - name: Launch packaged collector and login browser through the authenticated gateway
+        run: node scripts/desktop/smoke-embedded-collector.mjs ".tmp/embedded-windows/runtime.json"
+      - name: Keep the library available when the collector is missing
+        run: node scripts/desktop/smoke-embedded-collector-failure.mjs ".tmp/embedded-windows/runtime.json"
+      - name: Probe public metadata and cover without an account
+        continue-on-error: true
+        run: node scripts/desktop/smoke-embedded-collector.mjs ".tmp/embedded-windows/runtime.json" --live
+      - run: node scripts/desktop/build-embedded-app.mjs
+      - run: node node_modules/playwright-core/cli.js install chromium
+      - name: Verify downloaded cover persistence under native CSP
+        run: node --test scripts/desktop/source-cover-csp.test.mjs
+      - name: Recover the same profile after killing its launcher
+        run: node scripts/desktop/smoke-embedded-recovery.mjs ".tmp/Moya app 한글/embedded-server/runtime.json"
+      - name: Open native window, connect automatically, share, revoke and restart
+        timeout-minutes: 8
+        run: node scripts/desktop/smoke-embedded-app.mjs ".tmp/Moya app 한글/Moya.exe"
+      - name: Run packaged server and shared reader, then restart
+        shell: pwsh
+        run: |
+          node scripts/desktop/smoke-embedded-server.mjs ".tmp/Moya app 한글/embedded-server/runtime.json"
+          if ($LASTEXITCODE -ne 0) { throw 'Embedded server smoke failed' }
+      - name: Read EPUB and PDF using the packaged server
+        run: node scripts/desktop/smoke-embedded-formats.mjs ".tmp/Moya app 한글/embedded-server/runtime.json"
+      - name: Build the release installer candidate
+        id: installer
+        if: ${{ success() && inputs.build_installer }}
+        run: node scripts/desktop/build-embedded-installer.mjs
+      - name: Download previous test installer for data-preserving upgrade
+        if: ${{ success() && inputs.build_installer && inputs.upgrade_baseline_run != '' }}
+        uses: actions/download-artifact@v4
+        with:
+          name: moya-windows-x64-build-only
+          run-id: ${{ inputs.upgrade_baseline_run }}
+          github-token: ${{ github.token }}
+          path: .tmp/previous-installer
+      - name: Install and start with developer tools removed from PATH
+        if: ${{ success() && inputs.build_installer && steps.installer.outcome == 'success' }}
+        shell: pwsh
+        env:
+          BASELINE_RUN: ${{ inputs.upgrade_baseline_run }}
+          BASELINE_SHA256: ${{ inputs.upgrade_baseline_sha256 }}
+        run: |
+          if ($env:BASELINE_RUN) {
+            $previous = Get-ChildItem '.tmp/previous-installer' -Recurse -Filter '*-setup.exe' | Select-Object -First 1
+            if (!$previous) { throw 'Previous test installer is missing' }
+            if (!$env:BASELINE_SHA256 -or (Get-FileHash $previous.FullName -Algorithm SHA256).Hash.ToLowerInvariant() -ne $env:BASELINE_SHA256) { throw 'Previous installer checksum mismatch' }
+            ./scripts/desktop/smoke-embedded-installer.ps1 -BaselineInstaller $previous.FullName
+          } else {
+            ./scripts/desktop/smoke-embedded-installer.ps1
+          }
+      - name: Upload tested Windows installer
+        if: ${{ success() && inputs.build_installer }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: moya-windows-x64-test-installer
+          path: src-tauri/target/release/bundle/nsis/*-setup.exe
+          if-no-files-found: error
+          retention-days: 14
+      - name: Collect evidence without credentials or server data
+        if: always()
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force .tmp/embedded-evidence | Out-Null
+          Copy-Item ".tmp/Moya app 한글/embedded-server/inventory.json" .tmp/embedded-evidence/ -ErrorAction SilentlyContinue
+          Copy-Item ".tmp/embedded-windows/inventory.json" .tmp/embedded-evidence/ -ErrorAction SilentlyContinue
+          $appProfile = Get-ChildItem $env:TEMP -Directory -Filter 'Moya app proof *' | Sort-Object LastWriteTime -Descending | Select-Object -First 1
+          if ($appProfile) {
+            foreach ($name in @('app-smoke-result.json', 'launcher.log', 'native-reader.png', 'native-epub.png', 'native-pdf.png', 'native-sharing.png', 'native-error.png', 'native-desktop-error.png', 'initdb.log', 'postgres.log')) {
+              Copy-Item (Join-Path $appProfile.FullName $name) .tmp/embedded-evidence/ -ErrorAction SilentlyContinue
+            }
+          }
+          $profile = Get-ChildItem $env:TEMP -Directory -Filter 'Moya embedded *' | Sort-Object LastWriteTime -Descending | Select-Object -First 1
+          if ($profile) {
+            foreach ($name in @('smoke-result.json', 'reader.png', 'initdb.log', 'postgres.log', 'postgres-start.log', 'postgres-ready.log', 'redis.log', 'redis-ready.log')) {
+              Copy-Item (Join-Path $profile.FullName $name) .tmp/embedded-evidence/ -ErrorAction SilentlyContinue
+            }
+          }
+          $collectorProfile = Get-ChildItem $env:TEMP -Directory -Filter 'Moya collector *proof *' | Sort-Object LastWriteTime -Descending | Select-Object -First 1
+          if ($collectorProfile) {
+            foreach ($name in @('collector.log', 'collector-startup.log')) {
+              Copy-Item (Join-Path $collectorProfile.FullName $name) .tmp/embedded-evidence/ -ErrorAction SilentlyContinue
+            }
+            foreach ($name in @('api.log', 'worker.log', 'postgres.log')) {
+              Copy-Item (Join-Path $collectorProfile.FullName $name) (Join-Path .tmp/embedded-evidence "collector-profile-$name") -ErrorAction SilentlyContinue
+            }
+          }
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: embedded-windows-evidence
+          path: .tmp/embedded-evidence/

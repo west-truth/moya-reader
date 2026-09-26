@@ -1,5 +1,7 @@
 # 현재 아키텍처
 
+> 데스크톱 내장 서버는 [현재 데스크톱 구조](../platforms/desktop.md)를 기준으로 합니다. 아래 IndexedDB·Tauri 설명에는 이전 로컬 앱 기록이 포함되어 있으며 내장 self-host의 저장 구조를 뜻하지 않습니다.
+
 Reader sentence pagination - 2026-08-21: TXT/EPUB Reader는 스크롤과 문장 단위 페이지만 노출한다. TTS와
 조판은 text-core 문장 경계를 공유하고 page fragment는 원본 paragraph offset을 유지한다. 스크롤/페이지는
 첫 가시 문장 anchor로 전환하며, page map은 IndexedDB v34의 device-local 파생 cache에 최근 24 layout만

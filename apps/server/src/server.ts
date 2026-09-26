@@ -4,6 +4,7 @@ import { createPool, seedDefaultUser } from './db/pool.js';
 import { runMigrations } from './db/migrate.js';
 import { createImportQueue, createProviderQueue } from './queue.js';
 import { registerHealthRoutes } from './routes/health.js';
+import { registerWebAssets } from './routes/web-assets.js';
 import { registerUploadRoutes } from './routes/uploads.js';
 import { stageServerImport } from './services/stage-server-import.js';
 import { createDocumentSeriesSnapshot } from './services/document-series-snapshot.js';
@@ -195,6 +196,7 @@ export async function buildServer(config: ServerConfig): Promise<FastifyInstance
   const selfHostAuth = new SelfHostAuthService(new PostgresSelfHostAuthStore(pool), config.defaultUserId);
   await registerAuthHook(app, config, selfHostAuth);
   await registerSelfHostAuthRoutes(app, selfHostAuth, config);
+  if (config.webRoot) await registerWebAssets(app, config.webRoot);
 
   const pruneResult = await pruneStaleUploadSessions(pool, config);
   if (pruneResult.prunedCount) {

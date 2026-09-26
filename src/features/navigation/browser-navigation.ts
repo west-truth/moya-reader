@@ -1,3 +1,4 @@
+import { randomUuid } from '../../utils/random-uuid';
 const KEY = 'moyaNavigation';
 type Marker = { session: string; id: number; position: number };
 type Entry<T> = { marker: Marker; key: string; snapshot: T };
@@ -15,7 +16,7 @@ function marker(state: unknown): Marker | undefined {
 
 /** Browser state contains opaque entry IDs only; metadata snapshots stay in this tab's memory. */
 export class BrowserNavigation<T> {
-  private readonly session = crypto.randomUUID();
+  private readonly session = randomUuid();
   private serial = 0;
   private current: Entry<T>;
   private readonly entries = new Map<number, Entry<T>>();

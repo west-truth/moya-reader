@@ -1967,3 +1967,22 @@
   opacity: 0;
   pointer-events: none;
 }
+
+.backup-progress {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px;
+  margin-bottom: 12px;
+  border-radius: 8px;
+  background: var(--app-surface-muted);
+}
+.backup-progress > span:not(.task-progress-ring) {
+  min-width: 0;
+  display: grid;
+  gap: 4px;
+}
+.backup-progress small {
+  color: var(--text-2);
+  font-variant-numeric: tabular-nums;
+}

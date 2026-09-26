@@ -67,21 +67,21 @@ export async function maintainTTSCache(
          or (
            cache.voice_entry_fingerprint is not null
            and exists (
-             select 1 from voice_catalog_snapshots current_catalog
-             where current_catalog.book_id = cache.book_id
-               and current_catalog.provider_id = cache.provider_id
-               and (current_catalog.model_id is null or current_catalog.model_id is not distinct from cache.provider_model)
+             select 1 from voice_catalog_snapshots active_catalog
+             where active_catalog.book_id = cache.book_id
+               and active_catalog.provider_id = cache.provider_id
+               and (active_catalog.model_id is null or active_catalog.model_id is not distinct from cache.provider_model)
            )
            and not exists (
              select 1
              from voice_catalog_entries current_voice
-             join voice_catalog_snapshots current_catalog on current_catalog.id = current_voice.snapshot_id
+             join voice_catalog_snapshots active_catalog on active_catalog.id = current_voice.snapshot_id
              where current_voice.book_id = cache.book_id
                and current_voice.provider_id = cache.provider_id
                and current_voice.voice_id = voice.provider_voice_id
                and current_voice.fingerprint = cache.voice_entry_fingerprint
                and current_voice.available
-               and (current_catalog.model_id is null or current_catalog.model_id is not distinct from cache.provider_model)
+               and (active_catalog.model_id is null or active_catalog.model_id is not distinct from cache.provider_model)
            )
          )
        )`,

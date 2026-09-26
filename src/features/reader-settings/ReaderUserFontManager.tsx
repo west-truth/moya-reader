@@ -30,12 +30,15 @@ export function ReaderUserFontManager({
   const install = async (file: File) => {
     setBusy(true);
     setError(undefined);
+    let phase: 'prepare' | 'load' | 'save' = 'prepare';
     try {
       const prepared = await prepareUserFont(file);
       if (fonts.some((font) => font.contentHash === prepared.asset.contentHash)) {
         throw new Error('font_duplicate');
       }
+      phase = 'load';
       await verifyFontCanLoad(prepared.asset, prepared.blob);
+      phase = 'save';
       await repository.installUserFont(prepared);
       await refresh();
       selectFont(prepared.asset.id);
@@ -46,7 +49,11 @@ export function ReaderUserFontManager({
           ? '이미 등록된 글꼴입니다.'
           : code === 'font_size_invalid'
             ? '글꼴은 10MB 이하만 등록할 수 있습니다.'
-            : '유효한 WOFF2, WOFF, TTF 또는 OTF 글꼴인지 확인하세요.',
+            : phase === 'save'
+              ? '글꼴을 저장하거나 목록을 새로 고치지 못했습니다. 서버 연결과 저장 공간을 확인해 주세요.'
+              : phase === 'load'
+                ? '글꼴을 읽지 못했습니다. 손상된 파일이거나 앱에서 글꼴 로딩이 차단되었을 수 있습니다.'
+                : '유효한 WOFF2, WOFF, TTF 또는 OTF 글꼴인지 확인하세요.',
       );
     } finally {
       setBusy(false);

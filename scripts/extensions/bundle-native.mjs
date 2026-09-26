@@ -66,6 +66,7 @@ await build({
     'playwright-core',
     'patchright',
     'tough-cookie',
+    'sharp',
   ],
   alias: {
     '@noveldesk/extension-contracts/source-protocol': join(root, 'packages/extension-contracts/source-protocol.ts'),
@@ -80,7 +81,9 @@ async function copyPackage(name, from) {
   copied.add(name);
   const resolver = createRequire(join(from, 'package.json'));
   let folder =
-    name === '@moya/extension-runtime' ? join(root, 'packages/extension-runtime') : dirname(resolver.resolve(name));
+    name === '@moya/extension-runtime'
+      ? join(root, 'packages/extension-runtime')
+      : dirname(resolver.resolve(name.startsWith('@img/sharp-') ? `${name}/package` : name));
   while (JSON.parse(await readFile(join(folder, 'package.json'), 'utf8').catch(() => '{}')).name !== name) {
     const parent = dirname(folder);
     if (parent === folder) throw new Error(`Cannot resolve ${name}`);
@@ -101,6 +104,9 @@ async function copyPackage(name, from) {
 }
 await copyPackage('@moya/extension-runtime', root);
 await copyPackage('linkedom', join(root, 'apps/server'));
+// Native modules must remain external to esbuild, including the selected platform binary/DLLs.
+await copyPackage('sharp', join(root, 'apps/server'));
+await copyPackage('@img/sharp-win32-x64', dirname(require.resolve('sharp')));
 await copyPackage('https-proxy-agent', join(root, 'apps/server'));
 await copyPackage('agent-base', join(root, 'apps/server'));
 await copyPackage('socks', join(root, 'apps/server'));
@@ -118,5 +124,8 @@ await writeFile(
     2,
   ) + '\n',
 );
-await bundleApkRuntime(root, join(output, 'apk-runtime'));
+// Preserve the installer bundle's APK behavior. The portable JS-first build
+// skips Java unless its builder explicitly asks for it.
+if (process.env.MOYA_PORTABLE_BUILD !== '1' || process.env.MOYA_BUNDLE_APK === '1')
+  await bundleApkRuntime(root, join(output, 'apk-runtime'));
 console.log(`Native extension runtime packaged: ${output}`);

@@ -6,7 +6,7 @@ import {
   ChevronLeft,
   Headphones,
   Highlighter,
-  Focus,
+  ArrowDownToLine,
   LocateFixed,
   Maximize2,
   Minimize2,
@@ -34,6 +34,7 @@ import type {
   ReaderMode,
   ReaderScreenHandle,
   ReaderScreenModel,
+  ReaderSelection,
 } from './reader-screen-contract';
 import type { ReaderRuntimeFlow, ReaderViewportApi } from './ReaderViewport';
 import { showChapterSequence } from './ReaderChapterHeading';
@@ -70,13 +71,13 @@ export interface ReaderChromeProps {
   readonly readingFlow: ReaderRuntimeFlow;
   readonly activeBookmark?: Bookmark;
   readonly activeHighlight?: ReaderHighlight;
+  readonly selection?: ReaderSelection;
   readonly mobileSearchOpen: boolean;
   readonly overflowOpen: boolean;
   readonly onSetMode: (mode: ReaderMode) => void;
   readonly onMobileSearchOpenChanged: (open: boolean) => void;
   readonly onOverflowOpenChanged: (open: boolean) => void;
   readonly onGoToSavedPosition: () => void;
-  readonly onToggleImmersive: () => void;
   readonly onOpenAutoScroll?: () => void;
 }
 
@@ -91,16 +92,17 @@ export function ReaderChrome({
   readingFlow,
   activeBookmark,
   activeHighlight,
+  selection,
   mobileSearchOpen,
   overflowOpen,
   onSetMode,
   onMobileSearchOpenChanged,
   onOverflowOpenChanged,
   onGoToSavedPosition,
-  onToggleImmersive,
   onOpenAutoScroll,
 }: ReaderChromeProps) {
   const [bookmarkPending, setBookmarkPending] = useState(false);
+  const [highlightPending, setHighlightPending] = useState(false);
   const [quickViewOpen, setQuickViewOpen] = useState(false);
   const overflowMenu = useMenuPopover(overflowOpen, onOverflowOpenChanged);
   const actions = screenHandle.getActions();
@@ -122,7 +124,15 @@ export function ReaderChrome({
       setBookmarkPending(false);
     }
   };
-  const addHighlight = () => location && actions.addHighlight(location);
+  const addHighlight = async () => {
+    if (!location || !selection || highlightPending) return;
+    setHighlightPending(true);
+    try {
+      await actions.addHighlight(location, selection);
+    } finally {
+      setHighlightPending(false);
+    }
+  };
   const runOverflowAction = (action: () => void) => {
     onOverflowOpenChanged(false);
     overflowMenu.triggerRef.current?.focus();
@@ -177,10 +187,11 @@ export function ReaderChrome({
           </button>
           <button
             className={classNames('icon-btn', 'reader-topbar-secondary', Boolean(activeHighlight) && 'active')}
+            onMouseDown={(event) => event.preventDefault()}
             onClick={addHighlight}
-            title={activeHighlight ? '현재 문단 하이라이트됨' : '하이라이트'}
-            aria-label="하이라이트 토글"
-            aria-pressed={Boolean(activeHighlight)}
+            disabled={!selection || highlightPending}
+            title={selection ? '선택 문장 하이라이트' : '본문에서 문장을 먼저 선택하세요'}
+            aria-label="선택 문장 하이라이트"
           >
             <Highlighter size={18} />
           </button>
@@ -193,13 +204,13 @@ export function ReaderChrome({
             <SlidersHorizontal size={18} />
           </button>
           <button
-            className="icon-btn reader-desktop-action"
+            className="icon-btn"
             type="button"
-            onClick={onToggleImmersive}
-            title="몰입 모드"
-            aria-label="몰입 모드 시작"
+            onClick={onOpenAutoScroll}
+            title="자동 스크롤"
+            aria-label="자동 스크롤 설정"
           >
-            <Focus size={18} />
+            <ArrowDownToLine size={18} />
           </button>
           <button
             className="icon-btn reader-topbar-secondary"
@@ -399,8 +410,13 @@ export function ReaderChrome({
                 >
                   <ChevronsRight size={15} /> 현재 화 끝
                 </button>
-                <button type="button" role="menuitem" onClick={() => runOverflowAction(addHighlight)}>
-                  <Highlighter size={15} /> 현재 문단 하이라이트
+                <button
+                  type="button"
+                  role="menuitem"
+                  disabled={!selection || highlightPending}
+                  onClick={() => runOverflowAction(addHighlight)}
+                >
+                  <Highlighter size={15} /> 선택 문장 하이라이트
                 </button>
                 <button
                   type="button"
@@ -425,9 +441,6 @@ export function ReaderChrome({
                 )}
                 <button type="button" role="menuitem" onClick={() => runOverflowAction(actions.toggleNightTheme)}>
                   {nightThemeActive ? <Sun size={15} /> : <Moon size={15} />} 테마
-                </button>
-                <button type="button" role="menuitem" onClick={() => runOverflowAction(onToggleImmersive)}>
-                  <Focus size={15} /> 몰입 모드
                 </button>
                 <button
                   type="button"

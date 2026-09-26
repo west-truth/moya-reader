@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { spawn } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import { once } from 'node:events';
 import { createInterface } from 'node:readline';
 import { fileURLToPath } from 'node:url';
@@ -16,8 +16,63 @@ import { NativePackageExecution } from '../../src/platform/tauri/native-package-
 
 // Requires the real generated bundle. Never substitutes system Node or skips missing resources.
 const root = fileURLToPath(new URL('../../', import.meta.url));
-const directory = resolve(root, 'src-tauri/extension-sidecar');
+const directory = process.env.MOYA_PACKAGED_SIDECAR_DIR
+  ? resolve(process.env.MOYA_PACKAGED_SIDECAR_DIR)
+  : resolve(root, 'src-tauri/extension-sidecar');
 assert.equal(process.platform, 'win32', 'This packaged runtime gate currently targets Windows x64');
+// Match the desktop sidecar environment allowlist, including installed browser roots.
+const env = Object.fromEntries(
+  [
+    'SystemRoot',
+    'WINDIR',
+    'TMP',
+    'TEMP',
+    'LOCALAPPDATA',
+    'PROGRAMFILES',
+    'PROGRAMFILES(X86)',
+    'USERPROFILE',
+    'HOMEDRIVE',
+  ].flatMap((key) => (process.env[key] ? [[key, process.env[key]!]] : [])),
+);
+const browserCheck = spawnSync(
+  resolve(directory, 'node.exe'),
+  [
+    '-e',
+    `
+  (async () => {
+    for (const engine of ['playwright-core', 'patchright']) {
+      const { chromium } = require(engine);
+      let browser;
+      const errors = [];
+      for (const channel of ['msedge', 'chrome']) {
+        try { browser = await chromium.launch({ channel, headless: true }); break; }
+        catch (error) { errors.push(error); }
+      }
+      if (!browser) throw new AggregateError(errors, 'No installed source browser');
+      try {
+        const page = await browser.newPage();
+        await page.setContent('<main id="result"></main><script>document.querySelector("#result").textContent="browser ready"</script>');
+        if (await page.textContent('#result') !== 'browser ready') throw new Error('Site script did not execute');
+        console.log(engine + ': installed browser launch and page script passed');
+      } finally { await browser.close(); }
+    }
+  })().catch(error => { console.error(error); process.exitCode = 1; });
+`,
+  ],
+  { cwd: directory, env, encoding: 'utf8', timeout: 90000, windowsHide: true },
+);
+process.stdout.write(browserCheck.stdout ?? '');
+assert.equal(browserCheck.status, 0, `Packaged source browser failed: ${browserCheck.stderr}`);
+const codec = spawnSync(
+  resolve(directory, 'node.exe'),
+  [
+    '--input-type=module',
+    '-e',
+    "import sharp from 'sharp'; const bytes = await sharp({create:{width:8,height:8,channels:3,background:'#abc'}}).webp().toBuffer(); if (!bytes.length) process.exit(1);",
+  ],
+  { cwd: directory, encoding: 'utf8', timeout: 15000, windowsHide: true },
+);
+assert.equal(codec.status, 0, `Packaged cover codec failed: ${codec.stderr}`);
 const temporary = await mkdtemp(join(tmpdir(), 'moya-native-mangayomi-'));
 const vaultDirectory = join(temporary, 'vault'),
   vaultKey = '23'.repeat(32);
@@ -42,29 +97,43 @@ const review = await installed.inspect(
 );
 await installed.install(review.id, review.revision, new AbortController().signal);
 installed.close();
-const env = Object.fromEntries(
-  ['SystemRoot', 'WINDIR', 'TMP', 'TEMP'].flatMap((key) => (process.env[key] ? [[key, process.env[key]!]] : [])),
-);
+
 const child = spawn(resolve(directory, 'node.exe'), [resolve(directory, 'native-entry.mjs')], {
   cwd: directory,
   env,
   windowsHide: true,
   stdio: ['pipe', 'pipe', 'pipe'],
 });
+child.stderr.on('data', (chunk) => process.stderr.write(chunk));
 const exited = once(child, 'exit');
 const deadline = setTimeout(() => child.kill(), 25000);
 const lines = createInterface({ input: child.stdout });
+async function nextLine() {
+  const [line] = await Promise.race([
+    once(lines, 'line'),
+    exited.then(([code, signal]) => {
+      throw new Error(`Packaged host exited before replying: ${code}, ${signal}`);
+    }),
+  ]);
+  return line as string;
+}
 let connection: Promise<{ endpoint: string }> | undefined;
 const execution = new NativePackageExecution(async <T>(_command: string, args?: Record<string, unknown>) => {
   connection ??= (async () => {
-    const ready = once(lines, 'line');
+    const ready = nextLine();
+    console.log('Starting packaged native host');
     child.stdin.write(
-      JSON.stringify({ token: args?.sessionToken, origin: 'http://tauri.localhost', vaultDirectory, vaultKey }) + '\n',
+      JSON.stringify({ token: args?.sessionToken, origin: 'http://tauri.localhost', vaultDirectory }) + '\n',
     );
-    return JSON.parse((await ready)[0]) as { endpoint: string };
+    return JSON.parse(await ready) as { endpoint: string };
   })();
   return (await connection) as T;
 });
+async function changeVault(key: string | null) {
+  const response = nextLine();
+  child.stdin.write(JSON.stringify({ command: 'vault', key }) + '\n');
+  return JSON.parse(await response) as { ok?: boolean; error?: string };
+}
 const original = 'Original\r\n\r\n  Untouched bytes.\n';
 const pkg = await verifyMoyaExtension(
   await buildMoyaExtension({
@@ -80,6 +149,16 @@ const pkg = await verifyMoyaExtension(
 );
 const sourceId = 'org.example.catalog.source';
 try {
+  await execution.ready();
+  const settings = await execution.networkSettings();
+  const saved = await execution.networkSettings({ revision: settings.revision, defaultProxy: '' });
+  assert.deepEqual(await changeVault(vaultKey), { ok: true });
+  assert.deepEqual(await execution.networkSettings(), saved, 'Session network settings must survive unlock');
+  assert.deepEqual(await changeVault(null), { ok: true });
+  await assert.rejects(execution.networkSettings(), 'A locked profile must not silently fall back to direct');
+  assert.deepEqual(await changeVault(vaultKey), { ok: true });
+  assert.deepEqual(await execution.networkSettings(), saved);
+  console.log('Packaged vault transfer, lock and reopen passed');
   const inventory = (await execution.mangayomi.request({ action: 'list' })) as {
     available: boolean;
     sources: { descriptor: { id: string } }[];
@@ -107,6 +186,7 @@ try {
   const loop = execution.invoke(pkg, 'source.listWorks', { sourceId, query: 'loop' }, abort.signal);
   const rejected = assert.rejects(loop);
   await new Promise((resolve) => setTimeout(resolve, 350));
+  assert.deepEqual(await changeVault(null), { error: 'source_vault_busy' });
   const cancelledAt = Date.now();
   abort.abort();
   await rejected;

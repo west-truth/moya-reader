@@ -70,6 +70,133 @@ function createHarness() {
 }
 
 describe('annotations controller contracts', () => {
+  it('does not create a paragraph highlight without a selection', async () => {
+    const harness = createHarness();
+    harness.reader.getSelection = () => undefined;
+    const result = await harness.persistence.setHighlight(
+      { novel, chapter: chapters[0], reader: harness.reader, readerProgress: 0, highlights: [] },
+      'yellow',
+    );
+    expect(result).toBeUndefined();
+    expect(harness.repository.saveHighlight).not.toHaveBeenCalled();
+  });
+
+  it('stores each selected paragraph, reapplies color without toggling, and deletes the selected highlights', async () => {
+    const harness = createHarness();
+    const second = { ...paragraph, id: 'paragraph_2', text: '두 번째 본문 문장', index: 1 };
+    harness.reader.getCachedParagraphById = (id) => (id === second.id ? second : paragraph);
+    const selection = {
+      paragraphId: paragraph.id,
+      text: '문장\n두 번째',
+      parts: [
+        { paragraphId: paragraph.id, text: '문장' },
+        { paragraphId: second.id, text: '두 번째' },
+      ],
+    };
+    const context = { novel, chapter: chapters[0], reader: harness.reader, readerProgress: 0 };
+    const saved = await harness.persistence.setHighlight(
+      { ...context, highlights: [] },
+      'yellow',
+      undefined,
+      selection,
+    );
+    expect(saved?.highlights.map(({ paragraphId, quote }) => ({ paragraphId, quote }))).toEqual(
+      selection.parts.map(({ paragraphId, text }) => ({ paragraphId, quote: text })),
+    );
+    const again = await harness.persistence.setHighlight(
+      { ...context, highlights: saved!.highlights },
+      'yellow',
+      undefined,
+      selection,
+    );
+    expect(again?.highlights).toEqual(saved?.highlights);
+    expect(harness.repository.deleteHighlight).not.toHaveBeenCalled();
+    const removed = await harness.persistence.setHighlight(
+      { ...context, highlights: again!.highlights },
+      'remove',
+      undefined,
+      selection,
+    );
+    expect(removed?.highlights).toEqual([]);
+    expect(harness.repository.deleteHighlight).toHaveBeenCalledTimes(2);
+  });
+
+  it('can retry a partially saved selection without deleting the already saved part', async () => {
+    const harness = createHarness();
+    const second = { ...paragraph, id: 'paragraph_2', text: '다음 문장' };
+    harness.reader.getCachedParagraphById = (id) => (id === second.id ? second : paragraph);
+    const save = vi.mocked(harness.repository.saveHighlight).getMockImplementation()!;
+    let failed = false;
+    vi.mocked(harness.repository.saveHighlight).mockImplementation(async (row, options) => {
+      if (row.paragraphId === second.id && !failed) {
+        failed = true;
+        throw new Error('offline');
+      }
+      return save(row, options);
+    });
+    const context = { novel, chapter: chapters[0], reader: harness.reader, readerProgress: 0 };
+    const selection = {
+      text: '본문\n다음',
+      paragraphId: paragraph.id,
+      parts: [
+        { paragraphId: paragraph.id, text: '본문' },
+        { paragraphId: second.id, text: '다음' },
+      ],
+    };
+    await expect(
+      harness.persistence.setHighlight({ ...context, highlights: [] }, 'yellow', undefined, selection),
+    ).rejects.toThrow('offline');
+    expect(harness.collections().highlights).toHaveLength(1);
+    const result = await harness.persistence.setHighlight(
+      { ...context, highlights: harness.collections().highlights },
+      'yellow',
+      undefined,
+      selection,
+    );
+    expect(result?.highlights).toHaveLength(2);
+    expect(harness.repository.deleteHighlight).not.toHaveBeenCalled();
+  });
+
+  it('removes a highlight even when the selection only crosses one end of it', async () => {
+    const harness = createHarness();
+    const context = { novel, chapter: chapters[0], reader: harness.reader, readerProgress: 0, highlights: [] };
+    const saved = await harness.persistence.setHighlight(context, 'yellow', undefined, {
+      paragraphId: paragraph.id,
+      text: '문 문',
+    });
+    const removed = await harness.persistence.setHighlight(
+      { ...context, highlights: saved!.highlights },
+      'remove',
+      undefined,
+      {
+        paragraphId: paragraph.id,
+        text: '본문',
+      },
+    );
+    expect(removed?.highlights).toEqual([]);
+  });
+
+  it('validates every paragraph before saving a selection from an outdated view', async () => {
+    const harness = createHarness();
+    const selection = {
+      paragraphId: paragraph.id,
+      text: '본문\n없는 문장',
+      parts: [
+        { paragraphId: paragraph.id, text: '본문' },
+        { paragraphId: paragraph.id, text: '없는 문장' },
+      ],
+    };
+    await expect(
+      harness.persistence.setHighlight(
+        { novel, chapter: chapters[0], reader: harness.reader, readerProgress: 0, highlights: [] },
+        'yellow',
+        undefined,
+        selection,
+      ),
+    ).rejects.toThrow('highlight_selection_stale');
+    expect(harness.repository.saveHighlight).not.toHaveBeenCalled();
+  });
+
   it('creates v2 IDs and preserves IDs when annotations are edited', async () => {
     const harness = createHarness();
     const context = {

@@ -1,3 +1,5 @@
+import { taskProgressPercent } from '../../components/task-progress';
+import { randomUuid } from '../../utils/random-uuid';
 import { useSourceWorkLayout } from './source-work-layout';
 import { sourceCachePolicy, sourcePageTime, transientSourceFailure } from '../../external-sources/cache-policy';
 import { storedSourcePage, saveSourceCache } from '../../external-sources/cached-page';
@@ -394,7 +396,7 @@ function currentIso(): string {
 function externalImportOperationId(scope: string): string {
   const nonce =
     typeof globalThis.crypto?.randomUUID === 'function'
-      ? globalThis.crypto.randomUUID()
+      ? randomUuid()
       : Array.from(globalThis.crypto.getRandomValues(new Uint32Array(4)), (value) => value.toString(16)).join('');
   return persistentId128('external_import_operation', [scope, currentIso(), nonce]);
 }
@@ -1943,7 +1945,7 @@ export function useExternalSourceController(options: UseExternalSourceController
         });
 
       if (collection.seriesProfile?.kind === 'document_series') {
-        const batchId = `external-document-series-${crypto.randomUUID()}`;
+        const batchId = `external-document-series-${randomUuid()}`;
         const taskIdByItemKey = new Map<string, string>();
         const serialQueue: ActiveSerialImportQueue = {
           sourceId,
@@ -2135,6 +2137,7 @@ export function useExternalSourceController(options: UseExternalSourceController
                       ...task,
                       phase: 'failed',
                       percent: undefined,
+                      measurement: undefined,
                       error: isAbort(error)
                         ? '다운로드를 취소했습니다.'
                         : error instanceof Error
@@ -2295,10 +2298,32 @@ export function useExternalSourceController(options: UseExternalSourceController
                 port: hostedPort!,
                 items: importable,
                 signal: abort.signal,
-                onStage: (item, phase) => {
-                  if (!mountedRef.current) return;
+                onProgress: (item, value) => {
+                  if (!mountedRef.current || abort.signal.aborted) return;
                   const id = taskIdByItemKey.get(externalItemKeyId(item.key));
-                  setTasks((current) => current.map((task) => (task.id === id ? { ...task, phase } : task)));
+                  setTasks((current) =>
+                    current.map((task) =>
+                      task.id === id && ['queued', 'downloading', 'verifying'].includes(task.phase)
+                        ? {
+                            ...task,
+                            phase: value.phase === 'downloading' ? 'downloading' : 'verifying',
+                            measurement: value,
+                            percent: taskProgressPercent(value),
+                          }
+                        : task,
+                    ),
+                  );
+                },
+                onStage: (item, phase) => {
+                  if (!mountedRef.current || abort.signal.aborted) return;
+                  const id = taskIdByItemKey.get(externalItemKeyId(item.key));
+                  setTasks((current) =>
+                    current.map((task) =>
+                      task.id === id && task.phase !== 'cancelling'
+                        ? { ...task, phase, percent: undefined, measurement: undefined }
+                        : task,
+                    ),
+                  );
                 },
               });
           }
@@ -2351,7 +2376,7 @@ export function useExternalSourceController(options: UseExternalSourceController
               setTasks((current) =>
                 current.map((task) =>
                   task.id === activeTaskId
-                    ? { ...task, phase: 'downloading', percent: undefined, error: undefined }
+                    ? { ...task, phase: 'downloading', percent: undefined, measurement: undefined, error: undefined }
                     : task,
                 ),
               );
@@ -2692,7 +2717,9 @@ export function useExternalSourceController(options: UseExternalSourceController
             : current
                 .filter((task) => task.batchId !== batchId || task.id === activeTaskId)
                 .map((task) =>
-                  task.id === activeTaskId ? { ...task, phase: 'failed', percent: undefined, error: message } : task,
+                  task.id === activeTaskId
+                    ? { ...task, phase: 'failed', percent: undefined, measurement: undefined, error: message }
+                    : task,
                 ),
         );
         optionsRef.current.notify(

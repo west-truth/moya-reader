@@ -1,0 +1,26 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "Moya",
+  "identifier": "app.moya.reader",
+  "build": {
+    "beforeBuildCommand": "pnpm build && pnpm collector:bundle && pnpm extension:bundle-native && node scripts/desktop/create-portable-payload.mjs"
+  },
+  "app": {
+    "windows": [
+      {
+        "title": "모야 - 텍스트 및 만화 뷰어",
+        "width": 1280,
+        "height": 820,
+        "minWidth": 720,
+        "minHeight": 640,
+        "decorations": false,
+        "shadow": true,
+        "create": false
+      }
+    ]
+  },
+  "bundle": {
+    "active": false,
+    "resources": {}
+  }
+}

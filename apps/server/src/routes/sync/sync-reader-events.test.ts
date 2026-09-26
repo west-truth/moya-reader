@@ -1,4 +1,5 @@
 import pg from 'pg';
+import { syncPayloadIntegrityHash } from '@noveldesk/text-core/identity/sync';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { SyncEvent } from '@noveldesk/contracts/sync';
 import { validateSyncEventPayload } from './event-contracts.js';
@@ -121,7 +122,14 @@ describe('sync reader event routes', () => {
         quads: [{ x: 0.1, y: 0.2, width: 0.3, height: 0.04 }],
       },
       body: 'memo',
+      quote: 'selected words',
       color: 'yellow',
+      textAnchorRemap: {
+        status: 'remapped',
+        fromTextRevisionId: 'revision-old',
+        targetTextRevisionId: 'revision-1',
+        updatedAt,
+      },
       createdAt: updatedAt,
       updatedAt,
     };
@@ -152,8 +160,10 @@ describe('sync reader event routes', () => {
       2,
       'text_note',
       JSON.stringify(annotation.anchor),
+      'selected words',
       'memo',
       'yellow',
+      JSON.stringify(annotation.textAnchorRemap),
       updatedAt,
       updatedAt,
     ]);
@@ -162,7 +172,10 @@ describe('sync reader event routes', () => {
 
   it('validates fixed-document annotation page ownership before accepting sync', async () => {
     const client = {
-      query: vi.fn(async () => ({ rowCount: 1, rows: [{ page_hash: 'page-hash' }] })),
+      query: vi.fn(async () => ({
+        rowCount: 1,
+        rows: [{ format: 'pdf', raw_text_hash: 'source-hash', chapter_id: 'chapter-3' }],
+      })),
     } as unknown as pg.PoolClient;
     const event: SyncEvent = {
       id: 'event-document-annotation-validation',
@@ -180,7 +193,7 @@ describe('sync reader event routes', () => {
             kind: 'fixed_region',
             bookId: 'book_1',
             pageIndex: 2,
-            pageHash: 'page-hash',
+            pageHash: 'source-hash:pdf-page:2',
             quads: [{ x: 0.1, y: 0.2, width: 0.3, height: 0.4 }],
           },
           createdAt: '2026-08-01T00:00:00.000Z',
@@ -191,7 +204,7 @@ describe('sync reader event routes', () => {
     };
 
     await expect(validateSyncEventPayload(client, event)).resolves.toEqual({ ok: true });
-    expect(client.query).toHaveBeenCalledWith(expect.stringContaining('document_pages'), ['book_1', 2]);
+    expect(client.query).toHaveBeenCalledWith(expect.stringContaining('from library_books'), ['book_1', 2, null]);
     await expect(
       validateSyncEventPayload(client, {
         ...event,
@@ -210,8 +223,8 @@ describe('sync reader event routes', () => {
     const client = {
       query: vi.fn(async (sql: string, params?: unknown[]) => {
         queries.push({ sql, params });
-        if (sql.includes('select page_hash from document_pages')) {
-          return { rowCount: 1, rows: [{ page_hash: 'page-hash' }] };
+        if (sql.includes('from library_books')) {
+          return { rowCount: 1, rows: [{ format: 'pdf', raw_text_hash: 'source-hash', chapter_id: 'chapter-3' }] };
         }
         return { rowCount: 1, rows: [] };
       }),
@@ -221,7 +234,7 @@ describe('sync reader event routes', () => {
       id: 'document-order-1',
       bookId: 'book_1',
       pageIndex: 2,
-      pageHash: 'page-hash',
+      pageHash: 'source-hash:pdf-page:2',
       sourceRevisionId: 'revision-hash',
       orderedBlockFingerprints: ['block-b', 'block-a'],
       excludedBlockFingerprints: ['footer'],
@@ -254,7 +267,7 @@ describe('sync reader event routes', () => {
       'book_1',
       'user_test',
       2,
-      'page-hash',
+      'source-hash:pdf-page:2',
       'revision-hash',
       JSON.stringify(orderOverride.orderedBlockFingerprints),
       JSON.stringify(orderOverride.excludedBlockFingerprints),
@@ -381,6 +394,7 @@ describe('sync reader event routes', () => {
         if (sql.includes('from reading_positions') && sql.includes('should_accept')) {
           return { rowCount: 1, rows: [{ should_accept: false }] };
         }
+        if (sql.includes('from sync_events where id = $1')) return { rowCount: 0, rows: [] };
         if (sql.includes('insert into sync_events') || sql.includes('insert into reading_positions')) {
           throw new Error('stale events should not be inserted or materialized');
         }
@@ -629,15 +643,15 @@ describe('sync reader event routes', () => {
     expect(materialized).toEqual([
       {
         sql: expect.stringContaining('update bookmarks set deleted_at'),
-        params: ['bookmark_1', 'user_test', '2026-07-05T00:06:00.000Z'],
+        params: ['bookmark_1', 'user_test', '2026-07-05T00:06:00.000Z', 'book_1'],
       },
       {
         sql: expect.stringContaining('update highlights set deleted_at'),
-        params: ['highlight_1', 'user_test', '2026-07-05T00:07:00.000Z'],
+        params: ['highlight_1', 'user_test', '2026-07-05T00:07:00.000Z', 'book_1'],
       },
       {
         sql: expect.stringContaining('update notes set deleted_at'),
-        params: ['note_1', 'user_test', '2026-07-05T00:08:00.000Z'],
+        params: ['note_1', 'user_test', '2026-07-05T00:08:00.000Z', 'book_1'],
       },
     ]);
 
@@ -656,6 +670,7 @@ describe('sync reader event routes', () => {
           return { rowCount: 1, rows: [{ exists: true }] };
         if (sql.includes('join book_content_revisions')) return { rowCount: 1, rows: [{ should_accept: true }] };
         if (sql.includes('should_accept')) return { rowCount: 1, rows: [{ should_accept: false }] };
+        if (sql.includes('from sync_events where id = $1')) return { rowCount: 0, rows: [] };
         if (
           sql.includes('insert into sync_events') ||
           sql.includes('insert into bookmarks') ||
@@ -788,6 +803,39 @@ describe('sync reader event routes', () => {
     });
     expect(client.query).toHaveBeenCalledWith('commit');
 
+    await app.close();
+  });
+
+  it('accepts an identical replay after a newer position and rejects a changed event with the same ID', async () => {
+    const { pool } = syncRoundTripPool();
+    const app = await appWithSync(pool);
+    const older = readingPositionEvent('replayed_position', '2026-07-05T01:00:00.000Z');
+    const newer = readingPositionEvent('newer_position', '2026-07-05T02:00:00.000Z');
+    for (const event of [older, newer]) {
+      const response = await app.inject({ method: 'POST', url: '/api/sync/events', payload: v2PushEnvelope([event]) });
+      expect(response.statusCode).toBe(200);
+      expect(response.json().acceptedIds).toEqual([event.id]);
+    }
+
+    const replay = await app.inject({ method: 'POST', url: '/api/sync/events', payload: v2PushEnvelope([older]) });
+    expect(replay.statusCode).toBe(200);
+    expect(replay.json()).toMatchObject({ accepted: 0, acceptedIds: [older.id] });
+
+    const changedPayload = {
+      position: { ...(older.payload as { position: Record<string, unknown> }).position, scrollTop: 999 },
+    };
+    const changed = {
+      ...older,
+      payload: changedPayload,
+      revision: older.revision
+        ? { ...older.revision, payloadHash: syncPayloadIntegrityHash(changedPayload) }
+        : undefined,
+    };
+    const collision = await app.inject({ method: 'POST', url: '/api/sync/events', payload: v2PushEnvelope([changed]) });
+    expect(collision.statusCode).toBe(200);
+    expect(collision.json().rejected).toEqual([
+      { id: older.id, reason: 'invalid', message: 'sync event ID already has different content' },
+    ]);
     await app.close();
   });
 });

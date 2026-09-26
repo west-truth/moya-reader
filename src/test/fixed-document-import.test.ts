@@ -233,6 +233,7 @@ describe('fixed document import', () => {
 
     const assets: ParsedNovelImportAsset[] = [];
     for await (const asset of parsed.consumeEmbeddedAssets!()) assets.push(asset);
+    expect(parsed.embeddedAssetCount).toBe(assets.length);
     expect(
       assets
         .filter((asset) => asset.kind === 'document_page')

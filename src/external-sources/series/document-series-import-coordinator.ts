@@ -1,3 +1,4 @@
+import { randomUuid } from '../../utils/random-uuid';
 import type { ExtensionContributionId } from '@noveldesk/extension-contracts';
 import type { Novel } from '../../domain/types';
 import type { BookAssetRepository } from '../../repositories/book-asset-repository';
@@ -323,7 +324,7 @@ async function runDocumentSeries(
           ? await hashBlobInChunks(assembled.file, { shouldCancel: () => options.signal.aborted })
           : base.novel?.sourceContentHash);
       if (!sourceHash) throw new Error('저장된 원본을 확인하지 못했습니다.');
-      const operationId = crypto.randomUUID();
+      const operationId = randomUuid();
       const candidates = new Map(previous.map((link) => [externalItemKeyId(link.source), link]));
       for (const item of batch) {
         const key = externalItemKeyId(item.key);

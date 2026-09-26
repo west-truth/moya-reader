@@ -16,6 +16,28 @@ export interface SourceCredentialVault {
   retain?(packageId: string, epoch: string | undefined): void;
 }
 
+/** Keeps public native sources available while the device credential store is locked. */
+export class SessionSourceCredentialVault implements SourceCredentialVault {
+  private readonly values = new Map<string, SourceAuthenticationInput>();
+  read(scope: string): SourceAuthenticationInput | undefined {
+    return this.values.get(scope);
+  }
+  write(scope: string, value: SourceAuthenticationInput | undefined): void {
+    if (value) this.values.set(scope, value);
+    else this.values.delete(scope);
+  }
+  transferTo(target: SourceCredentialVault): void {
+    for (const [scope, value] of this.values) target.write(scope, value);
+    this.values.clear();
+  }
+  retain(packageId: string, epoch: string | undefined): void {
+    for (const scope of this.values.keys()) {
+      const [owner, , savedEpoch] = JSON.parse(scope) as string[];
+      if (owner === packageId && (!epoch || savedEpoch !== epoch)) this.values.delete(scope);
+    }
+  }
+}
+
 /** Separate from settings/backups. The host supplies the owner directory and a protected 256-bit key. */
 export class EncryptedSourceCredentialVault implements SourceCredentialVault {
   constructor(
@@ -76,5 +98,39 @@ export class EncryptedSourceCredentialVault implements SourceCredentialVault {
     } finally {
       rmSync(temporary, { force: true });
     }
+  }
+}
+
+/** Native host switches only between requests; a locked saved profile must not fall back to direct networking. */
+export class SwitchableSourceCredentialVault implements SourceCredentialVault {
+  private current: SourceCredentialVault | undefined;
+  constructor(
+    private readonly directory: string,
+    key?: Buffer,
+    configured = false,
+  ) {
+    this.current = key
+      ? new EncryptedSourceCredentialVault(directory, key)
+      : configured
+        ? undefined
+        : new SessionSourceCredentialVault();
+  }
+  switchKey(key?: Buffer): void {
+    const next = key ? new EncryptedSourceCredentialVault(this.directory, key) : undefined;
+    if (next && this.current instanceof SessionSourceCredentialVault) this.current.transferTo(next);
+    this.current = next;
+  }
+  private vault(): SourceCredentialVault {
+    if (!this.current) throw new Error('source_vault_locked');
+    return this.current;
+  }
+  read(scope: string) {
+    return this.vault().read(scope);
+  }
+  write(scope: string, value: SourceAuthenticationInput | undefined) {
+    this.vault().write(scope, value);
+  }
+  retain(packageId: string, epoch: string | undefined) {
+    this.vault().retain?.(packageId, epoch);
   }
 }

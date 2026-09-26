@@ -122,12 +122,16 @@ export function createAnnotationActions(input: AnnotationActionInput) {
       }
     },
     async setHighlight(
-      color: ReaderHighlight['color'],
+      color: ReaderHighlight['color'] | 'remove',
       location = input.reader.getLocation(),
       selection = input.reader.getSelection(),
     ) {
       const context = mutationContext();
       if (!context) return;
+      if (!selection?.text.trim()) {
+        input.notify('하이라이트할 문장을 먼저 선택해 주세요.', 'info');
+        return;
+      }
       try {
         const result = await input.persistence.setHighlight(
           { ...context, highlights: input.highlights },
@@ -141,12 +145,22 @@ export function createAnnotationActions(input: AnnotationActionInput) {
         await committed();
         const messages = {
           created: '하이라이트를 저장했습니다.',
-          updated: '하이라이트 색상을 바꿨습니다.',
+          updated: '하이라이트 색상을 적용했습니다.',
           deleted: '하이라이트를 삭제했습니다.',
         } as const;
         input.notify(messages[result.status], result.status === 'deleted' ? 'info' : 'success');
       } catch (error) {
-        await reportPersistenceFailure(input, error, '하이라이트를 저장하지 못했습니다.');
+        // A selection can span several existing records. If a request failed midway,
+        // display the records that were actually committed and keep the selection for retry.
+        const saved = await input.repository.listHighlights(context.novel.id).catch(() => undefined);
+        if (saved && input.isNovelCurrent(context.novel.id)) input.setHighlights(saved);
+        await reportPersistenceFailure(
+          input,
+          error,
+          error instanceof Error && error.message === 'highlight_selection_stale'
+            ? '선택한 본문이 바뀌었습니다. 문장을 다시 선택해 주세요.'
+            : '하이라이트를 변경하지 못했습니다. 저장된 상태를 확인한 뒤 다시 시도해 주세요.',
+        );
       }
     },
     deleteBookmark: (id: string) =>

@@ -368,6 +368,7 @@ export function providerAttemptAwarePool(pool: pg.Pool): pg.Pool {
         }),
       };
     }
+    if (sql.includes('pg_advisory_xact_lock(hashtextextended(user_id, 764173))')) return { rows: [] };
     if (sql.includes('with target as materialized')) {
       const jobId = String(params?.[0]);
       const attemptId = String(params?.[1]);

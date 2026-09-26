@@ -1,3 +1,4 @@
+import { TaskProgressRing } from '../../components/TaskProgressRing';
 import { WorkViewControl } from '../../components/WorkViewControl';
 import {
   AlertTriangle,
@@ -40,7 +41,14 @@ import { formatBytes, formatCount } from '../../utils/format';
 import type { LibraryScreenProps } from '../library/library-screen-contract';
 import { LibraryMobileHeader, LibraryNavigationButton, LibrarySidebar } from '../library/LibraryChrome';
 import { BookCover } from '../library/BookCover';
-import { importTaskIsActive, importTaskLabel, type ImportTaskView } from '../import/import-task-projection';
+import {
+  importTaskIsActive,
+  importTaskLabel,
+  importTaskStageLabel,
+  importTaskDetail,
+  importTaskTone,
+  type ImportTaskView,
+} from '../import/import-task-projection';
 import { SourceReleasePanel } from './SourceReleasePanel';
 import { SourceReleaseMenu } from './SourceReleaseMenu';
 import { SourceDownloadRecovery } from './SourceDownloadRecovery';
@@ -142,7 +150,12 @@ function ReleaseDownloadAction({
         aria-label={`${item.title} ${cancelling ? '취소 중' : '다운로드 중단'}`}
         onClick={controller.cancel}
       >
-        <LoaderCircle size={16} className="spin" />
+        <TaskProgressRing
+          percent={task.percent}
+          label={importTaskStageLabel(task)}
+          detail={importTaskDetail(task)}
+          tone={importTaskTone(task)}
+        />
       </button>
     );
   }
@@ -335,7 +348,7 @@ function SourceReleaseRow({
       data-state={item.importState}
       data-reading-state={item.readingState}
       aria-current={item.readingState === 'current' ? 'location' : undefined}
-      aria-label={`${item.title}, ${task ? importTaskLabel(task) : (readingStateLabel ?? importStateLabel(item.importState))}`}
+      aria-label={`${item.title}, ${task ? importTaskStageLabel(task) : (readingStateLabel ?? importStateLabel(item.importState))}`}
     >
       <label className="source-hub-release-select">
         {selectable ? (
@@ -366,15 +379,13 @@ function SourceReleaseRow({
       </div>
       <span className="source-hub-release-updated">{updatedLabel(item.updatedAt) ?? '—'}</span>
       <span className={`source-hub-state is-${task?.phase ?? item.readingState ?? item.importState}`}>
-        {task && importTaskIsActive(task) ? (
-          <LoaderCircle size={12} className="spin" />
-        ) : item.readingState === 'current' ? (
+        {task && importTaskIsActive(task) ? null : item.readingState === 'current' ? (
           <Play size={11} fill="currentColor" />
         ) : item.readingState === 'read' || (!item.readingState && item.importState === 'imported') ? (
           <Check size={12} />
         ) : null}
         <span className="source-hub-state-label" title={task ? importTaskLabel(task) : undefined}>
-          {task ? importTaskLabel(task) : (readingStateLabel ?? importStateLabel(item.importState))}
+          {task ? importTaskStageLabel(task) : (readingStateLabel ?? importStateLabel(item.importState))}
         </span>
       </span>
       <ItemAction item={item} controller={controller} task={task} releaseList />
@@ -598,11 +609,6 @@ export default function SourceHubScreen({
                 </small>
               </span>
             </div>
-            {controller.detail && (
-              <div className="source-hub-detail-context">
-                <BookOpen size={16} /> 선택한 작품의 회차를 보고 있습니다.
-              </div>
-            )}
             <div className="source-hub-topbar-actions">
               {(seriesNovel || controller.busy) && (
                 <button className="ghost-btn" type="button" onClick={controller.close}>

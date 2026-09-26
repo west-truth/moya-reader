@@ -16,8 +16,15 @@ import type {
 
 /** Device installation is separate from server inventory and ordinary library backups. */
 export class LocalInstalledExtensions extends InstalledPackageSourceRegistry implements InstalledExtensionManager {
-  readonly apk?: import('./apk-extension-manager').ApkExtensionManager;
-  readonly mangayomi?: import('./apk-extension-manager').ApkExtensionManager;
+  private features?: { credentialVault: boolean; mangayomi: boolean; apk: boolean };
+  get apk(): import('./apk-extension-manager').ApkExtensionManager | undefined {
+    return this.features?.apk === false ? undefined : this.apkCatalog?.manager;
+  }
+  get mangayomi(): import('./apk-extension-manager').ApkExtensionManager | undefined {
+    return this.features?.mangayomi === false ? undefined : this.mgCatalog?.manager;
+  }
+  private apkReady = false;
+  private mgReady = false;
   private mgCatalog?: NativeApkCatalog;
   private mgSources?: InstalledPackageSourceRegistry<NativeApkCatalog>;
   private apkCatalog?: NativeApkCatalog;
@@ -36,6 +43,15 @@ export class LocalInstalledExtensions extends InstalledPackageSourceRegistry imp
   constructor(
     private readonly execution: PackageExecutionPort & {
       ready?(): Promise<unknown>;
+      portableVaultStatus?: () => Promise<import('./installed-extension-manager').PortableVaultStatus>;
+      portableVaultUnlock?: (
+        passphrase: string,
+      ) => Promise<import('./installed-extension-manager').PortableVaultStatus>;
+      portableVaultLock?: () => Promise<import('./installed-extension-manager').PortableVaultStatus>;
+      networkSettings?: (
+        request?: import('../../../packages/extension-contracts/source-network-settings').SourceNetworkSettingsRequest,
+        signal?: AbortSignal,
+      ) => Promise<import('../../../packages/extension-contracts/source-network-settings').SourceNetworkSettings>;
       apk?: NativeApkTransport;
       mangayomi?: NativeApkTransport;
     },
@@ -46,15 +62,31 @@ export class LocalInstalledExtensions extends InstalledPackageSourceRegistry imp
     if (execution.mangayomi) {
       this.mgCatalog = new NativeApkCatalog(execution.mangayomi, () => this.refresh());
       this.mgSources = new InstalledPackageSourceRegistry(this.mgCatalog);
-      this.mangayomi = this.mgCatalog.manager;
     }
     if (execution.apk) {
       this.apkCatalog = new NativeApkCatalog(execution.apk, () => this.refresh());
       this.apkSources = new InstalledPackageSourceRegistry(this.apkCatalog);
-      this.apk = this.apkCatalog.manager;
     }
   }
   getSnapshot = () => this.snapshot;
+  portableVaultStatus = () => this.execution.portableVaultStatus?.() ?? Promise.reject(new Error('unsupported'));
+  portableVaultUnlock = async (passphrase: string) => {
+    const status = await (this.execution.portableVaultUnlock?.(passphrase) ?? Promise.reject(new Error('unsupported')));
+    await this.refresh();
+    return status;
+  };
+  portableVaultLock = async () => {
+    const status = await (this.execution.portableVaultLock?.() ?? Promise.reject(new Error('unsupported')));
+    await this.refresh();
+    return status;
+  };
+  networkSettings = (
+    request?: import('../../../packages/extension-contracts/source-network-settings').SourceNetworkSettingsRequest,
+    signal?: AbortSignal,
+  ) => {
+    if (!this.execution.networkSettings) return Promise.reject(new Error('source_network_unavailable'));
+    return this.execution.networkSettings(request, signal);
+  };
   listRepositories = () => this.repositories.list();
   refreshRepository = (url: string, signal?: AbortSignal) => this.repositories.refresh(url, signal);
   removeRepository = (url: string, revision: number) => this.repositories.remove(url, revision);
@@ -94,24 +126,53 @@ export class LocalInstalledExtensions extends InstalledPackageSourceRegistry imp
     if (this.pending) return this.pending;
     this.pending = (async () => {
       try {
-        await this.execution.ready?.();
+        const connection = await this.execution.ready?.();
+        this.features =
+          connection && typeof connection === 'object' && 'features' in connection
+            ? (connection.features as typeof this.features)
+            : undefined;
         await this.catalog.refresh();
-        await this.apkCatalog?.refresh().catch(() => undefined);
-        await this.mgCatalog?.refresh().catch(() => undefined);
+        const failures: string[] = [];
+        this.apkReady = false;
+        this.mgReady = false;
+        if (this.apk) {
+          try {
+            await this.apkCatalog?.refresh();
+            this.apkReady = true;
+          } catch {
+            failures.push('APK 확장 정보를 불러오지 못했습니다.');
+          }
+        }
+        if (this.mangayomi) {
+          try {
+            await this.mgCatalog?.refresh();
+            this.mgReady = true;
+          } catch {
+            failures.push('Mangayomi 확장 정보를 불러오지 못했습니다.');
+          }
+        }
         const value = {
           available: true,
           packages: await this.store.list(),
           sources: this.getExternalSources(),
           errors: this.catalog.getErrors(),
+          error: failures.length
+            ? `${failures.join(' ')} 다시 불러와 주세요.`
+            : this.features?.credentialVault === false
+              ? '소스 보관소를 열어 설정과 로그인을 저장하세요.'
+              : undefined,
         };
         const { revision, ...previous } = this.snapshot;
         if (JSON.stringify(value) === JSON.stringify(previous)) return;
         this.snapshot = { ...value, revision: revision + 1 };
       } catch (error) {
+        this.apkReady = false;
+        this.mgReady = false;
         this.snapshot = {
           ...this.snapshot,
           revision: this.snapshot.revision + 1,
           available: false,
+          sources: [],
           error:
             typeof error === 'string' && /[가-힣]/.test(error)
               ? error
@@ -165,8 +226,8 @@ export class LocalInstalledExtensions extends InstalledPackageSourceRegistry imp
   override getExternalSources() {
     return [
       ...super.getExternalSources(),
-      ...(this.apkSources?.getExternalSources() ?? []),
-      ...(this.mgSources?.getExternalSources() ?? []),
+      ...(this.apkReady && this.apk ? (this.apkSources?.getExternalSources() ?? []) : []),
+      ...(this.mgReady && this.mangayomi ? (this.mgSources?.getExternalSources() ?? []) : []),
     ];
   }
   override getExternalSourceStatus(id: string) {
@@ -193,9 +254,9 @@ export class LocalInstalledExtensions extends InstalledPackageSourceRegistry imp
       : super.resolveExternalSourceCover(...args);
   }
   private compatible(id: string) {
-    return this.apkCatalog?.getSource(id)
+    return this.apkReady && this.apk && this.apkCatalog?.getSource(id)
       ? this.apkSources
-      : this.mgCatalog?.getSource(id)
+      : this.mgReady && this.mangayomi && this.mgCatalog?.getSource(id)
         ? this.mgSources
         : undefined;
   }

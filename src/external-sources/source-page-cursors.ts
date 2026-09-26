@@ -1,3 +1,4 @@
+import { randomUuid } from '../utils/random-uuid';
 import type { ExternalItemPage, ExternalSourceListInput } from './contracts';
 import { sourceListIdentity } from './cache-policy';
 /** A cursor can only append to the source/query generation that produced its first page. */
@@ -27,7 +28,7 @@ export class SourcePageCursors {
       for (const [id, saved] of this.snapshots)
         if (saved.query === query || saved.expires <= Date.now()) this.snapshots.delete(id);
       if (page.nextCursor) {
-        token = crypto.randomUUID();
+        token = randomUuid();
         if (this.snapshots.size >= 1000) this.snapshots.delete(this.snapshots.keys().next().value!);
         this.snapshots.set(token, { query, expires: Date.now() + keep });
       }

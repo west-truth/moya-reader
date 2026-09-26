@@ -201,7 +201,14 @@ export async function registerWebNovelMetadataCollectorGateway(
   config: ServerConfig,
   options: WebNovelMetadataCollectorGatewayOptions = {},
 ): Promise<void> {
-  const fetchImpl = options.fetchImpl ?? globalThis.fetch.bind(globalThis);
+  const upstreamFetch = options.fetchImpl ?? globalThis.fetch.bind(globalThis);
+  const fetchImpl: typeof fetch = (input, init) => {
+    const token = config.webNovelMetadataCollectorSessionToken;
+    if (!token) return upstreamFetch(input, init);
+    const headers = new Headers(init?.headers);
+    headers.set('X-Moya-Collector-Token', token);
+    return upstreamFetch(input, { ...init, headers });
+  };
   const baseUrl = config.webNovelMetadataCollectorUrl;
   const remoteAuthEnabled = config.webNovelMetadataCollectorRemoteAuthEnabled === true;
 

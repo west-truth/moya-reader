@@ -3,6 +3,7 @@ import { FastifyInstance } from 'fastify';
 import { assertSecureServerConfig, type ServerConfig } from './config.js';
 import { SELF_HOST_SESSION_COOKIE, requestCookie } from './auth-cookie.js';
 import type { SelfHostAuthService } from './services/self-host-auth-service.js';
+import { isWebAssetRequest } from './routes/web-assets.js';
 
 function tokenFromAuthorizationHeader(value: string | undefined): string | undefined {
   if (!value) return undefined;
@@ -50,6 +51,7 @@ export async function registerAuthHook(
   if (!expectedToken && !selfHostAuth) return;
 
   app.addHook('onRequest', async (request, reply) => {
+    if (config.webRoot && isWebAssetRequest(request)) return;
     if (isPublicRequest(request.method, request.url)) return;
     const token = tokenFromAuthorizationHeader(request.headers.authorization);
     if (expectedToken && safeTokenEquals(token, expectedToken)) return;

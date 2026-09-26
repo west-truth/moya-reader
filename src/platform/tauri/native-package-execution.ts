@@ -10,8 +10,12 @@ import { validateRepositoryIndex, type RepositoryEntry } from '../../extensions/
 import { packageOperationMessage } from '../../extensions/packages/package-operation-error';
 import { NativeRequestQueue } from './native-request-queue';
 import type { SourceAuthenticationRequest, SourceAuthenticationStatus } from '@noveldesk/extension-contracts/package';
+import type { PortableVaultStatus } from '../../extensions/packages/installed-extension-manager';
 
-type Connection = { endpoint: string };
+type Connection = {
+  endpoint: string;
+  features?: { credentialVault: boolean; mangayomi: boolean; apk: boolean };
+};
 import {
   MAX_SOURCE_CONTENT_BYTES,
   MAX_SOURCE_IMAGES,
@@ -69,6 +73,22 @@ export class NativePackageExecution implements PackageExecutionPort {
     const invoke = this.invokeImpl ?? (await import('@tauri-apps/api/core')).invoke;
     return invoke<Connection>('desktop_extension_runtime_start', { sessionToken: this.token });
   }
+  private async portableVaultCommand(command: string, args?: Record<string, unknown>) {
+    const invoke = this.invokeImpl ?? (await import('@tauri-apps/api/core')).invoke;
+    return invoke<PortableVaultStatus>(command, args);
+  }
+  portableVaultStatus = () => this.portableVaultCommand('desktop_portable_vault_status');
+  portableVaultUnlock = (passphrase: string) =>
+    this.portableVaultCommand('desktop_portable_vault_unlock', { passphrase });
+  portableVaultLock = () => this.portableVaultCommand('desktop_portable_vault_lock');
+  async networkSettings(
+    request?: import('../../../packages/extension-contracts/source-network-settings').SourceNetworkSettingsRequest,
+    signal?: AbortSignal,
+  ): Promise<import('../../../packages/extension-contracts/source-network-settings').SourceNetworkSettings> {
+    return this.request('/network-settings', JSON.stringify(request ? { request } : {}), signal, (response) =>
+      response.json(),
+    ) as Promise<import('../../../packages/extension-contracts/source-network-settings').SourceNetworkSettings>;
+  }
   async listRepository(url: string, signal: AbortSignal) {
     return validateRepositoryIndex(
       await this.request('/repository-list', JSON.stringify({ url }), signal, (response) => response.json()),
@@ -124,6 +144,14 @@ export class NativePackageExecution implements PackageExecutionPort {
       });
       if (!response.ok) {
         const error = await response.json().catch(() => ({ error: 'native_execution_failed' }));
+        if (error?.error === 'source_vault_locked') throw new Error('소스 보관소의 잠금을 먼저 해제해 주세요.');
+        if (
+          path === '/network-settings' &&
+          ['source_network_conflict', 'source_network_unavailable', 'compatibility_preferences_invalid'].includes(
+            error?.error,
+          )
+        )
+          throw new Error(error.error);
         if (
           (path === '/apk' || path === '/mangayomi') &&
           [

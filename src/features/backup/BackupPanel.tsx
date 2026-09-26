@@ -1,3 +1,5 @@
+import { TaskProgressRing } from '../../components/TaskProgressRing';
+import { taskProgressPercent, taskProgressDetail, taskProgressLabel } from '../../components/task-progress';
 import { ArchiveRestore, DatabaseBackup, FileArchive, Upload } from 'lucide-react';
 import { useRef } from 'react';
 import { Dialog } from '../../shared/ui/Dialog';
@@ -14,6 +16,9 @@ const resolutionOptions: Array<{ value: BackupConflictResolution; label: string 
 export default function BackupPanel({ controller }: { controller: BackupFeatureController }) {
   const inputRef = useRef<HTMLInputElement>(null);
   const inspection = controller.inspection;
+  const progress = controller.progress;
+  const label = progress ? taskProgressLabel(progress) : '준비 중';
+  const detail = taskProgressDetail(progress);
   return (
     <Dialog
       open={controller.open}
@@ -31,6 +36,27 @@ export default function BackupPanel({ controller }: { controller: BackupFeatureC
         </div>
       ) : (
         <>
+          {controller.busy && (
+            <div className="backup-progress" role="status" aria-live="polite">
+              <TaskProgressRing
+                percent={taskProgressPercent(progress)}
+                label={label}
+                detail={detail}
+                tone={progress?.phase === 'downloading' || progress?.phase === 'uploading' ? 'transfer' : 'processing'}
+              />
+              <span>
+                <strong>
+                  {controller.operation === 'export'
+                    ? '백업 만들기'
+                    : controller.operation === 'restore'
+                      ? '백업 복원'
+                      : '백업 확인'}{' '}
+                  · {label}
+                </strong>
+                {detail && <small>{detail}</small>}
+              </span>
+            </div>
+          )}
           <section className="backup-action-block">
             <div>
               <DatabaseBackup size={22} />

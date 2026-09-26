@@ -355,3 +355,13 @@
     padding-block: 12px;
   }
 }
+
+@media (max-width: 480px) {
+  .selection-action-bar {
+    gap: 4px;
+    padding: 8px;
+  }
+  .selection-action-bar > span {
+    display: none;
+  }
+}

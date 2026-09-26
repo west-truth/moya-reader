@@ -119,7 +119,18 @@ test('persisted work identities and chapter order feed the ordinary image contra
     releases.map((r) => r.title),
     ['One', 'Two'],
   );
-  const downloaded = await invoke('getContent', { workId: work.id, releaseId: releases[0].id });
+  const progress = [];
+  const downloaded = await reopened.invoke(
+    source,
+    'source.getContent',
+    { workId: work.id, releaseId: releases[0].id },
+    new AbortController().signal,
+    { onProgress: (value) => progress.push(value) },
+  );
+  assert.deepEqual(progress, [
+    { phase: 'downloading', completed: 0, total: 1, unit: 'images' },
+    { phase: 'downloading', completed: 1, total: 1, unit: 'images' },
+  ]);
   assert.equal(downloaded.result.kind, 'images');
   assert.equal(downloaded.assets.size, 1);
   assert.equal(calls.filter((c) => c.method === 'chapters').length, 1);

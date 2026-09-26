@@ -12,13 +12,18 @@ import { ExtensionRepositoryBrowser } from './ExtensionRepositoryBrowser';
 import { SourceExtensionManagerPanel } from './SourceExtensionManagerPanel';
 import { ApkExtensionsPanel } from './ApkExtensionsPanel';
 import type { SourceExtensionManager } from '../../external-sources/extension-management';
+import { PortableSourceVault } from './PortableSourceVault';
 
 export function InstalledExtensionsPanel({
   manager,
   suwayomi,
+  sourceTarget,
+  onSourceTargetChange,
 }: {
   manager: InstalledExtensionManager;
   suwayomi?: SourceExtensionManager;
+  sourceTarget?: 'device' | 'server';
+  onSourceTargetChange?: (target: 'device' | 'server') => void;
 }) {
   const [apkRepository, setApkRepository] = useState<string>();
   const [showSuwayomi, setShowSuwayomi] = useState(false);
@@ -168,6 +173,16 @@ export function InstalledExtensionsPanel({
   );
   return (
     <section className="settings-section-card installed-extension-panel" aria-label="콘텐츠 소스 패키지">
+      {sourceTarget && onSourceTargetChange && (
+        <div className="installed-extension-actions" role="group" aria-label="소스 설치 위치">
+          <button type="button" aria-pressed={sourceTarget === 'device'} onClick={() => onSourceTargetChange('device')}>
+            이 PC
+          </button>
+          <button type="button" aria-pressed={sourceTarget === 'server'} onClick={() => onSourceTargetChange('server')}>
+            연결한 서버
+          </button>
+        </div>
+      )}
       <div className="settings-section-heading">
         <FilePlus2 size={18} aria-hidden="true" />
         <div>
@@ -309,6 +324,7 @@ export function InstalledExtensionsPanel({
           }}
         />
       </div>
+      <PortableSourceVault manager={manager} />
       <SourceNetworkSettingsPanel manager={manager} />
       {showUpdates && <ExtensionUpdatesPanel manager={manager} suwayomi={suwayomi} />}
       {showSuwayomi && suwayomi && <SourceExtensionManagerPanel manager={suwayomi} initialRepository={apkRepository} />}

@@ -582,6 +582,8 @@ export interface ParsedNovelImport {
   chapters: Chapter[];
   embeddedAssets?: ParsedNovelImportAsset[];
   consumeChapterParagraphs(): ParsedNovelImportChapterSource;
+  /** Exact total when the archive directory supplies it, without consuming image bytes. */
+  embeddedAssetCount?: number;
   consumeEmbeddedAssets?(): AsyncIterable<ParsedNovelImportAsset>;
 }
 

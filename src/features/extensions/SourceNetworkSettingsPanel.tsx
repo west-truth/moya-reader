@@ -10,6 +10,21 @@ export function SourceNetworkSettingsPanel({ manager }: { manager: InstalledExte
   const [error, setError] = useState('');
   const operation = useRef<AbortController>();
   useEffect(() => () => operation.current?.abort(), []);
+  useEffect(() => {
+    let previous = manager.getSnapshot().error;
+    return manager.subscribe(() => {
+      const current = manager.getSnapshot().error;
+      if (current === previous) return;
+      previous = current;
+      operation.current?.abort();
+      operation.current = undefined;
+      setBusy(false);
+      setSnapshot(undefined);
+      setAddress('');
+      setMessage('');
+      setError('');
+    });
+  }, [manager]);
   async function load() {
     if (!manager.networkSettings || snapshot || operation.current) return;
     const controller = new AbortController();
@@ -22,8 +37,13 @@ export function SourceNetworkSettingsPanel({ manager }: { manager: InstalledExte
         setSnapshot(result);
         setAddress(result.defaultProxy);
       }
-    } catch {
-      if (!controller.signal.aborted) setError('연결 설정을 불러오지 못했습니다. 다시 시도해 주세요.');
+    } catch (cause) {
+      if (!controller.signal.aborted)
+        setError(
+          cause instanceof Error && cause.message === '소스 보관소의 잠금을 먼저 해제해 주세요.'
+            ? cause.message
+            : '연결 설정을 불러오지 못했습니다. 다시 시도해 주세요.',
+        );
     } finally {
       if (operation.current === controller) {
         operation.current = undefined;
@@ -83,7 +103,10 @@ export function SourceNetworkSettingsPanel({ manager }: { manager: InstalledExte
         }}
       >
         <p className="field-help">소스별 연결 방식은 각 확장 옵션에서 변경할 수 있습니다.</p>
-        <p className="field-help">Moya 서버에서 연결 가능한 주소를 입력하세요. APK·Suwayomi는 별도 설정입니다.</p>
+        <p className="field-help">
+          {manager.target === 'device' ? '이 PC' : 'Moya 서버'}에서 연결 가능한 주소를 입력하세요. APK·Suwayomi는 별도
+          설정입니다.
+        </p>
         {snapshot && (
           <>
             <label className="compatibility-preference-field">
@@ -105,14 +128,14 @@ export function SourceNetworkSettingsPanel({ manager }: { manager: InstalledExte
             <p className="field-help">HTTP·HTTPS·SOCKS5 지원(인증 없음). 비우면 직접 연결합니다.</p>
             <p className="field-help">
               현재 기본값: {snapshot.defaultProxy || '직접 연결'}
-              {snapshot.origin === 'environment' ? ' (서버 환경 설정)' : ''}
+              {snapshot.origin === 'environment' ? ' (환경 기본값)' : ''}
             </p>
             <div className="installed-extension-actions">
               <button type="submit" disabled={busy}>
                 저장
               </button>
               <button type="button" disabled={busy} onClick={() => void save(true)}>
-                서버 기본값 복원
+                환경 기본값 복원
               </button>
             </div>
           </>

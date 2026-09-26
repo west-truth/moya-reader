@@ -21,9 +21,23 @@ describe('hosted image preparation HTTP boundary', () => {
     );
     const file = new File([await writer.close()], '1.cbz', { type: 'application/vnd.comicbook+zip' });
     let generation = 'one';
+    let release!: () => void;
+    let waitForDownload: Promise<void> | undefined;
+    let started!: () => void;
+    const downloading = new Promise<void>((resolve) => {
+      started = resolve;
+    });
     const registry = {
       getExternalSourceStatus: () => ({ state: 'connected', connectionGeneration: generation }),
-      downloadExternalSource: vi.fn(async () => ({ file, content: { kind: 'image_archive', file, format: 'cbz' } })),
+      downloadExternalSource: vi.fn(
+        async (...args: Parameters<ExternalSourceRegistryPort['downloadExternalSource']>) => {
+          const progress = args[4];
+          progress?.({ phase: 'downloading', completed: 12, total: 28, unit: 'images' });
+          started();
+          await waitForDownload;
+          return { file, content: { kind: 'image_archive', file, format: 'cbz' } };
+        },
+      ),
     } as unknown as ExternalSourceRegistryPort;
     const stage = vi.fn(async (archive: File) => {
       const manifest = await readSeriesImageArchiveManifest(archive);
@@ -52,7 +66,19 @@ describe('hosted image preparation HTTP boundary', () => {
     const payload = { key: { connectorId: 'fixture', remoteId: 'chapter' }, fileName: '1.cbz' };
     try {
       expect((await app.inject({ method: 'POST', url, payload })).statusCode).toBe(401);
-      const receipt = await app.inject({ method: 'POST', url, headers, payload });
+      waitForDownload = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      const progressId = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa';
+      const pending = app
+        .inject({ method: 'POST', url: `${url}?progressId=${progressId}`, headers, payload })
+        .then((r) => r);
+      await downloading;
+      const snapshot = await app.inject({ url: `${url}/progress/${progressId}`, headers });
+      expect(snapshot.json()).toEqual({ phase: 'downloading', completed: 12, total: 28, unit: 'images' });
+      expect((await app.inject(`${url}/progress/${progressId}`)).statusCode).toBe(401);
+      release();
+      const receipt = await pending;
       expect(receipt.statusCode).toBe(200);
       expect(receipt.headers['content-type']).toContain('application/json');
       expect(receipt.json()).not.toHaveProperty('file');

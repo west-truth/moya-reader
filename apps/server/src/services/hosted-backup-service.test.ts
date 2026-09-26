@@ -226,6 +226,52 @@ describe('hosted backup restore', () => {
           ],
         ],
         [
+          'listening_positions',
+          [
+            {
+              book_id: 'book_1',
+              user_id: 'old_user',
+              chapter_id: 'chapter_1',
+              anchor: { kind: 'reflowable_text', reader: { bookId: 'book_1', sectionId: 'chapter_1' } },
+              content_revision_id: 'revision_1',
+            },
+          ],
+        ],
+        [
+          'document_annotations',
+          [
+            {
+              id: 'document_note_1',
+              book_id: 'book_1',
+              user_id: 'old_user',
+              page_index: 0,
+              annotation_type: 'text_note',
+              anchor: { kind: 'fixed_page', bookId: 'book_1', pageIndex: 0, pageHash: 'page-hash' },
+              body: 'Keep this note',
+            },
+          ],
+        ],
+        [
+          'document_text_order_overrides',
+          [
+            {
+              id: 'text_order_1',
+              book_id: 'book_1',
+              user_id: 'old_user',
+              page_index: 0,
+              page_hash: 'page-hash',
+              source_revision_id: 'revision_1',
+              ordered_block_fingerprints: ['second', 'first'],
+              excluded_block_fingerprints: [],
+            },
+          ],
+        ],
+        ['comic_reading_profiles', [{ book_id: 'book_1', user_id: 'old_user', profile: { fit: 'width' } }]],
+        [
+          'spoken_text_rules',
+          [{ id: 'spoken_rule_1', book_id: 'book_1', user_id: 'old_user', rule: { text: 'test' } }],
+        ],
+        [
           'fixed_document_section_read_states',
           [
             {
@@ -309,6 +355,17 @@ describe('hosted backup restore', () => {
       '2026-08-30T01:06:00.000Z',
     ]);
     expect(calls.some((call) => call.sql.includes('insert into "voice_casting_states"'))).toBe(false);
+    for (const table of [
+      'listening_positions',
+      'document_annotations',
+      'document_text_order_overrides',
+      'comic_reading_profiles',
+      'spoken_text_rules',
+    ]) {
+      const inserted = calls.find((call) => call.sql.includes(`insert into "${table}"`));
+      expect(inserted?.values).toContain('user_1');
+      expect(JSON.stringify(inserted?.values)).toContain('book_1__copy_');
+    }
   });
 
   it('rolls back instead of reporting success when the rebuilt paragraph search index is incomplete', async () => {

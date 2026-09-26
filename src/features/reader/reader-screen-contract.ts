@@ -19,6 +19,7 @@ export type ReaderAddonTab = CoreReaderAddonTab | ExtensionContributionId;
 export type ReaderHighlightColor = ReaderHighlight['color'];
 
 export interface ReaderSelection {
+  readonly parts?: readonly { readonly paragraphId: string; readonly text: string }[];
   readonly text: string;
   readonly paragraphId: string;
 }
@@ -95,12 +96,12 @@ export interface ReaderScreenActions {
   readonly updateReadingProfile: (patch: ReadingProfileOverride) => void;
   readonly setReadingBookOverride: (enabled: boolean) => void;
   readonly toggleBookmark: (location: ReaderLocationSnapshot) => Promise<void>;
-  readonly addHighlight: (location: ReaderLocationSnapshot, selection?: ReaderSelection) => void;
+  readonly addHighlight: (location: ReaderLocationSnapshot, selection?: ReaderSelection) => void | Promise<void>;
   readonly highlightSelection: (
     location: ReaderLocationSnapshot,
     selection: ReaderSelection,
-    color: ReaderHighlightColor,
-  ) => void;
+    color: ReaderHighlightColor | 'remove',
+  ) => void | Promise<void>;
   readonly openSelectionNote: (selection: ReaderSelection) => void;
   readonly previewSelectionTTS: (selection: ReaderSelection) => void;
   readonly selectCorrectionSegment: (segmentId: string) => void;

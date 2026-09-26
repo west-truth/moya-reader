@@ -427,6 +427,8 @@ export function successfulInsertClient(onMaterialize: (sql: string, params?: unk
         sql === 'begin' ||
         sql === 'commit' ||
         sql === 'rollback' ||
+        sql === "set local lock_timeout = '2s'" ||
+        sql === 'lock table sync_events in share mode' ||
         sql.startsWith('savepoint ') ||
         sql.startsWith('rollback to savepoint ') ||
         sql.startsWith('release savepoint ')
@@ -483,12 +485,24 @@ export function syncRoundTripPool() {
 
   const client = {
     query: vi.fn(async (sql: string, params?: unknown[]) => {
-      if (sql === 'begin' || sql === 'commit' || sql === 'rollback') return { rowCount: 0, rows: [] };
+      if (
+        sql === 'begin' ||
+        sql === 'commit' ||
+        sql === 'rollback' ||
+        sql === "set local lock_timeout = '2s'" ||
+        sql === 'lock table sync_events in share mode'
+      )
+        return { rowCount: 0, rows: [] };
 
       if (sql.includes('where user_id = $1 and sequence > $2')) {
         expect(params?.[0]).toBe('user_test');
         const since = Number(params?.[1] ?? 0);
         return { rows: eventRows.filter((row) => row.sequence > since).slice(0, 500) };
+      }
+
+      if (sql.includes('from sync_events where id = $1')) {
+        const row = eventRows.find((event) => event.id === params?.[0]);
+        return { rowCount: row ? 1 : 0, rows: row ? [{ ...row, user_id: 'user_test' }] : [] };
       }
 
       if (sql.includes('from library_books') && sql.includes('for share')) {

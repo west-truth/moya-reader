@@ -1,3 +1,4 @@
+import { ServerAccessLink } from '../server-access/ServerAccessLink';
 import { publicAssetUrl } from '../../utils/public-asset-url';
 import { BrandWordmark } from '../../shared/ui/BrandWordmark';
 import {
@@ -99,7 +100,13 @@ function providerRuntimeLabel(runtime: ProviderExecutionRuntimeKind): string {
 }
 
 export function ApplicationInfoSettings(props: ApplicationInfoSettingsProps) {
-  const product = useOptionalAppRuntime()?.product;
+  const appRuntime = useOptionalAppRuntime();
+  const product = appRuntime?.product;
+  const reader = appRuntime?.readerRuntime;
+  const webAccessUrl =
+    props.platformRuntime.kind === 'browser' && reader?.mode === 'remote'
+      ? new URL((reader.apiBaseUrl ?? '/api').replace(/\/api\/?$/, '/') || '/', window.location.href).href
+      : undefined;
   const StoragePanel = product?.StoragePanel;
   const isAndroid = props.platformRuntime.kind === 'tauri-mobile' && /Android/i.test(props.platformRuntime.userAgent);
   const mediaSessionAvailable =
@@ -191,6 +198,14 @@ export function ApplicationInfoSettings(props: ApplicationInfoSettingsProps) {
               로그아웃
             </button>
           </div>
+        </section>
+      )}
+
+      {webAccessUrl && (
+        <section aria-labelledby="server-access-title">
+          <h3 id="server-access-title">다른 기기에서 서재 열기</h3>
+          <ServerAccessLink url={webAccessUrl} />
+          <p>같은 서버의 서재를 엽니다. 해당 주소에 접속할 수 있는 네트워크가 필요합니다.</p>
         </section>
       )}
 

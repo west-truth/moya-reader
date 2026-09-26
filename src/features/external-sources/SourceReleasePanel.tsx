@@ -46,8 +46,6 @@ export function SourceReleasePanel({
       !controller.stale,
   );
   const page = paginateReleases(sorted, requestedPage);
-  const headingRef = useRef<HTMLHeadingElement>(null);
-  const panelRef = useRef<HTMLElement>(null);
   const cursor = controller.nextCursor;
   const partial = Boolean(cursor || controller.listError || controller.stale);
 
@@ -67,27 +65,11 @@ export function SourceReleasePanel({
     if (selectionRef.current) selectionRef.current.indeterminate = selectedHere > 0 && selectedHere < selectable.length;
   }, [selectedHere, selectable.length]);
 
-  const moveToPage = (next: number) => {
-    setRequestedPage(next);
-    if (typeof window === 'undefined') return;
-    window.requestAnimationFrame(() => {
-      headingRef.current?.focus({ preventScroll: true });
-      if (panelRef.current && panelRef.current.getBoundingClientRect().top < 0)
-        panelRef.current.scrollIntoView({ block: 'start' });
-    });
-  };
-
   return (
-    <section
-      ref={panelRef}
-      className="source-hub-items chapter-panel source-hub-release-panel"
-      aria-labelledby="source-items-title"
-    >
+    <section className="source-hub-items chapter-panel source-hub-release-panel" aria-labelledby="source-items-title">
       <div className="source-hub-section-heading source-hub-items-heading chapter-panel-heading">
         <div>
-          <h2 id="source-items-title" ref={headingRef} tabIndex={-1}>
-            회차
-          </h2>
+          <h2 id="source-items-title">회차</h2>
           <span>
             {formatCount(items.length)}화{partial ? ' 불러옴' : ''}
           </span>
@@ -279,7 +261,7 @@ export function SourceReleasePanel({
         <span>
           {page.rangeStart}–{page.rangeEnd} / {formatCount(sorted.length)}화
         </span>
-        <ChapterPagination page={page.page} pageCount={page.pageCount} onPage={moveToPage} />
+        <ChapterPagination page={page.page} pageCount={page.pageCount} onPage={setRequestedPage} />
         <span>페이지당 {SOURCE_RELEASE_PAGE_SIZE}화</span>
       </footer>
       {selectedTotal > 0 && (

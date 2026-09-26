@@ -328,8 +328,8 @@ export async function persistReaderSyncEvent(
               scroll_top = excluded.scroll_top,
               updated_at = excluded.updated_at,
               deleted_at = null
-          where bookmarks.deleted_at is null
-             or bookmarks.updated_at <= excluded.updated_at
+          where bookmarks.user_id = excluded.user_id and bookmarks.book_id = excluded.book_id
+            and (bookmarks.deleted_at is null or bookmarks.updated_at <= excluded.updated_at)
       `,
       [
         stringValue(bookmark.id) ?? event.entityId,
@@ -351,8 +351,8 @@ export async function persistReaderSyncEvent(
     const deletedAt = String(payload.deletedAt ?? event.createdAt);
     if (id) {
       await client.query(
-        'update bookmarks set deleted_at = $3, updated_at = $3 where id = $1 and user_id = $2 and (deleted_at is null or updated_at <= $3::timestamptz)',
-        [id, userId, deletedAt],
+        'update bookmarks set deleted_at = $3, updated_at = $3 where id = $1 and user_id = $2 and book_id = $4 and (deleted_at is null or updated_at <= $3::timestamptz)',
+        [id, userId, deletedAt, event.novelId],
       );
     }
     return true;
@@ -373,8 +373,8 @@ export async function persistReaderSyncEvent(
               progress = excluded.progress,
               updated_at = excluded.updated_at,
               deleted_at = null
-          where highlights.deleted_at is null
-             or highlights.updated_at <= excluded.updated_at
+          where highlights.user_id = excluded.user_id and highlights.book_id = excluded.book_id
+            and (highlights.deleted_at is null or highlights.updated_at <= excluded.updated_at)
       `,
       [
         stringValue(highlight.id) ?? event.entityId,
@@ -397,8 +397,8 @@ export async function persistReaderSyncEvent(
     const deletedAt = String(payload.deletedAt ?? event.createdAt);
     if (id) {
       await client.query(
-        'update highlights set deleted_at = $3, updated_at = $3 where id = $1 and user_id = $2 and (deleted_at is null or updated_at <= $3::timestamptz)',
-        [id, userId, deletedAt],
+        'update highlights set deleted_at = $3, updated_at = $3 where id = $1 and user_id = $2 and book_id = $4 and (deleted_at is null or updated_at <= $3::timestamptz)',
+        [id, userId, deletedAt, event.novelId],
       );
     }
     return true;
@@ -419,8 +419,8 @@ export async function persistReaderSyncEvent(
               progress = excluded.progress,
               updated_at = excluded.updated_at,
               deleted_at = null
-          where notes.deleted_at is null
-             or notes.updated_at <= excluded.updated_at
+          where notes.user_id = excluded.user_id and notes.book_id = excluded.book_id
+            and (notes.deleted_at is null or notes.updated_at <= excluded.updated_at)
       `,
       [
         stringValue(note.id) ?? event.entityId,
@@ -443,8 +443,8 @@ export async function persistReaderSyncEvent(
     const deletedAt = String(payload.deletedAt ?? event.createdAt);
     if (id) {
       await client.query(
-        'update notes set deleted_at = $3, updated_at = $3 where id = $1 and user_id = $2 and (deleted_at is null or updated_at <= $3::timestamptz)',
-        [id, userId, deletedAt],
+        'update notes set deleted_at = $3, updated_at = $3 where id = $1 and user_id = $2 and book_id = $4 and (deleted_at is null or updated_at <= $3::timestamptz)',
+        [id, userId, deletedAt, event.novelId],
       );
     }
     return true;
@@ -457,16 +457,18 @@ export async function persistReaderSyncEvent(
     await client.query(
       `
         insert into document_annotations (
-          id, book_id, user_id, page_index, annotation_type, anchor, body, color, created_at, updated_at
+          id, book_id, user_id, page_index, annotation_type, anchor, quote, body, color, text_anchor_remap, created_at, updated_at
         )
-        select $1, $2, $3, $4, $5, $6::jsonb, $7, $8, $9, $10
+        select $1, $2, $3, $4, $5, $6::jsonb, $7, $8, $9, $10::jsonb, $11, $12
         where exists (select 1 from library_books where id = $2 and user_id = $3)
         on conflict (id) do update
           set page_index = excluded.page_index,
               annotation_type = excluded.annotation_type,
               anchor = excluded.anchor,
+              quote = excluded.quote,
               body = excluded.body,
               color = excluded.color,
+              text_anchor_remap = excluded.text_anchor_remap,
               updated_at = excluded.updated_at,
               deleted_at = null
           where document_annotations.user_id = excluded.user_id
@@ -479,8 +481,10 @@ export async function persistReaderSyncEvent(
         parsed.pageIndex,
         String(annotation.type),
         JSON.stringify(annotation.anchor),
+        stringValue(annotation.quote) ?? null,
         stringValue(annotation.body) ?? null,
         stringValue(annotation.color) ?? null,
+        annotation.textAnchorRemap ? JSON.stringify(annotation.textAnchorRemap) : null,
         String(annotation.createdAt ?? event.createdAt),
         parsed.updatedAt,
       ],

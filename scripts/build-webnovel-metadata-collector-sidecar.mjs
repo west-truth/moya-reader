@@ -1,4 +1,4 @@
-import { copyFileSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { copyFileSync, cpSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import { dirname, join, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -17,6 +17,7 @@ const environmentPython = join(
   process.platform === 'win32' ? 'python.exe' : 'python',
 );
 const environmentMarker = join(environmentRoot, '.moya-bundle-environment');
+const portable = process.env.MOYA_PORTABLE_BUILD === '1';
 const windowModeArguments = process.env.MOYA_COLLECTOR_BUNDLE_CONSOLE === '1' ? [] : ['--noconsole'];
 
 for (const temporaryPath of [buildRoot, environmentRoot]) {
@@ -28,6 +29,7 @@ for (const temporaryPath of [buildRoot, environmentRoot]) {
 function run(command, args, options = {}) {
   const result = spawnSync(command, args, {
     cwd: options.cwd ?? workspace,
+    env: options.env ?? process.env,
     encoding: 'utf8',
     stdio: options.stdio ?? 'inherit',
   });
@@ -82,7 +84,7 @@ run(
     'PyInstaller',
     '--noconfirm',
     '--clean',
-    '--onefile',
+    portable ? '--onedir' : '--onefile',
     ...windowModeArguments,
     '--name',
     'webnovel-metadata-collector',
@@ -116,10 +118,16 @@ run(
   },
 );
 
-const built = join(buildRoot, 'dist', executableName);
+const builtDirectory = join(buildRoot, 'dist', 'webnovel-metadata-collector');
+const built = portable ? join(builtDirectory, executableName) : join(buildRoot, 'dist', executableName);
 if (!existsSync(built)) throw new Error(`metadata collector bundle output is missing: ${built}`);
 const target = join(outputDir, executableName);
-copyFileSync(built, target);
+if (portable) {
+  // The outer Moya.exe is already a single-file archive. Avoid extracting Python on every launch.
+  rmSync(outputDir, { recursive: true, force: true });
+  cpSync(builtDirectory, outputDir, { recursive: true });
+  rmSync(join(outputDir, '_internal', 'playwright', 'driver', process.platform === 'win32' ? 'node.exe' : 'node'));
+} else copyFileSync(built, target);
 if (process.platform !== 'win32') {
   const { chmodSync } = await import('node:fs');
   chmodSync(target, 0o755);
@@ -137,5 +145,17 @@ run(
   ],
   { failureMessage: 'metadata collector Python license inventory could not be generated' },
 );
+if (process.env.MOYA_COLLECTOR_BUNDLE_REMOTE_BROWSER === '1') {
+  // Playwright's installed package selects the exact browser revision. Remote-frame mode
+  // always runs headless, so the full headed Chromium payload is unnecessary.
+  run(environmentPython, ['-m', 'playwright', 'install', '--only-shell', 'chromium'], {
+    env: {
+      ...process.env,
+      PLAYWRIGHT_BROWSERS_PATH: join(outputDir, 'browsers'),
+      PLAYWRIGHT_SKIP_BROWSER_GC: '1',
+    },
+    failureMessage: 'metadata collector Chromium headless shell could not be installed',
+  });
+}
 console.log(`Bundled metadata collector: ${target}`);
 console.log(`Isolated bundle environment: ${environmentRoot}`);

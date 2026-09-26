@@ -265,6 +265,7 @@ export function providerAttemptAwarePool(pool: pg.Pool, rejection?: ProviderAdmi
     if (inTransaction && sql.includes('update book_ai_workflows') && sql.includes('coalesce($3, status)')) {
       return originalQuery(sql, [params?.[0], params?.[1], params?.[4]]);
     }
+    if (sql.includes('pg_advisory_xact_lock(hashtextextended(user_id, 764173))')) return { rows: [] };
     if (sql.includes('with target as materialized')) {
       if (rejection) {
         return {

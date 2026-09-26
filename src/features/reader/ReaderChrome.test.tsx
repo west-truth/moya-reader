@@ -27,6 +27,7 @@ describe('ReaderChrome bookmark action', () => {
       const pending = deferred();
       const toggleBookmark = vi.fn(() => pending.promise);
       const notify = vi.fn();
+      const openAutoScroll = vi.fn();
       const screenHandle = new ReaderScreenHandle();
       screenHandle.setActions({ toggleBookmark, notify } as unknown as ReaderScreenActions);
       const fallbackLocation: ReaderLocationSnapshot = {
@@ -97,11 +98,15 @@ describe('ReaderChrome bookmark action', () => {
             onMobileSearchOpenChanged={vi.fn()}
             onOverflowOpenChanged={vi.fn()}
             onGoToSavedPosition={vi.fn()}
-            onToggleImmersive={vi.fn()}
+            onOpenAutoScroll={openAutoScroll}
           />,
         );
       });
 
+      expect(renderer.root.findAllByProps({ 'aria-label': '몰입 모드 시작' })).toHaveLength(0);
+      act(() => renderer.root.findByProps({ 'aria-label': '자동 스크롤 설정' }).props.onClick());
+      expect(openAutoScroll).toHaveBeenCalledOnce();
+      expect(renderer.root.findByProps({ 'aria-label': '선택 문장 하이라이트' }).props.disabled).toBe(true);
       expect(renderer.root.findByProps({ className: 'reader-title' }).findByType('span').children).toEqual([
         sourceSection ? '2화 다음 이야기' : '1화 · 2화 다음 이야기',
       ]);

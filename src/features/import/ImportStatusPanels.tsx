@@ -1,6 +1,8 @@
 import type { ImportFeatureController } from './useImportController';
 import { formatCount } from '../../utils/format';
 import { formatImportBytes, importProgressPercent } from './import-formatting';
+import { TaskProgressRing } from '../../components/TaskProgressRing';
+import { projectImportProgress } from './import-task-projection';
 
 function classNames(...values: Array<string | false>): string {
   return values.filter(Boolean).join(' ');
@@ -69,8 +71,7 @@ export function ImportPreviewPanel({ controller }: { controller: ImportFeatureCo
 export function ImportProgressPanel({ controller }: { controller: ImportFeatureController }) {
   const { batch, progress } = controller;
   if (!progress && !batch) return null;
-  const measurable = progress && (progress.subphase !== 'server_processing' || progress.status === 'reading');
-  const percent = measurable ? importProgressPercent(progress.bytesRead, progress.totalBytes) : undefined;
+  const percent = progress ? projectImportProgress(progress).percent : undefined;
 
   return (
     <div className="import-progress">
@@ -84,7 +85,7 @@ export function ImportProgressPanel({ controller }: { controller: ImportFeatureC
                 ? '취소하는 중'
                 : '가져오는 중'}
         </h3>
-        <span>{percent === undefined ? '' : `${percent}%`}</span>
+        <TaskProgressRing percent={percent} label={progress?.message || '현재 가져오기 단계'} />
       </div>
       {batch && (
         <div className="import-batch-summary">
@@ -114,6 +115,11 @@ export function ImportProgressPanel({ controller }: { controller: ImportFeatureC
         </>
       )}
       <div className="import-progress-stats">
+        {progress?.progressUnit === 'images' && progress.totalUnits !== undefined && (
+          <span>
+            저장한 이미지 {formatCount(progress.completedUnits ?? 0)} / {formatCount(progress.totalUnits)}개
+          </span>
+        )}
         {progress && (
           <span>
             {formatImportBytes(progress.bytesRead)} / {formatImportBytes(progress.totalBytes)}

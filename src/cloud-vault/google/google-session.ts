@@ -1,3 +1,4 @@
+import { randomUuid } from '../../utils/random-uuid';
 import { appPublicRuntimeConfig } from '../../config/public-runtime-config';
 import type { GoogleIdentity } from './google-identity';
 import { GoogleAuthClient, GoogleAuthError } from './google-auth-client';
@@ -143,7 +144,7 @@ export class GoogleSession {
     const sdk = await this.loadSdk();
     if (signal?.aborted) return () => {};
     this.sdk = sdk;
-    const nonce = this.auth ? await this.auth.nonce() : crypto.randomUUID();
+    const nonce = this.auth ? await this.auth.nonce() : randomUuid();
     if (signal?.aborted) return () => {};
     const generation = this.generation;
     let active = true;

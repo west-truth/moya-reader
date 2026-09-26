@@ -1,0 +1,75 @@
+name: Windows portable candidate
+
+on:
+  workflow_dispatch:
+    inputs:
+      artifact_run:
+        description: Existing Windows candidate run ID for smoke-only debugging
+        type: string
+        required: false
+        default: ''
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  build:
+    runs-on: windows-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/download-artifact@v4
+        if: inputs.artifact_run != ''
+        with:
+          name: moya-portable-windows-x64
+          path: release
+          run-id: ${{ inputs.artifact_run }}
+          github-token: ${{ github.token }}
+      - uses: pnpm/action-setup@v6
+        with:
+          version: 11.7.0
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: pnpm
+      - uses: dtolnay/rust-toolchain@stable
+        if: inputs.artifact_run == ''
+      - uses: actions/setup-python@v6
+        if: inputs.artifact_run == ''
+        with:
+          python-version: '3.12'
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm desktop:portable:win
+        if: inputs.artifact_run == ''
+      - name: Verify standalone artifact
+        shell: pwsh
+        run: |
+          if (!(Test-Path release/Moya.exe)) { throw "Moya.exe is missing" }
+          $size = (Get-Item release/Moya.exe).Length
+          if ($size -lt 50000000) { throw "Portable executable is missing its bundled source runtime" }
+          Write-Host "Moya.exe: $size bytes ($([math]::Round($size / 1MB, 2)) MiB)"
+          Get-FileHash release/Moya.exe -Algorithm SHA256
+      - name: Smoke portable launch and folder move
+        shell: pwsh
+        run: ./scripts/desktop/smoke-portable-windows.ps1
+      - name: Verify extracted JS source runtime
+        shell: pwsh
+        run: |
+          $runtime = Get-ChildItem (Join-Path $env:RUNNER_TEMP 'Moya portable moved path/MoyaData/runtime') -Filter 'native-entry.mjs' -Recurse |
+            Where-Object { $_.FullName -like '*extension-sidecar*' } | Select-Object -First 1
+          if (!$runtime) { throw 'Extracted source runtime is missing.' }
+          $env:MOYA_PACKAGED_SIDECAR_DIR = $runtime.Directory.FullName
+          pnpm --dir apps/server exec tsx ../../scripts/extensions/mangayomi-native-smoke.ts
+          if ($LASTEXITCODE -ne 0) { throw 'Packaged JS source smoke failed.' }
+          $env:PLAYWRIGHT_NODEJS_PATH = Join-Path $runtime.Directory.FullName 'node.exe'
+          $collector = Join-Path $runtime.Directory.Parent.FullName 'collector-sidecar/webnovel-metadata-collector.exe'
+          $check = Start-Process $collector -ArgumentList '--check-runtime' -PassThru
+          if (!$check.WaitForExit(30000)) { Stop-Process -Id $check.Id -Force; throw 'Collector driver timed out.' }
+          if ($check.ExitCode -ne 0) { throw 'Collector/shared Node driver failed.' }
+      - uses: actions/upload-artifact@v4
+        if: always() && inputs.artifact_run == ''
+        with:
+          name: moya-portable-windows-x64
+          path: release/Moya.exe
+          if-no-files-found: warn

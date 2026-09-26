@@ -11,7 +11,6 @@ import { resolveReaderThemeColors } from './reader-theme-colors';
 import type { ReaderSettingsController } from './useReaderSettingsDraft';
 
 export function ReaderSettingsLayout({
-  controller,
   profile,
   updateProfile,
 }: {
@@ -19,7 +18,6 @@ export function ReaderSettingsLayout({
   profile: ReadingProfile;
   updateProfile: (patch: ReadingProfileOverride) => void;
 }) {
-  const { settings } = controller;
   const themeColors = resolveReaderThemeColors(profile);
   return (
     <>
@@ -321,14 +319,6 @@ export function ReaderSettingsLayout({
             </div>
           </div>
         )}
-        <label className="reader-settings-toggle reader-settings-control-toggle">
-          <input
-            type="checkbox"
-            checked={settings.keepScreenChrome}
-            onChange={(event) => controller.updateSettings({ keepScreenChrome: event.target.checked })}
-          />
-          <span>도구 모음 항상 표시</span>
-        </label>
       </section>
     </>
   );

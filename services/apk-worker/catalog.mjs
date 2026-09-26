@@ -432,10 +432,19 @@ export class ApkSourceCatalog {
             if (!Array.isArray(pages) || !pages.length || pages.length > MAX_SOURCE_IMAGES)
               throw new Error('apk_page_limit');
             let total = 0;
+            let completed = 0;
+            options.onProgress?.({ phase: 'downloading', completed, total: pages.length, unit: 'images' });
             const refs = await downloadPagesOrdered(pages, this.pageConcurrency, signal, async (page, pageSignal) => {
               const ref = asset(imageAsset(await request('image', page, pageSignal)));
               total += ref.byteLength;
               if (total > MAX_SOURCE_CONTENT_BYTES) throw new Error('source_body_limit');
+              pageSignal.throwIfAborted();
+              options.onProgress?.({
+                phase: 'downloading',
+                completed: ++completed,
+                total: pages.length,
+                unit: 'images',
+              });
               return ref;
             });
             result = { kind: 'images', assets: refs };

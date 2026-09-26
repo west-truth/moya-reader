@@ -1,3 +1,4 @@
+import type { TaskProgressCallback } from '@noveldesk/contracts';
 import type {
   ExternalSourceDownloadRef,
   ExternalSourceCollectionDescriptor,
@@ -32,7 +33,11 @@ export type HostedImageAssembly = Pick<
 };
 
 export interface HostedImageImportPort {
-  download(ref: ExternalSourceDownloadRef, signal: AbortSignal): Promise<HostedImageDownload>;
+  download(
+    ref: ExternalSourceDownloadRef,
+    signal: AbortSignal,
+    onProgress?: TaskProgressCallback,
+  ): Promise<HostedImageDownload>;
   assemble(input: HostedImageAssembly, signal: AbortSignal): Promise<PreparedServerImport>;
   discard(artifactId: string): Promise<void>;
 }

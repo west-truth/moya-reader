@@ -21,6 +21,13 @@ async function shutdown(signal: NodeJS.Signals): Promise<void> {
 
 process.once('SIGTERM', () => void shutdown('SIGTERM'));
 process.once('SIGINT', () => void shutdown('SIGINT'));
+if (process.env.MOYA_MANAGED_SERVER === '1') {
+  process.on('message', (message) => {
+    if (message === 'shutdown') void shutdown('SIGTERM');
+  });
+  process.once('disconnect', () => void shutdown('SIGTERM'));
+  if (!process.connected) await shutdown('SIGTERM');
+}
 
 try {
   await app.listen({ host: config.host, port: config.port });

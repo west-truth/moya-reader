@@ -4,16 +4,18 @@ import { mkdir, mkdtemp, rm } from 'node:fs/promises';
 import path from 'node:path';
 import { pipeline } from 'node:stream/promises';
 import type { Readable } from 'node:stream';
-import { assertUploadDiskSpace } from './upload-file.js';
+import { assertUploadDiskSpace, UploadSpaceError } from './upload-file.js';
 import {
   MAX_HOSTED_BACKUP_ARCHIVE_BYTES,
   parseHostedBackupArchive,
   type ParsedHostedBackupArchive,
 } from './hosted-backup-archive.js';
+import { convertLocalBackup } from './local-backup-converter.js';
 
 const INSPECTION_TTL = 30 * 60_000;
 interface StagedBackup {
   parsed: ParsedHostedBackupArchive;
+  source: 'hosted' | 'local';
   byteLength: number;
   expires: number;
   dispose(): Promise<void>;
@@ -24,7 +26,10 @@ export class BackupStaging {
   private readonly ready = new Map<string, StagedBackup>();
   private occupied = 0;
   private readonly timer: NodeJS.Timeout;
-  constructor(private readonly root: string) {
+  constructor(
+    private readonly root: string,
+    private readonly userId?: string,
+  ) {
     this.timer = setInterval(() => void this.expire().catch(() => undefined), 60_000);
     this.timer.unref();
   }
@@ -42,6 +47,8 @@ export class BackupStaging {
     input: Readable,
     expectedBytes?: number,
     signal?: AbortSignal,
+    onBytesReceived?: (bytes: number) => void,
+    onValidationStarted?: () => void,
   ): Promise<{ id: string; stage: StagedBackup }> {
     await this.expire();
     if (this.occupied >= 2) throw new Error('다른 백업 작업이 진행 중입니다. 잠시 후 다시 시도해 주세요.');
@@ -78,26 +85,37 @@ export class BackupStaging {
             throw new Error('백업 ZIP 용량 제한을 초과했습니다.');
           archiveHash.update(chunk);
           yield chunk;
+          onBytesReceived?.(byteLength);
         }
         if (expectedBytes !== undefined && byteLength !== expectedBytes)
           throw new Error('백업 업로드가 완료되지 않았습니다.');
       }
       await pipeline(chunks(), createWriteStream(zipPath, { flags: 'wx', mode: 0o600 }), { signal });
+      onValidationStarted?.();
       const assets = path.join(directory, 'assets');
       await mkdir(assets);
-      const parsed = await parseHostedBackupArchive(await openAsBlob(zipPath), {
-        assetDirectory: assets,
-        signal,
-        archiveHash: `sha256:${archiveHash.digest('hex')}`,
-      });
+      const archiveBlob = await openAsBlob(zipPath);
+      const digest = `sha256:${archiveHash.digest('hex')}`;
+      let parsed: ParsedHostedBackupArchive;
+      let source: StagedBackup['source'] = 'hosted';
+      try {
+        parsed = await parseHostedBackupArchive(archiveBlob, { assetDirectory: assets, signal, archiveHash: digest });
+      } catch (error) {
+        if (!(error instanceof Error) || error.message !== 'Unsupported hosted backup manifest' || !this.userId) {
+          throw error;
+        }
+        parsed = await convertLocalBackup(archiveBlob, this.userId, digest, signal);
+        source = 'local';
+      }
       signal?.throwIfAborted();
       await rm(zipPath);
       const id = randomBytes(32).toString('base64url');
-      const stage = { parsed, byteLength, expires: Date.now() + INSPECTION_TTL, dispose };
+      const stage = { parsed, source, byteLength, expires: Date.now() + INSPECTION_TTL, dispose };
       this.ready.set(id, stage);
       return { id, stage };
     } catch (error) {
       await dispose();
+      if ((error as NodeJS.ErrnoException).code === 'ENOSPC') throw new UploadSpaceError();
       throw error;
     }
   }

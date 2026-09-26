@@ -205,6 +205,7 @@ import { LocalInstalledExtensions } from './extensions/packages/local-installed-
 import { NativePackageExecution } from './platform/tauri/native-package-execution';
 import type { InstalledExtensionManager } from './extensions/packages/installed-extension-manager';
 import { RemoteInstalledExtensions } from './extensions/packages/remote-installed-extensions';
+import { RemoteDocumentAnnotationRepository } from './repositories/remote-document-annotation-repository';
 import { InstalledExtensionsPanel } from './features/extensions/InstalledExtensionsPanel';
 import { DropboxSourceAccountBroker } from './external-sources/dropbox-source-account-broker';
 import { GoogleDriveSourceAccountBroker } from './external-sources/google-drive-source-account-broker';
@@ -382,14 +383,23 @@ export default function App() {
     readerRuntime,
   } = useAppRuntime();
   const localStatic = product?.kind === 'local-static';
+  const [desktopSourceTarget, setDesktopSourceTarget] = useState<'device' | 'server'>(() => {
+    try {
+      return globalThis.localStorage?.getItem('moya.desktopSourceTarget.v1') === 'server' ? 'server' : 'device';
+    } catch {
+      return 'device';
+    }
+  });
+  const canChooseDesktopSourceTarget =
+    platformRuntime.kind === 'tauri-desktop' && readerRuntime.mode === 'local' && Boolean(providerApiClient);
   const installedExtensions = useMemo<InstalledExtensionManager | undefined>(
     () =>
-      providerApiClient
+      providerApiClient && (!canChooseDesktopSourceTarget || desktopSourceTarget === 'server')
         ? new RemoteInstalledExtensions(providerApiClient)
         : platformRuntime.kind === 'tauri-desktop'
           ? new LocalInstalledExtensions(new NativePackageExecution())
           : undefined,
-    [providerApiClient, platformRuntime.kind],
+    [providerApiClient, platformRuntime.kind, canChooseDesktopSourceTarget, desktopSourceTarget],
   );
   const installedSnapshot = useSyncExternalStore(
     installedExtensions?.subscribe ?? (() => () => {}),
@@ -436,6 +446,10 @@ export default function App() {
     syncApiClient,
     syncService,
   } = readerRuntime;
+  const remoteDocumentAnnotationRepository = useMemo(
+    () => (remoteApiClient ? new RemoteDocumentAnnotationRepository(remoteApiClient) : undefined),
+    [remoteApiClient],
+  );
   const isDesktopProviderRuntime = providerExecutionRuntime === 'desktop';
   const localDeviceId = useMemo(() => getOrCreateRemoteDeviceId(), []);
   const documentIo = useMemo(() => createPlatformDocumentIo(platformRuntime), [platformRuntime]);
@@ -5829,12 +5843,12 @@ export default function App() {
     setReadingBookOverride: setReadingBookOverrideEnabled,
     toggleBookmark: (location: ReaderLocationSnapshot) => toggleBookmark(location),
     addHighlight: (location: ReaderLocationSnapshot, selection?: ReaderSelection) =>
-      void addHighlight('yellow', location, selection),
+      addHighlight('yellow', location, selection),
     highlightSelection: (
       location: ReaderLocationSnapshot,
       selection: ReaderSelection,
-      color: ReaderHighlight['color'],
-    ) => void addHighlight(color, location, selection),
+      color: ReaderHighlight['color'] | 'remove',
+    ) => addHighlight(color, location, selection),
     openSelectionNote,
     previewSelectionTTS: (selection: ReaderSelection) => {
       const text = selection.text.trim();
@@ -6396,6 +6410,7 @@ export default function App() {
             listeningPreparationBusy={ttsExecutionController.warmupBusy}
             listeningPosition={ttsPlaying ? ttsListeningPosition : undefined}
             annotationSyncRevision={syncState?.lastSyncedAt}
+            documentAnnotationRepository={remoteDocumentAnnotationRepository}
           />
         </Suspense>
       )}
@@ -6527,6 +6542,7 @@ export default function App() {
       {settingsOpen && (
         <Suspense fallback={null}>
           <ReaderSettingsPanel
+            serverApiBaseUrl={readerRuntime.mode === 'remote' ? readerRuntime.apiBaseUrl : undefined}
             controller={readerSettingsController}
             profile={readingProfile}
             bookOverrideEnabled={readingBookOverrideEnabled}
@@ -6541,7 +6557,21 @@ export default function App() {
             installedPackages={
               installedExtensions ? (
                 <InstalledExtensionsPanel
+                  key={installedExtensions.target}
                   manager={installedExtensions}
+                  sourceTarget={canChooseDesktopSourceTarget ? desktopSourceTarget : undefined}
+                  onSourceTargetChange={
+                    canChooseDesktopSourceTarget
+                      ? (target) => {
+                          setDesktopSourceTarget(target);
+                          try {
+                            globalThis.localStorage?.setItem('moya.desktopSourceTarget.v1', target);
+                          } catch {
+                            // The current session still uses the selected target.
+                          }
+                        }
+                      : undefined
+                  }
                   suwayomi={
                     externalSourceFeature.sources.find((source) => source.id === SUWAYOMI_EXTERNAL_SOURCE_ID)
                       ?.extensionManager

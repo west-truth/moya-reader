@@ -1,0 +1,60 @@
+.task-progress-ring {
+  position: relative;
+  display: inline-grid;
+  width: 32px;
+  height: 32px;
+  flex: 0 0 32px;
+  place-items: center;
+  color: var(--primary);
+  font-size: 10px;
+  font-weight: var(--ui-weight-bold);
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
+}
+
+.task-progress-ring-value,
+.task-progress-ring > svg:not(.task-progress-ring-outline) {
+  position: relative;
+  z-index: 1;
+}
+
+.task-progress-ring-outline {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+  transform: rotate(-90deg);
+}
+
+.task-progress-ring-track,
+.task-progress-ring-fill {
+  fill: none;
+  stroke-width: 2.5;
+}
+
+.task-progress-ring-track {
+  stroke: currentColor;
+  opacity: 0.25;
+}
+
+.task-progress-ring-fill {
+  stroke: currentColor;
+  stroke-linecap: round;
+}
+
+.book-import-overlay .task-progress-ring {
+  color: #fff;
+}
+
+.task-progress-ring[data-tone='processing'] {
+  color: var(--warning);
+}
+.book-import-overlay .task-progress-ring[data-tone='processing'] {
+  color: #fbd38d;
+}
+@media (prefers-reduced-motion: reduce) {
+  .task-progress-ring .spin {
+    animation: none;
+  }
+}

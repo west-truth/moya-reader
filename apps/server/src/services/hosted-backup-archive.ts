@@ -21,12 +21,19 @@ const MAX_MANIFEST_BYTES = 16 * 1024 ** 2;
 export const HOSTED_BACKUP_BOOK_TABLES = [
   'library_books',
   'book_assets',
+  'document_pages',
+  'document_text_revisions',
+  'document_text_blocks',
+  'document_annotations',
+  'document_text_order_overrides',
   'shelf_memberships',
   'book_content_revisions',
   'chapters',
   'paragraph_pages',
   'reading_positions',
+  'listening_positions',
   'fixed_document_section_read_states',
+  'comic_reading_profiles',
   'bookmarks',
   'highlights',
   'notes',
@@ -58,6 +65,7 @@ export const HOSTED_BACKUP_BOOK_TABLES = [
 export const HOSTED_BACKUP_GLOBAL_TABLES = [
   'shelves',
   'reader_settings',
+  'spoken_text_rules',
   'library_operation_receipts',
   'user_fonts',
 ] as const;
@@ -65,6 +73,7 @@ export const HOSTED_BACKUP_TABLES = [
   'shelves',
   ...HOSTED_BACKUP_BOOK_TABLES,
   'reader_settings',
+  'spoken_text_rules',
   'library_operation_receipts',
   'user_fonts',
 ] as const;

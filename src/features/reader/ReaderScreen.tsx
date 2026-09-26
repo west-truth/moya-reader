@@ -756,13 +756,13 @@ function ReaderScreenComponent({ model, screenHandle }: ReaderScreenProps) {
         readingFlow={readingFlow}
         activeBookmark={activeBookmark}
         activeHighlight={activeHighlight}
+        selection={selection}
         mobileSearchOpen={mobileSearchOpen}
         overflowOpen={overflowOpen}
         onSetMode={setMode}
         onMobileSearchOpenChanged={setMobileSearchOpen}
         onOverflowOpenChanged={setOverflowOpen}
         onGoToSavedPosition={() => void goToSavedPosition()}
-        onToggleImmersive={toggleImmersive}
         onOpenAutoScroll={() => {
           autoScroll.stop();
           setAutoScrollOpen(true);

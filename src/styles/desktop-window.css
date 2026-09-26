@@ -1,6 +1,13 @@
+html:has(.desktop-window-shell),
+body:has(.desktop-window-shell) {
+  /* Keep boundary gestures inside the desktop window, not the outer WebView. */
+  overscroll-behavior: none;
+}
+
 .desktop-window-shell {
   --desktop-titlebar-height: 34px;
-  position: relative;
+  position: fixed;
+  inset: 0;
   height: 100dvh;
   min-height: 0;
   overflow: hidden;
@@ -24,9 +31,42 @@
 
 .desktop-window-title {
   padding-inline-start: 13px;
+  margin-inline-end: auto;
   font-size: 12px;
   font-weight: 650;
   letter-spacing: -0.01em;
+}
+
+.desktop-server-choice label:has(input[type='radio']) {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 48px;
+  padding: 12px;
+  border: 1px solid var(--app-line);
+  border-radius: var(--radius-control);
+  background: var(--app-surface);
+  cursor: pointer;
+}
+
+.desktop-server-choice label:has(input[type='radio']:checked) {
+  border-color: var(--primary);
+  background: color-mix(in srgb, var(--primary) 12%, var(--app-surface));
+}
+
+.desktop-server-choice input[type='radio'] {
+  width: 18px;
+  height: 18px;
+  min-height: 0;
+  padding: 0;
+  flex: none;
+}
+
+.desktop-remote-home-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 18px;
 }
 
 .desktop-window-controls {
@@ -95,4 +135,34 @@
 
 .desktop-window-content .fixed-doc-screen {
   top: var(--desktop-titlebar-height);
+}
+
+:is(.desktop-server-choice, .desktop-remote-home, .embedded-server-dialog) :is(.primary-btn, .ghost-btn) {
+  min-height: 44px;
+}
+
+.desktop-connection-diagnostics {
+  margin-block: 16px;
+  border: 1px solid var(--app-line);
+  border-radius: var(--radius-control);
+  background: var(--app-surface);
+  padding: 12px;
+}
+.desktop-connection-diagnostics summary {
+  min-height: 44px;
+  padding: 12px;
+  border: 1px solid var(--app-line);
+  border-radius: var(--radius-control);
+  cursor: pointer;
+}
+.desktop-connection-diagnostics summary:hover {
+  background: var(--app-surface-hover);
+}
+.desktop-connection-diagnostics pre {
+  max-height: 220px;
+  overflow: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  user-select: text;
+  font-size: 12px;
 }

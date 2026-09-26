@@ -1,3 +1,4 @@
+import { requestProgress } from './request-progress.js';
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import type { ExtensionContributionId } from '@noveldesk/extension-contracts';
 import type { ExternalSourceRegistryPort } from '../../../../src/external-sources/app-external-source-registry.js';
@@ -70,6 +71,7 @@ export function registerPreparedSourceImages(
   };
   app.addHook('onClose', async () => store.close());
   const prefix = '/api/extensions/sources/:id/prepared-images';
+  const track = requestProgress(app, `${prefix}/progress/:progressId`);
   app.post<{ Params: { id: string } }>(prefix, { bodyLimit: 16 * 1024 }, (request, reply) =>
     handle(reply, () =>
       withCancellation(request, reply, async (signal) => {
@@ -82,21 +84,27 @@ export function registerPreparedSourceImages(
           !text(body.fileName, 1024)
         )
           return reply.code(400).send({ error: 'invalid_source_input' });
-        await refresh();
-        const before = generation(request.params.id);
-        const result = await registry.downloadExternalSource(
-          request.params.id as ExtensionContributionId,
-          context,
-          body as unknown as ExternalSourceDownloadRef,
-          signal,
-        );
-        if (result.content?.kind !== 'image_archive') return reply.code(422).send({ error: 'invalid_source_assets' });
-        const receipt = await store.put(request.params.id, body.key.remoteId, result.file, signal, before);
-        if (signal.aborted) {
-          store.discard(receipt.artifactId, request.params.id);
-          signal.throwIfAborted();
+        const progress = track(request.query);
+        try {
+          await refresh();
+          const before = generation(request.params.id);
+          const result = await registry.downloadExternalSource(
+            request.params.id as ExtensionContributionId,
+            context,
+            body as unknown as ExternalSourceDownloadRef,
+            signal,
+            progress,
+          );
+          if (result.content?.kind !== 'image_archive') return reply.code(422).send({ error: 'invalid_source_assets' });
+          const receipt = await store.put(request.params.id, body.key.remoteId, result.file, signal, before);
+          if (signal.aborted) {
+            store.discard(receipt.artifactId, request.params.id);
+            signal.throwIfAborted();
+          }
+          return { ...receipt, remoteRevision: result.remoteRevision };
+        } finally {
+          progress({ phase: 'finalizing' });
         }
-        return { ...receipt, remoteRevision: result.remoteRevision };
       }),
     ),
   );

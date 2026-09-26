@@ -863,13 +863,13 @@
   display: none;
 }
 
-.book-import-overlay.is-compact svg,
-.book-import-overlay.is-compact > span {
+.book-import-overlay.is-compact > svg,
+.book-import-overlay.is-compact > span:not(.task-progress-ring) {
   width: 18px;
   height: 18px;
 }
 
-.book-import-overlay > span {
+.book-import-overlay > span:not(.task-progress-ring) {
   width: 25px;
   height: 25px;
   display: grid;
@@ -908,8 +908,8 @@
   display: none;
 }
 
-.book-list-row .book-import-overlay svg,
-.book-list-row .book-import-overlay > span {
+.book-list-row .book-import-overlay > svg,
+.book-list-row .book-import-overlay > span:not(.task-progress-ring) {
   width: 17px;
   height: 17px;
 }

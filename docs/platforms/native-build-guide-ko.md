@@ -34,14 +34,24 @@ pnpm check:desktop
 pnpm tauri:dev
 ```
 
-로컬 release와 NSIS installer를 만들려면 다음 명령을 사용합니다.
+### 현재 내장 self-host 후보
+
+현재 데스크톱의 구조·남은 범위는 [desktop.md](desktop.md)를 따릅니다. 위 `tauri:dev`는 일반 shell 개발 명령입니다.
+내장 서버 후보는 Windows x64에서 다음 전용 스크립트로 빌드합니다.
 
 ```powershell
-pnpm tauri:build
+node scripts/desktop/build-embedded-runtime.mjs
+node scripts/desktop/build-embedded-app.mjs
+node scripts/desktop/smoke-embedded-app.mjs ".tmp/Moya app 한글/Moya.exe"
 ```
 
-결과물은 `src-tauri/target/release/bundle/nsis/`에 생성됩니다. `src-tauri/target/`과 installer는 Git에서
-제외됩니다. 이 로컬 build 성공은 코드 조합을 확인하는 개발 gate이며 공식 서명·배포 승인을 의미하지 않습니다.
+실행 파일과 `embedded-server/`를 함께 배포하는 구조입니다. 원본·DB는 서버 profile에 보관합니다.
+이전 WebView/IndexedDB 포터블 후보와 데이터를 자동으로 공유한다고 가정하지 마십시오.
+이전 단일 EXE 사용법은 [보관 문서](../archive/desktop-2026-09/windows-portable-user-guide-ko.md)에 있습니다.
+
+설치 후보는 `scripts/desktop/build-embedded-installer.mjs`, 전체 Windows 검사는
+`.github/workflows/desktop-embedded.yml`을 참고합니다. 서명된 공식 배포물의 제공 여부와
+미검증 범위는 현재 구조 문서에서 구분합니다. 작은 수정마다 전체 Windows 패키징을 반복하지 않습니다.
 
 ## Android
 
@@ -119,12 +129,12 @@ Gradle 출력, JNI library, generated web asset과 APK/AAB는 모두 Git에서 �
 
 ## 검사 역할
 
-| 명령 | 확인 범위 |
-| --- | --- |
-| `pnpm check:web-server` | 웹·서버 형식, 라이선스, 타입, 전체 테스트와 production build |
-| `pnpm check:desktop` | production 웹 build와 Tauri Rust compile |
-| `pnpm check:rust` | Rust format, Clippy와 native unit test |
-| `pnpm check:mobile-readiness` | Android project와 adapter 구성의 정적 준비 상태 |
-| `pnpm check:android-rust:strict` | 설치된 Android Rust target의 실제 compile |
+| 명령                             | 확인 범위                                                    |
+| -------------------------------- | ------------------------------------------------------------ |
+| `pnpm check:web-server`          | 웹·서버 형식, 라이선스, 타입, 전체 테스트와 production build |
+| `pnpm check:desktop`             | production 웹 build와 Tauri Rust compile                     |
+| `pnpm check:rust`                | Rust format, Clippy와 native unit test                       |
+| `pnpm check:mobile-readiness`    | Android project와 adapter 구성의 정적 준비 상태              |
+| `pnpm check:android-rust:strict` | 설치된 Android Rust target의 실제 compile                    |
 
 Docker Compose 서버만 운영하는 경우에는 JDK, Android SDK와 Rust가 필요하지 않습니다.

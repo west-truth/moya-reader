@@ -1,4 +1,5 @@
 import type { FastifyInstance } from 'fastify';
+import { isDeepStrictEqual } from 'node:util';
 import pg from 'pg';
 import type { RejectedSyncEvent, ResolvedSyncContract, SyncEvent } from '@noveldesk/contracts/sync';
 import { resolveSyncContract } from '../../../../../src/sync/contract.js';
@@ -10,6 +11,7 @@ import { pushSyncContract, type PushEventsBody } from './request-contracts.js';
 import { mapPushSyncResponse } from './response-mappers.js';
 import { insertSyncEvent } from './sync-event-persistence.js';
 import { canonicalizeIncomingSyncEvent, SyncIdentityTranslationError } from './sync-contract-translation.js';
+import { mapSyncEventRow, type SyncEventRow } from './row-mappers.js';
 
 type SourceEvent = SyncEvent;
 
@@ -75,6 +77,27 @@ async function processSourceEvent(
     };
   }
   const event = translated.event;
+  const replay = async (): Promise<'same' | 'different' | 'absent'> => {
+    const existing = await client.query<SyncEventRow>(
+      `select id, user_id, device_id, type, book_id, entity_id, payload, revision, created_at,
+            id_contract, hash_contract, sequence
+       from sync_events where id = $1`,
+      [event.id],
+    );
+    if (!existing.rows[0]) return 'absent';
+    const row = existing.rows[0];
+    const stored = mapSyncEventRow(row);
+    return row.user_id === config.defaultUserId &&
+      stored.deviceId === event.deviceId &&
+      stored.type === event.type &&
+      stored.novelId === event.novelId &&
+      stored.entityId === event.entityId &&
+      stored.createdAt === event.createdAt &&
+      isDeepStrictEqual(stored.payload, event.payload) &&
+      isDeepStrictEqual(stored.revision ?? undefined, event.revision ?? undefined)
+      ? 'same'
+      : 'different';
+  };
   if (!(await hasExistingBookForEvent(client, config.defaultUserId, event))) {
     return {
       sourceEventId,
@@ -95,18 +118,78 @@ async function processSourceEvent(
     };
   }
   if (!(await shouldAcceptSyncEvent(client, config.defaultUserId, event))) {
+    const prior = await replay();
+    if (prior === 'same') return { sourceEventId, inserted: false };
     return {
       sourceEventId,
       inserted: false,
-      rejection: { id: sourceEventId, reason: 'stale', message: 'server has a newer version of this entity' },
+      rejection:
+        prior === 'different'
+          ? { id: sourceEventId, reason: 'invalid', message: 'sync event ID already has different content' }
+          : { id: sourceEventId, reason: 'stale', message: 'server has a newer version of this entity' },
     };
   }
   const inserted = await insertSyncEvent(client, config.defaultUserId, event, {
     eventId: translated.sourceEventId,
     contract: translated.sourceContract,
   });
+  if (!inserted && (await replay()) !== 'same') {
+    return {
+      sourceEventId,
+      inserted: false,
+      rejection: { id: sourceEventId, reason: 'invalid', message: 'sync event ID already has different content' },
+    };
+  }
   if (inserted) await applySyncEvent(client, config.defaultUserId, event);
   return { sourceEventId, inserted };
+}
+
+export async function applySyncEventsInTransaction(
+  client: pg.PoolClient,
+  config: ServerConfig,
+  events: SourceEvent[],
+  envelopeContract: ResolvedSyncContract,
+): Promise<ReturnType<typeof mapPushSyncResponse>> {
+  let accepted = 0;
+  const acceptedIds: string[] = [];
+  const rejected: RejectedSyncEvent[] = [];
+  for (const group of eventGroups(events)) {
+    const operationId = compoundOperationId(group[0]);
+    if (operationId) await client.query('savepoint sync_compound_operation');
+    const groupResults: SourceEventResult[] = [];
+    try {
+      for (const sourceEvent of group) {
+        const result = await processSourceEvent(client, config, envelopeContract, sourceEvent);
+        groupResults.push(result);
+        if (result.rejection) break;
+      }
+    } catch (error) {
+      if (operationId) await client.query('rollback to savepoint sync_compound_operation');
+      throw error;
+    }
+    const failed = groupResults.find((result) => result.rejection)?.rejection;
+    if (failed && operationId) {
+      await client.query('rollback to savepoint sync_compound_operation');
+      await client.query('release savepoint sync_compound_operation');
+      rejected.push(
+        ...group.map((event) => ({
+          id: typeof event?.id === 'string' ? event.id : '',
+          reason: 'invalid' as const,
+          message: `compound operation ${operationId} was rejected: ${failed.message ?? failed.reason}`,
+        })),
+      );
+      continue;
+    }
+    if (operationId) await client.query('release savepoint sync_compound_operation');
+    for (const result of groupResults) {
+      if (result.rejection) rejected.push(result.rejection);
+      else {
+        if (result.inserted) accepted += 1;
+        acceptedIds.push(result.sourceEventId);
+      }
+    }
+  }
+  return mapPushSyncResponse(accepted, acceptedIds, rejected);
 }
 
 export function registerSyncPushRoute(app: FastifyInstance, pool: pg.Pool, config: ServerConfig): void {
@@ -123,55 +206,16 @@ export function registerSyncPushRoute(app: FastifyInstance, pool: pg.Pool, confi
     }
 
     const client = await pool.connect();
-    let accepted = 0;
-    const acceptedIds: string[] = [];
-    const rejected: RejectedSyncEvent[] = [];
     try {
       await client.query('begin');
-      for (const group of eventGroups(events)) {
-        const operationId = compoundOperationId(group[0]);
-        if (operationId) await client.query('savepoint sync_compound_operation');
-        const groupResults: SourceEventResult[] = [];
-        try {
-          for (const sourceEvent of group) {
-            const result = await processSourceEvent(client, config, envelopeContract, sourceEvent);
-            groupResults.push(result);
-            if (result.rejection) break;
-          }
-        } catch (error) {
-          if (operationId) await client.query('rollback to savepoint sync_compound_operation');
-          throw error;
-        }
-        const failed = groupResults.find((result) => result.rejection)?.rejection;
-        if (failed && operationId) {
-          await client.query('rollback to savepoint sync_compound_operation');
-          await client.query('release savepoint sync_compound_operation');
-          rejected.push(
-            ...group.map((event) => ({
-              id: typeof event?.id === 'string' ? event.id : '',
-              reason: 'invalid' as const,
-              message: `compound operation ${operationId} was rejected: ${failed.message ?? failed.reason}`,
-            })),
-          );
-          continue;
-        }
-        if (operationId) await client.query('release savepoint sync_compound_operation');
-        for (const result of groupResults) {
-          if (result.rejection) rejected.push(result.rejection);
-          else {
-            if (result.inserted) accepted += 1;
-            acceptedIds.push(result.sourceEventId);
-          }
-        }
-      }
+      const result = await applySyncEventsInTransaction(client, config, events, envelopeContract);
       await client.query('commit');
+      return result;
     } catch (error) {
       await client.query('rollback');
       throw error;
     } finally {
       client.release();
     }
-
-    return mapPushSyncResponse(accepted, acceptedIds, rejected);
   });
 }

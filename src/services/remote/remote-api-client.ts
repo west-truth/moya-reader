@@ -1,3 +1,5 @@
+import type { TaskProgressCallback } from '@noveldesk/contracts';
+import { withRequestProgress } from './request-progress';
 import type { OriginalFileEntry } from '@noveldesk/contracts';
 import type { DiscoveryConfig, DiscoverySettings } from '../../integration-settings/discovery-settings';
 import {
@@ -200,6 +202,9 @@ export interface RemoteImportJob {
   total_bytes?: number | string;
   chapters_detected?: number;
   paragraphs_written?: number;
+  progress_completed?: number | string | null;
+  progress_total?: number | string | null;
+  progress_unit?: 'images' | null;
   message?: string;
   book_id?: string;
   error_message?: string;
@@ -740,6 +745,7 @@ export class RemoteApiClient {
     path: string,
     init: RequestInit = {},
     timeoutMs?: number,
+    onProgress?: TaskProgressCallback,
   ): Promise<{ blob: Blob; headers: Headers; status: number }> {
     const authToken = this.options.getAuthToken?.()?.trim();
     let blob!: Blob;
@@ -758,7 +764,25 @@ export class RemoteApiClient {
           if (download.status === 401) this.options.onUnauthorized?.();
           throw await remoteError(download);
         }
-        blob = await download.blob();
+        if (!onProgress || !download.body) {
+          blob = await download.blob();
+          return;
+        }
+        const length = Number(download.headers.get('content-length'));
+        const total =
+          !download.headers.get('content-encoding') && Number.isFinite(length) && length > 0 ? length : undefined;
+        let completed = 0;
+        const observed = download.body.pipeThrough(
+          new TransformStream<Uint8Array, Uint8Array>({
+            transform(chunk, controller) {
+              completed += chunk.byteLength;
+              onProgress({ phase: 'downloading', completed, total, unit: 'bytes' });
+              controller.enqueue(chunk);
+            },
+          }),
+        );
+        blob = await new Response(observed, { headers: download.headers }).blob();
+        onProgress({ phase: 'verifying' });
       },
     );
     return { blob, headers: response.headers, status: response.status };
@@ -964,8 +988,8 @@ export class RemoteApiClient {
     });
   }
 
-  exportBackup(): Promise<{ blob: Blob; headers: Headers; status: number }> {
-    return this.requestBlob('/backups/export');
+  exportBackup(onProgress?: TaskProgressCallback): Promise<{ blob: Blob; headers: Headers; status: number }> {
+    return this.requestBlob('/backups/export', {}, undefined, onProgress);
   }
 
   async createBackupDownload(): Promise<string> {
@@ -978,8 +1002,13 @@ export class RemoteApiClient {
     return this.request(`/backups/staged/${encodeURIComponent(id)}`, { method: 'DELETE' });
   }
 
-  restoreInspectedBackup(id: string, options: BackupRestoreOptions): Promise<BackupRestoreResult> {
-    return this.request(
+  restoreInspectedBackup(
+    id: string,
+    options: BackupRestoreOptions,
+    onProgress?: TaskProgressCallback,
+  ): Promise<BackupRestoreResult> {
+    return withRequestProgress(
+      this.request.bind(this),
       `/backups/staged/${encodeURIComponent(id)}/restore`,
       {
         method: 'POST',
@@ -991,11 +1020,14 @@ export class RemoteApiClient {
         },
       },
       60 * 60_000,
+      onProgress,
+      '/backups/progress',
     );
   }
 
-  inspectBackup(archive: Blob): Promise<BackupInspection> {
-    return this.request(
+  inspectBackup(archive: Blob, onProgress?: TaskProgressCallback): Promise<BackupInspection> {
+    return withRequestProgress(
+      this.request.bind(this),
       '/backups/inspect',
       {
         method: 'POST',
@@ -1003,11 +1035,18 @@ export class RemoteApiClient {
         headers: { 'Content-Type': 'application/zip' },
       },
       60 * 60_000,
+      onProgress,
+      '/backups/progress',
     );
   }
 
-  restoreBackup(archive: Blob, options: BackupRestoreOptions): Promise<BackupRestoreResult> {
-    return this.request(
+  restoreBackup(
+    archive: Blob,
+    options: BackupRestoreOptions,
+    onProgress?: TaskProgressCallback,
+  ): Promise<BackupRestoreResult> {
+    return withRequestProgress(
+      this.request.bind(this),
       '/backups/restore',
       {
         method: 'POST',
@@ -1021,6 +1060,8 @@ export class RemoteApiClient {
         },
       },
       60 * 60_000,
+      onProgress,
+      '/backups/progress',
     );
   }
 

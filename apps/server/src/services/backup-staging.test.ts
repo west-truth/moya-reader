@@ -113,7 +113,11 @@ describe('disk staged backup', () => {
 
   it('removes partial uploads on cancellation and rejects invalid archives without retained files', async () => {
     await withStaging(async (staging, directory) => {
-      await expect(staging.receive(Readable.from(['not a zip']))).rejects.toThrow();
+      const validationStarted = vi.fn();
+      await expect(
+        staging.receive(Readable.from(['not a zip']), undefined, undefined, undefined, validationStarted),
+      ).rejects.toThrow();
+      expect(validationStarted).toHaveBeenCalledOnce();
       expect(await readdir(directory)).toEqual([]);
       const zip = createHostedBackupStream(snapshot(), async () => Buffer.from('abc'));
       const [buffer] = await Promise.all([
@@ -137,6 +141,19 @@ describe('disk staged backup', () => {
       await expect(pending).rejects.toThrow();
       clearTimeout(timer);
       expect(stream.destroyed).toBe(true);
+      expect(await readdir(directory)).toEqual([]);
+    });
+  });
+
+  it('reports a full staging disk clearly and removes the partial upload', async () => {
+    await withStaging(async (staging, directory) => {
+      const input = Readable.from(
+        (async function* () {
+          yield Buffer.from('partial zip');
+          throw Object.assign(new Error('write failed'), { code: 'ENOSPC' });
+        })(),
+      );
+      await expect(staging.receive(input)).rejects.toThrow('서버의 임시 저장공간이 부족합니다.');
       expect(await readdir(directory)).toEqual([]);
     });
   });

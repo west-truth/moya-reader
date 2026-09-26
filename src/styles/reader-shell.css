@@ -250,14 +250,13 @@
 }
 
 /*
- * Immersive reading is a latched state, not the ordinary auto-hidden chrome.
+ * Immersive reading is a latched state; the center tap explicitly opens/closes chrome.
  * Keep these overrides stronger than hover/focus/"always visible" rules so
  * pointer movement, scrolling and chapter navigation cannot reveal controls.
  */
 .reader-screen.immersive .top-progress,
 .reader-screen.immersive .reader-mobile-search,
 .reader-screen.immersive .reader-search-results-layer,
-.reader-screen.immersive .selection-action-bar,
 .reader-screen.immersive .reader-footnote-backdrop,
 .reader-screen.immersive .reader-pagination-controls,
 .reader-screen.immersive .chapter-nav {
@@ -425,7 +424,7 @@
   overflow: hidden;
 }
 
-.reader-quick-view-dialog > header {
+.modal.reader-quick-view-dialog > header {
   flex-shrink: 0;
   min-height: 54px;
   margin: 0;

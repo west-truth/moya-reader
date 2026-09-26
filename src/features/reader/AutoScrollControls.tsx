@@ -52,11 +52,12 @@ export function AutoScrollControls({
           <>
             <SettingsSlider
               label="읽기 속도"
-              value={controller.speed}
-              min={1}
-              max={12}
-              step={1}
-              onChange={controller.setSpeed}
+              value={controller.mode === 'pixel' ? controller.speed * 5 : controller.speed}
+              min={controller.mode === 'pixel' ? 5 : 1}
+              max={controller.mode === 'pixel' ? controller.maxSpeed * 5 : controller.maxSpeed}
+              step={controller.mode === 'pixel' ? 5 : 1}
+              suffix={controller.mode === 'pixel' ? 'px/초' : ''}
+              onChange={(value) => controller.setSpeed(controller.mode === 'pixel' ? value / 5 : value)}
             />
             <p>{autoReadingSpeedLabel(controller.mode, controller.speed)}</p>
           </>

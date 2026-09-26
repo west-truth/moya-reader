@@ -29,7 +29,7 @@ describe('inactive pagination work', () => {
     vi.stubGlobal('requestIdleCallback', (callback: () => void) => idleCallbacks.push(callback));
     vi.stubGlobal('cancelIdleCallback', vi.fn());
     vi.stubGlobal('window', { clearTimeout: vi.fn(), cancelAnimationFrame: vi.fn() });
-    vi.stubGlobal('document', { fonts: { ready: Promise.resolve() } });
+    vi.stubGlobal('document', Object.assign(new EventTarget(), { fonts: { ready: Promise.resolve() } }));
     vi.stubGlobal(
       'ResizeObserver',
       class {
@@ -115,7 +115,7 @@ describe('inactive pagination work', () => {
     vi.stubGlobal('requestIdleCallback', (callback: () => void) => idleCallbacks.push(callback));
     vi.stubGlobal('cancelIdleCallback', vi.fn());
     vi.stubGlobal('window', { clearTimeout: vi.fn(), cancelAnimationFrame: vi.fn() });
-    vi.stubGlobal('document', { fonts: { ready: Promise.resolve() } });
+    vi.stubGlobal('document', Object.assign(new EventTarget(), { fonts: { ready: Promise.resolve() } }));
     vi.stubGlobal(
       'ResizeObserver',
       class {

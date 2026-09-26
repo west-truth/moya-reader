@@ -50,6 +50,8 @@ export async function prepareBookReplacement(
   const existing = await lockExistingBookRevision(client, input.userId, input.bookId);
   if (!existing) return undefined;
   const toContentRevisionNumber = existing.contentRevisionNumber + 1;
+  if (!Number.isSafeInteger(toContentRevisionNumber) || toContentRevisionNumber <= existing.contentRevisionNumber)
+    throw new Error('book_replacement_target_revision_invalid');
   const toContentRevisionId = persistentId128('book_content_revision', [
     input.bookId,
     String(toContentRevisionNumber),

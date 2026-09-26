@@ -31,6 +31,7 @@ type WorkerCommand = StartMessage | CancelMessage;
 
 let activeJobId: string | undefined;
 let cancelled = false;
+let activeAbort: AbortController | undefined;
 
 function postProgress(progress: ImportProgress): void {
   self.postMessage({ type: 'progress', progress });
@@ -57,6 +58,7 @@ function postImportError(error: unknown, fallback = '파일 가져오기에 실�
 async function runImport(message: StartMessage): Promise<void> {
   activeJobId = message.jobId;
   cancelled = false;
+  activeAbort = new AbortController();
 
   const { jobId, file, encoding } = message;
   try {
@@ -72,7 +74,7 @@ async function runImport(message: StartMessage): Promise<void> {
       message: '파일을 읽는 중입니다.',
     });
 
-    const streamsArchiveEntries = /\.(zip|cbz|rar|cbr|7z|cb7)$/i.test(file.name);
+    const streamsArchiveEntries = /\.(epub|zip|cbz|rar|cbr|7z|cb7)$/i.test(file.name);
     let buffer: ArrayBuffer | undefined = streamsArchiveEntries
       ? new ArrayBuffer(0)
       : await readFileAsArrayBufferInChunks(file, {
@@ -107,6 +109,7 @@ async function runImport(message: StartMessage): Promise<void> {
       expectedNormalizedTextHash: message.expectedNormalizedTextHash,
       archivePassword: message.archivePassword,
       shouldCancel: () => cancelled && activeJobId === jobId,
+      signal: activeAbort.signal,
       onProgress: postProgress,
     };
     const pipeline = /\.epub$/i.test(file.name)
@@ -123,6 +126,7 @@ async function runImport(message: StartMessage): Promise<void> {
   } finally {
     if (activeJobId === jobId) {
       activeJobId = undefined;
+      activeAbort = undefined;
       cancelled = false;
     }
   }
@@ -142,7 +146,10 @@ self.addEventListener('unhandledrejection', (event) => {
 self.onmessage = (event: MessageEvent<WorkerCommand>) => {
   const message = event.data;
   if (message.type === 'cancel') {
-    if (!activeJobId || activeJobId === message.jobId) cancelled = true;
+    if (!activeJobId || activeJobId === message.jobId) {
+      cancelled = true;
+      activeAbort?.abort();
+    }
     return;
   }
   void runImport(message);

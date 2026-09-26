@@ -1,3 +1,4 @@
+import { verifyReaderControls } from './desktop/verify-reader-controls.mjs';
 import { spawn } from 'node:child_process';
 import fs from 'node:fs/promises';
 import path from 'node:path';
@@ -29,6 +30,7 @@ const skipScreenshots = hasArg('--no-screenshots');
 const initialContentOnly = hasArg('--initial-content-only');
 const chapterBoundaryOnly = hasArg('--chapter-boundary-only');
 const flowTransitionOnly = hasArg('--flow-transition-only');
+const selectionControlsOnly = hasArg('--selection-controls-only');
 const mobileViewport = hasArg('--mobile');
 const tabletViewport = hasArg('--tablet');
 const novelFile = argValue('--novel-file', process.env.READER_UI_NOVEL_FILE ?? '');
@@ -677,6 +679,12 @@ async function runReaderSmoke() {
   try {
     await openReader(page);
     await assertReaderDomIsBounded(page);
+    if (selectionControlsOnly) {
+      await verifyReaderControls(page, { font: !mobileViewport });
+      if (browserErrors.length) throw new Error(browserErrors.join('\n'));
+      log('Selection save/delete, immersive latch, automatic scroll entry and toolbar layout passed');
+      return;
+    }
     if (initialContentOnly) {
       await assertChromeOverlayKeepsReaderFrame(page);
       await assertPaginatedChromeOverlayKeepsReaderFrame(page);
@@ -1043,8 +1051,8 @@ async function runReaderSmoke() {
     await waitForPaginatedPageFit(page, 'mobile automatic paginated reader');
     const mobileAnchorBeforeImmersive = await currentPageStart(page);
     log('Checking mobile immersive layout transition');
-    await page.getByRole('button', { name: '리더 추가 메뉴' }).click();
-    await page.getByRole('menuitem', { name: '몰입 모드' }).click();
+    const readerBounds = await page.locator('.reader-paginated-root.is-active').boundingBox();
+    await page.mouse.click(readerBounds.x + readerBounds.width / 2, readerBounds.y + readerBounds.height / 2);
     await page.locator('.reader-screen.immersive').waitFor({ state: 'visible', timeout: timeoutMs });
     await waitForPaginatedPageFit(page, 'mobile immersive paginated reader');
     const mobileAnchorInImmersive = await currentPageStart(page);

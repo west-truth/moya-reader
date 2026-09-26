@@ -1,5 +1,13 @@
-import { LoaderCircle, RotateCcw, X } from 'lucide-react';
-import { importTaskIsActive, importTaskLabel, type ImportTaskView } from '../import/import-task-projection';
+import { TaskProgressRing } from '../../components/TaskProgressRing';
+import { RotateCcw, X } from 'lucide-react';
+import {
+  importTaskIsActive,
+  importTaskLabel,
+  importTaskStageLabel,
+  importTaskDetail,
+  importTaskTone,
+  type ImportTaskView,
+} from '../import/import-task-projection';
 import type { LibraryScreenProps } from './library-screen-contract';
 
 export function LibraryImportTaskOverlay({
@@ -16,8 +24,17 @@ export function LibraryImportTaskOverlay({
       role="status"
       aria-label={importTaskLabel(task)}
     >
-      {active ? <LoaderCircle size={24} className="spin" /> : <span aria-hidden="true">!</span>}
-      <strong>{importTaskLabel(task)}</strong>
+      {active ? (
+        <TaskProgressRing
+          percent={task.percent}
+          label={importTaskStageLabel(task)}
+          detail={importTaskDetail(task)}
+          tone={importTaskTone(task)}
+        />
+      ) : (
+        <span aria-hidden="true">!</span>
+      )}
+      <strong>{importTaskStageLabel(task)}</strong>
       {task.total && task.total > 1 && (
         <small>
           {Math.min(task.total, task.current ?? 0)}/{task.total}
@@ -66,7 +83,7 @@ export function LibraryImportTaskCard({
         </div>
         <p>{task.fileName}</p>
         <div className="card-row">
-          <strong>{importTaskLabel(task)}</strong>
+          <strong>{importTaskStageLabel(task)}</strong>
           <span>{task.error}</span>
           <LibraryImportTaskActions task={task} actions={actions} />
         </div>
@@ -98,7 +115,7 @@ export function LibraryImportTaskListRow({
         <p>{task.fileName}</p>
       </div>
       <div className="book-list-progress">
-        <strong>{importTaskLabel(task)}</strong>
+        <strong>{importTaskStageLabel(task)}</strong>
         <span>{task.error}</span>
       </div>
       <LibraryImportTaskActions task={task} actions={actions} />

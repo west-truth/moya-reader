@@ -1,4 +1,6 @@
 import React from 'react';
+import { EmbeddedServerGate, type EmbeddedServerConnection } from './platform/EmbeddedServerGate';
+import { createReaderRuntime } from './repositories/reader-runtime';
 import ReactDOM from 'react-dom/client';
 import App from './App';
 import { createAppRuntime } from './app/runtime/app-runtime';
@@ -8,6 +10,8 @@ import { relayDropboxOAuthPopup } from './cloud-vault/dropbox-oauth';
 import { initializeAppCredentialStore } from './platform/secure-credentials';
 import { SelfHostAccountGate } from './features/auth/SelfHostAccountGate';
 import { DesktopWindowShell } from './platform/DesktopWindowFrame';
+import { DesktopRemoteHome, DesktopServerChoice } from './platform/DesktopServerChoice';
+import { readDesktopServerSelection, type DesktopServerSelection } from './platform/desktop-server-selection';
 import { detectPlatformRuntime } from './platform/runtime';
 import { desktopGoogleSession } from './platform/desktop-google-session';
 import { googleSession } from './cloud-vault/google/google-session';
@@ -71,10 +75,22 @@ function registerWebAppServiceWorker(): void {
 
 async function startApp(): Promise<void> {
   const platformRuntime = detectPlatformRuntime();
-  try {
-    await initializeAppCredentialStore();
-  } catch (error) {
-    console.warn('Secure credential initialization failed; authenticated server features are unavailable.', error);
+  const embedded = platformRuntime.kind === 'tauri-desktop' && import.meta.env.VITE_DESKTOP_EMBEDDED_SERVER === 'true';
+  let desktopSelection: DesktopServerSelection | undefined;
+  let selectionError: string | undefined;
+  if (embedded) {
+    try {
+      desktopSelection = readDesktopServerSelection(window.localStorage);
+    } catch (error) {
+      selectionError = String(error instanceof Error ? error.message : error);
+    }
+  }
+  if (!embedded || desktopSelection?.mode === 'embedded') {
+    try {
+      await initializeAppCredentialStore();
+    } catch (error) {
+      console.warn('Secure credential initialization failed; authenticated server features are unavailable.', error);
+    }
   }
   let additionalTrustedRegistrations:
     | NonNullable<NonNullable<Parameters<typeof createAppExtensionRuntime>[0]>['additionalTrustedRegistrations']>
@@ -107,19 +123,31 @@ async function startApp(): Promise<void> {
       },
     ];
   }
-  const runtime = createAppRuntime({
-    extensionRuntimeFactory: () =>
-      createAppExtensionRuntime({
-        additionalTrustedRegistrations,
-        webNovelMetadataCollector: createPlatformWebNovelMetadataCollector(platformRuntime),
-      }),
-  });
+  const renderReader = (connection?: EmbeddedServerConnection) => {
+    const runtime = createAppRuntime({
+      readerRuntimeFactory: connection
+        ? () =>
+            createReaderRuntime({
+              mode: 'remote',
+              apiBaseUrl: `${connection.url}/api`,
+              getAuthToken: () => connection.authToken,
+              managedByDesktop: true,
+            })
+        : undefined,
+      extensionRuntimeFactory: () =>
+        createAppExtensionRuntime({
+          additionalTrustedRegistrations,
+          webNovelMetadataCollector: createPlatformWebNovelMetadataCollector(
+            platformRuntime,
+            connection ? { apiBaseUrl: `${connection.url}/api`, getAuthToken: () => connection.authToken } : undefined,
+          ),
+        }),
+    });
 
-  if (platformRuntime.kind === 'tauri-desktop') void desktopGoogleSession.restore();
-  else if (platformRuntime.kind === 'browser') void googleSession.restore();
+    if (platformRuntime.kind === 'tauri-desktop') void desktopGoogleSession.restore();
+    else if (platformRuntime.kind === 'browser') void googleSession.restore();
 
-  ReactDOM.createRoot(document.getElementById('root') as HTMLElement).render(
-    <React.StrictMode>
+    return (
       <RuntimeProvider runtime={runtime}>
         <DesktopWindowShell>
           <SelfHostAccountGate runtime={runtime.readerRuntime}>
@@ -127,6 +155,22 @@ async function startApp(): Promise<void> {
           </SelfHostAccountGate>
         </DesktopWindowShell>
       </RuntimeProvider>
+    );
+  };
+  ReactDOM.createRoot(document.getElementById('root') as HTMLElement).render(
+    <React.StrictMode>
+      {embedded ? (
+        desktopSelection?.mode === 'embedded' ? (
+          <>
+            <EmbeddedServerGate>{renderReader}</EmbeddedServerGate>
+            <DesktopServerChoice current={desktopSelection} />
+          </>
+        ) : (
+          <DesktopRemoteHome selection={desktopSelection} configurationError={selectionError} />
+        )
+      ) : (
+        renderReader()
+      )}
     </React.StrictMode>,
   );
 }

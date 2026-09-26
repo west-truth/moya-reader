@@ -50,6 +50,9 @@ const expectedRoutes = [
   ['GET', '/api/books/:bookId/notes'],
   ['POST', '/api/books/:bookId/notes'],
   ['DELETE', '/api/notes/:noteId'],
+  ['GET', '/api/books/:bookId/document-annotations'],
+  ['PUT', '/api/books/:bookId/document-annotations/:annotationId'],
+  ['DELETE', '/api/books/:bookId/document-annotations/:annotationId'],
 ] as const;
 
 describe('book route composition', () => {

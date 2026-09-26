@@ -208,3 +208,33 @@ describe('reader runtime connected server settings', () => {
     expect(store.get(REMOTE_DEVICE_ID_STORAGE_KEY)).toMatch(/^device_web_/);
   });
 });
+
+describe('managed desktop server connection', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.unstubAllEnvs();
+  });
+  it('uses the native endpoint and in-memory token even when the build defaults to local', async () => {
+    vi.stubEnv('VITE_READER_BACKEND', 'local');
+    vi.stubEnv('VITE_API_BASE_URL', '/wrong-api');
+    const setItem = vi.fn();
+    vi.stubGlobal('localStorage', { getItem: () => 'device_test', setItem });
+    const fetchMock = vi.fn(async () => new Response(JSON.stringify({ books: [] }), { status: 200 }));
+    vi.stubGlobal('fetch', fetchMock);
+    const runtime = createReaderRuntime({
+      mode: 'remote',
+      apiBaseUrl: 'http://127.0.0.1:43127/api/',
+      getAuthToken: () => 'native-private-token',
+      managedByDesktop: true,
+    });
+    await runtime.remoteApiClient!.listBooks();
+    expect(runtime.mode).toBe('remote');
+    expect(runtime.managedByDesktop).toBe(true);
+    expect(fetchMock.mock.calls[0]).toEqual([
+      'http://127.0.0.1:43127/api/books',
+      expect.objectContaining({ headers: expect.objectContaining({ Authorization: 'Bearer native-private-token' }) }),
+    ]);
+    expect(setItem).not.toHaveBeenCalled();
+    expect(runtime.syncService).toBeUndefined();
+  });
+});

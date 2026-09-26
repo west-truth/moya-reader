@@ -22,6 +22,7 @@ export type AnnotationRepository = Pick<
 >;
 
 export interface AnnotationSelection {
+  readonly parts?: readonly { readonly paragraphId: string; readonly text: string }[];
   readonly text: string;
   readonly paragraphId?: string;
 }

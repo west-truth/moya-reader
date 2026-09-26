@@ -1,3 +1,4 @@
+import { randomUuid } from '../../utils/random-uuid';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { Character, VoiceProfile } from '../../domain/types';
 import { voiceProfilesRevision } from '../../domain/resource-revisions';
@@ -276,7 +277,7 @@ export function useVoiceProductController(input: VoiceProductControllerInput) {
   const savePronunciationRule = useCallback(
     async (rule: Omit<PronunciationRuleV1, 'id' | 'userConfirmed' | 'provenance' | 'enabled'> & { id?: string }) => {
       if (!state || busy || !rule.sourceTerm.trim() || !rule.replacement.trim()) return;
-      const id = rule.id ?? `pronunciation_${crypto.randomUUID()}`;
+      const id = rule.id ?? `pronunciation_${randomUuid()}`;
       const nextRule: PronunciationRuleV1 = {
         ...rule,
         id,

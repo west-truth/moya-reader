@@ -7,6 +7,7 @@ import {
   Info,
   HardDrive,
   Keyboard,
+  Network,
   LayoutPanelTop,
   Palette,
   Puzzle,
@@ -33,13 +34,23 @@ import { StorageSettingsPanel, type StorageSettingsProps } from './StorageSettin
 import { ReaderGestureSettings } from './ReaderGestureSettings';
 import { ReaderSettingsAppearance } from './ReaderSettingsAppearance';
 import { ReaderSettingsLayout } from './ReaderSettingsLayout';
+import { RemoteAccessSettings } from './RemoteAccessSettings';
 import { SyncSettings } from './SyncSettings';
 import { resolveReaderThemeColors } from './reader-theme-colors';
 import type { ReaderSettingsController } from './useReaderSettingsDraft';
 import './reader-settings-panel.css';
 
 export type SettingsTab =
-  'appearance' | 'layout' | 'gesture' | 'sources' | 'extensions' | 'storage' | 'downloads' | 'sync' | 'application';
+  | 'appearance'
+  | 'layout'
+  | 'gesture'
+  | 'sources'
+  | 'extensions'
+  | 'storage'
+  | 'downloads'
+  | 'sync'
+  | 'remote-access'
+  | 'application';
 
 interface SettingsSection {
   readonly id: SettingsTab;
@@ -87,6 +98,12 @@ const SETTINGS_SECTIONS: readonly SettingsSection[] = [
     icon: Cloud,
   },
   {
+    id: 'remote-access',
+    label: '원격 접속',
+    detail: '다른 기기 연결, 접속 주소',
+    icon: Network,
+  },
+  {
     id: 'application',
     label: '앱 정보',
     detail: '버전, 환경, 라이선스',
@@ -103,6 +120,7 @@ export interface ReaderSettingsPanelProps {
   readonly personalizationRepository?: ReaderPersonalizationRepository;
   readonly platformRuntime: PlatformRuntimeInfo;
   readonly providerExecutionRuntime: ProviderExecutionRuntimeKind;
+  readonly serverApiBaseUrl?: string;
   readonly selfHostAccount?: SelfHostAccount;
   readonly logoutSelfHostAccount?: () => Promise<void>;
   readonly extensions: readonly AppExtensionSnapshot[];
@@ -341,6 +359,7 @@ export default function ReaderSettingsPanel(props: ReaderSettingsPanelProps) {
                 />
               )}
               {tab === 'sync' && <SyncSettings openSync={() => openDestination(props.openSync)} />}
+              {tab === 'remote-access' && <RemoteAccessSettings serverApiBaseUrl={props.serverApiBaseUrl} />}
               {tab === 'application' && (
                 <ApplicationInfoSettings
                   platformRuntime={props.platformRuntime}

@@ -103,49 +103,78 @@ export class AnnotationPersistence {
 
   async setHighlight(
     context: MutationContext & { readonly highlights: readonly ReaderHighlight[] },
-    color: ReaderHighlight['color'],
+    color: ReaderHighlight['color'] | 'remove',
     location = context.reader.getLocation(),
     selection: AnnotationSelection | undefined = context.reader.getSelection(),
   ): Promise<{ status: 'created' | 'updated' | 'deleted'; highlights: ReaderHighlight[] } | undefined> {
-    if (!location) return undefined;
-    const paragraph = await this.resolveParagraph(context.reader, selection, location);
-    if (!paragraph) return undefined;
-    const quote = selection?.text || paragraph.text;
-    const existing = context.highlights.find(
-      (highlight) => highlight.paragraphId === paragraph.id && highlight.quote === quote,
-    );
-    if (existing) {
-      if (existing.color === color) {
-        await this.repository.deleteHighlight(existing.id, { expectedRevision: highlightRevision(existing) });
-        return { status: 'deleted', highlights: await this.repository.listHighlights(context.novel.id) };
-      }
-      await this.repository.saveHighlight(
-        { ...existing, color, progress: location.progress, updatedAt: this.now() },
-        { expectedRevision: highlightRevision(existing) },
-      );
-      return { status: 'updated', highlights: await this.repository.listHighlights(context.novel.id) };
+    if (!location || !selection?.text.trim()) return undefined;
+    const parts =
+      selection.parts ?? (selection.paragraphId ? [selection as { paragraphId: string; text: string }] : []);
+    if (!parts.length) return undefined;
+    // Validate every selected paragraph before making any mutation. Never fall back
+    // to the visible first paragraph when selection is absent or no longer current.
+    const selectedParagraphs = new Map<string, string>();
+    for (const part of parts) {
+      const paragraph = await this.resolveParagraph(context.reader, part, location);
+      if (
+        !paragraph ||
+        paragraph.id !== part.paragraphId ||
+        paragraph.novelId !== context.novel.id ||
+        paragraph.chapterId !== context.chapter.id ||
+        !part.text.trim() ||
+        !paragraph.text.includes(part.text)
+      )
+        throw new Error('highlight_selection_stale');
+      selectedParagraphs.set(part.paragraphId, paragraph.text);
     }
-
-    const createdAt = this.now();
-    const highlight: ReaderHighlight = {
-      id: readerHighlightId({
+    let status: 'created' | 'updated' | 'deleted' = color === 'remove' ? 'deleted' : 'updated';
+    for (const part of parts) {
+      if (color === 'remove') {
+        const text = selectedParagraphs.get(part.paragraphId)!;
+        const start = text.indexOf(part.text);
+        const end = start + part.text.length;
+        const overlaps = context.highlights.filter((highlight) => {
+          if (highlight.paragraphId !== part.paragraphId || !highlight.quote) return false;
+          const highlightStart = text.indexOf(highlight.quote);
+          return highlightStart >= 0 && highlightStart < end && highlightStart + highlight.quote.length > start;
+        });
+        for (const existing of overlaps)
+          await this.repository.deleteHighlight(existing.id, { expectedRevision: highlightRevision(existing) });
+        continue;
+      }
+      const existing = context.highlights.find(
+        (highlight) => highlight.paragraphId === part.paragraphId && highlight.quote === part.text,
+      );
+      if (existing) {
+        if (existing.color !== color)
+          await this.repository.saveHighlight(
+            { ...existing, color, updatedAt: this.now() },
+            { expectedRevision: highlightRevision(existing) },
+          );
+        continue;
+      }
+      const createdAt = this.now();
+      const highlight: ReaderHighlight = {
+        id: readerHighlightId({
+          novelId: context.novel.id,
+          chapterId: context.chapter.id,
+          paragraphId: part.paragraphId,
+          quote: part.text,
+          createdAt,
+        }),
         novelId: context.novel.id,
         chapterId: context.chapter.id,
-        paragraphId: paragraph.id,
-        quote,
+        paragraphId: part.paragraphId,
+        quote: part.text,
+        color,
+        progress: location.progress,
         createdAt,
-      }),
-      novelId: context.novel.id,
-      chapterId: context.chapter.id,
-      paragraphId: paragraph.id,
-      quote,
-      color,
-      progress: location.progress,
-      createdAt,
-      updatedAt: createdAt,
-    };
-    await this.repository.saveHighlight(highlight, { expectedRevision: highlightRevision() });
-    return { status: 'created', highlights: await this.repository.listHighlights(context.novel.id) };
+        updatedAt: createdAt,
+      };
+      await this.repository.saveHighlight(highlight, { expectedRevision: highlightRevision() });
+      status = 'created';
+    }
+    return { status, highlights: await this.repository.listHighlights(context.novel.id) };
   }
 
   async deleteBookmark(novelId: string, bookmark: Bookmark): Promise<Bookmark[]> {

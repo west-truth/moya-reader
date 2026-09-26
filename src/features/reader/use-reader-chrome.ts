@@ -12,47 +12,30 @@ export interface ReaderChromeController {
   readonly toggleFullscreen: () => Promise<void>;
 }
 
-export function useReaderChrome(keepVisible: boolean, notify: (message: string) => void): ReaderChromeController {
+export function useReaderChrome(_keepVisible: boolean, notify: (message: string) => void): ReaderChromeController {
   const [visible, setVisible] = useState(false);
   const [immersive, setImmersive] = useState(true);
   const [fullscreen, setFullscreen] = useState(false);
-  const hideTimerRef = useRef<number>();
   const immersiveRef = useRef(true);
   const visibleRef = useRef(false);
-
-  const clearHideTimer = useCallback(() => {
-    window.clearTimeout(hideTimerRef.current);
-    hideTimerRef.current = undefined;
-  }, []);
 
   const reveal = useCallback(() => {
     if (immersiveRef.current) return;
     visibleRef.current = true;
     setVisible(true);
-    clearHideTimer();
-    if (!keepVisible) {
-      hideTimerRef.current = window.setTimeout(() => {
-        if (!immersiveRef.current) {
-          visibleRef.current = false;
-          setVisible(false);
-        }
-      }, 2600);
-    }
-  }, [clearHideTimer, keepVisible]);
+  }, []);
 
   const hide = useCallback(() => {
-    clearHideTimer();
     visibleRef.current = false;
     setVisible(false);
-  }, [clearHideTimer]);
+  }, []);
 
   const enterImmersive = useCallback(() => {
     immersiveRef.current = true;
-    clearHideTimer();
     visibleRef.current = false;
     setImmersive(true);
     setVisible(false);
-  }, [clearHideTimer]);
+  }, []);
 
   const exitImmersive = useCallback(() => {
     immersiveRef.current = false;
@@ -83,11 +66,6 @@ export function useReaderChrome(keepVisible: boolean, notify: (message: string) 
     sync();
     return () => document.removeEventListener('fullscreenchange', sync);
   }, []);
-
-  useEffect(() => {
-    reveal();
-    return clearHideTimer;
-  }, [clearHideTimer, reveal]);
 
   return {
     visible,

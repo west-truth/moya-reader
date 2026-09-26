@@ -607,10 +607,12 @@ describe('SourceHubScreen', () => {
     expect(selectedMarkup).toContain('선택한 작품.epub 선택 목록에서 제거');
   });
 
-  it('makes the active release spinner the download cancel button', () => {
-    const markup = renderToStaticMarkup(
+  it('keeps the measured progress circle as cancel, with no details action', () => {
+    const cancel = vi.fn();
+    const element = (
       <SourceHubScreen
         controller={controller({
+          cancel,
           busy: true,
           importBusy: true,
           detail: { title: '연동 작품' },
@@ -634,6 +636,7 @@ describe('SourceHubScreen', () => {
               title: '연동 작품',
               externalItemKey: 'fixture.source::::work-1',
               phase: 'downloading',
+              percent: 42,
             },
           ],
           progress: {
@@ -648,11 +651,22 @@ describe('SourceHubScreen', () => {
         })}
         library={library}
         openSourceSettings={vi.fn()}
-      />,
+      />
     );
+    const markup = renderToStaticMarkup(element);
 
     expect(markup).toContain('다운로드 중');
-    expect(markup).toContain('spin');
+    expect(markup).toContain('42%');
+    expect(markup).not.toContain('상세 보기');
+    let renderer!: ReactTestRenderer;
+    act(() => {
+      renderer = create(element);
+    });
+    const button = renderer.root.findByProps({ 'aria-label': '1화 다운로드 중단' });
+    expect(button.findAllByProps({ role: 'progressbar' })).toHaveLength(1);
+    act(() => button.props.onClick());
+    expect(cancel).toHaveBeenCalledOnce();
+    act(() => renderer.unmount());
     expect(markup).toContain('aria-label="1화 다운로드 중단"');
     expect(markup).not.toContain('source-hub-batch-bar');
     expect(markup).not.toContain('외부 작품 가져오기 진행률');

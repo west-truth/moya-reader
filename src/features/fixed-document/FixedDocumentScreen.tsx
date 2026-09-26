@@ -16,7 +16,6 @@ import {
   Download,
   EyeOff,
   Expand,
-  Focus,
   Highlighter,
   ListOrdered,
   Maximize2,
@@ -69,6 +68,7 @@ import {
 } from '../../domain/document-text-order';
 import type { BookAssetRepository } from '../../repositories/book-asset-repository';
 import { IndexedDbDocumentAnnotationRepository } from '../../storage/document-annotation-store';
+import type { DocumentAnnotationRepository } from '../../repositories/document-annotation-repository';
 import type { DocumentTextSearchResult } from '../../repositories/document-text-repository';
 import type { ReaderRepository } from '../../repositories/reader-repository';
 import { LocalTesseractOcrProvider } from '../../providers/local-tesseract-ocr-provider';
@@ -149,7 +149,7 @@ type ViewMode = ComicViewMode;
 type PdfTextPageState = 'ready' | 'ocr_candidate' | 'failed';
 
 const documentTextRepository = new IndexedDbDocumentTextRepository();
-const documentAnnotationRepository = new IndexedDbDocumentAnnotationRepository();
+const localDocumentAnnotationRepository = new IndexedDbDocumentAnnotationRepository();
 const comicReadingProfileRepository = new IndexedDbComicReadingProfileRepository();
 const CONTINUOUS_SECTION_NAV_HEIGHT = 112;
 const CONTINUOUS_SECTION_BOUNDARY_HEIGHT = 196;
@@ -201,6 +201,7 @@ export interface FixedDocumentScreenProps {
   readonly listeningPreparationBusy?: boolean;
   readonly listeningPosition?: ListeningPosition;
   readonly annotationSyncRevision?: string;
+  readonly documentAnnotationRepository?: DocumentAnnotationRepository;
 }
 
 function initialPage(chapters: readonly Chapter[], position?: ReadingPosition, initialChapterId?: string): number {
@@ -671,6 +672,7 @@ export default function FixedDocumentScreen({
   listeningPreparationBusy = false,
   listeningPosition,
   annotationSyncRevision,
+  documentAnnotationRepository = localDocumentAnnotationRepository,
 }: FixedDocumentScreenProps) {
   const sortedChapters = useMemo(() => [...chapters].sort((left, right) => left.index - right.index), [chapters]);
   const documentSections = useMemo(
@@ -1171,7 +1173,7 @@ export default function FixedDocumentScreen({
       await Promise.all(changed.map((result) => documentAnnotationRepository.save(result.annotation)));
       setDocumentAnnotations(await documentAnnotationRepository.list(novel.id));
     },
-    [novel.id],
+    [documentAnnotationRepository, novel.id],
   );
 
   const ensurePdfNativeText = useCallback(
@@ -1622,7 +1624,7 @@ export default function FixedDocumentScreen({
 
   const reloadDocumentAnnotations = useCallback(async () => {
     setDocumentAnnotations(await documentAnnotationRepository.list(novel.id));
-  }, [novel.id]);
+  }, [documentAnnotationRepository, novel.id]);
 
   const togglePageBookmark = useCallback(async () => {
     const existing = documentAnnotations.find(
@@ -1642,7 +1644,7 @@ export default function FixedDocumentScreen({
       });
     }
     await reloadDocumentAnnotations();
-  }, [documentAnnotations, novel, pageIndex, reloadDocumentAnnotations]);
+  }, [documentAnnotationRepository, documentAnnotations, novel, pageIndex, reloadDocumentAnnotations]);
 
   const saveTextAnnotation = useCallback(
     async (type: 'text_highlight' | 'text_note') => {
@@ -1690,7 +1692,14 @@ export default function FixedDocumentScreen({
       setSelectionNoteDraft('');
       await reloadDocumentAnnotations();
     },
-    [documentAnnotations, novel.id, pendingTextSelection, reloadDocumentAnnotations, selectionNoteDraft],
+    [
+      documentAnnotationRepository,
+      documentAnnotations,
+      novel.id,
+      pendingTextSelection,
+      reloadDocumentAnnotations,
+      selectionNoteDraft,
+    ],
   );
 
   const manuallyReanchorAnnotation = useCallback(async () => {
@@ -1726,7 +1735,14 @@ export default function FixedDocumentScreen({
     setReanchorTargetId(undefined);
     setSelectionMode(false);
     await reloadDocumentAnnotations();
-  }, [documentAnnotations, novel.id, pendingTextSelection, reanchorTargetId, reloadDocumentAnnotations]);
+  }, [
+    documentAnnotationRepository,
+    documentAnnotations,
+    novel.id,
+    pendingTextSelection,
+    reanchorTargetId,
+    reloadDocumentAnnotations,
+  ]);
 
   const saveRegionAnnotation = useCallback(
     async (type: 'region_highlight' | 'region_note') => {
@@ -1759,7 +1775,14 @@ export default function FixedDocumentScreen({
       setRegionNoteDraft('');
       await reloadDocumentAnnotations();
     },
-    [documentAnnotations, novel, pendingRegionSelection, regionNoteDraft, reloadDocumentAnnotations],
+    [
+      documentAnnotationRepository,
+      documentAnnotations,
+      novel,
+      pendingRegionSelection,
+      regionNoteDraft,
+      reloadDocumentAnnotations,
+    ],
   );
 
   const removeDocumentAnnotation = useCallback(
@@ -1771,7 +1794,7 @@ export default function FixedDocumentScreen({
       }
       await reloadDocumentAnnotations();
     },
-    [reanchorTargetId, reloadDocumentAnnotations],
+    [documentAnnotationRepository, reanchorTargetId, reloadDocumentAnnotations],
   );
 
   const flushReadingProgress = useFixedDocumentProgress(pageIndex, sortedChapters[pageIndex], novel, onPageSettled);
@@ -2618,15 +2641,6 @@ export default function FixedDocumentScreen({
           </button>
           <button
             type="button"
-            onClick={toggleImmersive}
-            aria-pressed={immersive}
-            aria-label={immersive ? '몰입 모드 종료' : '몰입 모드 시작'}
-            title="몰입 모드"
-          >
-            <Focus size={17} />
-          </button>
-          <button
-            type="button"
             className={novel.format === 'image_archive' ? 'fixed-doc-mobile-top-action' : undefined}
             onClick={() => void toggleFullscreen()}
             aria-pressed={fullscreen}
@@ -3138,15 +3152,6 @@ export default function FixedDocumentScreen({
               }}
             >
               <RotateCw size={16} /> 회전
-            </button>
-            <button
-              type="button"
-              onClick={() => {
-                toggleImmersive();
-                setMobileMenuOpen(false);
-              }}
-            >
-              <Focus size={16} /> 몰입 모드
             </button>
             {novel.format !== 'image_archive' && (
               <button

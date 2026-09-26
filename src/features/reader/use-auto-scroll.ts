@@ -18,10 +18,10 @@ function savedMode(key: string): AutoReadingMode {
     return 'pixel';
   }
 }
-function savedSpeed(): number {
+function savedSpeed(key = SPEED_KEY, max = 12): number {
   try {
-    const value = Number(localStorage.getItem(SPEED_KEY));
-    return Number.isInteger(value) && value >= 1 && value <= 12 ? value : 4;
+    const value = Number(localStorage.getItem(key));
+    return Number.isInteger(value) && value >= 1 && value <= max ? value : 4;
   } catch {
     return 4;
   }
@@ -35,10 +35,21 @@ export function useAutoScroll(
   nextChapter?: { scope: string; open: (isCurrent: () => boolean) => Promise<void> },
   kind: 'text' | 'comic' = 'text',
 ) {
-  const [speed, setSpeedState] = useState(savedSpeed);
+  const [standardSpeed, setSpeedState] = useState(() => savedSpeed());
+  const pixelSpeedKey = `moya.${kind}-auto-pixel-speed.v2`;
+  const [pixelSpeed, setPixelSpeed] = useState(() => {
+    try {
+      if (localStorage.getItem(pixelSpeedKey) !== null) return savedSpeed(pixelSpeedKey, 240);
+    } catch {
+      /* Optional preference. */
+    }
+    return savedSpeed();
+  });
   const modeKey = kind === 'text' ? MODE_KEY : 'moya.comic-auto-reading-mode.v1';
   const intervalKey = `moya.${kind}-auto-page-interval.v1`;
   const [mode, setModeState] = useState<AutoReadingMode>(() => savedMode(modeKey));
+  const speed = mode === 'pixel' ? pixelSpeed : standardSpeed;
+  const maxSpeed = mode === 'pixel' ? 240 : 12;
   const [interval, setIntervalState] = useState(() => {
     try {
       const value = Number(localStorage.getItem(intervalKey));
@@ -101,10 +112,11 @@ export function useAutoScroll(
     }
   };
   const setSpeed = (value: number) => {
-    if (!Number.isInteger(value) || value < 1 || value > 12) return;
-    setSpeedState(value);
+    if (!Number.isInteger(value) || value < 1 || value > maxSpeed) return;
+    if (mode === 'pixel') setPixelSpeed(value);
+    else setSpeedState(value);
     try {
-      localStorage.setItem(SPEED_KEY, String(value));
+      localStorage.setItem(mode === 'pixel' ? pixelSpeedKey : SPEED_KEY, String(value));
     } catch {
       /* Browser storage is optional. */
     }
@@ -242,6 +254,7 @@ export function useAutoScroll(
     interval,
     setInterval,
     speed,
+    maxSpeed,
     mode,
     setMode,
     continueChapter,

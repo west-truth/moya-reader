@@ -1,3 +1,4 @@
+import { randomUuid } from '../../utils/random-uuid';
 import { useState } from 'react';
 import { ModalDrawer } from '../../shared/ui/ModalDrawer';
 import type { ExternalSourceController } from '../external-sources/useExternalSourceController';
@@ -40,7 +41,7 @@ export function SaveDiscoveryList({
               return;
             }
             tab.sections.push({
-              id: crypto.randomUUID(),
+              id: randomUuid(),
               sourceId: source.activeSourceId,
               title: title.trim(),
               mode: browse.activeMode === 'latest' ? 'latest' : 'popular',

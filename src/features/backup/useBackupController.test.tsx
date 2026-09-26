@@ -5,6 +5,101 @@ import { useBackupController, type BackupFeatureController } from './useBackupCo
 import type { PlatformDocumentIo } from '../../platform/document-io';
 
 describe('backup conflict defaults', () => {
+  it('streams the server ZIP into a selected file and confirms completion', async () => {
+    const steps: string[] = [];
+    const chunks: Uint8Array[] = [];
+    vi.stubGlobal('window', {
+      isSecureContext: true,
+      showSaveFilePicker: async () => {
+        steps.push('picker');
+        return {
+          createWritable: async () =>
+            new WritableStream<Uint8Array>({
+              write(chunk) {
+                steps.push('write');
+                chunks.push(chunk);
+              },
+              close() {
+                steps.push('close');
+              },
+            }),
+        };
+      },
+    });
+    vi.stubGlobal('fetch', async () => {
+      steps.push('fetch');
+      return new Response('zip-content');
+    });
+    const onExported = vi.fn();
+    const notify = vi.fn();
+    let controller!: BackupFeatureController;
+    let renderer!: ReactTestRenderer;
+    function Harness() {
+      controller = useBackupController({
+        repository: {
+          createDownload: async () => {
+            steps.push('ticket');
+            return '/api/backups/download/ticket';
+          },
+        } as BackupRepository,
+        refreshLibrary: async () => {},
+        notify,
+        onExported,
+      });
+      return null;
+    }
+    try {
+      await act(async () => {
+        renderer = create(<Harness />);
+      });
+      await act(async () => controller.exportBackup());
+      expect(steps).toEqual(['picker', 'ticket', 'fetch', 'write', 'close']);
+      expect(new TextDecoder().decode(chunks[0])).toBe('zip-content');
+      expect(notify).toHaveBeenCalledWith('백업 파일 저장을 완료했습니다.', 'success');
+      expect(onExported).toHaveBeenCalledOnce();
+    } finally {
+      await act(async () => renderer.unmount());
+      vi.unstubAllGlobals();
+    }
+  });
+  it('does not report completion when writing the server ZIP fails', async () => {
+    vi.stubGlobal('window', {
+      isSecureContext: true,
+      showSaveFilePicker: async () => ({
+        createWritable: async () =>
+          new WritableStream<Uint8Array>({
+            write() {
+              throw new Error('disk full');
+            },
+          }),
+      }),
+    });
+    vi.stubGlobal('fetch', async () => new Response('zip-content'));
+    const onExported = vi.fn();
+    const notify = vi.fn();
+    let controller!: BackupFeatureController;
+    let renderer!: ReactTestRenderer;
+    function Harness() {
+      controller = useBackupController({
+        repository: { createDownload: async () => '/api/backups/download/ticket' } as BackupRepository,
+        refreshLibrary: async () => {},
+        notify,
+        onExported,
+      });
+      return null;
+    }
+    try {
+      await act(async () => {
+        renderer = create(<Harness />);
+      });
+      await act(async () => controller.exportBackup());
+      expect(onExported).not.toHaveBeenCalled();
+      expect(notify).toHaveBeenCalledWith('disk full', 'danger');
+    } finally {
+      await act(async () => renderer.unmount());
+      vi.unstubAllGlobals();
+    }
+  });
   it('starts a native browser download without buffering ZIP or reporting a completed backup', async () => {
     const anchor = { href: '', download: '', target: '', rel: '', click: vi.fn(), remove: vi.fn() };
     vi.stubGlobal('document', { createElement: () => anchor, body: { append: vi.fn() } });
@@ -123,17 +218,92 @@ describe('backup conflict defaults', () => {
     expect(controller.conflictResolutions).toEqual({});
     await act(async () => controller.setConflictResolution('b', 'skip'));
     await act(async () => controller.restoreBackup());
-    expect(restoreBackup).toHaveBeenLastCalledWith(archive, {
-      defaultConflictResolution: 'replace',
-      conflictResolutions: { b: 'skip' },
-    });
+    expect(restoreBackup).toHaveBeenLastCalledWith(
+      archive,
+      {
+        defaultConflictResolution: 'replace',
+        conflictResolutions: { b: 'skip' },
+      },
+      expect.any(Function),
+    );
     await act(async () => controller.inspectFile(archive));
     await act(async () => controller.setDefaultResolution('copy'));
     await act(async () => controller.restoreBackup());
-    expect(restoreBackup).toHaveBeenLastCalledWith(archive, {
-      defaultConflictResolution: 'copy',
-      conflictResolutions: {},
-    });
+    expect(restoreBackup).toHaveBeenLastCalledWith(
+      archive,
+      {
+        defaultConflictResolution: 'copy',
+        conflictResolutions: {},
+      },
+      expect.any(Function),
+    );
     await act(async () => renderer.unmount());
   });
+});
+
+it('shows bytes while receiving and stays busy until the destination closes', async () => {
+  let send!: ReadableStreamDefaultController<Uint8Array>;
+  let finish!: () => void;
+  const closing = new Promise<void>((resolve) => {
+    finish = resolve;
+  });
+  vi.stubGlobal('window', {
+    isSecureContext: true,
+    showSaveFilePicker: async () => ({
+      createWritable: async () => new WritableStream<Uint8Array>({ close: () => closing }),
+    }),
+  });
+  vi.stubGlobal(
+    'fetch',
+    async () =>
+      new Response(
+        new ReadableStream<Uint8Array>({
+          start(c) {
+            send = c;
+          },
+        }),
+      ),
+  );
+  const onExported = vi.fn();
+  let controller!: BackupFeatureController;
+  let renderer!: ReactTestRenderer;
+  function Harness() {
+    controller = useBackupController({
+      repository: { createDownload: async () => '/download' } as BackupRepository,
+      refreshLibrary: async () => {},
+      notify: vi.fn(),
+      onExported,
+    });
+    return null;
+  }
+  try {
+    act(() => {
+      renderer = create(<Harness />);
+    });
+    let operation!: Promise<void>;
+    await act(async () => {
+      operation = controller.exportBackup();
+    });
+    await act(async () => {
+      send.enqueue(new Uint8Array(1024));
+    });
+    expect(controller.progress).toEqual({ phase: 'downloading', completed: 1024, total: undefined, unit: 'bytes' });
+    await act(async () => {
+      send.close();
+    });
+    expect(controller.busy).toBe(true);
+    expect(controller.progress?.phase).toBe('finalizing');
+    expect(onExported).not.toHaveBeenCalled();
+    await act(async () => {
+      finish();
+      await operation;
+    });
+    expect(onExported).toHaveBeenCalledOnce();
+    expect(controller.busy).toBe(false);
+    expect(controller.progress).toBeUndefined();
+  } finally {
+    finish();
+    act(() => renderer.unmount());
+    vi.unstubAllGlobals();
+  }
 });

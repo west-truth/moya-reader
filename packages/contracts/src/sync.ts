@@ -1,4 +1,4 @@
-import type { Chapter, ListeningPosition, Novel, ParagraphPage, ReadingPosition } from './domain';
+import type { Chapter, Novel, ParagraphPage, ReadingPosition } from './domain';
 
 export type { ReadingPosition } from './domain';
 

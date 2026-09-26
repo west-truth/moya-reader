@@ -1,7 +1,7 @@
 # 모야 개발 문서
 
-이 디렉터리는 공개 저장소에서 제품을 실행·빌드·유지보수하는 데 필요한 문서만 제공합니다. 개인 소설 corpus,
-실험 결과, handoff packet, 내부 리뷰와 과거 작업 로그는 공개 저장소에 포함하지 않습니다.
+이 디렉터리는 제품 실행·빌드·유지보수 문서를 제공합니다. 현재 안내는 아래 색인을 따릅니다.
+`archive/`는 중단되거나 대체된 설계의 보관 장소이며, 현재 구현 지시로 사용하지 않습니다. 개인 소설과 비밀 정보는 포함하지 않습니다.
 
 ## 설치와 운영
 
@@ -14,6 +14,9 @@
 
 ## 데스크톱과 Android
 
+- [현재 데스크톱 구조·작업 범위](platforms/desktop.md) — 데스크톱 작업은 이 문서에서 시작합니다.
+- [다음 워커 작업 지시서](platforms/desktop-next-work.md) — 정리본 Windows 검증, 기존 서버 직접 접속, 완료 기준.
+- [보관된 데스크톱 계획·검토 기록](archive/desktop-2026-09/README.md) — 과거 기록이며 실행 지시가 아닙니다.
 - [Windows·Android 네이티브 빌드 가이드](platforms/native-build-guide-ko.md)
 - [Tauri v2 Android shell 결정](decisions/2026-08-01-tauri-v2-android-shell.md)
 - [웹 우선 공통 제품 구조 결정](decisions/2026-07-04-web-first-platform.md)
