@@ -218,17 +218,92 @@ describe('backup conflict defaults', () => {
     expect(controller.conflictResolutions).toEqual({});
     await act(async () => controller.setConflictResolution('b', 'skip'));
     await act(async () => controller.restoreBackup());
-    expect(restoreBackup).toHaveBeenLastCalledWith(archive, {
-      defaultConflictResolution: 'replace',
-      conflictResolutions: { b: 'skip' },
-    });
+    expect(restoreBackup).toHaveBeenLastCalledWith(
+      archive,
+      {
+        defaultConflictResolution: 'replace',
+        conflictResolutions: { b: 'skip' },
+      },
+      expect.any(Function),
+    );
     await act(async () => controller.inspectFile(archive));
     await act(async () => controller.setDefaultResolution('copy'));
     await act(async () => controller.restoreBackup());
-    expect(restoreBackup).toHaveBeenLastCalledWith(archive, {
-      defaultConflictResolution: 'copy',
-      conflictResolutions: {},
-    });
+    expect(restoreBackup).toHaveBeenLastCalledWith(
+      archive,
+      {
+        defaultConflictResolution: 'copy',
+        conflictResolutions: {},
+      },
+      expect.any(Function),
+    );
     await act(async () => renderer.unmount());
   });
+});
+
+it('shows bytes while receiving and stays busy until the destination closes', async () => {
+  let send!: ReadableStreamDefaultController<Uint8Array>;
+  let finish!: () => void;
+  const closing = new Promise<void>((resolve) => {
+    finish = resolve;
+  });
+  vi.stubGlobal('window', {
+    isSecureContext: true,
+    showSaveFilePicker: async () => ({
+      createWritable: async () => new WritableStream<Uint8Array>({ close: () => closing }),
+    }),
+  });
+  vi.stubGlobal(
+    'fetch',
+    async () =>
+      new Response(
+        new ReadableStream<Uint8Array>({
+          start(c) {
+            send = c;
+          },
+        }),
+      ),
+  );
+  const onExported = vi.fn();
+  let controller!: BackupFeatureController;
+  let renderer!: ReactTestRenderer;
+  function Harness() {
+    controller = useBackupController({
+      repository: { createDownload: async () => '/download' } as BackupRepository,
+      refreshLibrary: async () => {},
+      notify: vi.fn(),
+      onExported,
+    });
+    return null;
+  }
+  try {
+    act(() => {
+      renderer = create(<Harness />);
+    });
+    let operation!: Promise<void>;
+    await act(async () => {
+      operation = controller.exportBackup();
+    });
+    await act(async () => {
+      send.enqueue(new Uint8Array(1024));
+    });
+    expect(controller.progress).toEqual({ phase: 'downloading', completed: 1024, total: undefined, unit: 'bytes' });
+    await act(async () => {
+      send.close();
+    });
+    expect(controller.busy).toBe(true);
+    expect(controller.progress?.phase).toBe('finalizing');
+    expect(onExported).not.toHaveBeenCalled();
+    await act(async () => {
+      finish();
+      await operation;
+    });
+    expect(onExported).toHaveBeenCalledOnce();
+    expect(controller.busy).toBe(false);
+    expect(controller.progress).toBeUndefined();
+  } finally {
+    finish();
+    act(() => renderer.unmount());
+    vi.unstubAllGlobals();
+  }
 });

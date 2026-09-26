@@ -6,7 +6,11 @@ use std::{
     process::{ChildStdin, Command, Stdio},
     sync::{Arc, Mutex},
 };
-use tauri::{AppHandle, Emitter, Manager, State, WebviewWindow};
+#[cfg(all(desktop, moya_embedded_server))]
+use tauri::Emitter;
+#[cfg(moya_embedded_server)]
+use tauri::Manager;
+use tauri::{AppHandle, State, WebviewWindow};
 
 #[derive(Clone, Deserialize, Serialize)]
 pub(crate) struct SharingInterface {
@@ -290,9 +294,11 @@ pub(crate) fn desktop_embedded_server_start(
         static RECOVERY: std::sync::OnceLock<Result<(), String>> = std::sync::OnceLock::new();
         RECOVERY
             .get_or_init(|| {
-                window
-                    .state::<crate::workflow::NativeWorkflowRuntime>()
-                    .recover_and_spawn(app.clone())
+                // Do not even open/replay the local journal when using an external
+                // server. A corrupt local job must not prevent the selector loading.
+                let runtime = crate::workflow::NativeWorkflowRuntime::open(&app)?;
+                app.manage(runtime.clone());
+                runtime.recover_and_spawn(app.clone())
             })
             .clone()?;
     }
@@ -359,7 +365,7 @@ pub(crate) fn desktop_embedded_server_share(
     Ok(())
 }
 
-#[cfg(desktop)]
+#[cfg(all(desktop, moya_embedded_server))]
 pub(crate) fn setup_tray(app: &AppHandle) -> tauri::Result<()> {
     use tauri::{
         menu::{Menu, MenuItem},

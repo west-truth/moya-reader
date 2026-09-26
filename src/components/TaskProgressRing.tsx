@@ -5,14 +5,12 @@ export function TaskProgressRing({
   percent,
   label,
   detail,
-  onOpen,
-  expanded,
+  tone = 'transfer',
 }: {
   readonly percent?: number;
   readonly label: string;
   readonly detail?: string;
-  readonly onOpen?: () => void;
-  readonly expanded?: boolean;
+  readonly tone?: 'transfer' | 'processing';
 }) {
   const value =
     typeof percent === 'number' && Number.isFinite(percent)
@@ -21,6 +19,7 @@ export function TaskProgressRing({
   const ring = (
     <span
       className={`task-progress-ring${value === undefined ? ' is-indeterminate' : ''}`}
+      data-tone={tone}
       role="progressbar"
       aria-label={label}
       aria-valuemin={value === undefined ? undefined : 0}
@@ -51,17 +50,5 @@ export function TaskProgressRing({
       </svg>
     </span>
   );
-  return onOpen ? (
-    <button
-      className="task-progress-action"
-      type="button"
-      aria-label={`${label} 상세 보기`}
-      aria-expanded={expanded}
-      onClick={onOpen}
-    >
-      {ring}
-    </button>
-  ) : (
-    ring
-  );
+  return ring;
 }

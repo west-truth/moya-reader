@@ -1345,7 +1345,7 @@ export function materializeStreamingImageArchiveImport(input: {
   );
   let assetsConsumed = false;
 
-  return materializeFixedImport({
+  const parsed = materializeFixedImport({
     format: 'image_archive',
     fileName: input.fileName,
     sourceContentHash: input.sourceContentHash,
@@ -1400,6 +1400,7 @@ export function materializeStreamingImageArchiveImport(input: {
       }
     },
   });
+  return { ...parsed, embeddedAssetCount: pageAssetIds.length + (coverIndex >= 0 ? 1 : 0) };
 }
 
 export const materializeStreamingZipImageArchiveImport = materializeStreamingImageArchiveImport;

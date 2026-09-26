@@ -1,3 +1,4 @@
+import type { TaskProgressCallback } from '@noveldesk/contracts';
 import type {
   BackupInspection,
   BackupManifestV1,
@@ -59,26 +60,30 @@ export class RemoteBackupRepository implements BackupRepository {
     if (staged) await this.client.discardBackupInspection(staged.id);
   }
 
-  async exportBackup(): Promise<{ blob: Blob; manifest: BackupManifestV1 }> {
-    const { blob } = await this.client.exportBackup();
+  async exportBackup(onProgress?: TaskProgressCallback): Promise<{ blob: Blob; manifest: BackupManifestV1 }> {
+    const { blob } = await this.client.exportBackup(onProgress);
     return { blob, manifest: await readExportedManifest(blob) };
   }
 
-  async inspectBackup(archive: Blob): Promise<BackupInspection> {
+  async inspectBackup(archive: Blob, onProgress?: TaskProgressCallback): Promise<BackupInspection> {
     await this.discardInspection();
-    const inspection = await this.client.inspectBackup(archive);
+    const inspection = await this.client.inspectBackup(archive, onProgress);
     if (inspection.stagedId) this.staged = { archive, id: inspection.stagedId };
     return inspection;
   }
 
-  restoreBackup(archive: Blob, options: BackupRestoreOptions): Promise<BackupRestoreResult> {
+  restoreBackup(
+    archive: Blob,
+    options: BackupRestoreOptions,
+    onProgress?: TaskProgressCallback,
+  ): Promise<BackupRestoreResult> {
     if (this.staged?.archive === archive) {
       const id = this.staged.id;
-      return this.client.restoreInspectedBackup(id, options).then((result) => {
+      return this.client.restoreInspectedBackup(id, options, onProgress).then((result) => {
         if (this.staged?.id === id) this.staged = undefined;
         return result;
       });
     }
-    return this.client.restoreBackup(archive, options);
+    return this.client.restoreBackup(archive, options, onProgress);
   }
 }

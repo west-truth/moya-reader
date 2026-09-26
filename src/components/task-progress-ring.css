@@ -1,24 +1,3 @@
-.task-progress-action {
-  position: relative;
-  z-index: 4;
-  display: inline-grid;
-  width: 44px;
-  height: 44px;
-  flex: 0 0 44px;
-  place-items: center;
-  padding: 0;
-  border: 0;
-  border-radius: 50%;
-  color: inherit;
-  background: transparent;
-  cursor: pointer;
-}
-
-.task-progress-action:focus-visible {
-  outline: 2px solid var(--primary);
-  outline-offset: 2px;
-}
-
 .task-progress-ring {
   position: relative;
   display: inline-grid;
@@ -68,6 +47,12 @@
   color: #fff;
 }
 
+.task-progress-ring[data-tone='processing'] {
+  color: var(--warning);
+}
+.book-import-overlay .task-progress-ring[data-tone='processing'] {
+  color: #fbd38d;
+}
 @media (prefers-reduced-motion: reduce) {
   .task-progress-ring .spin {
     animation: none;

@@ -146,13 +146,15 @@ pub fn run() {
             }
             app.manage(crate::metadata_collector::MetadataCollectorManager::default());
             app.manage(crate::extension_runtime::ExtensionRuntimeManager::default());
-            let runtime = crate::workflow::NativeWorkflowRuntime::open(app.handle())
-                .map_err(std::io::Error::other)?;
-            app.manage(runtime.clone());
             #[cfg(not(moya_embedded_server))]
-            runtime
-                .recover_and_spawn(app.handle().clone())
-                .map_err(std::io::Error::other)?;
+            {
+                let runtime = crate::workflow::NativeWorkflowRuntime::open(app.handle())
+                    .map_err(std::io::Error::other)?;
+                app.manage(runtime.clone());
+                runtime
+                    .recover_and_spawn(app.handle().clone())
+                    .map_err(std::io::Error::other)?;
+            }
             Ok(())
         })
         .invoke_handler(|invoke: tauri::ipc::Invoke<tauri::Wry>| {

@@ -2,6 +2,8 @@ import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 import { EmbeddedServerSharing, type EmbeddedSharingStatus } from './EmbeddedServerSharing';
+import { DesktopWindowShell } from './DesktopWindowFrame';
+import { ToastHost } from '../shared/ui/ToastHost';
 
 export interface EmbeddedServerConnection {
   readonly url: string;
@@ -86,39 +88,57 @@ export function EmbeddedServerGate({ children }: { children: (connection: Embedd
     [children, status.url, status.authToken],
   );
   const failure = error || connectionError || status.error;
+  // A missed native status response does not mean the HTTP reader stopped.
+  // Keep its mounted state until the native process reports an actual failure.
+  const readerReady = status.phase === 'ready' && !error && !status.error;
   return (
     <>
-      {status.phase === 'ready' && !failure ? (
+      {readerReady ? (
         content
       ) : (
-        <main className="self-host-auth-screen">
-          <section className="self-host-auth-card" aria-live="polite">
-            <h1>
-              {failure ? '서재 서버를 확인해 주세요' : status.phase === 'stopping' ? '모야 종료 중' : '모야 시작 중'}
-            </h1>
-            <p role={failure ? 'alert' : 'status'}>
-              {failure || phases[status.phase] || '서재 서버가 종료되었습니다.'}
-            </p>
-            {failure && !status.running && (
-              <button
-                className="primary-btn"
-                onClick={() => {
-                  setError('');
-                  setConnectionError('');
-                  setStatus({ phase: 'preparing', running: false });
-                  setAttempt((value) => value + 1);
-                }}
-              >
-                다시 시도
-              </button>
-            )}
-            {status.phase !== 'stopping' && (
-              <button className="secondary-btn" onClick={() => void close(false)}>
-                모야 종료
-              </button>
-            )}
-          </section>
-        </main>
+        <DesktopWindowShell showSharing={false}>
+          <main className="self-host-auth-screen">
+            <section className="self-host-auth-card" aria-live="polite">
+              <h1>
+                {failure ? '서재 서버를 확인해 주세요' : status.phase === 'stopping' ? '모야 종료 중' : '모야 시작 중'}
+              </h1>
+              <p role={failure ? 'alert' : 'status'}>
+                {failure || phases[status.phase] || '서재 서버가 종료되었습니다.'}
+              </p>
+              {failure && !status.running && (
+                <button
+                  className="primary-btn"
+                  onClick={() => {
+                    setError('');
+                    setConnectionError('');
+                    setStatus({ phase: 'preparing', running: false });
+                    setAttempt((value) => value + 1);
+                  }}
+                >
+                  다시 시도
+                </button>
+              )}
+              {status.phase !== 'stopping' && (
+                <button className="secondary-btn" onClick={() => void close(false)}>
+                  모야 종료
+                </button>
+              )}
+            </section>
+          </main>
+        </DesktopWindowShell>
+      )}
+      {readerReady && connectionError && (
+        <ToastHost
+          toasts={[
+            {
+              id: 'native-status',
+              tone: 'warning',
+              message: `${connectionError} · 서버 상태를 다시 확인하고 있습니다.`,
+            },
+          ]}
+          readerActive={true}
+          addonOpen={false}
+        />
       )}
       {showSharing && status.phase === 'ready' && status.url && status.authToken && (
         <EmbeddedServerSharing

@@ -1,3 +1,4 @@
+import type { TaskProgressCallback } from '@noveldesk/contracts';
 export interface BackupManifestEntry {
   readonly path: string;
   readonly contentHash: string;
@@ -63,7 +64,11 @@ export interface BackupRestoreResult {
 export interface BackupRepository {
   createDownload?(): Promise<string>;
   discardInspection?(): Promise<void>;
-  exportBackup(): Promise<{ blob: Blob; manifest: BackupManifestV1 }>;
-  inspectBackup(archive: Blob): Promise<BackupInspection>;
-  restoreBackup(archive: Blob, options: BackupRestoreOptions): Promise<BackupRestoreResult>;
+  exportBackup(onProgress?: TaskProgressCallback): Promise<{ blob: Blob; manifest: BackupManifestV1 }>;
+  inspectBackup(archive: Blob, onProgress?: TaskProgressCallback): Promise<BackupInspection>;
+  restoreBackup(
+    archive: Blob,
+    options: BackupRestoreOptions,
+    onProgress?: TaskProgressCallback,
+  ): Promise<BackupRestoreResult>;
 }

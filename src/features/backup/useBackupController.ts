@@ -1,3 +1,4 @@
+import type { TaskProgress } from '@noveldesk/contracts';
 import { useCallback, useRef, useState } from 'react';
 import type {
   BackupConflictResolution,
@@ -10,6 +11,8 @@ import type { PlatformDocumentIo } from '../../platform/document-io';
 export interface BackupFeatureController {
   readonly open: boolean;
   readonly busy: boolean;
+  readonly progress?: TaskProgress;
+  readonly operation?: 'export' | 'inspect' | 'restore';
   readonly available: boolean;
   readonly inspection?: BackupInspection;
   readonly defaultResolution: BackupConflictResolution;
@@ -51,6 +54,8 @@ export function useBackupController(options: UseBackupControllerOptions): Backup
   const archiveRef = useRef<Blob>();
   const [open, setOpen] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [progress, setProgress] = useState<TaskProgress>();
+  const [operation, setOperation] = useState<'export' | 'inspect' | 'restore'>();
   const [inspection, setInspection] = useState<BackupInspection>();
   const [defaultResolution, setDefaultResolution] = useState<BackupConflictResolution>('skip');
   const [conflictResolutions, setConflictResolutions] = useState<Record<string, BackupConflictResolution>>({});
@@ -68,6 +73,8 @@ export function useBackupController(options: UseBackupControllerOptions): Backup
     const repository = optionsRef.current.repository;
     if (!repository || busy) return;
     setBusy(true);
+    setOperation('export');
+    setProgress({ phase: 'preparing' });
     try {
       if (repository.createDownload && !optionsRef.current.documentIo?.usesNativeSave) {
         const pickerWindow = typeof window === 'undefined' ? undefined : (window as SavePickerWindow);
@@ -82,7 +89,25 @@ export function useBackupController(options: UseBackupControllerOptions): Backup
           const url = await repository.createDownload();
           const response = await fetch(url, { credentials: 'same-origin' });
           if (!response.ok || !response.body) throw new Error(`백업 다운로드에 실패했습니다. (${response.status})`);
-          await response.body.pipeTo(await handle.createWritable());
+          const length = Number(response.headers.get('content-length'));
+          const total =
+            !response.headers.get('content-encoding') && Number.isFinite(length) && length > 0 ? length : undefined;
+          let completed = 0;
+          setProgress({ phase: 'downloading', completed, total, unit: 'bytes' });
+          await response.body
+            .pipeThrough(
+              new TransformStream<Uint8Array, Uint8Array>({
+                transform(chunk, controller) {
+                  completed += chunk.byteLength;
+                  setProgress({ phase: 'downloading', completed, total, unit: 'bytes' });
+                  controller.enqueue(chunk);
+                },
+                flush() {
+                  setProgress({ phase: 'finalizing' });
+                },
+              }),
+            )
+            .pipeTo(await handle.createWritable());
           optionsRef.current.notify('백업 파일 저장을 완료했습니다.', 'success');
           optionsRef.current.onExported?.(new Date().toISOString());
           return;
@@ -100,7 +125,8 @@ export function useBackupController(options: UseBackupControllerOptions): Backup
         // A started browser download is not proof of a completed backup.
         return;
       }
-      const exported = await repository.exportBackup();
+      const exported = await repository.exportBackup(setProgress);
+      setProgress({ phase: 'finalizing' });
       const fileName = backupFileName(exported.manifest.exportedAt);
       const documentIo = optionsRef.current.documentIo;
       if (documentIo) {
@@ -131,6 +157,7 @@ export function useBackupController(options: UseBackupControllerOptions): Backup
       }
     } finally {
       setBusy(false);
+      setProgress(undefined);
     }
   }, [busy]);
 
@@ -139,8 +166,10 @@ export function useBackupController(options: UseBackupControllerOptions): Backup
       const repository = optionsRef.current.repository;
       if (!repository || busy) return;
       setBusy(true);
+      setOperation('inspect');
+      setProgress({ phase: 'uploading' });
       try {
-        const next = await repository.inspectBackup(file);
+        const next = await repository.inspectBackup(file, setProgress);
         archiveRef.current = file;
         setInspection(next);
         setConflictResolutions({});
@@ -154,6 +183,7 @@ export function useBackupController(options: UseBackupControllerOptions): Backup
         );
       } finally {
         setBusy(false);
+        setProgress(undefined);
       }
     },
     [busy],
@@ -180,11 +210,18 @@ export function useBackupController(options: UseBackupControllerOptions): Backup
     const archive = archiveRef.current;
     if (!repository || !archive || !inspection || busy) return;
     setBusy(true);
+    setOperation('restore');
+    setProgress({ phase: 'preparing' });
     try {
-      const result = await repository.restoreBackup(archive, {
-        defaultConflictResolution: defaultResolution,
-        conflictResolutions,
-      });
+      const result = await repository.restoreBackup(
+        archive,
+        {
+          defaultConflictResolution: defaultResolution,
+          conflictResolutions,
+        },
+        setProgress,
+      );
+      setProgress({ phase: 'finalizing' });
       await optionsRef.current.refreshLibrary();
       optionsRef.current.notify(
         `${result.restoredBooks}권을 복원했습니다.${result.skippedBooks ? ` ${result.skippedBooks}권은 건너뛰었습니다.` : ''}`,
@@ -197,6 +234,7 @@ export function useBackupController(options: UseBackupControllerOptions): Backup
       optionsRef.current.notify(error instanceof Error ? error.message : '백업을 복원하지 못했습니다.', 'danger');
     } finally {
       setBusy(false);
+      setProgress(undefined);
     }
   }, [busy, conflictResolutions, defaultResolution, inspection]);
 
@@ -207,6 +245,8 @@ export function useBackupController(options: UseBackupControllerOptions): Backup
   return {
     open,
     busy,
+    progress,
+    operation,
     available: Boolean(options.repository),
     inspection,
     defaultResolution,

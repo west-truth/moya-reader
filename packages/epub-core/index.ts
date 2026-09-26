@@ -1055,6 +1055,7 @@ export async function materializeStreamingEpubImport(
   return {
     ...parsed,
     embeddedAssets: undefined,
+    embeddedAssetCount: descriptors.length,
     async *consumeEmbeddedAssets() {
       if (consumed) return;
       consumed = true;

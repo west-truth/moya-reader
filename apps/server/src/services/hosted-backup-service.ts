@@ -1,3 +1,4 @@
+import type { TaskProgressCallback } from '@noveldesk/contracts';
 import { randomUUID } from 'node:crypto';
 import pg from 'pg';
 import { Readable } from 'node:stream';
@@ -620,6 +621,7 @@ export async function restoreHostedBackup(
   archive: Uint8Array | ParsedHostedBackupArchive,
   options: HostedBackupRestoreOptions,
   signal: AbortSignal = AbortSignal.timeout(60 * 60_000),
+  onProgress?: TaskProgressCallback,
 ): Promise<HostedBackupRestoreResult> {
   const parsed = archive instanceof Uint8Array ? await parseHostedBackupArchive(archive) : archive;
   const books = bookRows(parsed);
@@ -694,80 +696,99 @@ export async function restoreHostedBackup(
     const activeCoverAssets = new Map<string, string>();
     const restoredParagraphPages: Record<string, unknown>[] = [];
     let restoredEntries = 0;
+    const totalEntries = HOSTED_BACKUP_TABLES.reduce((sum, table) => sum + (parsed.tables.get(table)?.length ?? 0), 0);
+    let processedEntries = 0;
+    onProgress?.({ phase: 'saving', completed: 0, total: totalEntries || undefined, unit: 'items' });
 
     for (const table of HOSTED_BACKUP_TABLES) {
       const rows = parsed.tables.get(table) ?? [];
       for (const original of rows) {
         signal.throwIfAborted();
-        const archivedBookId = rowBookId(table, original);
-        if (archivedBookId && resolutions.get(archivedBookId) === 'skip') continue;
-        // Superseded assets are not reachable through the hosted reader and
-        // self-generated backups do not include their object bytes. Older
-        // archives may still contain those metadata rows, so ignore them
-        // instead of turning an otherwise valid restore into a missing-blob
-        // failure.
-        if (table === 'book_assets' && original.status !== 'active') continue;
-        const copyMap = archivedBookId ? copyMaps.get(archivedBookId) : undefined;
-        // Voice-casting artifact identities include book/content IDs in their fingerprints.
-        // A copied book must rebuild them instead of persisting mechanically rekeyed artifacts.
-        if (table === 'voice_casting_states' && copyMap) continue;
-        const transformed = rekeyValue(original, [copyMap ?? new Map(), objectIdMap]) as Record<string, unknown>;
-        if (
-          table === 'book_content_revisions' &&
-          typeof original.source_object_id === 'string' &&
-          !objectIdMap.has(original.source_object_id)
-        ) {
-          if (original.status === 'active') throw new Error('Active source object is missing from hosted backup');
-          transformed.source_object_id = null;
-        }
-        if ('user_id' in transformed) transformed.user_id = config.defaultUserId;
-        if (table === 'voice_casting_states') invalidateRestoredVoiceCasting(transformed);
-        if (table === 'library_books') {
-          const targetBookId = String(transformed.id);
-          if (typeof transformed.active_content_revision_id === 'string') {
-            activeContentRevisions.set(targetBookId, transformed.active_content_revision_id);
+        let rowFailed = false;
+        try {
+          const archivedBookId = rowBookId(table, original);
+          if (archivedBookId && resolutions.get(archivedBookId) === 'skip') continue;
+          // Superseded assets are not reachable through the hosted reader and
+          // self-generated backups do not include their object bytes. Older
+          // archives may still contain those metadata rows, so ignore them
+          // instead of turning an otherwise valid restore into a missing-blob
+          // failure.
+          if (table === 'book_assets' && original.status !== 'active') continue;
+          const copyMap = archivedBookId ? copyMaps.get(archivedBookId) : undefined;
+          // Voice-casting artifact identities include book/content IDs in their fingerprints.
+          // A copied book must rebuild them instead of persisting mechanically rekeyed artifacts.
+          if (table === 'voice_casting_states' && copyMap) continue;
+          const transformed = rekeyValue(original, [copyMap ?? new Map(), objectIdMap]) as Record<string, unknown>;
+          if (
+            table === 'book_content_revisions' &&
+            typeof original.source_object_id === 'string' &&
+            !objectIdMap.has(original.source_object_id)
+          ) {
+            if (original.status === 'active') throw new Error('Active source object is missing from hosted backup');
+            transformed.source_object_id = null;
           }
-          transformed.active_content_revision_id = null;
-          if (typeof transformed.cover_asset_id === 'string') {
-            activeCoverAssets.set(targetBookId, transformed.cover_asset_id);
+          if ('user_id' in transformed) transformed.user_id = config.defaultUserId;
+          if (table === 'voice_casting_states') invalidateRestoredVoiceCasting(transformed);
+          if (table === 'library_books') {
+            const targetBookId = String(transformed.id);
+            if (typeof transformed.active_content_revision_id === 'string') {
+              activeContentRevisions.set(targetBookId, transformed.active_content_revision_id);
+            }
+            transformed.active_content_revision_id = null;
+            if (typeof transformed.cover_asset_id === 'string') {
+              activeCoverAssets.set(targetBookId, transformed.cover_asset_id);
+            }
+            transformed.cover_asset_id = null;
+            if (copyMap && typeof transformed.title === 'string') transformed.title = `${transformed.title} (복사본)`;
           }
-          transformed.cover_asset_id = null;
-          if (copyMap && typeof transformed.title === 'string') transformed.title = `${transformed.title} (복사본)`;
+          if (
+            table === 'book_assets' &&
+            (original.kind === 'cover' ||
+              original.kind === 'epub_resource' ||
+              original.kind === 'document_page' ||
+              original.kind === 'source_part')
+          ) {
+            const storageKey = embeddedStorageKeys.get(String(original.id));
+            if (!storageKey) throw new Error(`Backup embedded asset storage is missing: ${String(original.id)}`);
+            transformed.storage_key = storageKey;
+          }
+          if (table === 'user_fonts') {
+            const storageKey = fontStorageKeys.get(String(original.id));
+            if (!storageKey) throw new Error(`Backup user font storage is missing: ${String(original.id)}`);
+            transformed.storage_key = storageKey;
+          }
+          if (table === 'labeled_segments') transformed.analysis_run_id = null;
+          if (table === 'user_corrections' || table === 'label_mutation_operations') {
+            transformed.source_review_artifact_id = null;
+          }
+          await insertHostedBackupRow(client, table, transformed);
+          if (table === 'paragraph_pages') restoredParagraphPages.push(transformed);
+          if (table === 'library_books') {
+            // The normal book-insert trigger creates a fresh initial revision. Restore has its own
+            // complete revision rows; remove only this just-created default before inserting them.
+            await client.query(
+              'update library_books set active_content_revision_id = null where id = $1 and user_id = $2',
+              [transformed.id, config.defaultUserId],
+            );
+            await client.query('delete from book_content_revisions where book_id = $1', [transformed.id]);
+          }
+          restoredEntries += 1;
+        } catch (error) {
+          rowFailed = true;
+          throw error;
+        } finally {
+          if (!rowFailed) {
+            processedEntries++;
+            onProgress?.(
+              processedEntries === totalEntries
+                ? { phase: 'finalizing' }
+                : { phase: 'saving', completed: processedEntries, total: totalEntries, unit: 'items' },
+            );
+          }
         }
-        if (
-          table === 'book_assets' &&
-          (original.kind === 'cover' ||
-            original.kind === 'epub_resource' ||
-            original.kind === 'document_page' ||
-            original.kind === 'source_part')
-        ) {
-          const storageKey = embeddedStorageKeys.get(String(original.id));
-          if (!storageKey) throw new Error(`Backup embedded asset storage is missing: ${String(original.id)}`);
-          transformed.storage_key = storageKey;
-        }
-        if (table === 'user_fonts') {
-          const storageKey = fontStorageKeys.get(String(original.id));
-          if (!storageKey) throw new Error(`Backup user font storage is missing: ${String(original.id)}`);
-          transformed.storage_key = storageKey;
-        }
-        if (table === 'labeled_segments') transformed.analysis_run_id = null;
-        if (table === 'user_corrections' || table === 'label_mutation_operations') {
-          transformed.source_review_artifact_id = null;
-        }
-        await insertHostedBackupRow(client, table, transformed);
-        if (table === 'paragraph_pages') restoredParagraphPages.push(transformed);
-        if (table === 'library_books') {
-          // The normal book-insert trigger creates a fresh initial revision. Restore has its own
-          // complete revision rows; remove only this just-created default before inserting them.
-          await client.query(
-            'update library_books set active_content_revision_id = null where id = $1 and user_id = $2',
-            [transformed.id, config.defaultUserId],
-          );
-          await client.query('delete from book_content_revisions where book_id = $1', [transformed.id]);
-        }
-        restoredEntries += 1;
       }
     }
+    onProgress?.({ phase: 'finalizing' });
     await rebuildParagraphSearchFromStoredPages(client, restoredParagraphPages);
     for (const [bookId, revisionId] of activeContentRevisions) {
       await client.query(

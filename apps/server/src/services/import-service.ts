@@ -1289,6 +1289,9 @@ export async function processImportJob(
               status: 'processing',
               stage: 'writing',
               message: `이미지 저장 ${streamedAssets.toLocaleString()}개`,
+              progressUnit: 'images',
+              progressCompleted: streamedAssets,
+              progressTotal: parsed.embeddedAssetCount,
             },
             attempt.executionId,
           );
@@ -1309,6 +1312,9 @@ export async function processImportJob(
             status: 'processing',
             stage: 'writing',
             message: `이미지 저장 ${streamedAssets.toLocaleString()}개`,
+            progressUnit: 'images',
+            progressCompleted: streamedAssets,
+            progressTotal: parsed.embeddedAssetCount,
           },
           attempt.executionId,
         );

@@ -1,3 +1,4 @@
+import { requestProgress } from './request-progress.js';
 import { Readable } from 'node:stream';
 import { randomBytes } from 'node:crypto';
 import path from 'node:path';
@@ -47,6 +48,7 @@ function restoreOptions(headers: Record<string, string | string[] | undefined>):
 export async function registerBackupRoutes(app: FastifyInstance, pool: pg.Pool, config: ServerConfig): Promise<void> {
   const staging = new BackupStaging(path.join(config.dataDir, 'backup-staging'), config.defaultUserId);
   const tickets = new Map<string, number>();
+  const track = requestProgress(app, '/api/backups/progress/:progressId');
   app.addHook('onClose', async () => {
     tickets.clear();
     await staging.close();
@@ -116,12 +118,14 @@ export async function registerBackupRoutes(app: FastifyInstance, pool: pg.Pool, 
       return reply.code(410).send({ error: error instanceof Error ? error.message : 'Backup expired' });
     }
     restoring = true;
+    const progress = track(request.query);
     try {
-      return await restoreHostedBackup(pool, config, stage.parsed, options);
+      return await restoreHostedBackup(pool, config, stage.parsed, options, undefined, progress);
     } catch (error) {
       return reply.code(400).send({ error: error instanceof Error ? error.message : 'Backup restore failed' });
     } finally {
       restoring = false;
+      progress({ phase: 'finalizing' });
       await stage.dispose();
     }
   });
@@ -144,12 +148,21 @@ export async function registerBackupRoutes(app: FastifyInstance, pool: pg.Pool, 
         };
         reply.raw.once('close', disconnected);
         let stagedId: string | undefined;
+        const progress = track(request.query);
         try {
           const options = mode === 'restore' ? restoreOptions(request.headers) : undefined;
           const received = await staging.receive(
             request.body,
             request.headers['content-length'] === undefined ? undefined : Number(request.headers['content-length']),
             abort.signal,
+            (completed) =>
+              progress({
+                phase: 'uploading',
+                completed,
+                total: Number(request.headers['content-length']) || undefined,
+                unit: 'bytes',
+              }),
+            () => progress({ phase: 'verifying' }),
           );
           stagedId = received.id;
           if (mode === 'inspect') {
@@ -176,7 +189,7 @@ export async function registerBackupRoutes(app: FastifyInstance, pool: pg.Pool, 
           const stage = staging.take(stagedId);
           restoring = true;
           try {
-            return await restoreHostedBackup(pool, config, stage.parsed, options!);
+            return await restoreHostedBackup(pool, config, stage.parsed, options!, abort.signal, progress);
           } finally {
             restoring = false;
             await stage.dispose();
@@ -185,6 +198,7 @@ export async function registerBackupRoutes(app: FastifyInstance, pool: pg.Pool, 
           if (stagedId) await staging.discard(stagedId);
           return reply.code(400).send({ error: error instanceof Error ? error.message : 'Backup archive failed' });
         } finally {
+          progress({ phase: 'finalizing' });
           clearTimeout(timeout);
           reply.raw.removeListener('close', disconnected);
         }

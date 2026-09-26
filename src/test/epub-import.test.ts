@@ -434,6 +434,7 @@ it('streams EPUB assets with the same identities, text, cover and bytes as the e
   expect(streamed.embeddedAssets).toBeUndefined();
   const assets = [];
   for await (const asset of streamed.consumeEmbeddedAssets!()) assets.push(asset);
+  expect(streamed.embeddedAssetCount).toBe(assets.length);
   expect(assets.sort((a, b) => a.id.localeCompare(b.id))).toEqual(
     [...eager.embeddedAssets!].sort((a, b) => a.id.localeCompare(b.id)),
   );

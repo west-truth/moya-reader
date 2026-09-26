@@ -1,3 +1,5 @@
+import type { TaskProgress } from '@noveldesk/contracts';
+import { taskProgressDetail } from '../../components/task-progress';
 import type { ImportProgress } from '../../services/import/import-service';
 
 export type ImportTaskPhase =
@@ -28,6 +30,8 @@ export interface ImportTaskView {
   readonly percent?: number;
   readonly error?: string;
   readonly activity?: string;
+  readonly measurement?: TaskProgress;
+  readonly finalizing?: boolean;
 }
 
 function boundedPercent(completed: number, total: number): number | undefined {
@@ -38,7 +42,7 @@ function boundedPercent(completed: number, total: number): number | undefined {
 function projectImportPhase(progress: ImportProgress): Pick<ImportTaskView, 'phase' | 'percent'> {
   if (progress.status === 'failed') return { phase: 'failed' };
   if (progress.status === 'cancelling') return { phase: 'cancelling' };
-  if (progress.status === 'ready' || progress.subphase === 'complete') return { phase: 'saving', percent: 100 };
+  if (progress.status === 'ready' || progress.subphase === 'complete') return { phase: 'saving' };
   if (progress.status === 'writing' && progress.progressUnit === 'images') {
     return { phase: 'saving', percent: boundedPercent(progress.completedUnits ?? 0, progress.totalUnits ?? 0) };
   }
@@ -62,7 +66,7 @@ function projectImportPhase(progress: ImportProgress): Pick<ImportTaskView, 'pha
 
 export function projectImportProgress(
   progress: ImportProgress,
-): Pick<ImportTaskView, 'phase' | 'percent' | 'activity'> {
+): Pick<ImportTaskView, 'phase' | 'percent' | 'activity' | 'measurement' | 'finalizing'> {
   const phase = projectImportPhase(progress);
   const message = progress.message?.trim();
   // Keep card/release labels compact; older servers can still send long descriptions.
@@ -74,7 +78,24 @@ export function projectImportProgress(
     !/[\r\n<>]/u.test(message)
       ? message
       : undefined;
-  return { ...phase, activity };
+  const measurement: TaskProgress | undefined =
+    phase.percent === undefined
+      ? undefined
+      : {
+          phase: phase.phase === 'uploading' ? 'uploading' : phase.phase === 'saving' ? 'saving' : 'preparing',
+          completed: progress.progressUnit === 'images' ? progress.completedUnits : progress.bytesRead,
+          total: progress.progressUnit === 'images' ? progress.totalUnits : progress.totalBytes,
+          unit: progress.progressUnit === 'images' ? 'images' : 'bytes',
+        };
+  return {
+    ...phase,
+    activity,
+    measurement,
+    finalizing:
+      progress.status === 'ready' ||
+      progress.subphase === 'complete' ||
+      (progress.status === 'writing' && activity === '마무리 중'),
+  };
 }
 
 export function importTaskLabel(task: ImportTaskView): string {
@@ -108,4 +129,15 @@ export function importTaskLabel(task: ImportTaskView): string {
 
 export function importTaskIsActive(task: ImportTaskView): boolean {
   return task.phase !== 'failed' && task.phase !== 'complete';
+}
+
+export function importTaskStageLabel(task: ImportTaskView): string {
+  if (task.phase === 'saving' && task.finalizing) return '마무리 중';
+  return importTaskLabel({ ...task, activity: undefined, percent: undefined });
+}
+export function importTaskDetail(task: ImportTaskView): string | undefined {
+  return taskProgressDetail(task.measurement) ?? task.activity;
+}
+export function importTaskTone(task: ImportTaskView): 'transfer' | 'processing' {
+  return ['uploading', 'downloading', 'queued'].includes(task.phase) ? 'transfer' : 'processing';
 }

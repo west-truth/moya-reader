@@ -28,8 +28,13 @@ describe('RemoteBackupRepository', () => {
     await expect(repository.restoreBackup(archive, { defaultConflictResolution: 'skip' })).rejects.toThrow(
       'network interrupted',
     );
-    await repository.restoreBackup(archive, { defaultConflictResolution: 'skip' });
-    expect(client.restoreInspectedBackup).toHaveBeenCalledWith('stage-1', { defaultConflictResolution: 'skip' });
+    const progress = vi.fn();
+    await repository.restoreBackup(archive, { defaultConflictResolution: 'skip' }, progress);
+    expect(client.restoreInspectedBackup).toHaveBeenLastCalledWith(
+      'stage-1',
+      { defaultConflictResolution: 'skip' },
+      progress,
+    );
     expect(client.restoreBackup).not.toHaveBeenCalled();
     await repository.inspectBackup(archive);
     await repository.discardInspection();

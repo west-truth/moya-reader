@@ -1,3 +1,4 @@
+import type { TaskProgressCallback } from '@noveldesk/contracts';
 import { SourcePageCursors } from './source-page-cursors';
 import { SourceReadCache } from './source-read-cache';
 import { DETAIL_FRESH_MS, sourceCachePolicy, sourceListIdentity } from './cache-policy';
@@ -207,6 +208,7 @@ export class InstalledPackageSourceRegistry<
     _context: TrustedExternalSourceHostContext,
     ref: ExternalSourceDownloadRef,
     signal: AbortSignal,
+    onProgress?: TaskProgressCallback,
   ) {
     const source = this.catalog.getSource(id);
     if (
@@ -217,7 +219,9 @@ export class InstalledPackageSourceRegistry<
     )
       throw new Error('source_connection_mismatch');
     const [workId, releaseId] = parseRelease(ref.key.remoteId);
-    const { result, assets } = await this.catalog.invoke(id, 'source.getContent', { workId, releaseId }, signal);
+    const { result, assets } = await this.catalog.invoke(id, 'source.getContent', { workId, releaseId }, signal, {
+      onProgress,
+    });
     const maximum = ref.context?.maxBytes ?? MAX_SOURCE_CONTENT_BYTES;
     if ([...assets.values()].reduce((sum, blob) => sum + blob.size, 0) > maximum) throw new Error('source_body_limit');
     if (result.kind === 'text') {
@@ -234,6 +238,7 @@ export class InstalledPackageSourceRegistry<
         remoteRevision: ref.remoteRevision,
       };
     }
+    onProgress?.({ phase: 'verifying' });
     // Keep image acquisition separate from packaging. The established comic importer consumes the resulting CBZ.
     const { BlobReader, BlobWriter, ZipWriter } = await import('@zip.js/zip.js');
     const writer = new ZipWriter(new BlobWriter('application/vnd.comicbook+zip'), { useWebWorkers: false });

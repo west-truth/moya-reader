@@ -2,6 +2,36 @@ use sha2::{Digest, Sha256};
 use tauri::{AppHandle, Manager, WebviewUrl, WebviewWindow, WebviewWindowBuilder};
 
 const WINDOW_LABEL: &str = "remote-server";
+const WEBVIEW_COMPATIBILITY_MARKER: &str = "name=\"moya-desktop-webview\" content=\"browser-v1\"";
+
+async fn require_browser_frontend(
+    client: &reqwest::Client,
+    url: &tauri::Url,
+) -> Result<(), String> {
+    const INCOMPATIBLE: &str = "이 서버의 웹 화면은 앱 내 접속을 지원하지 않습니다. 서버를 업데이트하거나 일반 브라우저에서 접속해 주세요.";
+    let mut response = client
+        .get(url.clone())
+        .send()
+        .await
+        .map_err(|_| "서버 웹 화면의 호환성을 확인하지 못했습니다. 다시 시도해 주세요.")?;
+    if !response.status().is_success() {
+        return Err(INCOMPATIBLE.into());
+    }
+    // Check the served frontend, not the API version: older pages treat Tauri's
+    // injected, non-configurable globals as permission to invoke native commands.
+    // The small bundled index declares that it handles external WebViews as web.
+    let mut bytes = Vec::new();
+    while let Some(chunk) = response.chunk().await.map_err(|_| INCOMPATIBLE)? {
+        if bytes.len() + chunk.len() > 64 * 1024 {
+            return Err(INCOMPATIBLE.into());
+        }
+        bytes.extend_from_slice(&chunk);
+    }
+    if !String::from_utf8_lossy(&bytes).contains(WEBVIEW_COMPATIBILITY_MARKER) {
+        return Err(INCOMPATIBLE.into());
+    }
+    Ok(())
+}
 
 fn is_local_http_host(host: &str) -> bool {
     use std::net::IpAddr;
@@ -110,6 +140,8 @@ pub(crate) async fn desktop_remote_server_open(
         return Ok(());
     }
 
+    require_browser_frontend(&client, &url).await?;
+
     let digest = Sha256::digest(url.origin().ascii_serialization().as_bytes());
     let profile = crate::portable::data_dir(&app)?
         .join("remote-webviews")
@@ -142,6 +174,64 @@ pub(crate) async fn desktop_remote_server_open(
 #[cfg(test)]
 mod tests {
     use super::remote_origin;
+
+    #[test]
+    fn checks_the_served_frontend_before_opening_a_native_window() {
+        use std::io::{Read, Write};
+        use std::net::TcpListener;
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        let current = include_str!("../../index.html");
+        assert!(current.contains(super::WEBVIEW_COMPATIBILITY_MARKER));
+        let old = current.replace(
+            super::WEBVIEW_COMPATIBILITY_MARKER,
+            "name=\"description\" content=\"old UI\"",
+        );
+        for (body, status, accepted) in [
+            (current.to_string(), "200 OK", true),
+            (old, "200 OK", false),
+            ("{}".to_string(), "200 OK", false),
+            (current.to_string(), "302 Found", false),
+            (
+                format!("{}{}", current, "x".repeat(64 * 1024)),
+                "200 OK",
+                false,
+            ),
+        ] {
+            let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+            let url =
+                tauri::Url::parse(&format!("http://{}/", listener.local_addr().unwrap())).unwrap();
+            let server = std::thread::spawn(move || {
+                let (mut stream, _) = listener.accept().unwrap();
+                stream
+                    .set_read_timeout(Some(std::time::Duration::from_secs(5)))
+                    .unwrap();
+                let mut request = Vec::new();
+                while !request.ends_with(b"\r\n\r\n") {
+                    let mut byte = [0];
+                    stream.read_exact(&mut byte).unwrap();
+                    request.push(byte[0]);
+                    assert!(request.len() <= 4096, "request headers exceeded test limit");
+                }
+                let _ = write!(
+                    stream,
+                    "HTTP/1.1 {status}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                    body.len()
+                );
+            });
+            let client = reqwest::Client::builder()
+                .no_proxy()
+                .redirect(reqwest::redirect::Policy::none())
+                .timeout(std::time::Duration::from_secs(5))
+                .build()
+                .unwrap();
+            let result = runtime.block_on(super::require_browser_frontend(&client, &url));
+            server.join().unwrap();
+            assert_eq!(result.is_ok(), accepted, "{result:?}");
+        }
+    }
 
     #[test]
     fn accepts_a_server_origin_only() {
