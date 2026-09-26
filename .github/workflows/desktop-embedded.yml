@@ -7,6 +7,14 @@ on:
         description: Build a test EXE without smoke tests or PR CI
         type: boolean
         default: false
+      upgrade_baseline_run:
+        description: Optional build-only workflow run with the previous installer
+        type: string
+        default: ''
+      upgrade_baseline_sha256:
+        description: Required SHA-256 when upgrade_baseline_run is supplied
+        type: string
+        default: ''
       build_installer:
         description: Build and install the release candidate, including runtime prerequisites
         type: boolean
@@ -28,6 +36,7 @@ on:
 
 permissions:
   contents: read
+  actions: read
 
 jobs:
   test-installer:
@@ -36,7 +45,7 @@ jobs:
   windows-server:
     if: ${{ !inputs.build_only }}
     runs-on: windows-latest
-    timeout-minutes: 45
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@v7
       - uses: pnpm/action-setup@v6
@@ -103,9 +112,29 @@ jobs:
         id: installer
         if: ${{ success() && inputs.build_installer }}
         run: node scripts/desktop/build-embedded-installer.mjs
+      - name: Download previous test installer for data-preserving upgrade
+        if: ${{ success() && inputs.build_installer && inputs.upgrade_baseline_run != '' }}
+        uses: actions/download-artifact@v4
+        with:
+          name: moya-windows-x64-build-only
+          run-id: ${{ inputs.upgrade_baseline_run }}
+          github-token: ${{ github.token }}
+          path: .tmp/previous-installer
       - name: Install and start with developer tools removed from PATH
         if: ${{ success() && inputs.build_installer && steps.installer.outcome == 'success' }}
-        run: ./scripts/desktop/smoke-embedded-installer.ps1
+        shell: pwsh
+        env:
+          BASELINE_RUN: ${{ inputs.upgrade_baseline_run }}
+          BASELINE_SHA256: ${{ inputs.upgrade_baseline_sha256 }}
+        run: |
+          if ($env:BASELINE_RUN) {
+            $previous = Get-ChildItem '.tmp/previous-installer' -Recurse -Filter '*-setup.exe' | Select-Object -First 1
+            if (!$previous) { throw 'Previous test installer is missing' }
+            if (!$env:BASELINE_SHA256 -or (Get-FileHash $previous.FullName -Algorithm SHA256).Hash.ToLowerInvariant() -ne $env:BASELINE_SHA256) { throw 'Previous installer checksum mismatch' }
+            ./scripts/desktop/smoke-embedded-installer.ps1 -BaselineInstaller $previous.FullName
+          } else {
+            ./scripts/desktop/smoke-embedded-installer.ps1
+          }
       - name: Upload tested Windows installer
         if: ${{ success() && inputs.build_installer }}
         uses: actions/upload-artifact@v4

@@ -1,3 +1,4 @@
+import { verifyReaderControls } from './desktop/verify-reader-controls.mjs';
 import { spawn } from 'node:child_process';
 import fs from 'node:fs/promises';
 import path from 'node:path';
@@ -679,46 +680,7 @@ async function runReaderSmoke() {
     await openReader(page);
     await assertReaderDomIsBounded(page);
     if (selectionControlsOnly) {
-      await revealReaderChrome(page);
-      await page.waitForTimeout(3000);
-      if (!(await page.locator('.reader-screen.chrome-visible').count()))
-        throw new Error('Chrome auto-hid after explicit center tap');
-      await page.getByRole('button', { name: '자동 스크롤 설정', exact: true }).click();
-      const dialog = page.getByRole('dialog', { name: '자동 읽기', exact: true });
-      await dialog.waitFor();
-      await page.keyboard.press('Escape');
-      await dialog.waitFor({ state: 'hidden' });
-      const root = page.locator('.reader-viewport-layer.is-active');
-      const rect = await root.boundingBox();
-      await root.click({ position: { x: rect.width / 2, y: rect.height / 2 } });
-      await page.locator('.reader-screen.immersive').waitFor();
-      const select = async () =>
-        root.evaluate((element) => {
-          const nodes = [...element.querySelectorAll('[data-reader-text]')]
-            .filter((node) => node.textContent.trim().length > 3)
-            .slice(0, 2);
-          const first = document.createTreeWalker(nodes[0], NodeFilter.SHOW_TEXT).nextNode();
-          const walker = document.createTreeWalker(nodes[1], NodeFilter.SHOW_TEXT);
-          let last;
-          for (let node = walker.nextNode(); node; node = walker.nextNode()) last = node;
-          window.getSelection().setBaseAndExtent(first, 1, last, last.textContent.length - 1);
-        });
-      await select();
-      await page.getByRole('button', { name: '노랑 하이라이트', exact: true }).click();
-      await page.waitForFunction(
-        () => document.querySelectorAll('.reader-viewport-layer.is-active .reader-inline-highlight').length >= 2,
-      );
-      await page.locator('.selection-action-bar').waitFor({ state: 'hidden' });
-      await select();
-      await page.getByRole('button', { name: '선택 범위의 하이라이트 삭제', exact: true }).waitFor();
-      await assertNoHorizontalOverflow(page, 'selection toolbar');
-      const bar = await page.locator('.selection-action-bar').boundingBox();
-      const width = page.viewportSize().width;
-      if (bar.x < 0 || bar.x + bar.width > width) throw new Error('Selection toolbar leaves the viewport');
-      await page.getByRole('button', { name: '선택 범위의 하이라이트 삭제', exact: true }).click();
-      await page.waitForFunction(
-        () => document.querySelectorAll('.reader-viewport-layer.is-active .reader-inline-highlight').length === 0,
-      );
+      await verifyReaderControls(page, { font: !mobileViewport });
       if (browserErrors.length) throw new Error(browserErrors.join('\n'));
       log('Selection save/delete, immersive latch, automatic scroll entry and toolbar layout passed');
       return;

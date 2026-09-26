@@ -1,3 +1,4 @@
+import { verifyReaderControls } from './verify-reader-controls.mjs';
 import assert from 'node:assert/strict';
 import { spawn, execFileSync } from 'node:child_process';
 import { mkdtemp, readFile, writeFile } from 'node:fs/promises';
@@ -186,7 +187,9 @@ try {
       if (!response.ok) throw new Error(`Native import failed: ${response.status}`);
       return response.json();
     };
-    const bytes = new TextEncoder().encode('1화 시작\n\n앱 창에서 내장 서버의 작품을 읽습니다.\n');
+    const bytes = new TextEncoder().encode(
+      '1화 시작\n\n앱 창에서 내장 서버의 작품을 읽습니다.\n\n두 번째 문단에서도 하이라이트와 사용자 글꼴을 확인합니다.\n',
+    );
     const upload = await request('/uploads/init', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -218,6 +221,7 @@ try {
   await page.getByText('앱 연결 검증', { exact: true }).first().waitFor({ timeout: 30_000 });
   await page.locator('.book-continue-action').first().click();
   await page.getByText('앱 창에서 내장 서버의 작품을 읽습니다.', { exact: false }).first().waitFor();
+  evidence.readerControls = await verifyReaderControls(page, { font: true });
   console.log('Preparing normal server account in the isolated test profile');
   const remotePassword = 'moya-remote-window-proof-password';
   const registration = await fetch(`${connection.url}/api/auth/register`, {
