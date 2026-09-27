@@ -1,3 +1,4 @@
+import { BookFileFacts } from '../library/BookFileFacts';
 import { useSourceStreamNavigation } from './use-source-stream-navigation';
 import { sourceReadingPreferences } from '../../external-sources/source-reading-preferences';
 import { SourceStreamReader } from './SourceStreamReader';
@@ -569,6 +570,7 @@ export default function SourceHubScreen({
   ]
     .filter((value): value is string => Boolean(value))
     .join(' · ');
+  const workTags = controller.detail?.tags ?? seriesNovel?.tags;
   const workSourceLabel = controller.detail?.sourceLabel ?? activeSource?.title ?? '로컬 라이브러리';
   const seriesLibraryBook = seriesNovel ? library.model.collection.booksByNovelId?.get(seriesNovel.id) : undefined;
   const seriesReadingStatus =
@@ -782,10 +784,10 @@ export default function SourceHubScreen({
                         {controller.detail?.description ?? seriesNovel?.description}
                       </p>
                     )}
-                    {controller.detail?.tags && controller.detail.tags.length > 0 && (
+                    {workTags && workTags.length > 0 && (
                       <div className="detail-tags" aria-label="작품 태그">
                         <Tags size={14} />
-                        {controller.detail.tags.slice(0, 8).map((tag) => (
+                        {workTags.map((tag) => (
                           <span key={tag}>#{tag}</span>
                         ))}
                       </div>
@@ -929,6 +931,29 @@ export default function SourceHubScreen({
                   </div>
                 )}
               </section>
+            )}
+
+            {hasWorkHero && seriesNovel && (
+              <details className="book-management-disclosure">
+                <summary>
+                  <span>작품 관리 및 파일 정보</span>
+                </summary>
+                <div className="book-management-body">
+                  <BookFileFacts novel={seriesNovel} className="book-management-facts" />
+                  <div className="book-management-actions">
+                    <button type="button" onClick={() => library.actions.books.editMetadata(seriesNovel)}>
+                      <FilePenLine size={17} /> 작품 정보 편집
+                    </button>
+                    <button
+                      type="button"
+                      disabled={!seriesNovel.sourceAssetId}
+                      onClick={() => void library.actions.books.downloadSource(seriesNovel)}
+                    >
+                      <Download size={17} /> 원본 다운로드
+                    </button>
+                  </div>
+                </div>
+              </details>
             )}
 
             {activeSource?.supportsSubscriptions && !controller.detail && sourceSubscriptions.length > 0 && (

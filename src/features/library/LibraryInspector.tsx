@@ -1,7 +1,8 @@
+import { BookFileFacts } from './BookFileFacts';
 import { BookOpen, Download, Pencil, Play, RotateCcw, Star, Trash2, X } from 'lucide-react';
 import { useEffect, useRef } from 'react';
-import { bookFormatLabel, bookUnitLabel, isFixedDocumentFormat } from '../../domain/book-format';
-import { formatBytes, formatCount, formatProgress } from '../../utils/format';
+import { isFixedDocumentFormat } from '../../domain/book-format';
+import { formatProgress } from '../../utils/format';
 import { BookCover } from './BookCover';
 import type { LibraryScreenProps } from './library-screen-contract';
 import type { LibraryBookView } from './library-screen-model';
@@ -130,48 +131,7 @@ export function LibraryInspector({ book, model, actions }: LibraryScreenProps & 
           </div>
         )}
 
-        <dl className="library-inspector-details">
-          <div>
-            <dt>원본 파일</dt>
-            <dd title={novel.sourceFileName}>{novel.sourceFileName}</dd>
-          </div>
-          {novel.sourceByteLength !== undefined && (
-            <div>
-              <dt>원본 크기</dt>
-              <dd>{formatBytes(novel.sourceByteLength)}</dd>
-            </div>
-          )}
-          <div>
-            <dt>형식</dt>
-            <dd>{bookFormatLabel(novel)}</dd>
-          </div>
-          <div>
-            <dt>{bookUnitLabel(novel)}</dt>
-            <dd>{formatCount(novel.totalChapters)}개</dd>
-          </div>
-          {!fixedDocument && (
-            <>
-              <div>
-                <dt>문단</dt>
-                <dd>{formatCount(novel.totalParagraphs)}개</dd>
-              </div>
-              <div>
-                <dt>분량</dt>
-                <dd>{formatCount(novel.totalCharacters)}자</dd>
-              </div>
-            </>
-          )}
-          <div>
-            <dt>누적 독서</dt>
-            <dd>{book.readingTimeLabel}</dd>
-          </div>
-          {!fixedDocument && (
-            <div>
-              <dt>인코딩</dt>
-              <dd>{novel.sourceEncoding?.toUpperCase() ?? '자동'}</dd>
-            </div>
-          )}
-        </dl>
+        <BookFileFacts novel={novel} className="library-inspector-details" />
         {novel.tags && novel.tags.length > 0 && (
           <div className="library-inspector-tags" aria-label="작품 태그">
             {novel.tags.map((tag) => (

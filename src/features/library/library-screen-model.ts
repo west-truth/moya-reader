@@ -44,7 +44,7 @@ export interface BuildLibraryCollectionInput {
   readState: NovelReadStateSelectors;
 }
 
-function formatReadingDuration(totalSeconds: number): string {
+export function formatReadingDuration(totalSeconds: number): string {
   const seconds = Math.max(0, Math.floor(totalSeconds));
   const hours = Math.floor(seconds / 3600);
   const minutes = Math.floor((seconds % 3600) / 60);

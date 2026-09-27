@@ -120,6 +120,9 @@
 }
 
 .detail-tags span {
+  min-width: 0;
+  max-width: 100%;
+  overflow-wrap: anywhere;
   padding: 3px 7px;
   color: var(--text-2);
   background: var(--app-surface-muted);
@@ -780,9 +783,7 @@
     font-size: 0.7rem;
   }
   .detail-tags {
-    max-height: 48px;
     margin-top: 7px;
-    overflow: hidden;
   }
   .detail-tags span {
     font-size: 0.6rem;
@@ -960,9 +961,6 @@
   }
   .detail-hero-cover > .book-cover {
     min-height: 108px;
-  }
-  .detail-tags {
-    display: none;
   }
   .detail-stats > div {
     padding-inline: 9px;
