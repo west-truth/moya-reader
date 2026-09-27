@@ -78,7 +78,7 @@ export function BookDetailHero({ model, actions }: ChaptersScreenProps) {
             </p>
           )}
           {novel.tags && novel.tags.length > 0 && (
-            <div className="detail-tags" aria-label="작품 태그">
+            <div className="detail-tags" tabIndex={0} aria-label="작품 태그">
               <Tags size={14} />
               {novel.tags.map((tag) => (
                 <span key={tag}>#{tag}</span>

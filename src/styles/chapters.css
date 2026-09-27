@@ -98,7 +98,7 @@
 
 .detail-description {
   max-width: 720px;
-  max-height: 7.75em;
+  max-height: 4.65em;
   margin-top: 10px;
   overflow-y: auto;
   overflow-wrap: anywhere;
@@ -111,12 +111,18 @@
 
 .detail-tags {
   max-width: 720px;
+  /* Two chip rows: line height + vertical padding/borders, with one row gap. */
+  max-height: calc(3em + 22px);
+  overflow-y: auto;
+  scrollbar-width: thin;
   display: flex;
   align-items: center;
   flex-wrap: wrap;
   gap: 6px;
   margin-top: 9px;
   color: var(--muted);
+  font-size: 0.66rem;
+  line-height: 1.5;
 }
 
 .detail-tags span {
@@ -128,7 +134,7 @@
   background: var(--app-surface-muted);
   border: 1px solid var(--border);
   border-radius: 999px;
-  font-size: 0.66rem;
+  font-size: inherit;
 }
 
 .detail-reading-progress {
@@ -784,8 +790,6 @@
   }
   .detail-tags {
     margin-top: 7px;
-  }
-  .detail-tags span {
     font-size: 0.6rem;
   }
   .detail-reading-progress {
