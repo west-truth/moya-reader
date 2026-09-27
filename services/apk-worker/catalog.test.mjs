@@ -475,3 +475,77 @@ test('chapter cursors stay on one snapshot; explicit refresh reaches origin with
   await invoke('getCover', { workId });
   assert.equal(calls.filter((c) => c.method === 'cover').length, 2);
 });
+
+test('opens image lists without downloading pages; reading and saving reuse the same image', async (t) => {
+  const { catalog, source, invoke, calls } = await fixture(t);
+  const signal = new AbortController().signal;
+  const workId = (await invoke('listWorks')).result.items[0].id;
+  const releaseId = (await invoke('listReleases', { workId })).result.items[0].id;
+  const stream = await catalog.openStream(source, { workId, releaseId }, signal);
+  assert.equal(stream.pageCount, 1);
+  assert.equal(calls.filter((c) => c.method === 'image').length, 0);
+  const [page, download] = await Promise.all([
+    catalog.streamPage(source, stream.token, 0, signal),
+    invoke('getContent', { workId, releaseId }),
+  ]);
+  assert.equal(page.size, 4);
+  assert.equal(download.result.assets.length, 1);
+  assert.equal(calls.filter((c) => c.method === 'image').length, 1);
+  assert.equal(calls.filter((c) => c.method === 'pages').length, 1);
+  await assert.rejects(catalog.streamPage(source, stream.token, 1, signal), /invalid_source_invocation/);
+  catalog.closeStream(source, stream.token);
+  await assert.rejects(catalog.streamPage(source, stream.token, 0, signal), /source_stream_expired/);
+});
+test('stream sessions fence extension changes and honor disabled image reuse', async (t) => {
+  const { catalog, source, invoke, store, calls } = await fixture(t);
+  const signal = new AbortController().signal;
+  const workId = (await invoke('listWorks')).result.items[0].id;
+  const releaseId = (await invoke('listReleases', { workId })).result.items[0].id;
+  const stream = await catalog.openStream(source, { workId, releaseId, imageMinutes: 0 }, signal);
+  await catalog.streamPage(source, stream.token, 0, signal);
+  await catalog.streamPage(source, stream.token, 0, signal);
+  assert.equal(calls.filter((c) => c.method === 'image').length, 2);
+  store.snapshot().packages[0].activation = 'updated';
+  await catalog.refresh();
+  await assert.rejects(catalog.streamPage(source, stream.token, 0, signal), /source_stream_expired/);
+});
+test('foreground reading promotes a pending download image without fetching it twice', async (t) => {
+  const { catalog, source, invoke, tools } = await fixture(t);
+  catalog.pageConcurrency = 3;
+  const base = tools.worker;
+  const started = [],
+    release = new Map();
+  tools.worker = (...args) => {
+    const worker = base(...args),
+      original = worker.request;
+    worker.request = async (method, input) => {
+      if (method === 'pages') return Array.from({ length: 3 }, (_, index) => ({ index }));
+      if (method === 'image') {
+        started.push(input.index);
+        await new Promise((resolve) => release.set(input.index, resolve));
+      }
+      return original(method, input);
+    };
+    return worker;
+  };
+  const signal = new AbortController().signal;
+  const workId = (await invoke('listWorks')).result.items[0].id;
+  const releaseId = (await invoke('listReleases', { workId })).result.items[0].id;
+  const stream = await catalog.openStream(source, { workId, releaseId }, signal);
+  const download = invoke('getContent', { workId, releaseId });
+  const until = async (predicate) => {
+    for (let i = 0; i < 1000 && !predicate(); i++) await new Promise((resolve) => setImmediate(resolve));
+    assert(predicate());
+  };
+  await until(() => started.length === 2);
+  assert.deepEqual(started, [0, 1]);
+  const foreground = catalog.streamPage(source, stream.token, 2, signal);
+  await until(() => started.length === 3);
+  assert.deepEqual(started, [0, 1, 2]);
+  release.get(2)();
+  assert.equal((await foreground).size, 4);
+  release.get(0)();
+  release.get(1)();
+  assert.equal((await download).result.assets.length, 3);
+  assert.equal(started.length, 3);
+});

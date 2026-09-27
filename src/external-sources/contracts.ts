@@ -78,6 +78,8 @@ export interface ExternalSourceWorkDetail {
 }
 
 export interface ExternalSourceListInput {
+  /** Host-only freshness ceiling. Never forwarded into guest inputs or cursor identity. */
+  readonly cacheMaxAgeMs?: number;
   /** Host-only: explicitly revalidate every host cache layer. */
   readonly cacheMode?: 'reload';
   readonly accountConnectionId?: string;

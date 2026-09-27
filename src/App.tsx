@@ -1492,6 +1492,7 @@ export default function App() {
     notify: showToast,
   });
   const externalSourceFeature = useExternalSourceController({
+    saveStreamPosition: bookWorkspace.saveFixedDocumentPage,
     downloadPolicy: settings.downloadPolicy ?? legacyDownloads,
     updateDownloadPolicy: (patch) =>
       updateSettings((previous) => ({

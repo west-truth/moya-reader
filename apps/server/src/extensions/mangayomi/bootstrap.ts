@@ -69,7 +69,12 @@ class DomNode {
   get previousElementSibling(){return new DomNode(this.node?.previousElementSibling);}
   remove(){this.node?.remove();} toString(){return this.outerHtml;}
 }
-class Document extends DomNode {constructor(html){super(__moyaParseHTML(String(html)).document);}}
+class Document extends DomNode {
+ constructor(html){super(__moyaParseHTML(String(html)).document);}
+ get body(){return this.node.body?new DomNode(this.node.body):null;}
+ get head(){return this.node.head?new DomNode(this.node.head):null;}
+ get documentElement(){return this.node.documentElement?new DomNode(this.node.documentElement):null;}
+}
 const console={log(){},warn(){},error(){},debug(){}};
 let timerId=0;const timers=new Map();
 function setTimeout(fn,delay,...args){if(typeof fn!=='function'||timers.size>=128)unsupported();const id=++timerId;let ms=Number(delay);if(!Number.isFinite(ms)||ms<0)ms=0;timers.set(id,{fn,args,at:Date.now()+Math.min(ms,2147483647)});return id;}
@@ -113,11 +118,29 @@ globalThis.moyaExtension=async function(method,input,host){
  result.browse={activeMode:mode,availableModes:latest?['popular','latest','search']:['popular','search'],filters:definitions};
  }
  else if(input.action==='detail'||input.action==='chapters')result=await extension.getDetail(p.workUrl);
- else if(input.action==='pages'){result=await extension.getPageList(p.chapterUrl);if(Array.isArray(result))result=result.map(page=>{const url=typeof page==='string'?page:page.url;return {url,headers:(typeof page==='object'&&page.headers)||optionalMethod(extension,'getHeaders',[url],{})||{}};});}
+ else if(input.action==='pages'){result=await extension.getPageList(p.chapterUrl);if(Array.isArray(result))result=await Promise.all(result.map(async page=>{const url=typeof page==='string'?page:page.url;return {url,headers:(typeof page==='object'&&page.headers)||await optionalMethod(extension,'getHeaders',[url],{})||{}};}));}
  // Original novel sources own cleaning; invoking it again destroys already-extracted fragments.
  else if(input.action==='html'){if(sourceMetadata.itemType!==2||typeof extension.getHtmlContent!=='function')unsupported();result=await extension.getHtmlContent(p.title,p.chapterUrl);}
- else if(input.action==='headers')result=optionalMethod(extension,'getHeaders',[p.url],{})||{};
+ else if(input.action==='headers')result=await optionalMethod(extension,'getHeaders',[p.url],{})||{};
  else unsupported();
+ if(input.action==='list'||input.action==='detail'||input.action==='chapters'){
+  // Covers belong to their work page. Image-host Referer fails on hotlink-protected CDNs.
+  const covers=async(value,depth)=>{
+   if(!value||typeof value!=='object'||depth>4)return;
+   if(Array.isArray(value)){for(const item of value)await covers(item,depth+1);return;}
+   if(typeof value.imageUrl==='string'&&/^https:\/\//i.test(value.imageUrl)){
+    let context=value.link||value.url||p.workUrl||sourceMetadata.baseUrl||value.imageUrl;
+    if(typeof context==='string'&&context.startsWith('/')){
+     const origin=/^https?:\/\/[^/]+/.exec(extension.baseUrl||sourceMetadata.baseUrl||'');
+     if(context.startsWith('//'))context='https:'+context;
+     else if(origin)context=origin[0]+context;
+    }
+    value.imageHeaders=value.imageHeaders||await optionalMethod(extension,'getHeaders',[context],{})||{};
+   }
+   for(const key of Object.keys(value))if(key!=='imageHeaders')await covers(value[key],depth+1);
+  };
+  await covers(result,0);
+ }
  return {result,changes:preferenceChanges};
 };
 `;

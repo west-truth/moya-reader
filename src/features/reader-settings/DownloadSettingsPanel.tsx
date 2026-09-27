@@ -1,13 +1,120 @@
+import { useState } from 'react';
+import {
+  sourceReadingPreferences,
+  saveSourceReadingPreferences,
+  type SourceReadingPreferences,
+} from '../../external-sources/source-reading-preferences';
 import { Download, HardDrive, Server } from 'lucide-react';
 import { SourceDownloadRecovery } from '../external-sources/SourceDownloadRecovery';
 import type { ExternalSourceController } from '../external-sources/useExternalSourceController';
 
 export function DownloadSettingsPanel({ controller }: { readonly controller: ExternalSourceController }) {
+  const [sourceReading, setSourceReading] = useState(sourceReadingPreferences);
+  const [cacheError, setCacheError] = useState('');
+  const changeSourceReading = (patch: Partial<SourceReadingPreferences>) => {
+    try {
+      saveSourceReadingPreferences(patch);
+      setSourceReading(sourceReadingPreferences());
+      setCacheError('');
+    } catch {
+      setCacheError('설정을 저장하지 못했습니다. 브라우저 저장 공간을 확인해 주세요.');
+    }
+  };
   const autoDownload = controller.autoDownloadNext ?? false;
   const count = controller.autoDownloadNextCount ?? 1;
   const retention = controller.downloadRetention;
   return (
     <div className="reader-settings-destination-sections">
+      <section className="settings-section-card" aria-label="소스 읽기와 캐시">
+        <div className="settings-section-heading">
+          <Download size={18} aria-hidden="true" />
+          <div>
+            <h3>소스 읽기와 캐시</h3>
+            <p>이 브라우저에 적용됩니다. 저장한 회차는 캐시 설정과 관계없이 유지됩니다.</p>
+          </div>
+        </div>
+        {cacheError && <p role="alert">{cacheError}</p>}
+        <label className="reader-settings-select-row">
+          <span>
+            <strong>다운로드하지 않은 만화 열기</strong>
+            <small>망가요미·APK 이미지 소스에서 지원합니다.</small>
+          </span>
+          <select
+            value={sourceReading.mode}
+            onChange={(e) => changeSourceReading({ mode: e.target.value as SourceReadingPreferences['mode'] })}
+          >
+            <option value="stream-save">바로 읽으면서 회차 저장</option>
+            <option value="stream">저장 없이 바로 읽기</option>
+            <option value="download">다운로드 완료 후 읽기</option>
+          </select>
+        </label>
+        <label className="reader-settings-select-row">
+          <span>
+            <strong>목록·작품 정보 최대 재사용 시간</strong>
+            <small>기간이 지나면 다시 확인합니다. 새로고침은 즉시 반영됩니다.</small>
+          </span>
+          <select
+            value={sourceReading.listMinutes}
+            onChange={(e) =>
+              changeSourceReading({ listMinutes: Number(e.target.value) as SourceReadingPreferences['listMinutes'] })
+            }
+          >
+            <option value={0}>사용 안 함</option>
+            <option value={2}>2분</option>
+            <option value={30}>30분</option>
+            <option value={360}>6시간</option>
+          </select>
+        </label>
+        <label className="reader-settings-select-row">
+          <span>
+            <strong>표지 이미지 재사용</strong>
+          </span>
+          <select
+            value={sourceReading.coverHours}
+            onChange={(e) =>
+              changeSourceReading({ coverHours: Number(e.target.value) as SourceReadingPreferences['coverHours'] })
+            }
+          >
+            <option value={0}>사용 안 함</option>
+            <option value={1}>1시간</option>
+            <option value={24}>1일</option>
+            <option value={168}>7일</option>
+          </select>
+        </label>
+        <label className="reader-settings-select-row">
+          <span>
+            <strong>읽는 이미지 임시 보관</strong>
+            <small>서버 메모리에 최대 64MB까지 보관합니다. 영구 저장은 하지 않습니다.</small>
+          </span>
+          <select
+            value={sourceReading.imageMinutes}
+            onChange={(e) =>
+              changeSourceReading({ imageMinutes: Number(e.target.value) as SourceReadingPreferences['imageMinutes'] })
+            }
+          >
+            <option value={0}>사용 안 함</option>
+            <option value={2}>2분</option>
+            <option value={10}>10분</option>
+          </select>
+        </label>
+        <label className="reader-settings-select-row">
+          <span>
+            <strong>다음 이미지 미리 불러오기</strong>
+            <small>데이터 절약 모드에서는 현재 페이지만 불러옵니다.</small>
+          </span>
+          <select
+            value={sourceReading.prefetch}
+            onChange={(e) =>
+              changeSourceReading({ prefetch: Number(e.target.value) as SourceReadingPreferences['prefetch'] })
+            }
+          >
+            <option value={0}>사용 안 함</option>
+            <option value={2}>2장</option>
+            <option value={4}>4장</option>
+            <option value={8}>8장</option>
+          </select>
+        </label>
+      </section>
       <section className="settings-section-card">
         <div className="settings-section-heading">
           <Download size={18} aria-hidden="true" />

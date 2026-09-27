@@ -1,3 +1,4 @@
+import { sourceReadingPreferences } from '../../external-sources/source-reading-preferences';
 import { withRequestProgress } from '../../services/remote/request-progress';
 import { SessionCoverCache } from '../../external-sources/session-cover-cache';
 import { compatibilityFileUpload } from './compatibility-file';
@@ -31,6 +32,7 @@ import {
   type ApkManagerSnapshot,
 } from './apk-extension-manager';
 type Inventory = Pick<InstalledExtensionsSnapshot, 'packages' | 'sources' | 'errors'> & {
+  sourceStreaming?: boolean;
   preparedImageImports?: boolean;
   preparedDocumentImports?: boolean;
 };
@@ -75,6 +77,44 @@ export class RemoteInstalledExtensions implements InstalledExtensionManager {
   readonly apk: import('./apk-extension-manager').ApkExtensionManager;
   readonly mangayomi: import('./apk-extension-manager').ApkExtensionManager;
   readonly target = 'server' as const;
+  private sourceStreaming = false;
+  getSourceStream(
+    id: ExtensionContributionId,
+  ): import('../../external-sources/source-stream').SourceStreamPort | undefined {
+    if (
+      !this.sourceStreaming ||
+      !this.snapshot.sources.some(
+        (source) =>
+          source.descriptor.id === id &&
+          (source.apkPackageId || source.mangayomiPackageId) &&
+          source.descriptor.schemaVersion === 2 &&
+          source.descriptor.seriesProfile?.kind === 'image_series',
+      )
+    )
+      return undefined;
+    const prefix = `/extensions/sources/${encodeURIComponent(id)}/stream`;
+    return {
+      open: async (remoteId, signal) => {
+        const { token, pageCount } = await this.api.request<{ token: string; pageCount: number }>(
+          prefix,
+          {
+            method: 'POST',
+            body: JSON.stringify({ remoteId, imageMinutes: sourceReadingPreferences().imageMinutes }),
+            signal,
+          },
+          150000,
+        );
+        return {
+          pageCount,
+          loadPage: async (index, signal) =>
+            (await this.api.requestBlob(`${prefix}/${encodeURIComponent(token)}/${index}`, { signal }, 60000)).blob,
+          close: () => {
+            void this.api.request(`${prefix}/${encodeURIComponent(token)}`, { method: 'DELETE' }).catch(() => {});
+          },
+        };
+      },
+    };
+  }
   private preparedImageImports = false;
   private preparedDocumentImports = false;
   getHostedDocumentImport(
@@ -376,6 +416,7 @@ export class RemoteInstalledExtensions implements InstalledExtensionManager {
         if (request !== this.inventoryRequest) return;
         if (!value || !Array.isArray(value.packages) || !Array.isArray(value.sources) || !Array.isArray(value.errors))
           throw new Error('invalid_inventory');
+        this.sourceStreaming = value.sourceStreaming === true;
         this.preparedImageImports = value.preparedImageImports === true;
         this.preparedDocumentImports = value.preparedDocumentImports === true;
         this.publish({ ...value, available: true });
@@ -447,6 +488,7 @@ export class RemoteInstalledExtensions implements InstalledExtensionManager {
         installed.active.manifest.extension.version !== review.package.manifest.extension.version
       )
         throw new Error('package_install_unconfirmed');
+      this.sourceStreaming = value.sourceStreaming === true;
       this.preparedImageImports = value.preparedImageImports === true;
       this.preparedDocumentImports = value.preparedDocumentImports === true;
       this.publish({ ...value, available: true });
@@ -523,7 +565,11 @@ export class RemoteInstalledExtensions implements InstalledExtensionManager {
     return this.api
       .request<ExternalItemPage>(
         `/extensions/sources/${encodeURIComponent(id)}/list`,
-        { method: 'POST', body: JSON.stringify(input), signal },
+        {
+          method: 'POST',
+          body: JSON.stringify({ ...input, cacheMaxAgeMs: sourceReadingPreferences().listMinutes * 60000 }),
+          signal,
+        },
         input.parentRef ? 11 * 60_000 : 60000,
       )
       .catch(translatePackageOperationError);
@@ -582,7 +628,7 @@ export class RemoteInstalledExtensions implements InstalledExtensionManager {
       async (sharedSignal) => {
         const { blob } = await this.api.requestBlob(`/extensions/sources/${encodeURIComponent(id)}/cover`, {
           method: 'POST',
-          body: JSON.stringify({ workId: key.remoteId }),
+          body: JSON.stringify({ workId: key.remoteId, coverHours: sourceReadingPreferences().coverHours }),
           headers: { 'Content-Type': 'application/json' },
           signal: sharedSignal,
         });

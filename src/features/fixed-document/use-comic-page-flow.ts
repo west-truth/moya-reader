@@ -8,6 +8,10 @@ export function useComicPageFlow(
   contentRef: RefObject<HTMLDivElement>,
 ) {
   const [nearby, setNearby] = useState<number[]>([]);
+  const [visible, setVisible] = useState<{ owner: readonly number[]; indexes: number[] }>({
+    owner: pages,
+    indexes: [],
+  });
   const getRows = useCallback(
     () => Array.from(contentRef.current?.querySelectorAll<HTMLElement>('article[data-page-index]') ?? []),
     [contentRef],
@@ -40,12 +44,21 @@ export function useComicPageFlow(
       frame = undefined;
       const rect = viewport.getBoundingClientRect();
       const margin = viewport.clientHeight * 2;
-      const next = getRows()
-        .filter((row) => {
-          const bounds = row.getBoundingClientRect();
-          return bounds.bottom >= rect.top - margin && bounds.top <= rect.bottom + margin;
-        })
-        .map((row) => Number(row.dataset.pageIndex));
+      const measured = getRows().map((row) => ({
+        index: Number(row.dataset.pageIndex),
+        bounds: row.getBoundingClientRect(),
+      }));
+      const next = measured
+        .filter(({ bounds }) => bounds.bottom >= rect.top - margin && bounds.top <= rect.bottom + margin)
+        .map(({ index }) => index);
+      const shown = measured
+        .filter(({ bounds }) => bounds.bottom > rect.top && bounds.top < rect.bottom)
+        .map(({ index }) => index);
+      setVisible((previous) =>
+        previous.owner === pages && previous.indexes.join(',') === shown.join(',')
+          ? previous
+          : { owner: pages, indexes: shown },
+      );
       setNearby((previous) => (previous.join(',') === next.join(',') ? previous : next));
     };
     const schedule = () => {
@@ -62,5 +75,5 @@ export function useComicPageFlow(
       if (frame !== undefined) cancelAnimationFrame(frame);
     };
   }, [enabled, pages, getRows, viewportRef, contentRef]);
-  return { nearby, nearestPage, scrollToPage };
+  return { nearby, visible: enabled && visible.owner === pages ? visible.indexes : [], nearestPage, scrollToPage };
 }

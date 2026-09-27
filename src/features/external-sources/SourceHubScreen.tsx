@@ -1,3 +1,5 @@
+import { useSourceStreamNavigation } from './use-source-stream-navigation';
+import { SourceStreamReader } from './SourceStreamReader';
 import { TaskProgressRing } from '../../components/TaskProgressRing';
 import { WorkViewControl } from '../../components/WorkViewControl';
 import {
@@ -197,14 +199,15 @@ function ReleaseDownloadAction({
       </button>
     );
   }
+  const streaming = controller.canStreamItem?.(item) === true;
   const updating = item.importState === 'update_available';
   const queueing = controller.canQueueItem(item);
-  const blockedByOtherWork = controller.importBusy && !queueing;
+  const blockedByOtherWork = controller.importBusy && !queueing && !streaming;
   const label = updating
     ? `${item.title} 업데이트`
-    : queueing
+    : queueing && !streaming
       ? `${item.title} 다운로드 대기열에 추가`
-      : `${item.title} 다운로드 후 보기`;
+      : `${item.title} ${streaming ? '바로 읽기' : '다운로드 후 보기'}`;
   return (
     <button
       className="icon-btn source-hub-release-action"
@@ -215,14 +218,18 @@ function ReleaseDownloadAction({
           ? '다른 작품 다운로드 중'
           : updating
             ? '업데이트'
-            : queueing
+            : queueing && !streaming
               ? '다운로드 대기열에 추가'
-              : '다운로드 후 보기'
+              : streaming
+                ? '바로 읽기'
+                : '다운로드 후 보기'
       }
       aria-label={label}
-      onClick={() => void (updating || queueing ? controller.importItem(item) : controller.importAndOpen(item))}
+      onClick={() =>
+        void (updating || (queueing && !streaming) ? controller.importItem(item) : controller.importAndOpen(item))
+      }
     >
-      {updating ? <RefreshCw size={16} /> : <Download size={16} />}
+      {updating ? <RefreshCw size={16} /> : streaming ? <BookOpen size={16} /> : <Download size={16} />}
     </button>
   );
 }
@@ -244,6 +251,20 @@ function ItemAction({
   if (releaseList) {
     return (
       <div className="source-hub-release-actions">
+        {!canRead &&
+          task &&
+          (importTaskIsActive(task) || task.phase === 'failed') &&
+          controller.canStreamItem?.(item) && (
+            <button
+              className="icon-btn source-hub-release-action"
+              type="button"
+              title="바로 읽기"
+              aria-label={`${item.title} 바로 읽기`}
+              onClick={() => void controller.importAndOpen(item)}
+            >
+              <BookOpen size={16} />
+            </button>
+          )}
         {canRead && (
           <button
             className="icon-btn source-hub-release-action"
@@ -494,6 +515,7 @@ export default function SourceHubScreen({
   localSeriesNovel,
   localSeriesTitleEditor,
 }: SourceHubScreenProps) {
+  const streamNavigation = useSourceStreamNavigation(controller);
   const scrollRef = useRef<HTMLDivElement>(null);
   const [workLayout, changeWorkLayout] = useSourceWorkLayout();
   const taskByItemKey = useMemo(() => {
@@ -576,6 +598,30 @@ export default function SourceHubScreen({
   };
 
   useNavigationScroll(scrollRef, releaseLocationKey, !controller.loading);
+
+  if (controller.streaming) {
+    const { item, port } = controller.streaming;
+    const task = controller.tasks.find((task) => task.externalItemKey === externalItemKeyId(item.key));
+    return (
+      <SourceStreamReader
+        historyKey={controller.streaming.historyKey ?? externalItemKeyId(item.key)}
+        title={item.title}
+        remoteId={item.key.remoteId}
+        port={port}
+        onClose={() => controller.closeStream?.()}
+        onSave={() => (controller.saveStream ?? controller.importItem)(item)}
+        onPageSettled={(page, count) => controller.saveStreamPosition?.(item, page, count)}
+        saved={task?.phase === 'complete'}
+        saveStatus={task ? importTaskLabel(task) : undefined}
+        saveBusy={task ? importTaskIsActive(task) : false}
+        saveFailed={task?.phase === 'failed'}
+        onCancelSave={controller.cancel}
+        previous={streamNavigation.previous}
+        next={streamNavigation.next}
+        navigationBusy={streamNavigation.busy}
+      />
+    );
+  }
 
   if (!seriesNovel && (!activeSource || !connected)) return null;
 

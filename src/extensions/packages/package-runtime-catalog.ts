@@ -218,6 +218,7 @@ export class PackageRuntimeCatalog {
     _cache?: {
       cacheMode?: 'reload';
       refreshCovers?: boolean;
+      coverMaxAgeMs?: number;
       onProgress?: import('@noveldesk/contracts').TaskProgressCallback;
     },
   ): Promise<{

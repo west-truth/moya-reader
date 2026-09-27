@@ -19,6 +19,54 @@ import { OUTBOUND_PROXY_KEY } from '../outbound-proxy.js';
 import { createSourceNetworkSettings } from '../source-network-settings.js';
 const roots: string[] = [];
 const hosts: MangayomiExtensionHost[] = [];
+it('installs parameterized JS and preserves work referers for protected covers', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'moya-parameterized-js-'));
+  roots.push(root);
+  const row = {
+    ...fixtureRow,
+    additionalParams: '{"gallery":"comic_new6"}',
+    sourceCodeUrl: 'https://repo.example/source.min.js?v=1.0.8',
+  };
+  const script = `class DefaultExtension extends MProvider {
+    getSourcePreferences(){return [{key:'gallery',editTextPreference:{title:'Gallery',value:JSON.parse(this.source.additionalParams).gallery}}]}
+    async getHeaders(url){return {Referer:url};}
+    async getPopular(){return {list:[{name:JSON.parse(this.source.additionalParams).gallery,link:'/work/1',imageUrl:'https://cdn.example/cover.jpg'}],hasNextPage:false};}
+  }`;
+  const headers: unknown[] = [];
+  const transport: typeof compatibilityHttp = async (input) => {
+    if (input.url.includes('cdn.example')) headers.push(input.headers);
+    return {
+      bytes: Buffer.from(
+        input.url.endsWith('.json')
+          ? JSON.stringify([row])
+          : input.url.includes('source.min.js')
+            ? script
+            : Buffer.from([255, 216, 255, 217]),
+      ),
+      statusCode: 200,
+      headers: {},
+      contentType: 'text/plain',
+      url: input.url,
+    };
+  };
+  const vault = new EncryptedSourceCredentialVault(join(root, 'vault'), Buffer.alloc(32, 3));
+  let host = await MangayomiExtensionHost.open(join(root, 'host'), vault, transport);
+  hosts.push(host);
+  const repo = 'https://repo.example/index.json',
+    signal = AbortSignal.timeout(15000);
+  await host.refreshRepository(repo, signal);
+  const entry = host.snapshot().repositories[0].entries[0];
+  const review = await host.inspect(repo, entry.pkg, entry.code, signal);
+  await host.install(review.id, review.revision, signal);
+  host.close();
+  host = await MangayomiExtensionHost.open(join(root, 'host'), vault, transport);
+  hosts.push(host);
+  const id = host.catalog.getSources()[0].descriptor.id;
+  const list = await host.catalog.invoke(id, 'source.listWorks', {}, signal);
+  expect(list.result.items[0].title).toBe('comic_new6');
+  await host.catalog.invoke(id, 'source.getCover', { workId: list.result.items[0].id }, signal);
+  expect(headers).toEqual([{ Referer: 'https://site.example/work/1' }]);
+});
 it('returns lists with large source caches after reopen and applies default/custom/direct proxy choices to list and covers', async () => {
   const root = await mkdtemp(join(tmpdir(), 'moya-cache-proxy-'));
   roots.push(root);
@@ -341,6 +389,25 @@ it('preserves encrypted options across restart and imports original-script pages
     const chapters = (
       await app.inject({ method: 'POST', url: prefix + '/list', headers, payload: { parentRef: work.id } })
     ).json().items;
+    const openStream = await app.inject({
+      method: 'POST',
+      url: prefix + '/stream',
+      headers,
+      payload: { remoteId: chapters[0].key.remoteId },
+    });
+    expect(openStream.statusCode).toBe(200);
+    const stream = openStream.json();
+    expect(stream.pageCount).toBe(1);
+    expect((await app.inject(prefix + '/stream/' + stream.token + '/0')).statusCode).toBe(401);
+    const image = await app.inject({ url: prefix + '/stream/' + stream.token + '/0', headers });
+    expect(image.statusCode).toBe(200);
+    expect(image.headers['content-type']).toContain('image/');
+    expect(image.rawPayload.length).toBeGreaterThan(0);
+    expect(JSON.stringify(stream)).not.toContain('site.example');
+    await app.inject({ method: 'DELETE', url: prefix + '/stream/' + stream.token, headers });
+    expect((await app.inject({ url: prefix + '/stream/' + stream.token + '/0', headers })).json().error).toBe(
+      'source_stream_expired',
+    );
     const cbz = await app.inject({
       method: 'POST',
       url: prefix + '/download',

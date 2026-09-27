@@ -3,6 +3,7 @@ import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { joinTask } from './shared-task.mjs';
+import { ImageRequestQueue } from './image-request-queue.mjs';
 import { SourceCoverCache } from './source-cover-cache.mjs';
 import { downloadPagesOrdered } from './ordered-page-downloads.mjs';
 import { apkStateDirectory } from './installations.mjs';
@@ -29,6 +30,20 @@ export class ApkSourceCatalog {
   #sources = [];
   #pending = new Map();
   #covers = new SourceCoverCache();
+  #pages = new SourceCoverCache({ maxBytes: 64 * 1024 * 1024, maxEntries: 128, ttl: 300000, keep: 300000 });
+  #pageLists = new Map();
+  #imageRequests = new ImageRequestQueue();
+  #streams = new Map();
+  async openStream(source, input, signal) {
+    return (await this.invoke(source, 'source.openStream', input, signal)).result;
+  }
+  async streamPage(source, token, index, signal) {
+    const { result, assets } = await this.invoke(source, 'source.streamPage', { token, index }, signal);
+    return assets.get(result.handle);
+  }
+  closeStream(source, token) {
+    if (this.#streams.get(token)?.source === source) this.#streams.delete(token);
+  }
   constructor(
     store,
     tools,
@@ -52,6 +67,9 @@ export class ApkSourceCatalog {
   }
   setCacheOwner(owner) {
     this.#covers.setOwner(owner);
+    this.#pages.setOwner(owner);
+    this.#pageLists.clear();
+    this.#streams.clear();
   }
   subscribe = (listener) => {
     this.#listeners.add(listener);
@@ -221,6 +239,40 @@ export class ApkSourceCatalog {
       assets.set(handle, blob);
       return { handle, byteLength: blob.size, sha256, contentType: blob.type };
     };
+    const pageImage = (page, requestSignal) => {
+      const key = JSON.stringify([contributionId, generation(record), page]);
+      const foreground = method === 'source.streamPage';
+      const result = this.#pages.resolve(
+        key,
+        requestSignal,
+        (shared) =>
+          this.#imageRequests.run(key, foreground, shared, async () =>
+            imageAsset(await request('image', page, shared)),
+          ),
+        { ttl: options.imageTtl ?? 120000, keep: options.imageTtl ?? 120000 },
+      );
+      // Cache fills start in a microtask. Promote after that task has entered the queue,
+      // including when this reader joins a fill first requested by a download.
+      if (foreground) queueMicrotask(() => this.#imageRequests.promote(key));
+      return result;
+    };
+    if (method === 'source.streamPage') {
+      const stream = this.#streams.get(input.token);
+      if (
+        !stream ||
+        stream.source !== contributionId ||
+        stream.generation !== generation(record) ||
+        stream.expires <= Date.now()
+      )
+        throw new Error('source_stream_expired');
+      if (!Number.isSafeInteger(input.index) || input.index < 0 || input.index >= stream.pages.length)
+        throw new Error('invalid_source_invocation');
+      options.imageTtl = stream.imageTtl;
+      stream.expires = Date.now() + 30 * 60000;
+      const result = asset(await pageImage(stream.pages[input.index], signal));
+      current();
+      return { result, assets };
+    }
     let result;
     if (method === 'source.listWorks') {
       const browsing = JSON.stringify([
@@ -351,25 +403,34 @@ export class ApkSourceCatalog {
         }
         const raw = fresh(detail) ? { ...saved.raw, ...detail.raw, url: saved.raw.url } : saved.raw;
         // A refreshed listing can publish a new cover without invalidating unrelated detail fields.
-        if (listedCover && (!validUrl(raw.cover) || !fresh(detail) || saved.listedAt >= detail.fetchedAt))
+        if (listedCover && (!validUrl(raw.cover) || !fresh(detail) || saved.listedAt >= detail.fetchedAt)) {
           raw.cover = saved.raw.cover;
+          raw.coverHeaders = saved.raw.coverHeaders;
+        }
         result =
           method === 'source.getWork'
             ? toWork(raw)
             : validUrl(raw.cover)
               ? asset(
                   await this.#covers.resolve(
-                    `${contributionId}:${generation(record)}:${hash(raw.cover)}`,
+                    `${contributionId}:${generation(record)}:${hash(JSON.stringify([raw.cover, raw.url, raw.coverHeaders]))}`,
                     signal,
                     async (sharedSignal) =>
                       this.transformCover(
-                        imageAsset(await request('cover', { url: raw.cover }, sharedSignal)),
+                        imageAsset(
+                          await request(
+                            'cover',
+                            { url: raw.cover, workUrl: raw.url, headers: raw.coverHeaders },
+                            sharedSignal,
+                          ),
+                        ),
                         sharedSignal,
                       ),
+                    { ttl: options.coverMaxAgeMs },
                   ),
                 )
               : null;
-      } else if (method === 'source.listReleases' || method === 'source.getContent') {
+      } else if (method === 'source.listReleases' || method === 'source.getContent' || method === 'source.openStream') {
         const cachePath = join(directory, `${input.workId}-chapters.json`);
         let cache = await this.#read(cachePath);
         if (
@@ -428,14 +489,43 @@ export class ApkSourceCatalog {
             assets.set(handle, new Blob([bytes], { type: contentType }));
             result = { kind: 'text', asset: { handle, byteLength: bytes.length, sha256: hash(bytes), contentType } };
           } else {
-            const pages = await request('pages', { chapterUrl: chapter.url, title: chapter.title });
+            const pageKey = JSON.stringify([contributionId, generation(record), chapter.url]);
+            for (const [key, value] of this.#pageLists) if (value.expires <= Date.now()) this.#pageLists.delete(key);
+            const pages =
+              this.#pageLists.get(pageKey)?.pages ??
+              (await joinTask(this.#pending, 'pages:' + pageKey, signal, async (shared) => {
+                const pages = await request('pages', { chapterUrl: chapter.url, title: chapter.title }, shared);
+                if (
+                  !Array.isArray(pages) ||
+                  !pages.length ||
+                  pages.length > MAX_SOURCE_IMAGES ||
+                  JSON.stringify(pages).length > 2 * 1024 * 1024
+                )
+                  throw new Error('apk_page_limit');
+                if (this.#pageLists.size >= 16) this.#pageLists.delete(this.#pageLists.keys().next().value);
+                this.#pageLists.set(pageKey, { pages, expires: Date.now() + 120000 });
+                return pages;
+              }));
+            if (method === 'source.openStream') {
+              for (const [token, value] of this.#streams) if (value.expires <= Date.now()) this.#streams.delete(token);
+              if (this.#streams.size >= 16) throw new Error('source_rate_limited');
+              const token = randomUUID();
+              this.#streams.set(token, {
+                source: contributionId,
+                generation: generation(record),
+                pages,
+                imageTtl: [0, 2, 10].includes(input.imageMinutes) ? input.imageMinutes * 60000 : 120000,
+                expires: Date.now() + 30 * 60000,
+              });
+              return { result: { token, pageCount: pages.length }, assets };
+            }
             if (!Array.isArray(pages) || !pages.length || pages.length > MAX_SOURCE_IMAGES)
               throw new Error('apk_page_limit');
             let total = 0;
             let completed = 0;
             options.onProgress?.({ phase: 'downloading', completed, total: pages.length, unit: 'images' });
             const refs = await downloadPagesOrdered(pages, this.pageConcurrency, signal, async (page, pageSignal) => {
-              const ref = asset(imageAsset(await request('image', page, pageSignal)));
+              const ref = asset(await pageImage(page, pageSignal));
               total += ref.byteLength;
               if (total > MAX_SOURCE_CONTENT_BYTES) throw new Error('source_body_limit');
               pageSignal.throwIfAborted();
@@ -457,6 +547,9 @@ export class ApkSourceCatalog {
   }
   close() {
     this.#covers.clear();
+    this.#pages.clear();
+    this.#streams.clear();
+    this.#pageLists.clear();
     for (const worker of this.#workers.values()) worker.process.close();
     this.#workers.clear();
     this.#listeners.clear();

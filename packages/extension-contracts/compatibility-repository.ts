@@ -6,6 +6,7 @@ export interface MangayomiEntry {
   version: string;
   baseUrl: string;
   apiUrl?: string;
+  additionalParams?: string;
   dateFormat?: string;
   dateFormatLocale?: string;
   typeSource?: string;
@@ -58,6 +59,11 @@ export function parseMangayomiIndex(value: unknown): MangayomiEntry[] {
       (row.itemType !== 2 && row.isManga === false)
     )
       throw new Error('compatibility_repository_invalid');
+    if (
+      row.additionalParams !== undefined &&
+      (typeof row.additionalParams !== 'string' || row.additionalParams.length > 16384)
+    )
+      throw new Error('compatibility_repository_invalid');
     ids.add(id);
     const code = new URL(row.sourceCodeUrl),
       site = new URL(row.baseUrl);
@@ -82,6 +88,7 @@ export function parseMangayomiIndex(value: unknown): MangayomiEntry[] {
           typeof row[key] === 'string' && row[key].length <= 2048 ? [[key, row[key]]] : [],
         ),
       ),
+      ...(typeof row.additionalParams === 'string' ? { additionalParams: row.additionalParams } : {}),
       isManga: row.itemType !== 2,
       itemType: row.itemType === 2 ? 2 : 0,
       sourceCodeUrl: code.href,

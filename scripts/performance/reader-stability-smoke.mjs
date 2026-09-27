@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { verifyComicAutoReading } from './comic-auto-reading-smoke.mjs';
+import { revealComicControls, verifyComicAutoReading } from './comic-auto-reading-smoke.mjs';
 import { build } from 'vite';
 import { chromium } from 'playwright-core';
 
@@ -329,6 +329,8 @@ try {
   await flow.getByText('Injected image failure', { exact: true }).waitFor();
   assert.equal(await flow.locator('.is-page-flow article').count(), 200);
   assert.equal(await flow.evaluate(() => flowImage.isConnected), true);
+  assert.equal(await flow.locator('.fixed-doc-screen.is-immersive').count(), 1, 'Scroll reading starts immersive');
+  await revealComicControls(flow);
   await flow.locator('.fixed-doc-footer').getByRole('button', { name: '다음 회차', exact: true }).click();
   await flow.waitForFunction(() => document.querySelector('.is-page-flow article')?.dataset.pageIndex === '200');
   await flow.waitForFunction(() => document.querySelector('[data-page-index="200"] img')?.naturalWidth > 0);

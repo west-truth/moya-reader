@@ -12,6 +12,7 @@ export function compositeSourceRegistry(
     return provider;
   };
   return {
+    getSourceStream: (id) => findOwner(id)?.getSourceStream?.(id),
     getHostedImageImport: (id) => findOwner(id)?.getHostedImageImport?.(id),
     getHostedDocumentImport: (id) => findOwner(id)?.getHostedDocumentImport?.(id),
     getSourceExtensionManager: (id, ...args) => findOwner(id)?.getSourceExtensionManager?.(id, ...args),

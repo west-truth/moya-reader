@@ -13,6 +13,11 @@ export function qualityScope(files, full = false) {
   const result = Object.fromEntries(checks.map((key) => [key, false]));
   for (const file of files) {
     if (/^(docs\/|.*\.md$|LICENSE|\.github\/(ISSUE_TEMPLATE|PULL_REQUEST_TEMPLATE))/.test(file)) continue;
+    // These selector files have their own tests in hosted-source; unrelated CI tooling stays full-gate.
+    if (/^scripts\/ci\/quality-scope(?:\.test)?\.mjs$/.test(file)) {
+      result.code = true;
+      continue;
+    }
     if (
       /(^|\/)(package\.json|pnpm-lock\.yaml|pnpm-workspace\.yaml|package-lock\.json|tsconfig[^/]*\.json|vite\.config\.[^/]+)$/.test(
         file,
@@ -38,9 +43,21 @@ export function qualityScope(files, full = false) {
     } else if (/^services\/text-source-server\//.test(file)) {
       result.text = result.deploy = true;
     } else if (/^services\/apk-worker\//.test(file)) {
-      result.apk = result.extensions = result.deploy = true;
+      result.apk = result.extensions = true;
+      // Runtime/cache logic uses the source app gate. Packaging and worker entry changes still need Compose.
+      result.deploy ||=
+        !/^services\/apk-worker\/(catalog\.(mjs|d\.mts|test\.mjs)|(source-cover-cache|image-request-queue|shared-task)(\.test)?\.mjs)$/.test(
+          file,
+        );
     } else if (/^(deploy\/|compose[^/]*\.ya?ml$|\.dockerignore$|services\/)/.test(file)) {
       result.deploy = true;
+    } else if (/^scripts\/performance\/(reader-stability|comic-auto-reading)-smoke\.mjs$/.test(file)) {
+      result.web = result.reader = true;
+    } else if (
+      file === 'packages/extension-contracts/compatibility-repository.ts' ||
+      file === 'scripts/extensions/source-stream-browser-smoke.mjs'
+    ) {
+      result.web = result.extensions = true;
     } else {
       // Shared contracts, tooling and new top-level areas need the full gate.
       return allChecks();
