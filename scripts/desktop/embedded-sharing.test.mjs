@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { createServer, request as httpRequest } from 'node:http';
 import { test } from 'node:test';
+import { createRequire } from 'node:module';
 import { createSharingListener, startSharing } from './embedded-sharing.mjs';
 import { fixedTunnelOrigin, startCloudflareSharing } from './embedded-tunnel.mjs';
 
@@ -112,4 +113,59 @@ test('fixed tunnel URL rejects HTTP and credentials; cancelled startup opens no 
   const controller = new AbortController();
   controller.abort();
   await assert.rejects(startCloudflareSharing({ signal: controller.signal }), { name: 'AbortError' });
+});
+
+// HTTP/2 tunnel conversion can frame an empty command as HTTP/1.1 chunked.
+// Use the real API parser: a permissive http.createServer stub misses its 415.
+test('forwards empty chunked commands without inventing a body and preserves real streams', async () => {
+  const require = createRequire(new URL('../../apps/server/package.json', import.meta.url));
+  const api = require('fastify')();
+  api.get('/api/auth/status', async () => ({ setupRequired: false }));
+  api.addContentTypeParser('application/octet-stream', { parseAs: 'buffer' }, (_req, body, done) => done(null, body));
+  api.all('/probe', async (req) => ({
+    method: req.method,
+    body: Buffer.isBuffer(req.body) ? [...req.body] : (req.body ?? null),
+    contentType: req.headers['content-type'] ?? null,
+  }));
+  await api.listen({ host: '127.0.0.1', port: 0 });
+  let sharing;
+  try {
+    sharing = await createSharingListener({ url: `http://127.0.0.1:${api.server.address().port}` });
+    const request = (method, body, contentType) =>
+      new Promise((resolve, reject) => {
+        const outgoing = httpRequest(
+          `${sharing.url}/probe`,
+          {
+            method,
+            headers: { 'Transfer-Encoding': 'chunked', ...(contentType ? { 'Content-Type': contentType } : {}) },
+          },
+          (response) => {
+            let data = '';
+            response.on('data', (chunk) => {
+              data += chunk;
+            });
+            response.on('end', () => resolve({ status: response.statusCode, body: JSON.parse(data) }));
+          },
+        );
+        outgoing.on('error', reject);
+        outgoing.end(body);
+      });
+    for (const method of ['POST', 'PUT', 'PATCH', 'DELETE']) {
+      const response = await request(method);
+      assert.equal(response.status, 200, `${method}: ${JSON.stringify(response.body)}`);
+      assert.equal(response.body.body, null);
+      assert.equal(response.body.contentType, null);
+    }
+    assert.equal((await request('POST', 'untyped body')).status, 415);
+    const json = await request('POST', JSON.stringify({ name: '서재' }), 'application/json');
+    assert.equal(json.status, 200);
+    assert.deepEqual(json.body.body, { name: '서재' });
+    const bytes = Buffer.from([0, 255, 128, 1]);
+    const binary = await request('PUT', bytes, 'application/octet-stream');
+    assert.equal(binary.status, 200);
+    assert.deepEqual(binary.body.body, [...bytes]);
+  } finally {
+    await sharing?.stop();
+    await api.close();
+  }
 });

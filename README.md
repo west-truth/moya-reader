@@ -48,8 +48,7 @@ AI·외부 TTS·서버 확장은 Windows 앱 또는 self-host에서 사용합니
 Windows 앱은 서버 설치 없이 **이 PC의 서재**를 만들고, 기존 self-host 서재에도 접속할 수 있습니다.
 서재 선택은 **설정 → 동기화**, 다른 기기의 접속 설정은 **설정 → 원격 접속**에서 찾을 수 있습니다.
 
-Windows x64 베타 배포를 준비 중입니다. 설치본이 게시되면
-[GitHub Releases](https://github.com/west-truth/moya-reader/releases)에서 받을 수 있습니다.
+[Windows x64 베타 다운로드](https://github.com/west-truth/moya-reader/releases/tag/desktop-v0.1.1-beta.1) · 설치 프로그램을 실행해 시작하세요.
 [소스 빌드 안내 →](docs/platforms/native-build-guide-ko.md)
 
 ### Self-host · Docker Compose

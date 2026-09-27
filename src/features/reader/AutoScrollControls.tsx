@@ -1,7 +1,7 @@
 import { useEffect } from 'react';
 import { SettingsSlider } from '../reader-settings/SettingsSlider';
 import './auto-scroll-controls.css';
-import { Pause } from 'lucide-react';
+import { Pause, Play } from 'lucide-react';
 import { Dialog } from '../../shared/ui/Dialog';
 import type { useAutoScroll } from './use-auto-scroll';
 import { AUTO_READING_MODES, autoReadingSpeedLabel, type AutoReadingMode } from './auto-reading-modes';
@@ -70,6 +70,14 @@ export function AutoScrollControls({
           />
           회차 끝에서 다음 회차로 이동
         </label>
+        <label className="reader-auto-scroll-next">
+          <input
+            type="checkbox"
+            checked={controller.alwaysShowOverlay}
+            onChange={(event) => controller.setAlwaysShowOverlay(event.target.checked)}
+          />
+          항상 오버레이 표시
+        </label>
         {!allowed && (
           <p>
             {!controller.modeAllowed
@@ -89,10 +97,19 @@ export function AutoScrollControls({
           시작
         </button>
       </Dialog>
-      {controller.running && (
-        <button type="button" className="reader-auto-scroll-stop" onClick={controller.stop} aria-label="자동 읽기 정지">
-          <Pause size={16} /> 자동 읽기 정지
-        </button>
+      {controller.overlayVisible && !open && (
+        <div className="reader-auto-scroll-dock">
+          <button
+            type="button"
+            className="reader-auto-scroll-stop"
+            disabled={!controller.running && !allowed}
+            onClick={controller.running ? controller.stop : controller.start}
+            aria-label={controller.running ? '자동 읽기 일시정지' : '자동 읽기 재개'}
+            title={controller.running ? '자동 읽기 일시정지' : '자동 읽기 재개'}
+          >
+            {controller.running ? <Pause size={20} aria-hidden="true" /> : <Play size={20} aria-hidden="true" />}
+          </button>
+        </div>
       )}
     </div>
   );

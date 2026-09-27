@@ -723,6 +723,12 @@ function ReaderScreenComponent({ model, screenHandle }: ReaderScreenProps) {
         }
       : undefined,
   );
+  useEffect(() => {
+    if (readingFlow === 'scroll') enterImmersive();
+  }, [readingFlow, enterImmersive]);
+  useEffect(() => {
+    if (autoScroll.running) enterImmersive();
+  }, [autoScroll.running, enterImmersive]);
   const activeHighlight = activeHighlightAt(model.highlights, location);
   return (
     <main

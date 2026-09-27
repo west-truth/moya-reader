@@ -2218,6 +2218,18 @@ export default function FixedDocumentScreen({
         }
       : undefined,
   });
+  useEffect(() => {
+    if (continuousView) {
+      closeTransientChrome();
+      setImmersive(true);
+    }
+  }, [continuousView, closeTransientChrome]);
+  useEffect(() => {
+    if (autoReading.running) {
+      closeTransientChrome();
+      setImmersive(true);
+    }
+  }, [autoReading.running, closeTransientChrome]);
   const scrollSectionBoundary = useScrollChapterBoundary({
     rootRef: viewportRef,
     contentRef: continuousContentRef,
