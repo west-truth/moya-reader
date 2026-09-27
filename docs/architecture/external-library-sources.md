@@ -47,14 +47,27 @@ Self-host와 내장 self-host 데스크톱의 Mangayomi/APK 이미지 소스는 
   저장한다. 저장된 회차는 기존 리더에서 열고 원본 내보내기·백업·삭제에도 그대로 포함된다.
 - **저장 없이 바로 읽기:** 임시 이미지 요청만 실행한다. 서재 책/원본을 만들지 않는다.
   화면의 회차 저장 버튼으로 나중에 저장할 수 있다.
-- 바로 읽기 화면은 세로 스크롤, 키보드 이동, 이전/다음 회차, 이미지별 재시도와 저장 취소를 제공한다.
-  저장된 회차와 페이지 수가 일치할 때 기존 독서 위치 저장 함수를 사용한다.
-  저장하지 않은 회차의 지속 독서 위치와 일반 리더의 주석·OCR 기능은 이 화면에 포함하지 않는다.
+- 바로 읽기는 기존 `useComicAutoReading`/`AutoScrollControls`와 `useReaderChrome`을 재사용한다.
+  만화 자동 읽기 속도·오버레이 설정을 공유하고, 첫 진입은 몰입 모드다. 중앙 탭으로 도구를
+  열면 다시 명시적으로 닫기 전까지 유지한다. 일시정지/재개 dock은 본문 영역 밖에 배치한다.
+  자동 읽기는 아직 표시하지 못한 이미지를 기다리며, 선택하면 다음 회차로 이어진다.
+- 이전/다음 회차는 기존 회차 정렬 함수를 사용하고 현재 목록의 경계에서는 다음 catalog cursor를
+  조회한다. 조회 실패·cursor 정체·이동 취소 때에는 현재 회차를 유지하며 재시도할 수 있다.
+- 저장 전에도 회차·페이지·이미지 안의 상대 위치를 이 브라우저에 보관한다(최대 200회차/180일).
+  서버/사용자 설정 scope와 source item identity로 구분하고 파일·토큰은 기록하지 않는다.
+  재접속과 만료된 읽기 세션 재시도 시 복원하며 페이지 수가 달라졌으면 처음부터 연다.
+  저장된 회차와 페이지 수가 일치할 때는 기존 서재 독서 위치 저장 함수에도 반영한다.
+  일반 리더의 주석·OCR 기능은 바로 읽기 화면에 포함하지 않는다.
+- 저장을 다른 탭이 맡았거나 대기열 접수가 실패하면 요청 완료로 표시하지 않는다.
+  읽기는 유지하고 원인과 재시도를 제공한다. 이미 저장 중인 회차를 열어도 자동 저장을 중복 요청하지 않는다.
 - 서버가 관리하는 세션의 이미지 URL·헤더는 브라우저에 노출하지 않는다. 인증된 page API도 기존
   네트워크 검증/이미지 크기 제한을 거친다. 세션은 30분 유휴 만료, 동시 최대 16개이고 확장 설정이나
   활성 버전이 바뀌면 사용할 수 없다. 나갈 때 세션을 해제한다.
 - 읽기와 저장의 동일 이미지 요청을 합치며 이미지 캐시는 호환 catalog당 최대 64MiB/128장이다.
-  한 회차 전체를 캐시 용량 밖으로 보관하지 않는다. reader는 기존 `ArchivePageLoader`와
+  한 회차 전체를 캐시 용량 밖으로 보관하지 않는다. catalog별 이미지 요청은 최대 3개이고
+  그중 다운로드는 최대 2개만 사용한다. 대기 중인 읽기 요청을 우선 처리하며 다운로드와
+  공유하는 이미지도 승격한다. 이미 시작한 전송은 중단하지 않고 결과를 재사용한다.
+  reader는 기존 `ArchivePageLoader`와
   `ComicPageFlow`를 재사용해 현재/인접 이미지를 우선 읽고 이동 시 불필요한 요청과 object URL을 해제한다.
 
 설정의 다운로드·자동 정리 화면에서 이 브라우저의 기본 읽기 방식, 목록·작품 정보 최대 재사용 시간,
@@ -62,7 +75,7 @@ Self-host와 내장 self-host 데스크톱의 Mangayomi/APK 이미지 소스는 
 신선도 상한도 적용한다. 명시적 새로고침은 캐시를 무시하며, 캐시 설정은 이미 저장한 회차를 삭제하지 않는다.
 확장 설치 목록은 설치/설정 변경 때 갱신하는 기존 방식이며, 설치 파일을 장기간 캐시해 업데이트를 숨기지 않는다.
 
-검사: `node --test services/apk-worker/catalog.test.mjs services/apk-worker/source-cover-cache.test.mjs`,
+검사: `node --test services/apk-worker/catalog.test.mjs services/apk-worker/source-cover-cache.test.mjs services/apk-worker/image-request-queue.test.mjs`,
 Mangayomi host/runtime 및 source cache/controller 회귀 검사, `node scripts/extensions/source-stream-browser-smoke.mjs`.
 브라우저 검사는 Playwright Chromium 설치가 필요하며 `PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH`로 실행 파일을 지정할 수 있다.
 

@@ -1523,3 +1523,25 @@
   justify-content: space-between;
   padding: 24px 12px max(24px, env(safe-area-inset-bottom));
 }
+.source-stream-toolbar[hidden] {
+  display: none;
+}
+.source-stream-reader:has(.reader-auto-scroll-dock) .source-stream-viewport {
+  margin-bottom: calc(56px + env(safe-area-inset-bottom, 0px));
+}
+.source-stream-reader .reader-auto-scroll-dock {
+  background: #141414;
+}
+.source-stream-reader .reader-auto-scroll-stop {
+  color: #eee;
+  background: #232323;
+}
+@media (max-width: 480px) {
+  .source-stream-toolbar {
+    gap: 6px;
+    padding-inline: 8px;
+  }
+  .source-stream-fullscreen {
+    display: none;
+  }
+}

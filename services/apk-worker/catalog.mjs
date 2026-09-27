@@ -3,6 +3,7 @@ import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { joinTask } from './shared-task.mjs';
+import { ImageRequestQueue } from './image-request-queue.mjs';
 import { SourceCoverCache } from './source-cover-cache.mjs';
 import { downloadPagesOrdered } from './ordered-page-downloads.mjs';
 import { apkStateDirectory } from './installations.mjs';
@@ -31,6 +32,7 @@ export class ApkSourceCatalog {
   #covers = new SourceCoverCache();
   #pages = new SourceCoverCache({ maxBytes: 64 * 1024 * 1024, maxEntries: 128, ttl: 300000, keep: 300000 });
   #pageLists = new Map();
+  #imageRequests = new ImageRequestQueue();
   #streams = new Map();
   async openStream(source, input, signal) {
     return (await this.invoke(source, 'source.openStream', input, signal)).result;
@@ -237,13 +239,23 @@ export class ApkSourceCatalog {
       assets.set(handle, blob);
       return { handle, byteLength: blob.size, sha256, contentType: blob.type };
     };
-    const pageImage = (page, requestSignal) =>
-      this.#pages.resolve(
-        JSON.stringify([contributionId, generation(record), page]),
+    const pageImage = (page, requestSignal) => {
+      const key = JSON.stringify([contributionId, generation(record), page]);
+      const foreground = method === 'source.streamPage';
+      const result = this.#pages.resolve(
+        key,
         requestSignal,
-        async (shared) => imageAsset(await request('image', page, shared)),
+        (shared) =>
+          this.#imageRequests.run(key, foreground, shared, async () =>
+            imageAsset(await request('image', page, shared)),
+          ),
         { ttl: options.imageTtl ?? 120000, keep: options.imageTtl ?? 120000 },
       );
+      // Cache fills start in a microtask. Promote after that task has entered the queue,
+      // including when this reader joins a fill first requested by a download.
+      if (foreground) queueMicrotask(() => this.#imageRequests.promote(key));
+      return result;
+    };
     if (method === 'source.streamPage') {
       const stream = this.#streams.get(input.token);
       if (

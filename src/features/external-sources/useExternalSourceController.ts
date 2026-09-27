@@ -264,6 +264,7 @@ export interface ExternalSourceController {
   readonly streaming?: {
     item: ExternalSourceItemView;
     port: import('../../external-sources/source-stream').SourceStreamPort;
+    historyKey?: string;
   };
   closeStream?(): void;
   saveStream?(item: ExternalSourceItemView): Promise<void>;
@@ -3183,9 +3184,11 @@ export function useExternalSourceController(options: UseExternalSourceController
   }, []);
 
   const importItems = useCallback(
-    async (selected: readonly ExternalSourceItemView[]) => {
-      if (recoveryBusyRef.current) return;
-      if (blockingBusy || (importBusy && !selected.every(canQueueItem))) return;
+    async (selected: readonly ExternalSourceItemView[], reportRejection = false) => {
+      if (recoveryBusyRef.current || blockingBusy || (importBusy && !selected.every(canQueueItem))) {
+        if (reportRejection) throw new Error('다른 다운로드가 끝난 후 저장할 수 있습니다.');
+        return;
+      }
       const run = async () => {
         let queue: SourceDownloadQueue | undefined;
         try {
@@ -3193,6 +3196,7 @@ export function useExternalSourceController(options: UseExternalSourceController
           if (queue) activeQueueIdRef.current = queue.id;
           await executeImportItems(selected);
         } catch (error) {
+          if (reportRejection) throw error;
           optionsRef.current.notify(
             error instanceof Error ? error.message : '다운로드 대기열을 저장하지 못했습니다.',
             'warning',
@@ -3209,6 +3213,8 @@ export function useExternalSourceController(options: UseExternalSourceController
           { ifAvailable: true },
           async (lock) => {
             if (lock) await run();
+            else if (reportRejection)
+              throw new Error('다른 탭에서 이 작품을 다운로드하고 있습니다. 완료 후 다시 시도해 주세요.');
             else optionsRef.current.notify('다른 탭에서 이 작품을 다운로드하고 있습니다.', 'warning');
           },
         );
@@ -3421,7 +3427,11 @@ export function useExternalSourceController(options: UseExternalSourceController
       if (!item.release || item.importState !== 'available') return;
       const port = optionsRef.current.registry.getSourceStream?.(item.key.connectorId as ExtensionContributionId);
       if (port && sourceReadingPreferences().mode !== 'download') {
-        setStreaming({ item, port });
+        setStreaming({
+          item,
+          port,
+          historyKey: JSON.stringify([optionsRef.current.settingsScope, externalItemKeyId(item.key)]),
+        });
         return;
       }
       await importItems([item]);
@@ -4393,7 +4403,7 @@ export function useExternalSourceController(options: UseExternalSourceController
     saveStream: async (item) => {
       if (recoveryBusyRef.current || blockingBusy || (importBusy && !canQueueItem(item)))
         throw new Error('다른 다운로드가 끝난 후 저장할 수 있습니다.');
-      await importItems([item]);
+      await importItems([item], true);
     },
     canStreamItem: (item) =>
       sourceReadingPreferences().mode !== 'download' &&

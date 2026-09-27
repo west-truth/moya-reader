@@ -1,3 +1,4 @@
+import { useSourceStreamNavigation } from './use-source-stream-navigation';
 import { SourceStreamReader } from './SourceStreamReader';
 import { TaskProgressRing } from '../../components/TaskProgressRing';
 import { WorkViewControl } from '../../components/WorkViewControl';
@@ -514,6 +515,7 @@ export default function SourceHubScreen({
   localSeriesNovel,
   localSeriesTitleEditor,
 }: SourceHubScreenProps) {
+  const streamNavigation = useSourceStreamNavigation(controller);
   const scrollRef = useRef<HTMLDivElement>(null);
   const [workLayout, changeWorkLayout] = useSourceWorkLayout();
   const taskByItemKey = useMemo(() => {
@@ -600,22 +602,9 @@ export default function SourceHubScreen({
   if (controller.streaming) {
     const { item, port } = controller.streaming;
     const task = controller.tasks.find((task) => task.externalItemKey === externalItemKeyId(item.key));
-    const index = controller.items.findIndex(
-      (candidate) => externalItemKeyId(candidate.key) === externalItemKeyId(item.key),
-    );
-    const navigate = (offset: number) => {
-      const adjacent = controller.items[index + offset];
-      if (!adjacent?.release) return undefined;
-      return () => {
-        if (adjacent.importState === 'imported') {
-          controller.closeStream?.();
-          void controller.openImported(adjacent);
-        } else void controller.importAndOpen(adjacent);
-      };
-    };
     return (
       <SourceStreamReader
-        key={externalItemKeyId(item.key)}
+        historyKey={controller.streaming.historyKey ?? externalItemKeyId(item.key)}
         title={item.title}
         remoteId={item.key.remoteId}
         port={port}
@@ -627,8 +616,9 @@ export default function SourceHubScreen({
         saveBusy={task ? importTaskIsActive(task) : false}
         saveFailed={task?.phase === 'failed'}
         onCancelSave={controller.cancel}
-        previous={navigate(-1)}
-        next={navigate(1)}
+        previous={streamNavigation.previous}
+        next={streamNavigation.next}
+        navigationBusy={streamNavigation.busy}
       />
     );
   }

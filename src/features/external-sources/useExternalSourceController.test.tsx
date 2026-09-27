@@ -2751,6 +2751,24 @@ describe('source streaming connection', () => {
       await act(async () => h.renderer.unmount());
     }
   });
+  it('reports a save rejected by another tab instead of claiming it was queued', async () => {
+    const h = await createHarness({ downloadedContent: '', serial: true, localBookMissing: true });
+    const previous = globalThis.navigator;
+    vi.stubGlobal('navigator', {
+      ...previous,
+      locks: {
+        request: async (_name: string, _options: unknown, callback: (lock: null) => Promise<void>) => callback(null),
+      },
+    });
+    try {
+      await expect(h.controller.saveStream?.(h.controller.items[0])).rejects.toThrow('다른 탭');
+      expect(h.registry.downloadExternalSource).not.toHaveBeenCalled();
+      expect(h.importFile).not.toHaveBeenCalled();
+    } finally {
+      vi.stubGlobal('navigator', previous);
+      await act(async () => h.renderer.unmount());
+    }
+  });
   it('maps a viewed streaming page only onto an already committed matching section', async () => {
     const chapters: Chapter[] = [];
     const save = vi.fn(async () => {});
