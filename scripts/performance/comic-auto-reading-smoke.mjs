@@ -1,8 +1,18 @@
 import assert from 'node:assert/strict';
 
+export async function revealComicControls(page) {
+  if (await page.locator('.fixed-doc-screen.is-immersive').count()) {
+    const bounds = await page.locator('.fixed-doc-viewport').boundingBox();
+    assert.ok(bounds, 'The comic viewport must be present');
+    await page.mouse.click(bounds.x + bounds.width / 2, bounds.y + bounds.height / 5);
+  }
+  await page.locator('.fixed-doc-footer').waitFor({ state: 'visible' });
+}
+
 // Run inside the existing comic fixture/browser, never against user books.
 export async function verifyComicAutoReading(newPage) {
   const openControls = async (page) => {
+    await revealComicControls(page);
     const menu = page.getByRole('button', { name: '문서 메뉴', exact: true });
     if (await menu.isVisible()) await menu.click();
     await page.getByRole('button', { name: '자동 읽기', exact: true }).click();
@@ -27,7 +37,7 @@ export async function verifyComicAutoReading(newPage) {
     await input.press('Tab');
     if (next) await page.getByRole('checkbox', { name: '회차 끝에서 다음 회차로 이동' }).check();
     await page.getByRole('button', { name: '시작', exact: true }).click();
-    await page.getByRole('button', { name: '자동 읽기 정지' }).waitFor();
+    await page.getByRole('button', { name: '자동 읽기 일시정지' }).waitFor();
   };
   const current = (page) => page.locator('.fixed-doc-pages article.is-current').getAttribute('data-page-index');
   const page = await newPage();
@@ -60,7 +70,7 @@ export async function verifyComicAutoReading(newPage) {
   await start(page);
   const initial = await page.locator('.fixed-doc-viewport').evaluate((e) => e.scrollTop);
   await page.waitForFunction((top) => document.querySelector('.fixed-doc-viewport').scrollTop > top + 25, initial);
-  await page.getByRole('button', { name: '자동 읽기 정지' }).click();
+  await page.getByRole('button', { name: '자동 읽기 일시정지' }).click();
   const stopped = await page.locator('.fixed-doc-viewport').evaluate((e) => e.scrollTop);
   await page.waitForTimeout(250);
   assert.equal(await page.locator('.fixed-doc-viewport').evaluate((e) => e.scrollTop), stopped);
@@ -78,7 +88,7 @@ export async function verifyComicAutoReading(newPage) {
       { timeout: 8000 },
     );
     if (query.includes('spread')) assert.equal(await paged.locator('.fixed-doc-pages article').count(), 2);
-    await paged.getByRole('button', { name: '자동 읽기 정지' }).waitFor({ state: 'hidden', timeout: 12000 });
+    await paged.getByRole('button', { name: '자동 읽기 일시정지' }).waitFor({ state: 'hidden', timeout: 12000 });
     assert.equal(await current(paged), query.includes('spread') ? '1' : '2', 'Stop at episode end by default');
     await start(paged, true, true);
     await paged.waitForFunction(
@@ -87,7 +97,7 @@ export async function verifyComicAutoReading(newPage) {
       { timeout: 8000 },
     );
     await paged.mouse.click(8, 220);
-    await paged.getByRole('button', { name: '자동 읽기 정지' }).waitFor({ state: 'hidden' });
+    await paged.getByRole('button', { name: '자동 읽기 일시정지' }).waitFor({ state: 'hidden' });
     await paged.close();
   }
 
@@ -102,7 +112,7 @@ export async function verifyComicAutoReading(newPage) {
     undefined,
     { timeout: 8000 },
   );
-  await slow.getByRole('button', { name: '자동 읽기 정지' }).click();
+  await slow.getByRole('button', { name: '자동 읽기 일시정지' }).click();
   await slow.close();
   const failed = await newPage();
   await failed.goto('http://reader.test/comic?auto-comic&paged-comic&failed-next');
@@ -112,7 +122,7 @@ export async function verifyComicAutoReading(newPage) {
   await failed.waitForTimeout(300);
   assert.equal(await current(failed), '0');
   assert.equal(
-    await failed.getByRole('button', { name: '자동 읽기 정지' }).count(),
+    await failed.getByRole('button', { name: '자동 읽기 일시정지' }).count(),
     0,
     'Image failure stops automatic reading',
   );

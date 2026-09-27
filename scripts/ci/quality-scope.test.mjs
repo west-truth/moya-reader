@@ -64,3 +64,12 @@ test('streaming and compatibility changes retain source checks without unrelated
   assert.equal(qualityScope(['src-tauri/src/lib.rs']).native, true);
   assert.equal(Object.values(qualityScope(['packages/extension-contracts/other.ts'])).every(Boolean), true);
 });
+
+test('reader browser regression scripts select their browser job, not deployment or Windows', () => {
+  const result = qualityScope([
+    'scripts/performance/reader-stability-smoke.mjs',
+    'scripts/performance/comic-auto-reading-smoke.mjs',
+  ]);
+  for (const key of ['code', 'web', 'reader']) assert.equal(result[key], true, key);
+  for (const key of ['deploy', 'native', 'extensions', 'text']) assert.equal(result[key], false, key);
+});

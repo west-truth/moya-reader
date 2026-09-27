@@ -51,6 +51,8 @@ export function qualityScope(files, full = false) {
         );
     } else if (/^(deploy\/|compose[^/]*\.ya?ml$|\.dockerignore$|services\/)/.test(file)) {
       result.deploy = true;
+    } else if (/^scripts\/performance\/(reader-stability|comic-auto-reading)-smoke\.mjs$/.test(file)) {
+      result.web = result.reader = true;
     } else if (
       file === 'packages/extension-contracts/compatibility-repository.ts' ||
       file === 'scripts/extensions/source-stream-browser-smoke.mjs'
