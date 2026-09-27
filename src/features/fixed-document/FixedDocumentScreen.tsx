@@ -186,6 +186,7 @@ interface PdfRegionSelection {
 }
 
 export interface ComicRemoteNavigation {
+  readonly invalidatePage?: (index: number) => void;
   readonly scope: string;
   readonly nextScope: string;
   readonly nextTitle?: string;
@@ -365,7 +366,9 @@ function ArchiveThumbnailPreview({
   repository,
   assets,
   onPageHint,
+  persistent = true,
 }: {
+  readonly persistent?: boolean;
   readonly bookId: string;
   readonly sourceIdentity: string;
   readonly chapterId: string;
@@ -391,24 +394,29 @@ function ArchiveThumbnailPreview({
       if (!assetId) throw new Error('이미지 페이지 정보를 찾을 수 없습니다.');
       const pageHash = archiveThumbnailPageHash(assetId, pageIndex);
       const renderFingerprint = archiveThumbnailFingerprint();
-      const cached = await getDocumentThumbnail({ bookId, pageIndex, pageHash, renderFingerprint });
+      const cached = persistent
+        ? await getDocumentThumbnail({ bookId, pageIndex, pageHash, renderFingerprint })
+        : undefined;
       let blob = cached?.blob;
       if (!blob) {
         const resource = await assets.getEmbeddedResource(bookId, assetId, controller.signal);
         if (!resource) throw new Error('이미지 페이지를 찾을 수 없습니다.');
         const rendered = await renderArchiveThumbnail(resource.blob, controller.signal);
         blob = rendered.blob;
-        await saveDocumentThumbnail({
-          bookId,
-          pageIndex,
-          pageHash,
-          renderFingerprint: rendered.renderFingerprint,
-          contentType: rendered.contentType,
-          pixelWidth: rendered.pixelWidth,
-          pixelHeight: rendered.pixelHeight,
-          blob,
-        }).catch(() => undefined);
-        void pruneDocumentThumbnails(bookId).catch(() => undefined);
+        controller.signal.throwIfAborted();
+        if (persistent) {
+          await saveDocumentThumbnail({
+            bookId,
+            pageIndex,
+            pageHash,
+            renderFingerprint: rendered.renderFingerprint,
+            contentType: rendered.contentType,
+            pixelWidth: rendered.pixelWidth,
+            pixelHeight: rendered.pixelHeight,
+            blob,
+          }).catch(() => undefined);
+          void pruneDocumentThumbnails(bookId).catch(() => undefined);
+        }
       }
       controller.signal.throwIfAborted();
       objectUrl = URL.createObjectURL(blob);
@@ -418,7 +426,7 @@ function ArchiveThumbnailPreview({
       controller.abort();
       if (objectUrl) URL.revokeObjectURL(objectUrl);
     };
-  }, [assets, bookId, chapterId, onPageHint, pageIndex, repository, sourceIdentity]);
+  }, [assets, bookId, chapterId, onPageHint, pageIndex, repository, sourceIdentity, persistent]);
   return url ? <img src={url} alt="" draggable={false} /> : <span>{pageIndex + 1}</span>;
 }
 
@@ -692,6 +700,7 @@ export default function FixedDocumentScreen({
   annotationSyncRevision,
   documentAnnotationRepository = localDocumentAnnotationRepository,
 }: FixedDocumentScreenProps) {
+  const persistThumbnails = !remoteNavigation;
   const sortedChapters = useMemo(() => [...chapters].sort((left, right) => left.index - right.index), [chapters]);
   const documentSections = useMemo(
     () => projectFixedDocumentSections(novel.id, sortedChapters),
@@ -1082,6 +1091,7 @@ export default function FixedDocumentScreen({
     assets,
     retainedPages: stableComicFlow && !remoteNavigation ? continuousPageIndexes : undefined,
     onDimensions: recordArchiveImageDimensions,
+    onPageInvalid: remoteNavigation?.invalidatePage,
   });
   const archiveError = archiveImages.errors.get(pageIndex);
   const documentStatus =
@@ -1316,6 +1326,7 @@ export default function FixedDocumentScreen({
     const pdfDocument = pdf;
     const isPdf = novel.format === 'pdf';
     if (
+      !persistThumbnails ||
       (isPdf && !pdfDocument) ||
       (!isPdf && novel.format !== 'image_archive') ||
       thumbnailBatchControllerRef.current
@@ -1409,7 +1420,7 @@ export default function FixedDocumentScreen({
       if (thumbnailBatchControllerRef.current === controller) thumbnailBatchControllerRef.current = undefined;
       setThumbnailBatchProgress(undefined);
     }
-  }, [assets, novel, pdf, pdfPages, repository, sortedChapters, totalPages]);
+  }, [assets, novel, pdf, pdfPages, repository, sortedChapters, totalPages, persistThumbnails]);
 
   const recognizePdfPage = useCallback(
     async (index: number, signal: AbortSignal, current = 1, total = 1) => {
@@ -2807,7 +2818,7 @@ export default function FixedDocumentScreen({
                   <button type="button" onClick={() => thumbnailBatchControllerRef.current?.abort()}>
                     취소
                   </button>
-                ) : (
+                ) : persistThumbnails ? (
                   <button
                     type="button"
                     onClick={() => void prepareAllDocumentThumbnails()}
@@ -2815,7 +2826,7 @@ export default function FixedDocumentScreen({
                   >
                     전체 준비
                   </button>
-                )}
+                ) : null}
               </div>
             )}
             <div className="fixed-doc-sidebar-list" style={{ height: sidebarVirtualizer.getTotalSize() }}>
@@ -2852,6 +2863,7 @@ export default function FixedDocumentScreen({
                         />
                       ) : novel.format === 'image_archive' ? (
                         <ArchiveThumbnailPreview
+                          persistent={persistThumbnails}
                           bookId={novel.id}
                           sourceIdentity={archivePageSourceIdentity(
                             chapter,

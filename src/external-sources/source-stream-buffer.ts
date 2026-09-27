@@ -22,11 +22,19 @@ export class SourceStreamBuffer {
       return concurrent;
     }
     const cache = new Map<number, Blob>();
+    const invalidPages = new Set<number>();
     let size = 0;
     const controller = new AbortController();
     let reopening: Promise<void> | undefined;
     const session: SourceStreamSession = {
       pageCount: raw.pageCount,
+      invalidatePage: (index) => {
+        const old = cache.get(index);
+        if (old) size -= old.size;
+        cache.delete(index);
+        invalidPages.add(index);
+        raw.invalidatePage?.(index);
+      },
       loadPage: async (index, request) => {
         const active = AbortSignal.any([request, controller.signal, this.lifetime.signal]);
         active.throwIfAborted();
@@ -56,9 +64,11 @@ export class SourceStreamBuffer {
             });
           await reopening;
           active.throwIfAborted();
+          if (invalidPages.has(index)) raw.invalidatePage?.(index);
           blob = await raw.loadPage(index, active);
         }
         active.throwIfAborted();
+        invalidPages.delete(index);
         const old = cache.get(index);
         if (old) size -= old.size;
         cache.delete(index);

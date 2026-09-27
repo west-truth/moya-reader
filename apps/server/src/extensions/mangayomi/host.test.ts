@@ -403,6 +403,9 @@ it('preserves encrypted options across restart and imports original-script pages
     expect(image.statusCode).toBe(200);
     expect(image.headers['content-type']).toContain('image/');
     expect(image.rawPayload.length).toBeGreaterThan(0);
+    const reloaded = await app.inject({ url: prefix + '/stream/' + stream.token + '/0?reload=1', headers });
+    expect(reloaded.statusCode).toBe(200);
+    expect(reloaded.rawPayload).toEqual(image.rawPayload);
     expect(JSON.stringify(stream)).not.toContain('site.example');
     await app.inject({ method: 'DELETE', url: prefix + '/stream/' + stream.token, headers });
     expect((await app.inject({ url: prefix + '/stream/' + stream.token + '/0', headers })).json().error).toBe(

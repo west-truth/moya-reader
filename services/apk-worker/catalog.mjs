@@ -37,8 +37,10 @@ export class ApkSourceCatalog {
   async openStream(source, input, signal) {
     return (await this.invoke(source, 'source.openStream', input, signal)).result;
   }
-  async streamPage(source, token, index, signal) {
-    const { result, assets } = await this.invoke(source, 'source.streamPage', { token, index }, signal);
+  async streamPage(source, token, index, signal, reload = false) {
+    const { result, assets } = await this.invoke(source, 'source.streamPage', { token, index }, signal, {
+      cacheMode: reload ? 'reload' : undefined,
+    });
     return assets.get(result.handle);
   }
   closeStream(source, token) {
@@ -241,6 +243,7 @@ export class ApkSourceCatalog {
     };
     const pageImage = (page, requestSignal) => {
       const key = JSON.stringify([contributionId, generation(record), page]);
+      if (method === 'source.streamPage' && options.cacheMode === 'reload') this.#pages.invalidatePrefix(key);
       const foreground = method === 'source.streamPage';
       const result = this.#pages.resolve(
         key,

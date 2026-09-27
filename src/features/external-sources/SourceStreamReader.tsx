@@ -208,6 +208,7 @@ export function SourceStreamReader({
           entryRequestVersion={opened.epoch}
           onBack={onClose}
           remoteNavigation={{
+            invalidatePage: opened.session.invalidatePage,
             scope: `stream:${opened.epoch}`,
             nextScope: `stream:${opened.epoch + 1}`,
             profileKey,

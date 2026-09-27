@@ -14,13 +14,15 @@ const code = `import React from 'react';import {createRoot} from 'react-dom/clie
 import {IndexedDbComicReadingProfileRepository} from '${root}/src/storage/comic-reading-profile-store.ts';
 import {savedFirstSourceStream} from '${root}/src/external-sources/saved-source-stream.ts';
 import {useSourceStreamNavigation} from '${root}/src/features/external-sources/use-source-stream-navigation.ts';
+import {openReaderDb} from '${root}/src/storage/reader-database.ts';
+globalThis.thumbnailCount=async()=>{const db=await openReaderDb();return new Promise((resolve,reject)=>{const request=db.transaction('document_thumbnail_cache','readonly').objectStore('document_thumbnail_cache').count();request.onsuccess=()=>resolve(request.result);request.onerror=()=>reject(request.error);});};
 import {saveSourceStreamPosition} from '${root}/src/external-sources/source-stream-history.ts';
 import {DEFAULT_COMIC_READING_PROFILE} from '${root}/src/features/fixed-document/comic-layout.ts';
 import '${root}/src/styles/tokens.css';import '${root}/src/styles/base.css';import '${root}/src/styles/dialogs-import.css';import '${root}/src/styles/shell.css';import '${root}/src/styles/library.css';
-globalThis.positionWrites=[];globalThis.calls=[];globalThis.saves=[];globalThis.closedStreams=0;globalThis.opens=[];globalThis.expireNext=false;globalThis.retryPage=false;
+globalThis.positionWrites=[];globalThis.calls=[];globalThis.saves=[];globalThis.closedStreams=0;globalThis.opens=[];globalThis.expireNext=false;globalThis.retryPage=false;globalThis.repairCorrupt=false;
 const params=new URLSearchParams(location.search);localStorage.setItem('moya.source-reading.v1',JSON.stringify({mode:params.get('mode'),prefetch:Number(params.get('prefetch')??8)}));
 const failed=new Set();
-const remotePort={open:async(id)=>{opens.push(id);return {pageCount:30,close(){globalThis.closedStreams++},loadPage:async(index,signal)=>{calls.push([id,index]);if(globalThis.expireNext){globalThis.expireNext=false;throw new Error('source_stream_expired');}if(index===5&&!globalThis.retryPage){throw new Error('연결을 확인해 주세요.');}return (await fetch('/image',{signal})).blob();}}}};
+const remotePort={open:async(id)=>{opens.push(id);return {pageCount:30,close(){globalThis.closedStreams++},loadPage:async(index,signal)=>{calls.push([id,index]);if(globalThis.expireNext){globalThis.expireNext=false;throw new Error('source_stream_expired');}if(index===5&&!globalThis.retryPage){throw new Error('연결을 확인해 주세요.');}if(index===6&&!globalThis.repairCorrupt)return new Blob(['broken image'],{type:'image/png'});return (await fetch('/image',{signal})).blob();}}}};
 globalThis.savedEpisodes=[];globalThis.savedReads=[];globalThis.remoteOpens=[];
 const originalOpen=remotePort.open;remotePort.open=async(id,signal)=>{remoteOpens.push(id);return originalOpen(id,signal)};
 const port=savedFirstSourceStream(remotePort,{
@@ -111,6 +113,15 @@ try {
       `http://127.0.0.1:${server.address().port}/?mode=${mode}&view=${view}&prefetch=${prefetch}&mixed=${mixed}`,
     );
     await page.waitForFunction(() => document.querySelector('.fixed-doc-pages img')?.naturalWidth > 0);
+    if (width >= 1280) {
+      await page.waitForFunction(() => document.querySelector('.fixed-doc-sidebar img')?.naturalWidth > 0);
+      assert.equal(
+        await page.evaluate(() => thumbnailCount()),
+        0,
+        'Transient episode thumbnails must not leave orphaned library cache rows',
+      );
+      assert.equal(await page.getByRole('button', { name: '전체 준비', exact: true }).count(), 0);
+    }
     assert.equal(await page.locator('.source-stream-toolbar').count(), 0);
     assert.equal(await page.getByRole('button', { name: '저장 취소', exact: true }).count(), 0);
     assert.equal(await page.getByRole('button', { name: '회차 저장', exact: true }).count(), 0);
@@ -137,6 +148,27 @@ try {
       );
       await page.getByRole('button', { name: '6페이지 다시 불러오기', exact: true }).click();
       await page.waitForFunction(() => document.querySelector('article[data-page-index="5"] img')?.naturalWidth > 0);
+      await page.locator('article[data-page-index="6"]').scrollIntoViewIfNeeded();
+      await page.getByRole('button', { name: '7페이지 다시 불러오기', exact: true }).waitFor();
+      await page.waitForTimeout(250);
+      await page.getByRole('button', { name: '7페이지 다시 불러오기', exact: true }).evaluate((button) =>
+        button.addEventListener(
+          'click',
+          () => {
+            globalThis.repairCorrupt = true;
+          },
+          { once: true, capture: true },
+        ),
+      );
+      const corruptRequests = await page.evaluate(
+        () => calls.filter(([id, index]) => id === 'fixture-1' && index === 6).length,
+      );
+      await page.getByRole('button', { name: '7페이지 다시 불러오기', exact: true }).click();
+      await page.waitForFunction(() => document.querySelector('article[data-page-index="6"] img')?.naturalWidth > 0);
+      assert.equal(
+        await page.evaluate(() => calls.filter(([id, index]) => id === 'fixture-1' && index === 6).length),
+        corruptRequests + 1,
+      );
       await page.evaluate(() => {
         const root = document.querySelector('.fixed-doc-viewport'),
           row = document.querySelector('article[data-page-index="24"]');

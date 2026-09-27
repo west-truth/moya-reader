@@ -407,13 +407,19 @@ export async function registerExtensionPackageRoutes(
       }),
     ),
   );
-  app.get<{ Params: { id: string; token: string; index: string } }>(
+  app.get<{ Params: { id: string; token: string; index: string }; Querystring: { reload?: string } }>(
     `${PREFIX}/sources/:id/stream/:token/:index`,
     (request, reply) =>
       handle(reply, () =>
         withCancellation(request, reply, async (signal) => {
           const { id, token, index } = request.params;
-          const blob = await streamingCatalog(id).streamPage(id, token, Number(index), signal);
+          const blob = await streamingCatalog(id).streamPage(
+            id,
+            token,
+            Number(index),
+            signal,
+            request.query.reload === '1',
+          );
           reply.header('Content-Type', blob.type).header('Content-Length', blob.size);
           return reply.send(Readable.fromWeb(blob.stream() as import('node:stream/web').ReadableStream));
         }),

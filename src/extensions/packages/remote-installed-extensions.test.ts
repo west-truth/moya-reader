@@ -45,6 +45,34 @@ function compatibilityInventory(
 }
 const context = { brokers: { get: () => undefined } };
 describe('remote package inventory and source client', () => {
+  it('reloads a rejected image through the authenticated stream endpoint, then resumes normal caching', async () => {
+    const snapshot = inventory();
+    const descriptor = {
+      ...snapshot.sources[0]!.descriptor,
+      schemaVersion: 2,
+      seriesProfile: { kind: 'image_series' },
+    };
+    const request = vi.fn(async (path: string) =>
+      path.endsWith('/stream')
+        ? { token: 'session', pageCount: 2 }
+        : { ...snapshot, sourceStreaming: true, sources: [{ descriptor, mangayomiPackageId: 'fixture' }] },
+    );
+    const requestBlob = vi.fn(async () => ({ blob: new Blob(['image']) }));
+    const client = new RemoteInstalledExtensions({ request, requestBlob } as unknown as RemoteApiClient);
+    await client.refresh();
+    const signal = new AbortController().signal;
+    const session = await client.getSourceStream('org.example.catalog.source')!.open('episode', signal);
+    await session.loadPage(0, signal);
+    expect(requestBlob).toHaveBeenLastCalledWith(expect.stringMatching(/\/session\/0$/), { signal }, 60000);
+    session.invalidatePage?.(0);
+    requestBlob.mockRejectedValueOnce(new Error('network interrupted'));
+    await expect(session.loadPage(0, signal)).rejects.toThrow('network interrupted');
+    await session.loadPage(0, signal);
+    expect(requestBlob).toHaveBeenLastCalledWith(expect.stringMatching(/\/session\/0\?reload=1$/), { signal }, 60000);
+    await session.loadPage(0, signal);
+    expect(requestBlob).toHaveBeenLastCalledWith(expect.stringMatching(/\/session\/0$/), { signal }, 60000);
+    session.close();
+  });
   it.each(['apk', 'mangayomi'] as const)(
     'supersedes pre-install inventory for %s and ignores its late result',
     async (kind) => {

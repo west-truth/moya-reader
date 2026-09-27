@@ -4,9 +4,52 @@ import type { BookAssetRepository } from '../../repositories/book-asset-reposito
 import type { ReaderRepository } from '../../repositories/reader-repository';
 import { testChapter } from '../book-workspace/book-workspace-test-fixtures';
 import type { ArchivePageSnapshot } from './archive-page-loader';
-import { useArchivePageImages } from './use-archive-page-images';
+import { useArchivePageImages, type ArchivePageImages } from './use-archive-page-images';
 
 describe('archive image hook lifecycle', () => {
+  it('invalidates only the failed current image and ignores errors from its replaced URL', async () => {
+    let url = 0;
+    vi.spyOn(URL, 'createObjectURL').mockImplementation(() => `blob:retry-${++url}`);
+    vi.spyOn(URL, 'revokeObjectURL').mockImplementation(() => {});
+    const onPageInvalid = vi.fn();
+    const getEmbeddedResource = vi.fn(async () => ({ blob: new Blob(['image']) }));
+    const input = {
+      enabled: true,
+      bookId: 'book',
+      sourceRevision: 'revision',
+      chapters: [testChapter(1)],
+      currentPage: 0,
+      wantedPages: new Set([0]),
+      onPageInvalid,
+      repository: {
+        getParagraphPage: vi.fn(async () => ({ paragraphs: [{ assetId: 'image' }] })),
+      } as unknown as ReaderRepository,
+      assets: { getEmbeddedResource } as unknown as BookAssetRepository,
+    };
+    let images!: ArchivePageImages;
+    function Harness() {
+      images = useArchivePageImages(input);
+      return null;
+    }
+    let renderer!: ReactTestRenderer;
+    await act(async () => {
+      renderer = create(<Harness />);
+    });
+    try {
+      const old = images.pages.get(0)!.url;
+      await act(async () => images.reportError(0, old));
+      expect(onPageInvalid).toHaveBeenCalledExactlyOnceWith(0);
+      expect(images.errors.has(0)).toBe(true);
+      await act(async () => images.retry(0));
+      expect(images.pages.get(0)!.url).not.toBe(old);
+      expect(getEmbeddedResource).toHaveBeenCalledTimes(2);
+      await act(async () => images.reportError(0, old));
+      expect(onPageInvalid).toHaveBeenCalledTimes(1);
+      expect(images.errors.size).toBe(0);
+    } finally {
+      await act(async () => renderer.unmount());
+    }
+  });
   afterEach(() => {
     vi.restoreAllMocks();
   });

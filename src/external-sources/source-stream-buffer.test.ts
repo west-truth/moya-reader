@@ -1,10 +1,19 @@
 import { describe, it, expect, vi } from 'vitest';
 import { SourceStreamBuffer } from './source-stream-buffer';
 function fixture() {
-  const sessions: { close: ReturnType<typeof vi.fn>; loadPage: ReturnType<typeof vi.fn> }[] = [];
+  const sessions: {
+    close: ReturnType<typeof vi.fn>;
+    loadPage: ReturnType<typeof vi.fn>;
+    invalidatePage: ReturnType<typeof vi.fn>;
+  }[] = [];
   const port = {
     open: vi.fn(async () => {
-      const session = { pageCount: 20, close: vi.fn(), loadPage: vi.fn(async () => new Blob(['page'])) };
+      const session = {
+        pageCount: 20,
+        close: vi.fn(),
+        invalidatePage: vi.fn(),
+        loadPage: vi.fn(async () => new Blob(['page'])),
+      };
       sessions.push(session);
       return session;
     }),
@@ -12,6 +21,26 @@ function fixture() {
   return { port, sessions, buffer: new SourceStreamBuffer(port), signal: new AbortController().signal };
 }
 describe('stream episode buffer', () => {
+  it('discards a rejected page without dropping prepared neighbors and invalidates the backend cache', async () => {
+    const invalidatePage = vi.fn();
+    const loadPage = vi.fn(async (index: number) => new Blob([String(index)]));
+    const buffer = new SourceStreamBuffer({
+      open: async () => ({ pageCount: 2, loadPage, invalidatePage, close: vi.fn() }),
+    });
+    const signal = new AbortController().signal;
+    try {
+      const session = await buffer.open('episode', signal);
+      const old = await session.loadPage(0, signal);
+      const neighbor = await session.loadPage(1, signal);
+      session.invalidatePage?.(0);
+      expect(invalidatePage).toHaveBeenCalledWith(0);
+      expect(await session.loadPage(0, signal)).not.toBe(old);
+      expect(await session.loadPage(1, signal)).toBe(neighbor);
+      expect(loadPage).toHaveBeenCalledTimes(3);
+    } finally {
+      buffer.close();
+    }
+  });
   it('reuses the prepared next session and bytes when it becomes the current episode', async () => {
     const f = fixture();
     const first = await f.buffer.open('first', f.signal);
@@ -45,6 +74,20 @@ describe('stream episode buffer', () => {
     expect(f.sessions[0].close).toHaveBeenCalledOnce();
     expect(f.sessions[1].loadPage).toHaveBeenCalledWith(4, expect.any(AbortSignal));
     f.buffer.close();
+  });
+  it('keeps an image retry fresh even when its stream session has expired', async () => {
+    const f = fixture();
+    try {
+      const session = await f.buffer.open('book', f.signal);
+      await session.loadPage(0, f.signal);
+      session.invalidatePage?.(0);
+      f.sessions[0].loadPage.mockRejectedValueOnce(new Error('source_stream_expired'));
+      await session.loadPage(0, f.signal);
+      expect(f.sessions[1].invalidatePage).toHaveBeenCalledExactlyOnceWith(0);
+      expect(f.sessions[1].loadPage).toHaveBeenCalledWith(0, expect.any(AbortSignal));
+    } finally {
+      f.buffer.close();
+    }
   });
   it('closes an opening session if cancellation arrives before it resolves', async () => {
     const f = fixture(),
