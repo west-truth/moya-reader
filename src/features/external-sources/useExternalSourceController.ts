@@ -3427,11 +3427,15 @@ export function useExternalSourceController(options: UseExternalSourceController
       if (!item.release || item.importState !== 'available') return;
       const port = optionsRef.current.registry.getSourceStream?.(item.key.connectorId as ExtensionContributionId);
       if (port && sourceReadingPreferences().mode !== 'download') {
-        setStreaming({
+        setStreaming((current) => ({
           item,
-          port,
+          port:
+            current?.item.key.connectorId === item.key.connectorId &&
+            current?.item.key.accountConnectionId === item.key.accountConnectionId
+              ? current.port
+              : port,
           historyKey: JSON.stringify([optionsRef.current.settingsScope, externalItemKeyId(item.key)]),
-        });
+        }));
         return;
       }
       await importItems([item]);

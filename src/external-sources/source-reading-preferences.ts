@@ -11,7 +11,7 @@ export const sourceReadingDefaults: SourceReadingPreferences = {
   listMinutes: 30,
   coverHours: 24,
   imageMinutes: 2,
-  prefetch: 4,
+  prefetch: 8,
 };
 const key = 'moya.source-reading.v1';
 export const sourceReadingPreferenceEvent = 'moya-source-reading-preferences';
@@ -23,7 +23,7 @@ export function sourceReadingPreferences(): SourceReadingPreferences {
       listMinutes: [0, 2, 30, 360].includes(value.listMinutes) ? value.listMinutes : 30,
       coverHours: [0, 1, 24, 168].includes(value.coverHours) ? value.coverHours : 24,
       imageMinutes: [0, 2, 10].includes(value.imageMinutes) ? value.imageMinutes : 2,
-      prefetch: [0, 2, 4, 8].includes(value.prefetch) ? value.prefetch : 4,
+      prefetch: [0, 2, 4, 8].includes(value.prefetch) ? value.prefetch : 8,
     };
   } catch {
     return { ...sourceReadingDefaults };

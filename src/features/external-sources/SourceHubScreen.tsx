@@ -1,4 +1,5 @@
 import { useSourceStreamNavigation } from './use-source-stream-navigation';
+import { sourceReadingPreferences } from '../../external-sources/source-reading-preferences';
 import { SourceStreamReader } from './SourceStreamReader';
 import { TaskProgressRing } from '../../components/TaskProgressRing';
 import { WorkViewControl } from '../../components/WorkViewControl';
@@ -8,6 +9,7 @@ import {
   Bell,
   BookOpen,
   Check,
+  CircleCheck,
   ChevronRight,
   Cloud,
   Download,
@@ -229,7 +231,7 @@ function ReleaseDownloadAction({
         void (updating || (queueing && !streaming) ? controller.importItem(item) : controller.importAndOpen(item))
       }
     >
-      {updating ? <RefreshCw size={16} /> : streaming ? <BookOpen size={16} /> : <Download size={16} />}
+      {updating ? <RefreshCw size={16} /> : streaming ? <Play size={16} /> : <Download size={16} />}
     </button>
   );
 }
@@ -262,7 +264,7 @@ function ItemAction({
               aria-label={`${item.title} 바로 읽기`}
               onClick={() => void controller.importAndOpen(item)}
             >
-              <BookOpen size={16} />
+              <Play size={16} />
             </button>
           )}
         {canRead && (
@@ -270,11 +272,11 @@ function ItemAction({
             className="icon-btn source-hub-release-action"
             type="button"
             disabled={controller.blockingBusy}
-            title="회차 보기"
+            title="저장된 회차 보기"
             aria-label={`${item.title} 보기`}
             onClick={() => void controller.openImported(item)}
           >
-            <BookOpen size={16} />
+            <CircleCheck size={16} />
           </button>
         )}
         {(item.importState !== 'imported' || (task && importTaskIsActive(task)) || !controller.renameRelease) && (
@@ -515,7 +517,7 @@ export default function SourceHubScreen({
   localSeriesNovel,
   localSeriesTitleEditor,
 }: SourceHubScreenProps) {
-  const streamNavigation = useSourceStreamNavigation(controller);
+  const streamNavigation = useSourceStreamNavigation(controller, sourceReadingPreferences().prefetch > 0);
   const scrollRef = useRef<HTMLDivElement>(null);
   const [workLayout, changeWorkLayout] = useSourceWorkLayout();
   const taskByItemKey = useMemo(() => {
@@ -602,20 +604,43 @@ export default function SourceHubScreen({
   if (controller.streaming) {
     const { item, port } = controller.streaming;
     const task = controller.tasks.find((task) => task.externalItemKey === externalItemKeyId(item.key));
+    const nextItem = streamNavigation.nextItem;
+    const nextTask =
+      nextItem && controller.tasks.find((task) => task.externalItemKey === externalItemKeyId(nextItem.key));
     return (
       <SourceStreamReader
         historyKey={controller.streaming.historyKey ?? externalItemKeyId(item.key)}
         title={item.title}
+        profileKey={controller.streaming.historyKey ?? externalItemKeyId(item.key)}
+        nextEpisode={
+          nextItem && controller.canStreamItem?.(nextItem)
+            ? {
+                remoteId: nextItem.key.remoteId,
+                title: nextItem.title,
+                saved:
+                  nextItem.importState === 'imported' ||
+                  nextItem.importState === 'update_available' ||
+                  nextTask?.phase === 'complete',
+                busy:
+                  controller.importBusy || controller.blockingBusy || Boolean(nextTask && importTaskIsActive(nextTask)),
+                save: () => (controller.saveStream ?? controller.importItem)(nextItem),
+              }
+            : undefined
+        }
         remoteId={item.key.remoteId}
         port={port}
         onClose={() => controller.closeStream?.()}
         onSave={() => (controller.saveStream ?? controller.importItem)(item)}
         onPageSettled={(page, count) => controller.saveStreamPosition?.(item, page, count)}
-        saved={task?.phase === 'complete'}
-        saveStatus={task ? importTaskLabel(task) : undefined}
-        saveBusy={task ? importTaskIsActive(task) : false}
-        saveFailed={task?.phase === 'failed'}
-        onCancelSave={controller.cancel}
+        saved={
+          task?.phase === 'complete' ||
+          controller.items.some(
+            (candidate) =>
+              externalItemKeyId(candidate.key) === externalItemKeyId(item.key) &&
+              ['imported', 'update_available'].includes(candidate.importState),
+          )
+        }
+        saveBusy={controller.importBusy || controller.blockingBusy || Boolean(task && importTaskIsActive(task))}
         previous={streamNavigation.previous}
         next={streamNavigation.next}
         navigationBusy={streamNavigation.busy}

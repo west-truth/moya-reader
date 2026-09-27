@@ -4,7 +4,7 @@ import { externalItemKeyId } from '../../external-sources/contracts';
 import type { ExternalSourceController } from './useExternalSourceController';
 
 /** Fetch through catalog cursors without losing the currently open episode on failure. */
-export function useSourceStreamNavigation(controller: ExternalSourceController) {
+export function useSourceStreamNavigation(controller: ExternalSourceController, prefetchEnabled = false) {
   const [request, setRequest] = useState<{
     origin: string;
     offset: number;
@@ -26,6 +26,36 @@ export function useSourceStreamNavigation(controller: ExternalSourceController) 
     'asc',
   );
   const index = items.findIndex((item) => externalItemKeyId(item.key) === identity);
+  const [warmRevision, setWarmRevision] = useState(0);
+  const warming = useRef({ identity, cursors: new Set<string>(), busy: false });
+  useEffect(() => {
+    if (warming.current.identity !== identity) warming.current = { identity, cursors: new Set(), busy: false };
+    const state = warming.current;
+    const cursor = controller.nextCursor;
+    if (
+      !prefetchEnabled ||
+      !identity ||
+      index < 0 ||
+      items[index + 1] ||
+      !cursor ||
+      request ||
+      controller.loading ||
+      controller.catalogLoading ||
+      state.busy ||
+      state.cursors.has(cursor) ||
+      state.cursors.size >= 32
+    )
+      return;
+    state.busy = true;
+    state.cursors.add(cursor);
+    void controller
+      .loadMore()
+      .catch(() => undefined)
+      .finally(() => {
+        state.busy = false;
+        setWarmRevision((value) => value + 1);
+      });
+  }, [prefetchEnabled, identity, index, items, controller, request, warmRevision]);
   const latest = useRef(controller);
   latest.current = controller;
   useEffect(() => () => pending.current?.reject(new Error('회차 이동이 취소됐습니다.')), []);
@@ -96,6 +126,7 @@ export function useSourceStreamNavigation(controller: ExternalSourceController) 
     });
   return {
     busy: Boolean(request),
+    nextItem: index >= 0 ? items[index + 1] : undefined,
     previous:
       index >= 0 && (index > 0 || controller.nextCursor)
         ? (isCurrent?: () => boolean) => move(-1, isCurrent)

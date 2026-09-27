@@ -1644,3 +1644,16 @@
     width: 100%;
   }
 }
+
+.fixed-doc-navigation-error {
+  position: absolute;
+  bottom: calc(var(--fixed-doc-footer-height) + 12px);
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 20;
+  max-width: calc(100% - 24px);
+  padding: 8px 12px;
+  border-radius: 8px;
+  background: var(--fixed-doc-panel);
+  color: #e8e9ea;
+}

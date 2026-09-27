@@ -25,8 +25,8 @@ export function useArchivePageImages(input: {
   readonly chapters: readonly Chapter[];
   readonly currentPage: number;
   readonly wantedPages: ReadonlySet<number>;
-  readonly repository: ReaderRepository;
-  readonly assets: BookAssetRepository;
+  readonly repository: Pick<ReaderRepository, 'getParagraphPage'>;
+  readonly assets: Pick<BookAssetRepository, 'getEmbeddedResource'>;
   readonly retainedPages?: readonly number[];
   readonly onDimensions?: (index: number, dimensions: ContinuousImageDimensions) => void;
 }): ArchivePageImages {

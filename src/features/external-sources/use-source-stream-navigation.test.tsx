@@ -9,7 +9,7 @@ function item(n: number) {
     importState: 'available',
   } as ExternalSourceItemView;
 }
-async function harness() {
+async function harness(prefetch = false) {
   const first = item(1),
     second = item(2);
   let controller = {
@@ -23,7 +23,7 @@ async function harness() {
   } as unknown as ExternalSourceController;
   let result!: ReturnType<typeof useSourceStreamNavigation>, renderer!: ReactTestRenderer;
   function Harness() {
-    result = useSourceStreamNavigation(controller);
+    result = useSourceStreamNavigation(controller, prefetch);
     return null;
   }
   await act(async () => {
@@ -48,6 +48,20 @@ async function harness() {
   };
 }
 describe('stream navigation across catalog pages', () => {
+  it('prepares a neighbor across catalog cursors without navigating or importing it', async () => {
+    const h = await harness(true);
+    try {
+      expect(h.controller.loadMore).toHaveBeenCalledOnce();
+      await h.update({ items: [h.second, h.first], nextCursor: undefined });
+      expect(h.result.nextItem).toBe(h.second);
+      expect(h.controller.importAndOpen).not.toHaveBeenCalled();
+      expect(h.controller.openImported).not.toHaveBeenCalled();
+      expect(h.result.busy).toBe(false);
+    } finally {
+      await h.dispose();
+    }
+  });
+
   it('loads another page and navigates in episode order despite descending listings', async () => {
     const h = await harness();
     try {
