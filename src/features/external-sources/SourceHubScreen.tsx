@@ -778,7 +778,9 @@ export default function SourceHubScreen({
                     )}
                     {workByline && <p className="detail-byline">{workByline}</p>}
                     {(controller.detail?.description ?? seriesNovel?.description) && (
-                      <p className="detail-description">{controller.detail?.description ?? seriesNovel?.description}</p>
+                      <p className="detail-description" tabIndex={0} aria-label="작품 설명">
+                        {controller.detail?.description ?? seriesNovel?.description}
+                      </p>
                     )}
                     {controller.detail?.tags && controller.detail.tags.length > 0 && (
                       <div className="detail-tags" aria-label="작품 태그">

@@ -72,7 +72,11 @@ export function BookDetailHero({ model, actions }: ChaptersScreenProps) {
             <h1 id="book-detail-title">{novel.title}</h1>
           )}
           {byline && <p className="detail-byline">{byline}</p>}
-          {novel.description && <p className="detail-description">{novel.description}</p>}
+          {novel.description && (
+            <p className="detail-description" tabIndex={0} aria-label="작품 설명">
+              {novel.description}
+            </p>
+          )}
           {novel.tags && novel.tags.length > 0 && (
             <div className="detail-tags" aria-label="작품 태그">
               <Tags size={14} />

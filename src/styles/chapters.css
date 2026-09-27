@@ -98,14 +98,15 @@
 
 .detail-description {
   max-width: 720px;
+  max-height: 7.75em;
   margin-top: 10px;
-  overflow: hidden;
+  overflow-y: auto;
+  overflow-wrap: anywhere;
+  white-space: pre-line;
+  scrollbar-width: thin;
   color: var(--text);
   font-size: 0.78rem;
   line-height: 1.55;
-  display: -webkit-box;
-  -webkit-box-orient: vertical;
-  -webkit-line-clamp: 2;
 }
 
 .detail-tags {
@@ -777,7 +778,6 @@
   .detail-description {
     margin-top: 7px;
     font-size: 0.7rem;
-    -webkit-line-clamp: 2;
   }
   .detail-tags {
     max-height: 48px;
@@ -961,7 +961,6 @@
   .detail-hero-cover > .book-cover {
     min-height: 108px;
   }
-  .detail-description,
   .detail-tags {
     display: none;
   }
