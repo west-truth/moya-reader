@@ -67,6 +67,17 @@ function fixture(owner?: symbol) {
   };
 }
 describe('source cache policy', () => {
+  it('changing freshness does not invalidate cursors and zero forces revalidation', async () => {
+    const f = fixture();
+    const first = await f.list();
+    await f.list({ cacheMaxAgeMs: 0 });
+    expect(f.invoke).toHaveBeenCalledTimes(2);
+    const second = await f.list({ cacheMaxAgeMs: 120000 });
+    expect(f.invoke).toHaveBeenCalledTimes(2);
+    await f.list({ cursor: second.nextCursor, cacheMaxAgeMs: 0 });
+    expect(f.invoke).toHaveBeenCalledTimes(3);
+    expect(first.items).toEqual(second.items);
+  });
   it('reuses normal lists, preserves original age and forces both detail and releases on refresh', async () => {
     const f = fixture();
     const a = await f.list();

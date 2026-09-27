@@ -1,3 +1,4 @@
+import { sourceReadingPreferences } from '../../external-sources/source-reading-preferences';
 import { taskProgressPercent } from '../../components/task-progress';
 import { randomUuid } from '../../utils/random-uuid';
 import { useSourceWorkLayout } from './source-work-layout';
@@ -260,6 +261,14 @@ export interface ExternalSourceController {
   toggleItem(key: string): void;
   selectAllSupported(selected: boolean, itemKeys?: readonly string[]): void;
   importItem(item: ExternalSourceItemView): Promise<void>;
+  readonly streaming?: {
+    item: ExternalSourceItemView;
+    port: import('../../external-sources/source-stream').SourceStreamPort;
+  };
+  closeStream?(): void;
+  saveStream?(item: ExternalSourceItemView): Promise<void>;
+  saveStreamPosition?(item: ExternalSourceItemView, page: number, count: number): Promise<void>;
+  canStreamItem?(item: ExternalSourceItemView): boolean;
   importAndOpen(item: ExternalSourceItemView): Promise<void>;
   importSelected(): Promise<void>;
   deleteDownloads(items: readonly ExternalSourceItemView[]): Promise<void>;
@@ -303,6 +312,7 @@ export interface ExternalSourceNavigationSnapshot {
 }
 
 export interface UseExternalSourceControllerOptions {
+  saveStreamPosition?(pageIndex: number, chapter: Chapter, novel: Novel): Promise<void>;
   readonly downloadPolicy?: import('../../domain/types').DownloadPolicy;
   readonly updateDownloadPolicy?: (patch: Partial<import('../../domain/types').DownloadPolicy>) => void;
   readonly settingsScope?: string;
@@ -458,10 +468,15 @@ function filterChanges(
 }
 
 export function useExternalSourceController(options: UseExternalSourceControllerOptions): ExternalSourceController {
+  const streamPositionWrites = useRef<Promise<void>>(Promise.resolve());
+  const [streaming, setStreaming] = useState<ExternalSourceController['streaming']>();
   const [workLayout] = useSourceWorkLayout();
   const optionsRef = useRef(options);
   optionsRef.current = options;
   const [open, setOpen] = useState(false);
+  useEffect(() => {
+    if (!open) setStreaming(undefined);
+  }, [open]);
   const [loading, setLoading] = useState(false);
   const [blockingBusy, setBusy] = useState(false);
   const [catalogLoading, setCatalogLoading] = useState(false);
@@ -909,7 +924,11 @@ export function useExternalSourceController(options: UseExternalSourceController
         publish(snapshot);
         setLoading(false);
         setStale(Date.parse(snapshot.expiresAt) <= Date.now());
-        if (!forceRefresh && Date.parse(snapshot.expiresAt) > Date.now()) {
+        if (
+          !forceRefresh &&
+          Date.parse(snapshot.expiresAt) > Date.now() &&
+          Date.parse(snapshot.fetchedAt) + sourceCachePolicy(input).fresh > Date.now()
+        ) {
           setCatalogLoading(false);
           return true;
         }
@@ -3279,7 +3298,11 @@ export function useExternalSourceController(options: UseExternalSourceController
   );
 
   const automaticDownloadBlockedRef = useRef(busy || importBusy || blockingBusy);
-  const downloadRetention = useDownloadRetention({ options, busy: busy || importBusy || blockingBusy, setBusy });
+  const downloadRetention = useDownloadRetention({
+    options: { ...options, readingActive: options.readingActive || Boolean(streaming) },
+    busy: busy || importBusy || blockingBusy,
+    setBusy,
+  });
   automaticDownloadBlockedRef.current = busy || importBusy || blockingBusy;
   const automaticDownload = useNextReleaseDownload({
     policy: options.downloadPolicy,
@@ -3396,6 +3419,11 @@ export function useExternalSourceController(options: UseExternalSourceController
   const importAndOpen = useCallback(
     async (item: ExternalSourceItemView) => {
       if (!item.release || item.importState !== 'available') return;
+      const port = optionsRef.current.registry.getSourceStream?.(item.key.connectorId as ExtensionContributionId);
+      if (port && sourceReadingPreferences().mode !== 'download') {
+        setStreaming({ item, port });
+        return;
+      }
       await importItems([item]);
       if (!openRef.current) return;
       const link = (await optionsRef.current.state.listLinks(item.key.connectorId)).find(
@@ -4337,6 +4365,39 @@ export function useExternalSourceController(options: UseExternalSourceController
     selectAllSupported,
     importItem,
     importAndOpen,
+    streaming,
+    closeStream: () => setStreaming(undefined),
+    saveStreamPosition: (item, page, count) => {
+      const run = async () => {
+        const current = optionsRef.current;
+        if (!current.saveStreamPosition) return;
+        const link = (await current.state.listLinks(item.key.connectorId)).find(
+          (link) => externalItemKeyId(link.source) === externalItemKeyId(item.key) && !link.pendingImport,
+        );
+        if (!link) return;
+        const novel = await current.getNovel(link.localBookId);
+        if (!novel || novel.deletedAt) return;
+        const ordered = (await current.listChapters(novel.id)).sort((a, b) => a.index - b.index);
+        const chapters = ordered.filter((chapter) => chapter.documentSectionId === externalItemSectionId(item));
+        if (chapters.length !== count || !chapters[page]) return;
+        await current.saveStreamPosition(
+          ordered.findIndex((chapter) => chapter.id === chapters[page].id),
+          chapters[page],
+          novel,
+        );
+      };
+      const pending = streamPositionWrites.current.then(run);
+      streamPositionWrites.current = pending.catch(() => {});
+      return pending;
+    },
+    saveStream: async (item) => {
+      if (recoveryBusyRef.current || blockingBusy || (importBusy && !canQueueItem(item)))
+        throw new Error('다른 다운로드가 끝난 후 저장할 수 있습니다.');
+      await importItems([item]);
+    },
+    canStreamItem: (item) =>
+      sourceReadingPreferences().mode !== 'download' &&
+      Boolean(optionsRef.current.registry.getSourceStream?.(item.key.connectorId as ExtensionContributionId)),
     importSelected,
     deleteDownloads,
     openImported,

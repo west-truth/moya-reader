@@ -70,6 +70,7 @@ function novel(overrides: Partial<Novel> = {}): Novel {
 }
 
 async function createHarness(input: {
+  saveStreamPosition?: (pageIndex: number, chapter: Chapter, novel: Novel) => Promise<void>;
   downloadedContent: string;
   importedContent?: Novel;
   importError?: Error;
@@ -280,6 +281,7 @@ async function createHarness(input: {
     readingTarget?: { novelId: string; sectionId: string };
   }) {
     controller = useExternalSourceController({
+      saveStreamPosition: input.saveStreamPosition,
       readingTarget,
       registry,
       hostContext: { brokers: { get: () => undefined } },
@@ -2728,5 +2730,53 @@ describe('useExternalSourceController remote updates', () => {
     );
     expect(harness.currentLink.localBookId).toBe('book-1');
     await act(async () => harness.renderer.unmount());
+  });
+});
+
+describe('source streaming connection', () => {
+  it('opens a stream without downloading or importing the entire episode first', async () => {
+    const h = await createHarness({ downloadedContent: '', serial: true, localBookMissing: true });
+    const port = { open: vi.fn() };
+    h.registry.getSourceStream = () => port;
+    try {
+      await act(async () => {
+        await h.controller.importAndOpen(h.controller.items[0]);
+      });
+      expect(h.controller.streaming?.port).toBe(port);
+      expect(h.registry.downloadExternalSource).not.toHaveBeenCalled();
+      expect(h.importFile).not.toHaveBeenCalled();
+      await act(async () => h.controller.closeStream?.());
+      expect(h.controller.streaming).toBeUndefined();
+    } finally {
+      await act(async () => h.renderer.unmount());
+    }
+  });
+  it('maps a viewed streaming page only onto an already committed matching section', async () => {
+    const chapters: Chapter[] = [];
+    const save = vi.fn(async () => {});
+    const h = await createHarness({
+      downloadedContent: '',
+      serial: true,
+      chapters,
+      saveStreamPosition: save,
+      novelOverrides: { format: 'image_archive' },
+    });
+    const item = h.controller.items[0];
+    chapters.push(
+      testChapter(5, { id: 'page-1', index: 5, documentSectionId: externalItemSectionId(item) }),
+      testChapter(6, { id: 'page-2', index: 6, documentSectionId: externalItemSectionId(item) }),
+    );
+    try {
+      await h.controller.saveStreamPosition?.(item, 1, 3);
+      expect(save).not.toHaveBeenCalled();
+      await h.controller.saveStreamPosition?.(item, 1, 2);
+      expect(save).toHaveBeenCalledWith(
+        1,
+        chapters[1],
+        expect.objectContaining({ id: 'book-1', activeContentRevisionId: 'content-old' }),
+      );
+    } finally {
+      await act(async () => h.renderer.unmount());
+    }
   });
 });

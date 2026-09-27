@@ -1,4 +1,5 @@
-import { COVER_FRESH_MS, COVER_KEEP_MS, transientSourceFailure } from './cache-policy';
+import { sourceReadingPreferences } from './source-reading-preferences';
+import { COVER_KEEP_MS, transientSourceFailure } from './cache-policy';
 interface Entry {
   url: string;
   bytes: number;
@@ -40,7 +41,7 @@ export class SessionCoverCache {
     if (found) {
       this.entries.delete(key);
       this.entries.set(key, found);
-      if (found.time + COVER_FRESH_MS > Date.now()) {
+      if (found.time + sourceReadingPreferences().coverHours * 3600000 > Date.now()) {
         this.pin(found.url, signal);
         return found.url;
       }

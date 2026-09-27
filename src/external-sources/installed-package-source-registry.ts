@@ -84,14 +84,27 @@ export class InstalledPackageSourceRegistry<
     if (!source) throw new Error('package_source_unavailable');
     return source.descriptor;
   }
-  private async work(id: string, workId: string, signal: AbortSignal, reload: boolean): Promise<SourceWork> {
+  private async work(
+    id: string,
+    workId: string,
+    signal: AbortSignal,
+    reload: boolean,
+    maxAge = DETAIL_FRESH_MS,
+  ): Promise<SourceWork> {
     const generation = this.catalog.getSource(id)?.generation;
     const key = JSON.stringify(['detail', id, generation, workId]);
-    const cached = await this.reads.read(key, DETAIL_FRESH_MS, 7 * 86400_000, signal, reload, async (shared) => {
-      const { result } = await this.catalog.invoke(id, 'source.getWork', { workId }, shared, { cacheMode: 'reload' });
-      if (this.catalog.getSource(id)?.generation !== generation) throw new Error('package_generation_changed');
-      return result;
-    });
+    const cached = await this.reads.read(
+      key,
+      Math.min(DETAIL_FRESH_MS, Math.max(0, maxAge)),
+      7 * 86400_000,
+      signal,
+      reload,
+      async (shared) => {
+        const { result } = await this.catalog.invoke(id, 'source.getWork', { workId }, shared, { cacheMode: 'reload' });
+        if (this.catalog.getSource(id)?.generation !== generation) throw new Error('package_generation_changed');
+        return result;
+      },
+    );
     // Let the outer page retain its original age instead of stamping stale detail as a new success.
     if (cached.stale) throw new Error('source_connection_failed');
     return cached.value;
@@ -160,7 +173,7 @@ export class InstalledPackageSourceRegistry<
       };
     }
     const [work, response] = await Promise.all([
-      this.work(id, input.parentRef, signal, input.cacheMode === 'reload'),
+      this.work(id, input.parentRef, signal, input.cacheMode === 'reload', sourceCachePolicy(input, true).fresh),
       this.catalog.invoke(
         id,
         'source.listReleases',

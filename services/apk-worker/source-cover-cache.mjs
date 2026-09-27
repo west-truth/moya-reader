@@ -1,7 +1,7 @@
 import { joinTask } from './shared-task.mjs';
 import { CacheBudget } from '../../packages/extension-runtime/cache-budget.mjs';
 const pool = new CacheBudget(128 * 1024 * 1024, 1000, 64 * 1024 * 1024, 500);
-/** Shared process budget with isolated account keys; chapter images never enter this cache. */
+/** Shared cover budget with isolated account keys; chapter pages use a separate explicit budget. */
 export class SourceCoverCache {
   #pending = new Map();
   #owner = Symbol('covers');
@@ -13,22 +13,24 @@ export class SourceCoverCache {
     this.clear();
     this.#owner = owner;
   }
-  async resolve(key, signal, load) {
+  async resolve(key, signal, load, policy = {}) {
+    const ttl = Number.isFinite(policy.ttl) ? Math.max(0, Math.min(policy.ttl, 7 * 86400000)) : this.ttl;
+    const keep = Number.isFinite(policy.keep) ? Math.max(ttl, policy.keep) : Math.max(ttl, this.keep);
     signal.throwIfAborted();
     const found = this.pool.get(this.#owner, key);
-    if (found && found.time + this.ttl > this.now()) return found.image;
+    if (found && found.time + ttl > this.now()) return found.image;
     try {
       return await joinTask(this.#pending, key, signal, async (sharedSignal) => {
         const image = await load(sharedSignal);
         sharedSignal.throwIfAborted();
-        this.pool.set(this.#owner, key, { image, time: this.now() }, image.blob.size, Date.now() + this.keep);
+        this.pool.set(this.#owner, key, { image, time: this.now() }, image.blob.size, Date.now() + keep);
         return image;
       });
     } catch (error) {
       signal.throwIfAborted();
       if (
         found &&
-        found.time + this.keep > this.now() &&
+        found.time + keep > this.now() &&
         !/(?:401|403|404|410)|auth_|access_denied|generation_changed/i.test(String(error)) &&
         /timeout|network|fetch failed|ECONN|ENET|HTTP (?:429|50[0234])|gateway/i.test(String(error))
       )

@@ -36,6 +36,7 @@ const safeCodes = new Set([
   'source_preferences_conflict',
   'source_work_unavailable',
   'source_release_unavailable',
+  'source_stream_expired',
   'invalid_source_assets',
   'source_address_denied',
   'apk_android_feature_unsupported',
@@ -162,6 +163,7 @@ export async function registerExtensionPackageRoutes(
     handle(reply, async () => {
       await catalog.refresh();
       return {
+        sourceStreaming: true,
         preparedImageImports: Boolean(stageImageImport),
         preparedDocumentImports: Boolean(documentImports),
         packages: await store.list(),
@@ -365,6 +367,65 @@ export async function registerExtensionPackageRoutes(
     ),
   );
 
+  const streamingCatalog = (id: string) => {
+    const host = apk?.catalog.getSource(id)
+      ? apk.catalog
+      : mangayomi?.catalog.getSource(id)
+        ? mangayomi.catalog
+        : undefined;
+    if (!host || host.getSource(id)?.descriptor.seriesProfile?.kind !== 'image_series')
+      throw new Error('compatibility_feature_unsupported');
+    return host;
+  };
+  app.post<{ Params: { id: string } }>(`${PREFIX}/sources/:id/stream`, { bodyLimit: 4096 }, (request, reply) =>
+    handle(reply, () =>
+      withCancellation(request, reply, async (signal) => {
+        const body = request.body;
+        if (!object(body) || typeof body.remoteId !== 'string')
+          return reply.code(400).send({ error: 'invalid_source_input' });
+        let ids: unknown;
+        try {
+          ids = JSON.parse(body.remoteId);
+        } catch {
+          return reply.code(400).send({ error: 'invalid_source_input' });
+        }
+        if (
+          !Array.isArray(ids) ||
+          ids.length !== 2 ||
+          ids.some((id) => typeof id !== 'string' || !/^[a-f0-9]{64}$/.test(id))
+        )
+          return reply.code(400).send({ error: 'invalid_source_input' });
+        return streamingCatalog(request.params.id).openStream(
+          request.params.id,
+          {
+            workId: ids[0],
+            releaseId: ids[1],
+            imageMinutes: [0, 2, 10].includes(Number(body.imageMinutes)) ? Number(body.imageMinutes) : 2,
+          },
+          signal,
+        );
+      }),
+    ),
+  );
+  app.get<{ Params: { id: string; token: string; index: string } }>(
+    `${PREFIX}/sources/:id/stream/:token/:index`,
+    (request, reply) =>
+      handle(reply, () =>
+        withCancellation(request, reply, async (signal) => {
+          const { id, token, index } = request.params;
+          const blob = await streamingCatalog(id).streamPage(id, token, Number(index), signal);
+          reply.header('Content-Type', blob.type).header('Content-Length', blob.size);
+          return reply.send(Readable.fromWeb(blob.stream() as import('node:stream/web').ReadableStream));
+        }),
+      ),
+  );
+  app.delete<{ Params: { id: string; token: string } }>(`${PREFIX}/sources/:id/stream/:token`, (request, reply) =>
+    handle(reply, async () => {
+      streamingCatalog(request.params.id).closeStream(request.params.id, request.params.token);
+      return { ok: true };
+    }),
+  );
+
   app.post<{ Params: { id: string } }>(`${PREFIX}/sources/:id/cover`, { bodyLimit: 4096 }, (request, reply) =>
     handle(reply, () =>
       withCancellation(request, reply, async (signal) => {
@@ -381,6 +442,11 @@ export async function registerExtensionPackageRoutes(
           'source.getCover',
           { workId: request.body.workId },
           signal,
+          {
+            coverMaxAgeMs: [0, 1, 24, 168].includes(Number(request.body.coverHours))
+              ? Number(request.body.coverHours) * 3600000
+              : undefined,
+          },
         );
         if (!result) return reply.code(404).send({ error: 'cover_unavailable' });
         if (!['image/png', 'image/jpeg', 'image/webp', 'image/gif'].includes(result.contentType))

@@ -25,6 +25,7 @@ export interface ExternalSourceContributionView {
 
 /** The host-facing source port shared by built-in connectors and source plugins. */
 export interface ExternalSourceRegistryPort {
+  getSourceStream?(id: ExtensionContributionId): import('./source-stream').SourceStreamPort | undefined;
   getHostedDocumentImport?(
     contributionId: ExtensionContributionId,
   ): import('../services/import/hosted-document-import').HostedDocumentImportPort | undefined;
@@ -109,6 +110,9 @@ export interface ExternalSourceProviderRegistryPort extends Omit<ExternalSourceR
  * Optional plugin sources are merged after built-ins and cannot shadow a product connector ID.
  */
 export class AppExternalSourceRegistry implements ExternalSourceRegistryPort {
+  getSourceStream(id: ExtensionContributionId) {
+    return this.builtIns.has(id) ? undefined : this.pluginSources?.getSourceStream?.(id);
+  }
   getHostedDocumentImport(contributionId: ExtensionContributionId) {
     return this.builtIns.has(contributionId)
       ? undefined

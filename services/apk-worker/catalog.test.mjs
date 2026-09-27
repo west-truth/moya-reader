@@ -475,3 +475,37 @@ test('chapter cursors stay on one snapshot; explicit refresh reaches origin with
   await invoke('getCover', { workId });
   assert.equal(calls.filter((c) => c.method === 'cover').length, 2);
 });
+
+test('opens image lists without downloading pages; reading and saving reuse the same image', async (t) => {
+  const { catalog, source, invoke, calls } = await fixture(t);
+  const signal = new AbortController().signal;
+  const workId = (await invoke('listWorks')).result.items[0].id;
+  const releaseId = (await invoke('listReleases', { workId })).result.items[0].id;
+  const stream = await catalog.openStream(source, { workId, releaseId }, signal);
+  assert.equal(stream.pageCount, 1);
+  assert.equal(calls.filter((c) => c.method === 'image').length, 0);
+  const [page, download] = await Promise.all([
+    catalog.streamPage(source, stream.token, 0, signal),
+    invoke('getContent', { workId, releaseId }),
+  ]);
+  assert.equal(page.size, 4);
+  assert.equal(download.result.assets.length, 1);
+  assert.equal(calls.filter((c) => c.method === 'image').length, 1);
+  assert.equal(calls.filter((c) => c.method === 'pages').length, 1);
+  await assert.rejects(catalog.streamPage(source, stream.token, 1, signal), /invalid_source_invocation/);
+  catalog.closeStream(source, stream.token);
+  await assert.rejects(catalog.streamPage(source, stream.token, 0, signal), /source_stream_expired/);
+});
+test('stream sessions fence extension changes and honor disabled image reuse', async (t) => {
+  const { catalog, source, invoke, store, calls } = await fixture(t);
+  const signal = new AbortController().signal;
+  const workId = (await invoke('listWorks')).result.items[0].id;
+  const releaseId = (await invoke('listReleases', { workId })).result.items[0].id;
+  const stream = await catalog.openStream(source, { workId, releaseId, imageMinutes: 0 }, signal);
+  await catalog.streamPage(source, stream.token, 0, signal);
+  await catalog.streamPage(source, stream.token, 0, signal);
+  assert.equal(calls.filter((c) => c.method === 'image').length, 2);
+  store.snapshot().packages[0].activation = 'updated';
+  await catalog.refresh();
+  await assert.rejects(catalog.streamPage(source, stream.token, 0, signal), /source_stream_expired/);
+});

@@ -1,3 +1,4 @@
+import { sourceReadingPreferences } from './source-reading-preferences';
 import type { ExternalItemPage, ExternalSourceListInput } from './contracts';
 const minute = 60_000,
   hour = 60 * minute,
@@ -5,11 +6,18 @@ const minute = 60_000,
 export const COVER_FRESH_MS = day;
 export const COVER_KEEP_MS = 7 * day;
 export const DETAIL_FRESH_MS = 6 * hour;
-export function sourceCachePolicy(input: ExternalSourceListInput, completed = false) {
+function defaultSourceCachePolicy(input: ExternalSourceListInput, completed = false) {
   if (input.parentRef) return { fresh: completed ? 6 * hour : 2 * minute, keep: 7 * day };
   if (input.query || input.filters?.length || input.browseMode === 'search')
     return { fresh: 10 * minute, keep: 6 * hour };
   return { fresh: input.browseMode === 'latest' ? 2 * minute : 30 * minute, keep: day };
+}
+export function sourceCachePolicy(input: ExternalSourceListInput, completed = false) {
+  const policy = defaultSourceCachePolicy(input, completed);
+  const value = input.cacheMaxAgeMs ?? sourceReadingPreferences().listMinutes * minute;
+  const max =
+    typeof value === 'number' && Number.isFinite(value) && value >= 0 ? Math.min(value, 6 * hour) : policy.fresh;
+  return { ...policy, fresh: Math.min(policy.fresh, max) };
 }
 export function sourcePageTime(page: ExternalItemPage, fallback = Date.now()) {
   const time = page.cache?.fetchedAt;
@@ -40,6 +48,6 @@ export function transientSourceFailure(error: unknown) {
 }
 /** Hosts keep cache mode out of the extension guest's input and out of cache identity. */
 export function sourceListIdentity(input: ExternalSourceListInput) {
-  const { cacheMode: _mode, ...identity } = input;
+  const { cacheMode: _mode, cacheMaxAgeMs: _age, ...identity } = input;
   return identity;
 }

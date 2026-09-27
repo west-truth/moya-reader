@@ -11,6 +11,17 @@ import { validateRepositoryIndex } from '../../../../../src/extensions/packages/
 
 import { fixtureRow, fixtureSource } from './test-fixture.js';
 describe('Mangayomi compatibility runtime', () => {
+  it('provides Document body/head/documentElement wrappers used by original JS sources', async () => {
+    const value = await invokeMangayomi({
+      entry: parseMangayomiIndex([fixtureRow])[0],
+      source: `class DefaultExtension extends MProvider {
+      getPopular(){const doc=new Document('<html><head><title>Works</title></head><body><a href="/one">One</a></body></html>');return {list:[{name:doc.body.selectFirst('a').text,link:doc.body.selectFirst('a').attr('href'),title:doc.head.selectFirst('title').text,tag:doc.documentElement.localName}],hasNextPage:false};}
+    }`,
+      action: 'list',
+      signal: AbortSignal.timeout(5000),
+    });
+    expect(value.result).toMatchObject({ list: [{ name: 'One', link: '/one', title: 'Works', tag: 'html' }] });
+  });
   it('preserves a safe browser capacity error when the extension replaces its message', async () => {
     await expect(
       invokeMangayomi({

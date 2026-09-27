@@ -3,6 +3,18 @@
 기준: 2026-09-19 P0와 HTTP·SDK 후속 구현. 이 문서는 작업 트리의 구현 상태이며 해당 변경이 포함된 서버 버전부터 적용된다.
 설치 가능한 확장과 실제 본문까지 취득 가능한 확장은 구분한다. 전체 Mangayomi 호환을 보장하지 않는다.
 
+## 저장소 메타데이터와 표지
+
+- 저장소의 `additionalParams` 문자열은 최대 16KiB까지 설치 기록과 `MProvider.source`에 보존한다.
+  같은 JS 파일을 여러 소스가 공유해도 각 소스의 갤러리/분류 설정을 유지한다.
+- `Document.body`, `head`, `documentElement`는 기존 DOM wrapper로 제공한다.
+- 표지의 `getHeaders()`에는 이미지 CDN이 아닌 작품 URL을 전달한다. 소스가 반환한
+  `imageHeaders`가 있으면 우선 사용하며 async `getHeaders()`도 기다린다. 헤더와 원격 URL은
+  host에만 보관하고 클라이언트에는 작품 식별자와 인증된 이미지 응답만 전달한다.
+- `dc-manhwa-29bc3f.espr.page/mangayomi/index.json`의 원본 디시 JS 1.0.8로
+  3개 소스 설치와 DOM fixture 목록 실행을 확인했다. 늑대 만화 0.1.7 원본 확장의
+  실제 목록·보호된 표지 취득도 확인했다(2026-09-28). 모든 사이트/작품의 가용성을 뜻하지 않는다.
+
 ## 실행 방식
 
 Mangayomi JS 원본은 서버의 제한된 QuickJS realm에서 실행한다. Android WebView나 Flutter 앱을 실행하지 않는다.

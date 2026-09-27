@@ -23,6 +23,13 @@ export class ApkSourceCatalog implements InstalledSourceCatalogPort {
   invoke: InstalledSourceCatalogPort['invoke'];
   disable: InstalledSourceCatalogPort['disable'];
   refresh(): Promise<void>;
+  openStream(
+    source: string,
+    input: { workId: string; releaseId: string; imageMinutes?: number },
+    signal: AbortSignal,
+  ): Promise<{ token: string; pageCount: number }>;
+  streamPage(source: string, token: string, index: number, signal: AbortSignal): Promise<Blob>;
+  closeStream(source: string, token: string): void;
   close(): void;
   setCacheOwner(owner: symbol): void;
   preferences(

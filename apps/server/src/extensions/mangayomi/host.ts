@@ -542,14 +542,14 @@ export class MangayomiExtensionHost {
     if (hash(source) !== record.digest) throw new Error('package_repository_integrity');
     if (method === 'image' || method === 'cover') {
       const headers =
-        method === 'image' && params.headers && typeof params.headers === 'object'
+        params.headers && typeof params.headers === 'object'
           ? params.headers
           : (
               await invokeMangayomi({
                 entry: record.metadata,
                 source,
                 action: 'headers',
-                params: { url: params.imageUrl ?? params.url },
+                params: { url: params.workUrl ?? params.imageUrl ?? params.url },
                 preferences: options.values,
                 signal,
               })
@@ -629,6 +629,7 @@ export class MangayomiExtensionHost {
       url: row.link ?? row.url,
       title: row.name ?? row.title,
       cover: row.imageUrl,
+      coverHeaders: row.imageHeaders,
       author: row.author,
       description: row.description,
       genre: Array.isArray(row.genre) ? row.genre.join(',') : undefined,
