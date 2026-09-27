@@ -14,7 +14,7 @@ test('documentation is skipped, while build/dependency/unknown changes and full 
     ['pnpm-lock.yaml'],
     ['deploy/server.Dockerfile', 'package.json'],
     ['new-runtime/entry.ts'],
-    ['scripts/ci/quality-scope.mjs'],
+    ['scripts/ci/quality-tests.mjs'],
   ]) {
     assert.equal(Object.values(qualityScope(files)).every(Boolean), true);
   }
@@ -41,4 +41,26 @@ test('shared UI state runs all browser regressions and source backends keep the 
   assert.equal(qualityScope(['apps/server/src/extensions/mangayomi/host.ts']).extensions, true);
   assert.equal(qualityScope(['services/apk-worker/catalog.mjs']).apk, true);
   assert.equal(qualityScope(['services/text-source-server/index.mjs']).text, true);
+});
+
+test('streaming and compatibility changes retain source checks without unrelated packaging gates', () => {
+  const result = qualityScope([
+    'packages/extension-contracts/compatibility-repository.ts',
+    'scripts/extensions/source-stream-browser-smoke.mjs',
+    'services/apk-worker/catalog.mjs',
+    'services/apk-worker/catalog.d.mts',
+    'services/apk-worker/catalog.test.mjs',
+    'services/apk-worker/image-request-queue.mjs',
+    'services/apk-worker/image-request-queue.test.mjs',
+    'services/apk-worker/source-cover-cache.mjs',
+    'scripts/ci/quality-scope.mjs',
+    'scripts/ci/quality-scope.test.mjs',
+  ]);
+  for (const key of ['code', 'web', 'extensions', 'apk']) assert.equal(result[key], true, key);
+  for (const key of ['native', 'deploy', 'text']) assert.equal(result[key], false, key);
+  for (const file of ['services/apk-worker/index.mjs', 'services/apk-worker/Dockerfile']) {
+    assert.equal(qualityScope([file]).deploy, true, file);
+  }
+  assert.equal(qualityScope(['src-tauri/src/lib.rs']).native, true);
+  assert.equal(Object.values(qualityScope(['packages/extension-contracts/other.ts'])).every(Boolean), true);
 });

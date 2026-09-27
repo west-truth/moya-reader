@@ -273,7 +273,7 @@ export interface ExternalSourceController {
   importAndOpen(item: ExternalSourceItemView): Promise<void>;
   importSelected(): Promise<void>;
   deleteDownloads(items: readonly ExternalSourceItemView[]): Promise<void>;
-  openImported(item: ExternalSourceItemView): Promise<void>;
+  openImported(item: ExternalSourceItemView, reportRejection?: boolean): Promise<void>;
   cancel(): void;
   dismissTask(taskId: string): void;
   connect(input?: ExternalSourceConnectionInput): Promise<void>;
@@ -3469,12 +3469,16 @@ export function useExternalSourceController(options: UseExternalSourceController
   }, [importBusy, importItems, items]);
 
   const openImported = useCallback(
-    async (item: ExternalSourceItemView) => {
-      if (blockingBusy || !['imported', 'update_available'].includes(item.importState) || !item.localBookId) return;
+    async (item: ExternalSourceItemView, reportRejection = false) => {
+      if (blockingBusy || !['imported', 'update_available'].includes(item.importState) || !item.localBookId) {
+        if (reportRejection) throw new Error('지금은 저장된 회차를 열 수 없습니다. 잠시 후 다시 시도해 주세요.');
+        return;
+      }
       const novel = await optionsRef.current.getNovel(item.localBookId);
       if (!novel || novel.deletedAt) {
         await refreshLocalProjection();
         optionsRef.current.notify('작품의 보관 상태가 변경되어 목록을 갱신했습니다.', 'warning');
+        if (reportRejection) throw new Error('저장된 회차를 찾을 수 없습니다. 회차 목록을 확인해 주세요.');
         return;
       }
       if (item.release) {
@@ -3491,13 +3495,13 @@ export function useExternalSourceController(options: UseExternalSourceController
         setLocalSeriesReadingStates(new Map());
         setLocalSeriesChapters([]);
       }
-      setOpen(false);
       if (item.release)
         await optionsRef.current.openNovel(novel, {
           documentSectionId: externalItemSectionId(item),
           documentSectionTitle: item.release.title,
         });
       else await optionsRef.current.openNovel(novel);
+      setOpen(false);
     },
     [blockingBusy, rawItems, refreshLocalProjection],
   );

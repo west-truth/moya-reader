@@ -90,6 +90,30 @@ describe('stream navigation across catalog pages', () => {
       await h.dispose();
     }
   });
+  it('keeps the current stream when opening a saved neighbor fails and allows retry', async () => {
+    const h = await harness();
+    try {
+      await h.update({ items: [h.first, { ...h.second, importState: 'imported' }], nextCursor: undefined });
+      vi.mocked(h.controller.openImported).mockRejectedValueOnce(new Error('saved book missing'));
+      let error: unknown;
+      await act(async () => {
+        void h.result.next!().catch((value) => {
+          error = value;
+        });
+      });
+      expect(error).toEqual(new Error('saved book missing'));
+      expect(h.controller.closeStream).not.toHaveBeenCalled();
+      expect(h.result.busy).toBe(false);
+      let pending!: Promise<void>;
+      await act(async () => {
+        pending = h.result.next!();
+      });
+      await pending;
+      expect(h.controller.closeStream).toHaveBeenCalledOnce();
+    } finally {
+      await h.dispose();
+    }
+  });
   it.each(['imported', 'update_available'] as const)(
     'uses the saved reader for %s neighbors and cancels stale automatic navigation',
     async (importState) => {
@@ -110,7 +134,7 @@ describe('stream navigation across catalog pages', () => {
           pending = h.result.next!();
         });
         await pending;
-        expect(h.controller.openImported).toHaveBeenCalledWith(saved);
+        expect(h.controller.openImported).toHaveBeenCalledWith(saved, true);
         expect(h.controller.closeStream).toHaveBeenCalledOnce();
       } finally {
         await h.dispose();

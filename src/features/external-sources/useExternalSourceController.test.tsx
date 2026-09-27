@@ -1727,6 +1727,24 @@ describe('useExternalSourceController remote updates', () => {
     await act(async () => harness.renderer.unmount());
   });
 
+  it('reports a missing saved neighbor to stream navigation without closing the source screen', async () => {
+    const h = await createHarness({ downloadedContent: 'fixture', getNovel: async () => undefined });
+    try {
+      await act(async () => h.controller.show());
+      const item = { ...h.controller.items[0]!, importState: 'imported' as const, localBookId: 'missing' };
+      await act(async () => {
+        await expect(h.controller.openImported(item, true)).rejects.toThrow('저장된 회차를 찾을 수 없습니다');
+      });
+      expect(h.openNovel).not.toHaveBeenCalled();
+      expect(h.controller.open).toBe(true);
+      await act(async () => {
+        await expect(h.controller.openImported(item)).resolves.toBeUndefined();
+      });
+    } finally {
+      await act(async () => h.renderer.unmount());
+    }
+  });
+
   it('opens an imported source item through the injected book workspace boundary', async () => {
     const harness = await createHarness({ downloadedContent: '기존 원격 원문' });
 
