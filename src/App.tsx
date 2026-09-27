@@ -622,17 +622,6 @@ export default function App() {
     view,
   } = bookWorkspaceState;
   const { replaceSelection, setNovels, setRemoteReadingPosition, setSelectedNovel } = bookWorkspace;
-  const readingSession = useReaderSession({
-    active: (view === 'reader' || view === 'document') && Boolean(selectedNovel),
-    repository: readerRepository,
-    novelId: selectedNovel?.id,
-    statsVisible: view === 'reader' && addonOpen && addonTab === 'stats',
-    onStarted: bookWorkspace.resetReaderSessionTime,
-    onCommitted: bookWorkspace.commitSessionTime,
-    onFailed: ignoreReaderSessionPersistenceFailure,
-    onDisplayChanged: bookWorkspace.setReaderSessionDisplaySeconds,
-    personalizationRepository,
-  });
   const graphKnowledgeController = useCharacterGraphKnowledgeController({
     repository: readerRepository,
     novelId: selectedNovel?.id,
@@ -1492,6 +1481,7 @@ export default function App() {
     notify: showToast,
   });
   const externalSourceFeature = useExternalSourceController({
+    getParagraphPage: (chapterId, pageIndex, signal) => readerRepository.getParagraphPage(chapterId, pageIndex, signal),
     saveStreamPosition: bookWorkspace.saveFixedDocumentPage,
     downloadPolicy: settings.downloadPolicy ?? legacyDownloads,
     updateDownloadPolicy: (patch) =>
@@ -1531,6 +1521,23 @@ export default function App() {
     },
     notify: showToast,
     confirm: (message) => window.confirm(message),
+  });
+  const readingSession = useReaderSession({
+    active:
+      externalSourceFeature.open && externalSourceFeature.streaming
+        ? Boolean(externalSourceFeature.streamingBookId)
+        : (view === 'reader' || view === 'document') && Boolean(selectedNovel),
+    repository: readerRepository,
+    novelId:
+      externalSourceFeature.open && externalSourceFeature.streaming
+        ? externalSourceFeature.streamingBookId
+        : selectedNovel?.id,
+    statsVisible: view === 'reader' && addonOpen && addonTab === 'stats',
+    onStarted: bookWorkspace.resetReaderSessionTime,
+    onCommitted: bookWorkspace.commitSessionTime,
+    onFailed: ignoreReaderSessionPersistenceFailure,
+    onDisplayChanged: bookWorkspace.setReaderSessionDisplaySeconds,
+    personalizationRepository,
   });
   const discovery = useDiscoveryController(
     externalSourceRegistry,

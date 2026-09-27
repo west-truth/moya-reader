@@ -611,6 +611,7 @@ export default function SourceHubScreen({
       nextItem && controller.tasks.find((task) => task.externalItemKey === externalItemKeyId(nextItem.key));
     return (
       <SourceStreamReader
+        fromStart={controller.streaming.fromStart}
         historyKey={controller.streaming.historyKey ?? externalItemKeyId(item.key)}
         title={item.title}
         profileKey={controller.streaming.historyKey ?? externalItemKeyId(item.key)}

@@ -70,6 +70,7 @@ function novel(overrides: Partial<Novel> = {}): Novel {
 }
 
 async function createHarness(input: {
+  getParagraphPage?: import('../../repositories/reader-repository').ReaderRepository['getParagraphPage'];
   saveStreamPosition?: (pageIndex: number, chapter: Chapter, novel: Novel) => Promise<void>;
   downloadedContent: string;
   importedContent?: Novel;
@@ -282,6 +283,7 @@ async function createHarness(input: {
   }) {
     controller = useExternalSourceController({
       saveStreamPosition: input.saveStreamPosition,
+      getParagraphPage: input.getParagraphPage,
       readingTarget,
       registry,
       hostContext: { brokers: { get: () => undefined } },
@@ -2761,10 +2763,46 @@ describe('source streaming connection', () => {
         await h.controller.importAndOpen(h.controller.items[0]);
       });
       expect(h.controller.streaming?.port).toBe(port);
+      expect(h.controller.streamingBookId).toBeUndefined();
       expect(h.registry.downloadExternalSource).not.toHaveBeenCalled();
       expect(h.importFile).not.toHaveBeenCalled();
       await act(async () => h.controller.closeStream?.());
       expect(h.controller.streaming).toBeUndefined();
+    } finally {
+      await act(async () => h.renderer.unmount());
+    }
+  });
+  it('keeps the stream viewer for a saved episode and reads its committed local section', async () => {
+    const chapters: Chapter[] = [];
+    const blob = new Blob(['saved image'], { type: 'image/png' });
+    const getParagraphPage = vi.fn(
+      async () => ({ paragraphs: [{ assetId: 'saved-page' }] }) as import('../../domain/types').ParagraphPage,
+    );
+    const getEmbeddedResource = vi.fn(async () => ({ blob, metadata: {} as BookAssetMetadata }));
+    const h = await createHarness({
+      downloadedContent: '',
+      serial: true,
+      chapters,
+      getParagraphPage,
+      assets: { getEmbeddedResource } as unknown as BookAssetRepository,
+      novelOverrides: { format: 'image_archive' },
+    });
+    const remote = { open: vi.fn() };
+    h.registry.getSourceStream = () => remote;
+    const item = h.controller.items[0];
+    chapters.push(testChapter(1, { documentSectionId: externalItemSectionId(item) }));
+    try {
+      await act(async () => {
+        await h.controller.openStreamItem!(item);
+      });
+      expect(h.controller.streaming?.fromStart).toBe(true);
+      expect(h.controller.streamingBookId).toBe('book-1');
+      const signal = new AbortController().signal;
+      const session = await h.controller.streaming!.port.open(item.key.remoteId, signal);
+      expect(await session.loadPage(0, signal)).toBe(blob);
+      expect(remote.open).not.toHaveBeenCalled();
+      expect(h.importFile).not.toHaveBeenCalled();
+      session.close();
     } finally {
       await act(async () => h.renderer.unmount());
     }

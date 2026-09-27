@@ -26,6 +26,7 @@ export function useComicViewportPosition(input: {
     if (!input.save || !input.continuous || !root || !body) return;
     const save = input.save;
     let restored = !input.initial;
+    let restoring = Boolean(input.initial);
     let latest: ComicViewportPosition | undefined;
     let frame = 0,
       timer = 0;
@@ -50,7 +51,7 @@ export function useComicViewportPosition(input: {
       cancelAnimationFrame(frame);
       frame = requestAnimationFrame(() => {
         frame = requestAnimationFrame(() => {
-          if (!restored && input.initial) {
+          if (restoring && input.initial) {
             const row = body.querySelector<HTMLElement>(`article[data-page-index="${input.initial.page}"]`);
             if (!row?.querySelector<HTMLImageElement>('img')?.naturalWidth) return;
             root.scrollTop +=
@@ -69,6 +70,17 @@ export function useComicViewportPosition(input: {
       capture();
       flush();
     };
+    // Image sizes and immersive chrome can settle after the first load. Keep the
+    // restored image anchor through those shifts, until the reader interacts.
+    const interacted = () => {
+      restoring = false;
+      restored = true;
+    };
+    const resize = new ResizeObserver(update);
+    resize.observe(root);
+    resize.observe(body);
+    for (const event of ['pointerdown', 'touchstart', 'wheel', 'keydown'])
+      window.addEventListener(event, interacted, { capture: true, passive: true });
     root.addEventListener('load', update, true);
     root.addEventListener('scroll', update);
     window.addEventListener('pagehide', hide);
@@ -77,6 +89,9 @@ export function useComicViewportPosition(input: {
       cancelAnimationFrame(frame);
       clearTimeout(timer);
       flush();
+      resize.disconnect();
+      for (const event of ['pointerdown', 'touchstart', 'wheel', 'keydown'])
+        window.removeEventListener(event, interacted, true);
       root.removeEventListener('load', update, true);
       root.removeEventListener('scroll', update);
       window.removeEventListener('pagehide', hide);

@@ -1,3 +1,4 @@
+import { savedFirstSourceStream } from '../../external-sources/saved-source-stream';
 import { sourceReadingPreferences } from '../../external-sources/source-reading-preferences';
 import { taskProgressPercent } from '../../components/task-progress';
 import { randomUuid } from '../../utils/random-uuid';
@@ -261,12 +262,15 @@ export interface ExternalSourceController {
   toggleItem(key: string): void;
   selectAllSupported(selected: boolean, itemKeys?: readonly string[]): void;
   importItem(item: ExternalSourceItemView): Promise<void>;
+  readonly streamingBookId?: string;
   readonly streaming?: {
     item: ExternalSourceItemView;
     port: import('../../external-sources/source-stream').SourceStreamPort;
     historyKey?: string;
+    fromStart?: boolean;
   };
   closeStream?(): void;
+  openStreamItem?(item: ExternalSourceItemView): Promise<void>;
   saveStream?(item: ExternalSourceItemView): Promise<void>;
   saveStreamPosition?(item: ExternalSourceItemView, page: number, count: number): Promise<void>;
   canStreamItem?(item: ExternalSourceItemView): boolean;
@@ -313,6 +317,7 @@ export interface ExternalSourceNavigationSnapshot {
 }
 
 export interface UseExternalSourceControllerOptions {
+  getParagraphPage?: import('../../repositories/reader-repository').ReaderRepository['getParagraphPage'];
   saveStreamPosition?(pageIndex: number, chapter: Chapter, novel: Novel): Promise<void>;
   readonly downloadPolicy?: import('../../domain/types').DownloadPolicy;
   readonly updateDownloadPolicy?: (patch: Partial<import('../../domain/types').DownloadPolicy>) => void;
@@ -3422,22 +3427,51 @@ export function useExternalSourceController(options: UseExternalSourceController
     [importItems],
   );
 
+  const beginStream = useCallback((item: ExternalSourceItemView, fromStart = false) => {
+    const port = optionsRef.current.registry.getSourceStream?.(item.key.connectorId as ExtensionContributionId);
+    if (!port) return false;
+    const { assets, getParagraphPage } = optionsRef.current;
+    const savedPort =
+      assets && getParagraphPage
+        ? savedFirstSourceStream(port, {
+            assets,
+            getParagraphPage,
+            find: async (remoteId) => {
+              const current = optionsRef.current;
+              const link = (await current.state.listLinks(item.key.connectorId)).find(
+                (candidate) =>
+                  !candidate.pendingImport &&
+                  externalItemKeyId(candidate.source) === externalItemKeyId({ ...item.key, remoteId }),
+              );
+              if (!link) return undefined;
+              const novel = await current.getNovel(link.localBookId);
+              if (!novel || novel.deletedAt)
+                throw new Error('저장된 회차를 찾을 수 없습니다. 회차 목록을 확인해 주세요.');
+              return {
+                novel,
+                chapters: await current.listChapters(novel.id),
+                sectionId: externalItemSectionId({ ...item, key: { ...item.key, remoteId } }),
+              };
+            },
+          })
+        : port;
+    setStreaming((current) => ({
+      item,
+      fromStart,
+      port:
+        current?.item.key.connectorId === item.key.connectorId &&
+        current?.item.key.accountConnectionId === item.key.accountConnectionId
+          ? current.port
+          : savedPort,
+      historyKey: JSON.stringify([optionsRef.current.settingsScope, externalItemKeyId(item.key)]),
+    }));
+    return true;
+  }, []);
+
   const importAndOpen = useCallback(
     async (item: ExternalSourceItemView) => {
       if (!item.release || item.importState !== 'available') return;
-      const port = optionsRef.current.registry.getSourceStream?.(item.key.connectorId as ExtensionContributionId);
-      if (port && sourceReadingPreferences().mode !== 'download') {
-        setStreaming((current) => ({
-          item,
-          port:
-            current?.item.key.connectorId === item.key.connectorId &&
-            current?.item.key.accountConnectionId === item.key.accountConnectionId
-              ? current.port
-              : port,
-          historyKey: JSON.stringify([optionsRef.current.settingsScope, externalItemKeyId(item.key)]),
-        }));
-        return;
-      }
+      if (sourceReadingPreferences().mode !== 'download' && beginStream(item)) return;
       await importItems([item]);
       if (!openRef.current) return;
       const link = (await optionsRef.current.state.listLinks(item.key.connectorId)).find(
@@ -3456,7 +3490,7 @@ export function useExternalSourceController(options: UseExternalSourceController
         documentSectionTitle: item.release.title,
       });
     },
-    [importItems],
+    [importItems, beginStream],
   );
 
   const importSelected = useCallback(async () => {
@@ -4384,7 +4418,21 @@ export function useExternalSourceController(options: UseExternalSourceController
     importItem,
     importAndOpen,
     streaming,
+    streamingBookId: streaming
+      ? links.find(
+          (link) =>
+            !link.pendingImport &&
+            externalItemKeyId(link.source) === externalItemKeyId(streaming.item.key) &&
+            novels.some((novel) => novel.id === link.localBookId && !novel.deletedAt),
+        )?.localBookId
+      : undefined,
     closeStream: () => setStreaming(undefined),
+    openStreamItem:
+      options.assets && options.getParagraphPage
+        ? async (item) => {
+            if (!item.release || !beginStream(item, true)) throw new Error('이 회차를 바로 열 수 없습니다.');
+          }
+        : undefined,
     saveStreamPosition: (item, page, count) => {
       const run = async () => {
         const current = optionsRef.current;
@@ -4405,8 +4453,10 @@ export function useExternalSourceController(options: UseExternalSourceController
         );
       };
       const pending = streamPositionWrites.current.then(run);
-      streamPositionWrites.current = pending.catch(() => {});
-      return pending;
+      streamPositionWrites.current = pending.catch(() => {
+        optionsRef.current.notify('읽던 위치를 저장하지 못했습니다. 연결 상태를 확인해 주세요.', 'warning');
+      });
+      return streamPositionWrites.current;
     },
     saveStream: async (item) => {
       if (recoveryBusyRef.current || blockingBusy || (importBusy && !canQueueItem(item)))

@@ -15,6 +15,7 @@ export function SourceStreamReader({
   remoteId,
   historyKey = remoteId,
   profileKey = historyKey,
+  fromStart = false,
   port,
   onClose,
   onSave,
@@ -30,6 +31,7 @@ export function SourceStreamReader({
   remoteId: string;
   historyKey?: string;
   profileKey?: string;
+  fromStart?: boolean;
   port: SourceStreamPort;
   onClose(): void;
   onSave(): Promise<void>;
@@ -43,7 +45,13 @@ export function SourceStreamReader({
 }) {
   const [preferences] = useState(sourceReadingPreferences);
   const buffer = useMemo(() => new SourceStreamBuffer(port), [port]);
-  const [opened, setOpened] = useState<{ session: SourceStreamSession; key: string; title: string; epoch: number }>();
+  const [opened, setOpened] = useState<{
+    session: SourceStreamSession;
+    key: string;
+    title: string;
+    epoch: number;
+    fromStart: boolean;
+  }>();
   const [error, setError] = useState('');
   const [attempt, setAttempt] = useState(0);
   const [loaded, setLoaded] = useState('');
@@ -71,7 +79,7 @@ export function SourceStreamReader({
       .open(remoteId, controller.signal)
       .then((session) => {
         if (controller.signal.aborted) return;
-        setOpened((before) => ({ session, key: historyKey, title, epoch: (before?.epoch ?? -1) + 1 }));
+        setOpened((before) => ({ session, key: historyKey, title, fromStart, epoch: (before?.epoch ?? -1) + 1 }));
         buffer.retain([remoteId, ...(callbacks.current.nextEpisode ? [callbacks.current.nextEpisode.remoteId] : [])]);
       })
       .catch((error) => {
@@ -81,7 +89,7 @@ export function SourceStreamReader({
           );
       });
     return () => controller.abort();
-  }, [buffer, remoteId, historyKey, title, attempt]);
+  }, [buffer, remoteId, historyKey, title, attempt, fromStart]);
   const projection = useMemo(
     () =>
       opened
@@ -92,7 +100,7 @@ export function SourceStreamReader({
     [opened],
   );
   const position = useMemo(() => {
-    if (!opened) return undefined;
+    if (!opened || opened.fromStart) return undefined;
     const value = readSourceStreamPosition(opened.key);
     return value?.count === opened.session.pageCount ? value : undefined;
   }, [opened]);
@@ -114,7 +122,6 @@ export function SourceStreamReader({
   const nextId = nextEpisode?.remoteId;
   useEffect(() => {
     if (
-      nextEpisode?.saved ||
       !nextId ||
       !opened ||
       opened.key !== historyKey ||
@@ -216,7 +223,7 @@ export function SourceStreamReader({
               saveSourceStreamPosition(opened.key, { ...value, count: opened.session.pageCount }),
           }}
           onPageSettled={(page, _chapter, _novel) => {
-            if (opened.key === historyKey) void callbacks.current.onPageSettled?.(page, opened.session.pageCount);
+            if (opened.key === historyKey) return onPageSettled?.(page, opened.session.pageCount);
           }}
         />
       </Suspense>

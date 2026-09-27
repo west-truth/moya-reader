@@ -1873,7 +1873,10 @@ export default function FixedDocumentScreen({
   useEffect(() => {
     if (novel.format !== 'image_archive') return;
     let active = true;
-    setComicProfile(DEFAULT_COMIC_READING_PROFILE);
+    // Keep shared view settings while switching stream episodes; only page-specific crops reset.
+    setComicProfile((current) =>
+      remoteNavigation?.profileKey ? { ...current, pageCrops: undefined } : DEFAULT_COMIC_READING_PROFILE,
+    );
     setComicPageHints(new Map());
     void comicReadingProfileRepository
       .get(remoteNavigation?.profileKey ?? novel.id, { direction: novel.readingDirection ?? 'ltr' })

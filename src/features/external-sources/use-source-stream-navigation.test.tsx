@@ -104,6 +104,27 @@ describe('stream navigation across catalog pages', () => {
       await h.dispose();
     }
   });
+  it.each(['available', 'imported', 'update_available'] as const)(
+    'keeps one viewer mounted for a %s neighbor when saved-page access is available',
+    async (importState) => {
+      const h = await harness();
+      try {
+        const openStreamItem = vi.fn(async () => {});
+        const next = { ...h.second, importState };
+        await h.update({ items: [h.first, next], nextCursor: undefined, openStreamItem });
+        let pending!: Promise<void>;
+        await act(async () => {
+          pending = h.result.next!();
+        });
+        await pending;
+        expect(openStreamItem).toHaveBeenCalledWith(next);
+        expect(h.controller.openImported).not.toHaveBeenCalled();
+        expect(h.controller.closeStream).not.toHaveBeenCalled();
+      } finally {
+        await h.dispose();
+      }
+    },
+  );
   it('keeps the current stream when opening a saved neighbor fails and allows retry', async () => {
     const h = await harness();
     try {

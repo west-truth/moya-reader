@@ -12,13 +12,32 @@ const png = await require('sharp')({ create: { width: 600, height: 900, channels
   .toBuffer();
 const code = `import React from 'react';import {createRoot} from 'react-dom/client';import {SourceStreamReader} from '${root}/src/features/external-sources/SourceStreamReader.tsx';
 import {IndexedDbComicReadingProfileRepository} from '${root}/src/storage/comic-reading-profile-store.ts';
+import {savedFirstSourceStream} from '${root}/src/external-sources/saved-source-stream.ts';
+import {useSourceStreamNavigation} from '${root}/src/features/external-sources/use-source-stream-navigation.ts';
+import {saveSourceStreamPosition} from '${root}/src/external-sources/source-stream-history.ts';
 import {DEFAULT_COMIC_READING_PROFILE} from '${root}/src/features/fixed-document/comic-layout.ts';
 import '${root}/src/styles/tokens.css';import '${root}/src/styles/base.css';import '${root}/src/styles/dialogs-import.css';import '${root}/src/styles/shell.css';import '${root}/src/styles/library.css';
-globalThis.calls=[];globalThis.saves=[];globalThis.closedStreams=0;globalThis.opens=[];globalThis.expireNext=false;globalThis.retryPage=false;
+globalThis.positionWrites=[];globalThis.calls=[];globalThis.saves=[];globalThis.closedStreams=0;globalThis.opens=[];globalThis.expireNext=false;globalThis.retryPage=false;
 const params=new URLSearchParams(location.search);localStorage.setItem('moya.source-reading.v1',JSON.stringify({mode:params.get('mode'),prefetch:Number(params.get('prefetch')??8)}));
 const failed=new Set();
-const port={open:async(id)=>{opens.push(id);return {pageCount:30,close(){globalThis.closedStreams++},loadPage:async(index,signal)=>{calls.push([id,index]);if(globalThis.expireNext){globalThis.expireNext=false;throw new Error('source_stream_expired');}if(index===5&&!globalThis.retryPage){throw new Error('연결을 확인해 주세요.');}return (await fetch('/image',{signal})).blob();}}}};
-function Fixture(){const [episode,setEpisode]=React.useState(1);const [saved,setSaved]=React.useState([]);globalThis.episode=episode;const save=async(n)=>{saves.push(n);setSaved(value=>[...value,n]);};return React.createElement(SourceStreamReader,{title:'검증용 만화 '+episode+'화',remoteId:'fixture-'+episode,profileKey:'fixture',port,saved:saved.includes(episode),onClose:()=>globalThis.closedStreams++,onSave:()=>save(episode),previous:episode>1?async(isCurrent=()=>true)=>{if(isCurrent())setEpisode(n=>n-1)}:undefined,next:async(isCurrent=()=>true)=>{if(isCurrent())setEpisode(n=>n+1)},nextEpisode:{remoteId:'fixture-'+(episode+1),title:(episode+1)+'화',saved:saved.includes(episode+1),busy:false,save:()=>save(episode+1)}})}
+const remotePort={open:async(id)=>{opens.push(id);return {pageCount:30,close(){globalThis.closedStreams++},loadPage:async(index,signal)=>{calls.push([id,index]);if(globalThis.expireNext){globalThis.expireNext=false;throw new Error('source_stream_expired');}if(index===5&&!globalThis.retryPage){throw new Error('연결을 확인해 주세요.');}return (await fetch('/image',{signal})).blob();}}}};
+globalThis.savedEpisodes=[];globalThis.savedReads=[];globalThis.remoteOpens=[];
+const originalOpen=remotePort.open;remotePort.open=async(id,signal)=>{remoteOpens.push(id);return originalOpen(id,signal)};
+const port=savedFirstSourceStream(remotePort,{
+ find:async(id)=>{if(!savedEpisodes.includes(Number(id.split('-')[1])))return undefined;opens.push(id);return {novel:{id:'saved-book',format:'image_archive'},sectionId:id,chapters:Array.from({length:30},(_,i)=>({id:id+':'+i,index:i,documentSectionId:id}))}},
+ getParagraphPage:async(id)=>({paragraphs:[{assetId:id}]}),
+ assets:{getEmbeddedResource:async(_,id,signal)=>{const [episode,index]=id.split(':');calls.push([episode,Number(index)]);savedReads.push(episode);return {blob:await(await fetch('/image',{signal})).blob()}}}
+});
+saveSourceStreamPosition('fixture-2',{page:15,fraction:0.5,ratio:1.5,count:30});
+function Fixture(){
+ const [episode,setEpisode]=React.useState(1);
+ const [saved,setSaved]=React.useState(params.get('mixed')==='true'?[2]:[]);
+ globalThis.episode=episode;globalThis.savedEpisodes=saved;
+ const save=async(n)=>{saves.push(n);setSaved(value=>[...value,n]);};
+ const items=Array.from({length:4},(_,i)=>({key:{connectorId:'fixture',remoteId:'fixture-'+(i+1)},title:(i+1)+'화',release:{title:(i+1)+'화',sourceOrder:i+1},importState:saved.includes(i+1)?'imported':'available'}));
+ const nav=useSourceStreamNavigation({streaming:{item:items[episode-1]},items,openStreamItem:async item=>setEpisode(Number(item.key.remoteId.split('-')[1])),openImported:async()=>{throw Error('viewer must stay mounted')},closeStream:()=>{throw Error('viewer must stay mounted')}});
+ return React.createElement(SourceStreamReader,{title:'검증용 만화 '+episode+'화',remoteId:'fixture-'+episode,profileKey:'fixture-'+episode,fromStart:episode>1,port,saved:saved.includes(episode),onClose:()=>globalThis.closedStreams++,onSave:()=>save(episode),onPageSettled:(page)=>positionWrites.push([episode,page]),previous:nav.previous,next:nav.next,navigationBusy:nav.busy,nextEpisode:episode<4?{remoteId:'fixture-'+(episode+1),title:(episode+1)+'화',saved:saved.includes(episode+1),busy:false,save:()=>save(episode+1)}:undefined});
+}
 void new IndexedDbComicReadingProfileRepository().save('fixture',{...DEFAULT_COMIC_READING_PROFILE,mode:params.get('view')||'vertical',seamlessVertical:true,fit:'width',pageTurnMotion:'instant'}).then(()=>createRoot(document.getElementById('root')).render(React.createElement(Fixture)));`;
 const result = await build({
   root,
@@ -76,17 +95,21 @@ async function reveal(page) {
   await page.locator('.fixed-doc-footer').waitFor({ state: 'visible' });
 }
 try {
-  for (const [mode, width, view, prefetch] of [
+  for (const [mode, width, view, prefetch, mixed = false] of [
     ['stream-save', 390, 'vertical', 8],
     ['stream', 390, 'vertical', 8],
     ['stream', 1280, 'single', 8],
     ['stream', 1280, 'spread', 0],
+    ['stream', 390, 'vertical', 8, true],
+    ['stream', 1280, 'spread', 8, true],
   ]) {
     const page = await browser.newPage({ viewport: { width, height: 844 } }),
       errors = [];
     page.setDefaultTimeout(10000);
     page.on('pageerror', (error) => errors.push(error.message));
-    await page.goto(`http://127.0.0.1:${server.address().port}/?mode=${mode}&view=${view}&prefetch=${prefetch}`);
+    await page.goto(
+      `http://127.0.0.1:${server.address().port}/?mode=${mode}&view=${view}&prefetch=${prefetch}&mixed=${mixed}`,
+    );
     await page.waitForFunction(() => document.querySelector('.fixed-doc-pages img')?.naturalWidth > 0);
     assert.equal(await page.locator('.source-stream-toolbar').count(), 0);
     assert.equal(await page.getByRole('button', { name: '저장 취소', exact: true }).count(), 0);
@@ -120,6 +143,13 @@ try {
         root.scrollTop += row.getBoundingClientRect().top - root.getBoundingClientRect().top + 120;
       });
       await page.waitForFunction(() => document.querySelector('article[data-page-index="24"] img')?.naturalWidth > 0);
+      await page.waitForTimeout(200);
+      // Position within the decoded image, after estimated page sizes have settled.
+      await page.evaluate(() => {
+        const root = document.querySelector('.fixed-doc-viewport');
+        const row = document.querySelector('article[data-page-index="24"]');
+        root.scrollTop += row.getBoundingClientRect().top - root.getBoundingClientRect().top + 120;
+      });
       await page.waitForTimeout(500);
       assert.equal(
         await page.evaluate(() => JSON.parse(localStorage.getItem('moya.source-stream-positions.v1')).at(-1)[1].page),
@@ -169,16 +199,35 @@ try {
         before,
         'Prepared bytes reused by the existing viewer',
       );
+    await page.waitForTimeout(400);
+    assert.equal(
+      await page.evaluate(() => positionWrites.some(([episode, index]) => episode === 2 && index >= 15)),
+      false,
+      'A next episode starts at its beginning, not its prior history or the previous episode position',
+    );
+    if (mixed) {
+      assert.equal(await page.evaluate(() => remoteOpens.includes('fixture-2')), false);
+      assert(await page.evaluate(() => savedReads.includes('fixture-2')));
+    }
     if (view === 'vertical') {
       await page.evaluate(() => {
         globalThis.expireNext = true;
       });
       await page.locator('article[data-page-index="29"]').scrollIntoViewIfNeeded();
       await page.waitForFunction(() => document.querySelector('article[data-page-index="29"] img')?.naturalWidth > 0);
+    } else {
+      await reveal(page);
+      const seek = page.getByRole('slider', { name: '만화 페이지 빠르게 이동' });
+      await seek.focus();
+      await seek.press('End');
+      await page.waitForFunction(() => document.querySelector('article[data-page-index="29"] img')?.naturalWidth > 0);
+    }
+    {
       await reveal(page);
       const menu = page.getByRole('button', { name: '문서 메뉴', exact: true });
       if (await menu.isVisible()) await menu.click();
       await page.getByRole('button', { name: '자동 읽기', exact: true }).click();
+      if (view !== 'vertical') await page.getByLabel('자동 읽기 방식', { exact: true }).selectOption('page-turn');
       await page.getByLabel('회차 끝에서 다음 회차로 이동').check();
       await page.getByRole('button', { name: '시작', exact: true }).click();
       await page.waitForFunction(() => episode === 3, undefined, { timeout: 15000 });
@@ -188,7 +237,7 @@ try {
       await page.getByRole('button', { name: '자동 읽기 일시정지', exact: true }).waitFor();
     }
     assert.deepEqual(errors, []);
-    console.log(JSON.stringify({ mode, width, view, prefetch, passed: true }));
+    console.log(JSON.stringify({ mode, width, view, prefetch, mixed, passed: true }));
     await page.close();
   }
 } finally {

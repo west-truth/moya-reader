@@ -76,8 +76,9 @@ export function useSourceStreamNavigation(controller: ExternalSourceController, 
         return;
       }
       request.opening = true;
-      const operation =
-        target.importState === 'imported' || target.importState === 'update_available'
+      const operation = latest.current.openStreamItem
+        ? latest.current.openStreamItem(target)
+        : target.importState === 'imported' || target.importState === 'update_available'
           ? (async () => {
               await latest.current.openImported(target, true);
               latest.current.closeStream?.();
