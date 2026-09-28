@@ -296,6 +296,7 @@ export function BookWorkspaceScreens({
     importTasks,
     presentation: {
       layoutMode,
+      showReadingCounts: textReader?.settings.showLibraryReadingCounts === true,
       focusedBookId,
       inspectorOpen: layoutMode === 'wide' || inspectorOpen,
       shelfBookCounts,
@@ -503,7 +504,9 @@ export function BookWorkspaceScreens({
                       currentReadTargetChapter: projection.currentReadTargetChapter,
                       canMarkCurrentChapterRead: projection.canMarkCurrentChapterRead,
                       canMarkBookFinished: projection.canMarkBookFinished,
-                      canResetBookProgress: projection.canResetBookProgress,
+                      canResetBookProgress:
+                        projection.canResetBookProgress ||
+                        Boolean(externalSources.sourceWorkProgress?.byNovelId.get(state.selectedNovel!.id)?.readCount),
                     },
                   }}
                   actions={{
@@ -528,7 +531,10 @@ export function BookWorkspaceScreens({
                       openFirstUnreadChapter: controller.openFirstUnreadChapter,
                       markCurrentChapterRead: controller.markCurrentChapterRead,
                       markFinished: controller.markBookFinished,
-                      resetProgress: controller.resetBookProgress,
+                      resetProgress: () =>
+                        controller.resetBookProgress(
+                          () => externalSources.clearBookSourceHistory?.(state.selectedNovel!) ?? Promise.resolve(),
+                        ),
                       exportSource,
                       reselectSource,
                       reconstructSource,

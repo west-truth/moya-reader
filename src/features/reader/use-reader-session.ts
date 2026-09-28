@@ -142,6 +142,7 @@ export interface ReaderSessionOptions extends Omit<ReaderSessionTarget, 'novelId
 
 export function useReaderSession(options: ReaderSessionOptions): { flush: () => Promise<void> } {
   const trackerRef = useRef<ReaderSessionTracker>();
+  const pendingRef = useRef(Promise.resolve());
   const activeSessionRef = useRef<object>();
   const {
     active,
@@ -213,7 +214,8 @@ export function useReaderSession(options: ReaderSessionOptions): { flush: () => 
       }
       if (trackerRef.current === tracker) trackerRef.current = undefined;
       if (activeSessionRef.current === sessionIdentity) activeSessionRef.current = undefined;
-      void tracker.flush();
+      tracker.setEnvironment(false, false);
+      pendingRef.current = Promise.all([pendingRef.current, tracker.flush()]).then(() => undefined);
     };
   }, [active, novelId, onCommitted, onDisplayChanged, onFailed, onStarted, repository, personalizationRepository]);
 
@@ -228,6 +230,9 @@ export function useReaderSession(options: ReaderSessionOptions): { flush: () => 
     return () => window.clearInterval(displayTimer);
   }, [active, novelId, statsVisible]);
 
-  const flush = useCallback(() => trackerRef.current?.flush() ?? Promise.resolve(), []);
+  const flush = useCallback(async () => {
+    await pendingRef.current;
+    await trackerRef.current?.flush();
+  }, []);
   return { flush };
 }

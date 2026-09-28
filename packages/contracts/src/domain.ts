@@ -623,6 +623,8 @@ export interface ReaderSettings {
   applicationTheme?: ReadingProfileTheme;
   /** Hide decorative branding on this device. */
   hideAppLogo?: boolean;
+  /** Show numeric reading progress in library cover views on this device. */
+  showLibraryReadingCounts?: boolean;
   /**
    * How library progress is shown for works added from an extension source: read releases out of
    * everything the source lists (default), or the downloaded chapters as for any local book.

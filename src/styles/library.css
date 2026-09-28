@@ -1137,9 +1137,6 @@
 .book-card .book-remove-action {
   display: none;
 }
-.book-card.external-work-card .book-remove-action {
-  display: inline-grid;
-}
 
 .book-direct-action {
   min-height: 30px;
@@ -2827,4 +2824,19 @@
 }
 .books-grid[data-view='compact'] .import-task-actions {
   margin-left: auto;
+}
+
+.book-card .card-row > strong:has(.library-reading-count) {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.library-reading-count {
+  font-variant-numeric: tabular-nums;
+  font-size: 11px;
+}
+.book-card .card-row:has(.library-reading-count) .card-actions {
+  flex-shrink: 0;
 }

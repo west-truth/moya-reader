@@ -74,6 +74,24 @@ function harness() {
 }
 
 describe('stream reading persistence', () => {
+  it('discards uncommitted positions on reset and allows a new visit to the same episode', async () => {
+    const h = harness();
+    try {
+      await h.progress.record(h.item(1), { kind: 'image', page: 4, count: 8 });
+      await h.progress.clearWork({ ...h.item(1).key, remoteId: 'work' });
+      h.preferences.clear();
+      h.link(1);
+      await h.progress.reconcile();
+      expect(h.saveImage).not.toHaveBeenCalled();
+      expect(h.preferences.size).toBe(0);
+      await h.progress.record(h.item(1), { kind: 'image', page: 0, count: 1 });
+      expect(h.saveImage).toHaveBeenCalledTimes(1);
+      expect([...h.preferences.values()][0].read).toBe(true);
+    } finally {
+      h.close();
+    }
+  });
+
   it('records streamed episodes without downloads and replays only the latest location when downloads finish', async () => {
     const h = harness();
     try {

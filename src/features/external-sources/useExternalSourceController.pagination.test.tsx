@@ -261,6 +261,43 @@ describe('source series pagination integration', () => {
     },
   );
 
+  it.each(['txt', 'image_archive'] as const)(
+    'loads the persisted streamed episode before positioning the %s detail, including cached catalogs',
+    async (format) => {
+      const h = await fixture(format, true);
+      h.novel.lastReadChapterId = h.chapters[0].id;
+      h.novel.lastReadChapterIndex = h.chapters[0].index;
+      h.novel.lastReadProgress = 0.5;
+      h.setPage(async () => ({ items: Array.from({ length: 100 }, (_, i) => release(i + 1, format)) }));
+      let currentEpisode = 46;
+      h.state.listReleasePreferences = async () => [
+        {
+          id: 'stream-visit',
+          kind: 'releasePreference',
+          source: release(currentEpisode, format).key,
+          collectionRemoteId: 'work',
+          read: true,
+          readingMode: 'stream',
+          lastReadAt: '2026-09-28T00:00:00.000Z',
+          updatedAt: '2026-09-28T00:00:00.000Z',
+        },
+      ];
+      try {
+        await act(async () => h.controller.showLocalSeries(h.novel));
+        expect(h.renderer.root.findByProps({ 'aria-current': 'page' }).props['aria-label']).toBe('5페이지');
+        expect(h.controller.items.filter((item) => item.readingState === 'current').map((item) => item.title)).toEqual([
+          '46화',
+        ]);
+        await act(async () => h.controller.close());
+        currentEpisode = 86;
+        await act(async () => h.controller.showLocalSeries(h.novel));
+        expect(h.renderer.root.findByProps({ 'aria-current': 'page' }).props['aria-label']).toBe('9페이지');
+      } finally {
+        await act(async () => h.renderer.unmount());
+      }
+    },
+  );
+
   it('publishes the first complete snapshot once, reuses it without requests, and stages background changes', async () => {
     const h = await fixture();
     let finish!: () => void;

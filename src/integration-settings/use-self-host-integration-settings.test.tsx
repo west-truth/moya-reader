@@ -47,8 +47,9 @@ function createFixture(
   const onApplied = vi.fn();
   const notify = vi.fn();
 
+  let waitUntilReady!: () => Promise<void>;
   function Harness() {
-    useSelfHostIntegrationSettings({
+    waitUntilReady = useSelfHostIntegrationSettings({
       enabled: true,
       client: { getIntegrationSettings, saveIntegrationSettings },
       extensionManager: {
@@ -84,6 +85,7 @@ function createFixture(
 
   return {
     Harness,
+    waitUntilReady: () => waitUntilReady(),
     extensionListeners,
     getIntegrationSettings,
     saveIntegrationSettings,
@@ -157,6 +159,57 @@ describe('useSelfHostIntegrationSettings', () => {
       4,
     );
 
+    await act(async () => renderer.unmount());
+  });
+
+  it('holds reading actions until the remote snapshot and source configuration are applied', async () => {
+    let resolve!: (value: { settings: SelfHostIntegrationSettingsV1 }) => void;
+    const fixture = createFixture(
+      vi.fn(
+        () =>
+          new Promise((done) => {
+            resolve = done;
+          }),
+      ),
+    );
+    let finishApply!: () => void;
+    fixture.refreshTextConfiguration.mockImplementation(
+      () =>
+        new Promise((done) => {
+          finishApply = () => done(undefined);
+        }),
+    );
+    let renderer!: ReactTestRenderer;
+    await act(async () => {
+      renderer = create(<fixture.Harness />);
+    });
+    const ready = vi.fn();
+    const waiting = fixture.waitUntilReady().then(ready);
+    expect(ready).not.toHaveBeenCalled();
+    await act(async () => {
+      resolve({ settings: integrationSettings() });
+      await flush();
+    });
+    expect(ready).not.toHaveBeenCalled();
+    await act(async () => {
+      finishApply();
+      await waiting;
+    });
+    expect(ready).toHaveBeenCalledOnce();
+    await act(async () => renderer.unmount());
+  });
+
+  it('rejects reading actions when the initial history could not be loaded', async () => {
+    const fixture = createFixture(
+      vi.fn(async () => {
+        throw new Error('offline');
+      }),
+    );
+    let renderer!: ReactTestRenderer;
+    await act(async () => {
+      renderer = create(<fixture.Harness />);
+    });
+    await expect(fixture.waitUntilReady()).rejects.toThrow('읽기 기록');
     await act(async () => renderer.unmount());
   });
 

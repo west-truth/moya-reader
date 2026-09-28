@@ -1,3 +1,4 @@
+import { clearBookReadingSessions } from './clear-book-reading-sessions';
 import type { Novel, ReaderSettings } from '../domain/types';
 import { sharedReaderSettings, sharedReaderSettingsEqual } from '../repositories/reader-settings-scope';
 import {
@@ -138,6 +139,7 @@ export async function clearReadingPosition(novelId: string): Promise<void> {
   const tx = db.transaction(
     [
       'novels',
+      'reading_session_events',
       'reading_positions',
       'sync_tombstones',
       'devices',
@@ -159,6 +161,8 @@ export async function clearReadingPosition(novelId: string): Promise<void> {
   novelStore.put(
     storedNovel({
       ...novel,
+      readingSeconds: 0,
+      lastReadAt: undefined,
       lastReadChapterId: undefined,
       lastReadChapterIndex: undefined,
       lastReadParagraphId: undefined,
@@ -168,6 +172,7 @@ export async function clearReadingPosition(novelId: string): Promise<void> {
     }),
   );
   deleteByIndexInTransaction(tx, 'reading_positions', 'novelId', novelId);
+  await clearBookReadingSessions(tx, novelId);
   await clearExactDocumentSectionReadState(tx, novel);
   tx.objectStore('sync_tombstones').put(tombstoneEntity('reading_position', positionId, deletedAt, novelId));
   await queueSyncEventInTransaction(tx, 'reading_position_deleted', jsonValue({ id: positionId, deletedAt }), {

@@ -6,7 +6,7 @@ import {
   ChevronLeft,
   Headphones,
   Highlighter,
-  ArrowDownToLine,
+  Play,
   LocateFixed,
   Maximize2,
   Minimize2,
@@ -210,7 +210,7 @@ export function ReaderChrome({
             title="자동 스크롤"
             aria-label="자동 스크롤 설정"
           >
-            <ArrowDownToLine size={18} />
+            <Play size={18} />
           </button>
           <button
             className="icon-btn reader-topbar-secondary"
@@ -446,7 +446,7 @@ export function ReaderChrome({
                 </button>
                 {onOpenAutoScroll && (
                   <button type="button" role="menuitem" onClick={() => runOverflowAction(onOpenAutoScroll)}>
-                    <ChevronsRight size={15} /> 자동 읽기
+                    <Play size={15} /> 자동 읽기
                   </button>
                 )}
                 <button type="button" role="menuitem" onClick={() => runOverflowAction(actions.toggleNightTheme)}>

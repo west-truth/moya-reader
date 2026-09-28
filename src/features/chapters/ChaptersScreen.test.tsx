@@ -214,7 +214,7 @@ describe('ChaptersScreen', () => {
     expect(markup.indexOf('book-management-disclosure')).toBeLessThan(markup.indexOf('chapter-panel'));
     expect(markup).toContain('작품 관리 및 파일 정보');
     expect(markup).toContain('원본 다운로드');
-    expect(markup).toContain('읽은 위치 초기화');
+    expect(markup).toContain('읽은 기록 초기화');
   });
 
   it('starts on the ten-row page containing the current chapter', () => {

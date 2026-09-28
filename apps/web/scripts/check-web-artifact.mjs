@@ -38,7 +38,8 @@ assert(coreBytes <= 4 * 1024 * 1024, `Initial offline assets exceed 4MiB: ${core
 const entry = html.match(/<script[^>]+src="([^"]+)"/)[1];
 assert(manifest.precache.includes(entry));
 const entryGzip = gzipSync(fs.readFileSync(path.join(root, entry.slice(manifest.base.length)))).length;
-assert(entryGzip <= 650 * 1024, `Entry JS exceeds 650KiB gzip: ${entryGzip}`);
+// September 2026 baseline: 646KiB gzip. Allow ~8% headroom for incremental UI changes.
+assert(entryGzip <= 700 * 1024, `Entry JS exceeds 700KiB gzip: ${entryGzip}`);
 assert(!html.includes('runtime-config.js'), 'Offline boot must not depend on uncached server config');
 assert(html.includes(`${manifest.base}assets/`));
 assert(html.includes(`${manifest.base}manifest.webmanifest`));

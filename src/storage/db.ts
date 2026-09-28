@@ -1,3 +1,5 @@
+import { clearBookReadingSessions } from './clear-book-reading-sessions';
+import { clearExactDocumentSectionReadState } from './exact-section-read-state';
 import { sharedReaderSettings } from '../repositories/reader-settings-scope';
 import { preserveLocalReaderSettings } from './device-reader-settings-store';
 import type {
@@ -1195,11 +1197,15 @@ async function applyRemoteSyncEvent(tx: IDBTransaction, event: SyncEvent): Promi
     if (tombstone && !isRemoteNewer(deletedAt, tombstone.deletedAt)) return;
     if (existingPosition && !isRemoteNewer(deletedAt, existingPosition.updatedAt)) return;
     positionStore.delete(id);
+    await clearBookReadingSessions(tx, event.novelId);
+    if (existingNovel) await clearExactDocumentSectionReadState(tx, existingNovel);
     tombstoneStore.put(tombstoneEntity('reading_position', id, deletedAt, event.novelId));
     if (existingNovel) {
       tx.objectStore('novels').put(
         storedNovel({
           ...existingNovel,
+          readingSeconds: 0,
+          lastReadAt: undefined,
           lastReadChapterId: undefined,
           lastReadChapterIndex: undefined,
           lastReadParagraphId: undefined,

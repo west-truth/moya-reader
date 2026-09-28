@@ -1324,7 +1324,7 @@ export default function App() {
     notify: showToast,
   });
   const webNovelMetadataCollector = extensionRuntime.webNovelMetadataCollector;
-  useSelfHostIntegrationSettings({
+  const waitForSourceReadingHistory = useSelfHostIntegrationSettings({
     enabled: readerRuntime.mode === 'remote',
     client: remoteApiClient,
     extensionManager: extensionRuntime.manager,
@@ -1508,6 +1508,10 @@ export default function App() {
         offsetInParagraph: 0,
       }),
     saveTextPosition: (input) => readerRepository.saveReadingPosition(input),
+    clearReadingHistory: async (novelId) => {
+      await readingSession.flush();
+      await readerRepository.clearReadingPosition(novelId);
+    },
     downloadPolicy: settings.downloadPolicy ?? legacyDownloads,
     updateDownloadPolicy: (patch) =>
       updateSettings((previous) => ({
@@ -1520,6 +1524,7 @@ export default function App() {
       })),
     readingActive: view === 'reader' || view === 'document',
     settingsScope: downloadSettingsScope,
+    waitForReadingHistory: waitForSourceReadingHistory,
     readingTarget:
       (view === 'reader' || view === 'document') && selectedNovel && currentChapter?.documentSectionId
         ? { novelId: selectedNovel.id, sectionId: currentChapter.documentSectionId }

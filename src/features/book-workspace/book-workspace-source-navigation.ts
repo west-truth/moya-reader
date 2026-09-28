@@ -12,9 +12,16 @@ export function shouldOpenSourceSeriesDetails(novel: Novel, linkedSeriesBookIds:
 export async function openLibraryBook(
   novel: Novel,
   workspace: Pick<BookWorkspaceController, 'replaceSelection' | 'setView' | 'openNovel'>,
-  sources: Pick<ExternalSourceController, 'linkedSeriesBookIds' | 'showLocalSeries' | 'close'>,
+  sources: Pick<
+    ExternalSourceController,
+    'linkedSeriesBookIds' | 'showLocalSeries' | 'close' | 'resolveSourceSeriesBook'
+  >,
 ): Promise<void> {
-  if (shouldOpenSourceSeriesDetails(novel, sources.linkedSeriesBookIds)) {
+  const sourceSeries = sources.resolveSourceSeriesBook
+    ? await sources.resolveSourceSeriesBook(novel)
+    : shouldOpenSourceSeriesDetails(novel, sources.linkedSeriesBookIds);
+  if (sourceSeries === undefined) return;
+  if (sourceSeries) {
     workspace.replaceSelection({
       selectedNovel: novel,
       chapters: [],
@@ -32,10 +39,13 @@ export async function openLibraryBook(
 
 export async function returnToSourceSeriesDetails(
   workspace: Pick<BookWorkspaceController, 'returnToChaptersAndThen' | 'setView'>,
-  sources: Pick<ExternalSourceController, 'linkedSeriesBookIds' | 'showLocalSeries'>,
+  sources: Pick<ExternalSourceController, 'linkedSeriesBookIds' | 'showLocalSeries' | 'resolveSourceSeriesBook'>,
 ): Promise<void> {
   await workspace.returnToChaptersAndThen(async (novel) => {
-    if (!shouldOpenSourceSeriesDetails(novel, sources.linkedSeriesBookIds)) return;
+    const sourceSeries = sources.resolveSourceSeriesBook
+      ? await sources.resolveSourceSeriesBook(novel)
+      : shouldOpenSourceSeriesDetails(novel, sources.linkedSeriesBookIds);
+    if (!sourceSeries) return;
     workspace.setView('library');
     await sources.showLocalSeries(novel);
   });

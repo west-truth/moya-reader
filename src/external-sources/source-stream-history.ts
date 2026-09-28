@@ -48,3 +48,16 @@ export function saveSourceStreamPosition(identity: string, position: Omit<Source
     /* Reading remains available with browser storage disabled or full. */
   }
 }
+
+/** Remove both image offsets and every text-revision offset for the selected episodes. */
+export function clearSourceStreamPositions(identities: readonly string[]): void {
+  const selected = new Set(identities);
+  const before = entries();
+  const remaining = before.filter(([id]) => {
+    if (selected.has(id)) return false;
+    const textSuffix = id.lastIndexOf(':text:');
+    return textSuffix < 0 || !selected.has(id.slice(0, textSuffix));
+  });
+  if (remaining.length === before.length) return;
+  localStorage.setItem(key, JSON.stringify(remaining));
+}

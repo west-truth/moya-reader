@@ -32,6 +32,18 @@ describe('Library source-series navigation', () => {
     expect(sources.close).not.toHaveBeenCalled();
   });
 
+  it.each([true, undefined])(
+    'resolves persisted source links before opening an initial detail (%s)',
+    async (linked) => {
+      const novel = testNovel({ format: 'txt', documentSectionCount: 2 });
+      const workspace = { replaceSelection: vi.fn(), setView: vi.fn(), openNovel: vi.fn() };
+      const sources = { ...sourceState(novel.id, false), resolveSourceSeriesBook: vi.fn(async () => linked) };
+      await openLibraryBook(novel, workspace, sources);
+      expect(workspace.openNovel).not.toHaveBeenCalled();
+      expect(sources.showLocalSeries).toHaveBeenCalledTimes(linked ? 1 : 0);
+    },
+  );
+
   it.each(['txt', 'image_archive'] as const)(
     'closes the SourceHub back layer before continuing a %s book',
     async (format) => {

@@ -40,6 +40,7 @@ export function SourceReleasePanel({
     SOURCE_RELEASE_PAGE_SIZE,
     // Keep downloaded subsets usable, but settle the reading page only after catalog preparation.
     !controller.loading &&
+      !controller.readingHistoryLoading &&
       !controller.catalogPreparing &&
       !controller.nextCursor &&
       !controller.listError &&

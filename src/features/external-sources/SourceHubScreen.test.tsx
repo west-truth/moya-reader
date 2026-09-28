@@ -280,7 +280,9 @@ describe('SourceHubScreen', () => {
       />,
     );
     expect(markup).toContain('#remote11</span>');
-    expect(markup).not.toContain('작품 관리 및 파일 정보');
+    expect(markup).toContain('작품 관리 및 파일 정보');
+    expect(markup).toContain('스트리밍 · 저장된 파일 없음');
+    expect(markup).toContain('읽은 기록 초기화');
     expect(markup).not.toContain('누적 독서');
   });
 

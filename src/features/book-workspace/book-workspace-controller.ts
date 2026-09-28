@@ -613,15 +613,17 @@ export class BookWorkspaceController {
     }
   };
 
-  readonly resetBookProgress = async (): Promise<void> => {
+  readonly resetBookProgress = async (clearSourceHistory?: () => Promise<void>): Promise<void> => {
     const novel = this.state.selectedNovel;
     const projection = buildBookWorkspaceReadingProjection(this.state);
-    if (!novel || !projection.canResetBookProgress) return;
+    if (!novel || (!projection.canResetBookProgress && !clearSourceHistory)) return;
     const confirmed = this.ports.environment.confirm(
-      `"${novel.title}"의 읽은 위치를 초기화할까요?\n\n이어 읽기 위치와 진행률만 지워지고 본문, 북마크, 하이라이트, 메모는 유지됩니다.`,
+      `"${novel.title}"의 읽은 기록을 초기화할까요?\n\n읽음 표시, 이어 읽기 위치와 누적 독서 시간이 지워집니다. 본문, 북마크, 하이라이트, 메모는 유지됩니다.`,
     );
     if (!confirmed) return;
     try {
+      await this.ports.transition.flushReaderSession();
+      await clearSourceHistory?.();
       await this.ports.repository.clearReadingPosition(novel.id);
       const [freshNovel, readingPosition] = await Promise.all([
         this.ports.repository.getNovel(novel.id),
@@ -637,7 +639,7 @@ export class BookWorkspaceController {
           chapters: this.state.chapters.map((chapter) => ({ ...chapter, documentSectionReadAt: undefined })),
         });
       }
-      this.ports.environment.notify('읽은 위치와 진행률을 초기화했습니다.', 'success');
+      this.ports.environment.notify('읽은 기록을 초기화했습니다.', 'success');
     } catch (error) {
       await this.handleProgressFailure(
         error,

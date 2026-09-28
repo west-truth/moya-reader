@@ -43,8 +43,8 @@ export function DownloadSettingsPanel({ controller }: { readonly controller: Ext
             value={sourceReading.mode}
             onChange={(e) => changeSourceReading({ mode: e.target.value as SourceReadingPreferences['mode'] })}
           >
-            <option value="stream-save">바로 읽으면서 회차 저장</option>
             <option value="stream">저장 없이 바로 읽기</option>
+            <option value="stream-save">바로 읽으면서 회차 저장</option>
             <option value="download">다운로드 완료 후 읽기</option>
           </select>
         </label>

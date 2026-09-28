@@ -1,7 +1,8 @@
-import { BookOpen, Play, Trash2 } from 'lucide-react';
+import { LibraryCountLabel } from './LibraryCountLabel';
+import { BookOpen, Play } from 'lucide-react';
 import { useState } from 'react';
 import { formatDateTime, formatProgress } from '../../utils/format';
-import { importTaskIsActive, importTaskLabel, type ImportTaskView } from '../import/import-task-projection';
+import { importTaskLabel, type ImportTaskView } from '../import/import-task-projection';
 import type { LibraryExternalWorkView, LibraryScreenProps } from './library-screen-contract';
 import { externalWorkListMeta, externalWorkReleaseLabel } from './library-source-progress';
 import { LibraryImportTaskActions, LibraryImportTaskOverlay } from './LibraryImportTaskItems';
@@ -10,6 +11,7 @@ import { LibraryReadingProgress } from './LibraryReadingProgress';
 interface ExternalWorkItemProps extends Pick<LibraryScreenProps, 'actions'> {
   readonly work: LibraryExternalWorkView;
   readonly importTask?: ImportTaskView;
+  readonly showReadingCounts?: boolean;
 }
 
 function workProgress(work: LibraryExternalWorkView): number {
@@ -44,7 +46,7 @@ function ExternalWorkCover({ work, thumbnail }: { work: LibraryExternalWorkView;
   );
 }
 
-function ExternalWorkActions({ work, actions, importTask }: ExternalWorkItemProps) {
+function ExternalWorkActions({ work, actions }: ExternalWorkItemProps) {
   const continueLabel = work.lastReadAt ? '이어 보기' : '첫 화 보기';
   const continueExternal = actions.books.continueExternal;
   return (
@@ -61,22 +63,12 @@ function ExternalWorkActions({ work, actions, importTask }: ExternalWorkItemProp
           <span>{continueLabel}</span>
         </button>
       )}
-      <button
-        type="button"
-        className="mini-icon-btn book-remove-action"
-        title="라이브러리에서 제거"
-        aria-label={`${work.title} 라이브러리에서 제거`}
-        disabled={Boolean(importTask && importTaskIsActive(importTask))}
-        onClick={() => void actions.books.removeExternal(work.id)}
-      >
-        <Trash2 size={15} />
-      </button>
     </div>
   );
 }
 
 /** A streamed work reads like any library book: cover, progress, last read and a direct continue. */
-export function ExternalWorkCard({ work, actions, importTask }: ExternalWorkItemProps) {
+export function ExternalWorkCard({ work, actions, importTask, showReadingCounts }: ExternalWorkItemProps) {
   const progress = workProgress(work);
   return (
     <article className="book-card external-work-card" role="listitem">
@@ -111,7 +103,15 @@ export function ExternalWorkCard({ work, actions, importTask }: ExternalWorkItem
           className="card-progress"
         />
         <div className="card-row">
-          <strong>{importTask ? importTaskLabel(importTask) : formatProgress(progress)}</strong>
+          <strong>
+            {importTask ? (
+              importTaskLabel(importTask)
+            ) : showReadingCounts ? (
+              <LibraryCountLabel current={work.readReleaseCount ?? 0} total={work.availableReleaseCount} unit="화" />
+            ) : (
+              formatProgress(progress)
+            )}
+          </strong>
           <span>{workLastReadLabel(work)}</span>
           {importTask?.phase === 'failed' ? (
             <LibraryImportTaskActions task={importTask} actions={actions} />

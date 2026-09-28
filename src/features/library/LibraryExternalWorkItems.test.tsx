@@ -25,6 +25,7 @@ describe.each([ExternalWorkCard, ExternalWorkListRow])('stream-only library item
     await act(async () => {
       renderer = create(<Item work={work} actions={actions} />);
     });
+    expect(renderer.root.findAllByProps({ 'aria-label': '스트리밍 작품 라이브러리에서 제거' })).toHaveLength(0);
     expect(renderer.root.findByType('img').props.src).toBe('blob:cover');
     expect(renderer.root.findByProps({ role: 'progressbar' }).props['aria-valuenow']).toBe(30);
     await act(async () => renderer.root.findByProps({ 'aria-label': '스트리밍 작품 이어 보기' }).props.onClick());

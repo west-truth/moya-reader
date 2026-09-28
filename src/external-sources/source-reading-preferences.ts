@@ -7,7 +7,7 @@ export interface SourceReadingPreferences {
   prefetch: 0 | 2 | 4 | 8;
 }
 export const sourceReadingDefaults: SourceReadingPreferences = {
-  mode: 'stream-save',
+  mode: 'stream',
   listMinutes: 30,
   coverHours: 24,
   imageMinutes: 2,

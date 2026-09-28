@@ -154,6 +154,17 @@ export function ReaderSettingsAppearance({
           <label className="reader-settings-check">
             <input
               type="checkbox"
+              checked={controller.settings.showLibraryReadingCounts === true}
+              onChange={(event) => controller.updateSettings({ showLibraryReadingCounts: event.target.checked })}
+            />
+            표지 보기에서 회차·페이지 수 표시
+          </label>
+          <p className="muted">
+            표지와 작은 표지의 퍼센트 대신 현재/전체 수를 표시합니다. 큰 숫자는 천·만 단위로 줄입니다.
+          </p>
+          <label className="reader-settings-check">
+            <input
+              type="checkbox"
               checked={controller.settings.hideAppLogo === true}
               onChange={(event) => controller.updateSettings({ hideAppLogo: event.target.checked })}
             />

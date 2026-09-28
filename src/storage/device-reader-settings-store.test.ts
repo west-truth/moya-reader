@@ -14,6 +14,11 @@ import { putItem } from './indexeddb-transaction';
 beforeEach(() => resetReaderDbForTests());
 
 describe('device reader settings boundary', () => {
+  it('persists library cover counts locally without synchronizing them', async () => {
+    await saveSettings({ ...(await getSettings()), showLibraryReadingCounts: true });
+    expect((await getSettings()).showLibraryReadingCounts).toBe(true);
+    expect(await listSyncOutbox()).toEqual([]);
+  });
   it('preserves an unmigrated local profile before applying a legacy remote settings event', async () => {
     await putItem('settings', { ...defaultSettings, fontSize: 26, applicationTheme: 'sepia' });
     await applyRemoteSyncEvents([

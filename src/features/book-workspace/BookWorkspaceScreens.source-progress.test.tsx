@@ -76,6 +76,14 @@ function render(settings: ReaderSettings) {
 }
 
 describe('BookWorkspaceScreens source work progress', () => {
+  it('passes the cover count preference through to cards and retains the progress basis toggle', () => {
+    expect(render({ ...defaultSettings, showLibraryReadingCounts: true })).toContain('library-reading-count');
+    expect(render(defaultSettings)).not.toContain('library-reading-count');
+    expect(render({ ...defaultSettings, showLibraryReadingCounts: true })).toContain('title="30 / 120화"');
+    expect(render({ ...defaultSettings, showLibraryReadingCounts: true, sourceProgressBasis: 'downloaded' })).toContain(
+      'title="30 / 30화"',
+    );
+  });
   it('shows source works against the source release list by default', () => {
     const markup = render(defaultSettings);
     expect(markup).toContain('25%');
