@@ -2928,7 +2928,7 @@ export default function FixedDocumentScreen({
             }
             preserveFocalPoint(() => setZoom((value) => (value > 1.02 ? 1 : 2)), event.clientX, event.clientY);
           }}
-          aria-busy={documentStatus === 'loading'}
+          aria-busy={documentStatus === 'loading' || remoteNavigation?.busy}
         >
           {documentStatus === 'failed' && !stableComicFlow ? (
             <div className="fixed-doc-message">
@@ -3077,17 +3077,21 @@ export default function FixedDocumentScreen({
                     >
                       <div className="fixed-doc-page-retry">
                         <span role="status">{archiveImages.errors.get(index) ?? `${index + 1}페이지 불러오는 중`}</span>
-                        <button
-                          type="button"
-                          className="secondary-btn"
-                          aria-label={`${index + 1}페이지 다시 불러오기`}
-                          onClick={(event) => {
-                            event.stopPropagation();
-                            archiveImages.retry(index);
-                          }}
-                        >
-                          <RefreshCw size={16} /> 다시 불러오기
-                        </button>
+                        {archiveImages.errors.has(index) ? (
+                          <button
+                            type="button"
+                            className="secondary-btn"
+                            aria-label={`${index + 1}페이지 다시 불러오기`}
+                            onClick={(event) => {
+                              event.stopPropagation();
+                              archiveImages.retry(index);
+                            }}
+                          >
+                            <RefreshCw size={16} /> 다시 불러오기
+                          </button>
+                        ) : (
+                          <span className="fixed-doc-loading-spinner" aria-hidden="true" />
+                        )}
                       </div>
                     </div>
                   )}
@@ -4098,6 +4102,12 @@ export default function FixedDocumentScreen({
             <p className="fixed-doc-search-empty">검색어를 입력하세요.</p>
           )}
         </aside>
+      )}
+      {remoteNavigation?.busy && !remoteNavigation.error && (
+        <div className="fixed-doc-transition-status" role="status">
+          <span className="fixed-doc-loading-spinner" aria-hidden="true" />
+          회차 불러오는 중
+        </div>
       )}
       {(navigationError || remoteNavigation?.error) && (
         <p className="fixed-doc-navigation-error" role="alert">

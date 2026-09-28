@@ -173,7 +173,7 @@ function ComicStreamReader({
           </button>
           <strong>{title}</strong>
         </header>
-        <div className="fixed-doc-page-loading" role="status">
+        <div className="fixed-doc-message" role="status">
           {error || '회차 불러오는 중'}
           {error && (
             <button type="button" className="secondary-btn" onClick={() => setAttempt((value) => value + 1)}>

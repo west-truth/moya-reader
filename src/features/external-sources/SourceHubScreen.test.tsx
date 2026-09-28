@@ -181,33 +181,36 @@ describe('SourceHubScreen', () => {
     }
   });
 
-  it.each([true, false])('allows the viewed episode to save into its active work queue: %s', (canQueue) => {
-    const item = {
-      ...controller().items[0]!,
-      release: { title: '1화', sourceOrder: 1 },
-      collection: { remoteId: 'manga:1', title: '연동 작품' },
-    };
-    let renderer!: ReactTestRenderer;
-    act(() => {
-      renderer = create(
-        <SourceHubScreen
-          controller={controller({
-            items: [item],
-            importBusy: true,
-            streaming: { item, port: { open: vi.fn() } },
-            canQueueItem: () => canQueue,
-          })}
-          library={library}
-          openSourceSettings={vi.fn()}
-        />,
-      );
-    });
-    try {
-      expect(renderer.root.findByType(SourceStreamReader).props.saveBusy).toBe(!canQueue);
-    } finally {
-      act(() => renderer.unmount());
-    }
-  });
+  it.each([true, false])(
+    'submits the viewed episode even while the active download queue cannot accept additions: %s',
+    (canQueue) => {
+      const item = {
+        ...controller().items[0]!,
+        release: { title: '1화', sourceOrder: 1 },
+        collection: { remoteId: 'manga:1', title: '연동 작품' },
+      };
+      let renderer!: ReactTestRenderer;
+      act(() => {
+        renderer = create(
+          <SourceHubScreen
+            controller={controller({
+              items: [item],
+              importBusy: true,
+              streaming: { item, port: { open: vi.fn() } },
+              canQueueItem: () => canQueue,
+            })}
+            library={library}
+            openSourceSettings={vi.fn()}
+          />,
+        );
+      });
+      try {
+        expect(renderer.root.findByType(SourceStreamReader).props.saveBusy).toBe(false);
+      } finally {
+        act(() => renderer.unmount());
+      }
+    },
+  );
 
   it('exposes saved source book facts and all tags even without a catalog detail response', () => {
     const tags = Array.from({ length: 12 }, (_, index) => `태그${index + 1}`);

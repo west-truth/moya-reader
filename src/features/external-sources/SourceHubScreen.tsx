@@ -645,11 +645,7 @@ export default function SourceHubScreen({
               ['imported', 'update_available'].includes(candidate.importState),
           )
         }
-        saveBusy={
-          controller.blockingBusy ||
-          (controller.importBusy && !controller.canQueueItem?.(item)) ||
-          Boolean(task && importTaskIsActive(task))
-        }
+        saveBusy={Boolean(task && importTaskIsActive(task))}
         previous={streamNavigation.previous}
         next={streamNavigation.next}
         navigationBusy={streamNavigation.busy}

@@ -3053,6 +3053,60 @@ describe('source streaming connection', () => {
       await act(async () => h.renderer.unmount());
     }
   });
+  it('serializes streamed saves from the same render while automatic downloading is off', async () => {
+    const h = await createDocumentHarness(4);
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const download = h.download.getMockImplementation()!;
+    h.download.mockImplementation(async (...args) => {
+      if (args[2].key.remoteId === 'work-1') await gate;
+      return download(...args);
+    });
+    const previous = globalThis.navigator;
+    let locked = false;
+    vi.stubGlobal('navigator', {
+      ...previous,
+      locks: {
+        request: async (_name: string, _options: unknown, run: (lock: object | null) => Promise<void>) => {
+          if (locked) return run(null);
+          locked = true;
+          try {
+            await run({});
+          } finally {
+            locked = false;
+          }
+        },
+      },
+    });
+    const results: Promise<unknown>[] = [];
+    try {
+      await act(async () => h.controller.setAutoDownloadNext?.(false));
+      await act(async () => {
+        for (const item of h.controller.items.slice(0, 3)) {
+          results.push(h.controller.saveStream!(item).catch((error) => error));
+        }
+      });
+      await act(async () => {
+        await vi.waitFor(() => expect(h.download).toHaveBeenCalledTimes(1));
+      });
+      await act(async () => {
+        release();
+      });
+      await act(async () => {
+        await vi.waitFor(() => expect(h.importFile).toHaveBeenCalledTimes(3));
+      });
+      expect(await Promise.all(results)).toEqual([undefined, undefined, undefined]);
+      expect(h.download.mock.calls.map((call) => call[2].key.remoteId)).toEqual(['work-1', 'work-2', 'work-3']);
+      expect(h.notify).not.toHaveBeenCalledWith(expect.stringContaining('다른 탭'), 'warning');
+    } finally {
+      release();
+      await act(async () => h.renderer.unmount());
+      await Promise.all(results);
+      vi.stubGlobal('navigator', previous);
+    }
+  });
   it('reports a save rejected by another tab instead of claiming it was queued', async () => {
     const h = await createHarness({ downloadedContent: '', serial: true, localBookMissing: true });
     const previous = globalThis.navigator;
