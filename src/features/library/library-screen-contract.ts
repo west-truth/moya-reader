@@ -43,6 +43,7 @@ export interface LibraryScreenModel {
     tone: string;
   };
   externalSources: {
+    bookReadingActivity?: ReadonlyMap<string, { readonly lastReadAt?: string }>;
     libraryBootstrap?: { status: 'loading' | 'ready' | 'failed'; message?: string };
     active: boolean;
     activeSourceId?: ExtensionContributionId;

@@ -7,7 +7,7 @@ export function sourceLibraryLoadingState(model: LibraryScreenModel) {
   return model.externalSources.libraryBootstrap;
 }
 
-/** Occupies the same grid cell or list row as the source card that replaces it. */
+/** Temporary loading cells; source metadata determines the final sorted positions. */
 export function LibrarySourcePlaceholder({ viewMode }: { viewMode: LibraryScreenModel['viewMode'] }) {
   const cover = isCoverView(viewMode);
   return (

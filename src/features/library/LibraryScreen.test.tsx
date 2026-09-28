@@ -815,3 +815,45 @@ describe('LibraryScreen', () => {
     expect(screenActions.books.continueReading).toHaveBeenCalledWith(fixed);
   });
 });
+
+it.each(['grid', 'compact', 'list', 'text'] as const)(
+  'renders one mixed sort order in %s view, including selection mode',
+  (viewMode) => {
+    const local = novel({
+      title: '나 로컬',
+      lastReadAt: '2026-09-20T00:00:00.000Z',
+      createdAt: '2026-09-20T00:00:00.000Z',
+    });
+    const makeWork = (id: string, title: string, day: number) => ({
+      id,
+      title,
+      availableReleaseCount: 10,
+      newReleaseCount: 0,
+      addedAt: `2026-09-${day}T00:00:00.000Z`,
+      updatedAt: `2026-09-${day}T00:00:00.000Z`,
+      lastReadAt: `2026-09-${day}T00:00:00.000Z`,
+    });
+    for (const sort of ['recent', 'added', 'title'] as const) {
+      for (const selectionMode of [false, true]) {
+        const base = model([local]);
+        const markup = renderToStaticMarkup(
+          <LibraryScreen
+            model={{
+              ...base,
+              viewMode,
+              sort,
+              management: { ...base.management, selectionMode },
+              externalSources: {
+                ...base.externalSources,
+                libraryWorks: [makeWork('older', '다 스트리밍', 10), makeWork('newer', '가 스트리밍', 25)],
+              },
+            }}
+            actions={actions()}
+          />,
+        );
+        const titles = [...markup.matchAll(/<h3>([^<]+)<\/h3>/g)].map((match) => match[1]);
+        expect(titles).toEqual(['가 스트리밍', '나 로컬', '다 스트리밍']);
+      }
+    }
+  },
+);
