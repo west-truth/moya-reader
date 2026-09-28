@@ -109,23 +109,41 @@ async function launchRemoteSelection(address) {
   await page.getByRole('heading', { name: '기존 서버에 접속' }).waitFor({ timeout: 30_000 });
   const status = await page.evaluate(() => window.__TAURI_INTERNALS__.invoke('desktop_embedded_server_status'));
   assert.equal(status.running, false, 'Remote selection started the embedded server');
-  let remotePage;
-  const deadline = Date.now() + 30_000;
-  while (!remotePage && Date.now() < deadline) {
+  return connectRemoteWindow(address);
+}
+async function connectRemoteWindow(address) {
+  const endpoint = `http://127.0.0.1:${remoteDebugPort}`;
+  const deadline = Date.now() + 60_000;
+  let probeError;
+  while (Date.now() < deadline) {
     try {
-      remoteBrowser ??= await chromium.connectOverCDP(`http://127.0.0.1:${remoteDebugPort}`, { timeout: 2000 });
-      remotePage = remoteBrowser
-        .contexts()
+      if (!remoteBrowser) {
+        // Attaching during profile creation can time out with a debugger-paused about:blank target.
+        // Observe normal navigation first without attaching or driving the app's WebView.
+        const response = await fetch(`${endpoint}/json/list`, { signal: AbortSignal.timeout(2_000) });
+        if (!response.ok) throw new Error(`WebView target list: HTTP ${response.status}`);
+        const targets = await response.json();
+        if (targets.some((target) => target.type === 'page' && target.url.startsWith(address))) {
+          remoteBrowser = await chromium.connectOverCDP(endpoint, { timeout: 10_000 });
+        }
+      }
+      const remotePage = remoteBrowser
+        ?.contexts()
         .flatMap((entry) => entry.pages())
         .find((entry) => entry.url().startsWith(address));
-    } catch {
-      // WebView2 creates the external server profile after the local selector appears.
+      if (remotePage) return remotePage;
+    } catch (error) {
+      probeError = error instanceof Error ? error.message : String(error);
     }
-    if (!remotePage) await delay(200);
+    await delay(200);
   }
-  assert(remotePage, 'Saved external server was not opened');
-  return remotePage;
+  console.error('Remote WebView debug probe:', {
+    error: probeError,
+    pages: remoteBrowser?.contexts().flatMap((entry) => entry.pages().map((entry) => entry.url())) ?? [],
+  });
+  throw new Error('External server WebView did not appear in the native app');
 }
+
 async function close(fromTray = false) {
   const exited = new Promise((resolve) => app.once('exit', resolve));
   if (fromTray) {
@@ -247,29 +265,7 @@ try {
     connection.url,
   );
   console.log('Native remote WebView command completed');
-  let remotePage;
-  let remoteProbeError;
-  const remoteDeadline = Date.now() + 30_000;
-  while (!remotePage && Date.now() < remoteDeadline) {
-    try {
-      remoteBrowser ??= await chromium.connectOverCDP(`http://127.0.0.1:${remoteDebugPort}`, { timeout: 2000 });
-      remotePage = remoteBrowser
-        .contexts()
-        .flatMap((entry) => entry.pages())
-        .find((entry) => entry.url().startsWith(connection.url));
-    } catch (error) {
-      remoteProbeError = error instanceof Error ? error.message : String(error);
-      // WebView2 creates the separate profile and debugging endpoint after the command returns.
-    }
-    if (!remotePage) await delay(200);
-  }
-  if (!remotePage) {
-    console.error('Remote WebView debug probe:', {
-      error: remoteProbeError,
-      pages: remoteBrowser?.contexts().flatMap((entry) => entry.pages().map((entry) => entry.url())) ?? [],
-    });
-  }
-  assert(remotePage, 'External server WebView did not appear in the native app');
+  const remotePage = await connectRemoteWindow(connection.url);
   console.log('Remote WebView is visible to the browser probe');
   await remotePage.getByRole('heading', { name: '모야에 로그인' }).waitFor({ timeout: 30_000 });
   const remoteNativeAccess = await remotePage.evaluate(async () => {

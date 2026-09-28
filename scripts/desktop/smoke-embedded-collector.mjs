@@ -81,6 +81,7 @@ try {
   console.log(JSON.stringify(result));
 } finally {
   await server?.stop().catch(() => undefined);
-  if (passed) await rm(profileDir, { recursive: true, force: true });
+  // Windows can retain directory handles briefly after the processes have exited.
+  if (passed) await rm(profileDir, { recursive: true, force: true, maxRetries: 10, retryDelay: 250 });
   else console.error(`Collector proof profile retained for diagnostics: ${profileDir}`);
 }
