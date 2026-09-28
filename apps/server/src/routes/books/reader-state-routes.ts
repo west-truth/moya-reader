@@ -190,6 +190,10 @@ export async function registerReaderStateRoutes(
           request.params.bookId,
           config.defaultUserId,
         ]);
+        await client.query(
+          "delete from reading_session_events where book_id = $1 and user_id = $2 and mode = 'reading' and ended_at <= $3::timestamptz",
+          [request.params.bookId, config.defaultUserId, body.updatedAt],
+        );
         const payload = {
           id: positionId,
           bookId: request.params.bookId,

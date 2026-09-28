@@ -1,3 +1,5 @@
+import { belongsToSourceWork, clearSourceWorkHistory } from './source-work-history';
+import { sourceWorkSessionId } from './source-work-reading-time';
 import { recoverSourceStreamVisits } from '../../external-sources/source-stream-visit-journal';
 import { latestSourceVisits, sourceReleaseReadingState } from './source-release-reading';
 import type { SourceWorkProgressProjection } from './source-work-progress';
@@ -272,6 +274,10 @@ export interface ExternalSourceController {
   selectAllSupported(selected: boolean, itemKeys?: readonly string[]): void;
   importItem(item: ExternalSourceItemView): Promise<void>;
   readonly streamingBookId?: string;
+  readonly workReadingSessionId?: string;
+  readonly readingHistoryRevision?: number;
+  resetCurrentWorkHistory?(): Promise<void>;
+  clearBookSourceHistory?(novel: Novel): Promise<void>;
   readonly streaming?: {
     item: ExternalSourceItemView;
     port: SourceReadingPort;
@@ -331,6 +337,7 @@ export interface ExternalSourceNavigationSnapshot {
 }
 
 export interface UseExternalSourceControllerOptions {
+  clearReadingHistory?(novelId: string): Promise<void>;
   saveTextPosition?: import('../../repositories/reader-repository').ReaderRepository['saveReadingPosition'];
   getParagraphPage?: import('../../repositories/reader-repository').ReaderRepository['getParagraphPage'];
   saveStreamPosition?(pageIndex: number, chapter: Chapter, novel: Novel): Promise<void>;
@@ -755,8 +762,7 @@ export function useExternalSourceController(options: UseExternalSourceController
   const streamProgress = useSourceStreamProgress({
     current: () => optionsRef.current,
     lastReadAt: releasePreferences.reduce(
-      (latest, preference) =>
-        preference.lastReadAt && preference.lastReadAt > latest ? preference.lastReadAt : latest,
+      (latest, preference) => [latest, preference.lastReadAt ?? '', preference.readChangedAt ?? ''].sort().at(-1)!,
       '',
     ),
     isRead: (item) => preferenceByKey.get(externalItemKeyId(item.key))?.read === true,
@@ -1738,20 +1744,24 @@ export function useExternalSourceController(options: UseExternalSourceController
           .filter((item) => item.release)
           .map((item) => {
             const id = releasePreferenceId(item.key);
+            const previous = byId.get(id);
+            const changedAt = new Date(
+              Math.max(
+                Date.now(),
+                (Date.parse(previous?.updatedAt ?? '') || 0) + 1,
+                (Date.parse(previous?.readChangedAt ?? '') || 0) + 1,
+                (Date.parse(previous?.lastReadAt ?? '') || 0) + 1,
+              ),
+            ).toISOString();
             return {
-              ...byId.get(id),
+              ...previous,
               id,
               kind: 'releasePreference' as const,
               source: item.key,
               ...patch,
-              ...(patch.read !== undefined
-                ? {
-                    readChangedAt: new Date(
-                      Math.max(Date.now(), Date.parse(byId.get(id)?.lastReadAt ?? '') || 0),
-                    ).toISOString(),
-                  }
-                : {}),
-              updatedAt: currentIso(),
+              ...(item.collection ? { collectionRemoteId: item.collection.remoteId } : {}),
+              ...(patch.read !== undefined ? { readChangedAt: changedAt } : {}),
+              updatedAt: changedAt,
             };
           });
         await optionsRef.current.state.saveReleasePreferences(changed);
@@ -4573,6 +4583,101 @@ export function useExternalSourceController(options: UseExternalSourceController
     sources.find((source) => source.id === activeSourceId)?.supportsSubscriptions &&
     sources.find((source) => source.id === activeSourceId)?.connection.state === 'connected',
   );
+  const [readingHistoryRevision, setReadingHistoryRevision] = useState(0);
+  const historyItem = streaming?.item ?? currentWorkItem;
+  const workIdentity = historyItem?.collection
+    ? { ...historyItem.key, remoteId: historyItem.collection.remoteId }
+    : activeSubscription
+      ? {
+          connectorId: activeSubscription.connectorId,
+          accountConnectionId: activeSubscription.accountConnectionId,
+          remoteId: activeSubscription.collectionRemoteId,
+        }
+      : activeSourceId && currentParentRef
+        ? {
+            connectorId: activeSourceId,
+            accountConnectionId: sources.find((source) => source.id === activeSourceId)?.connection.accountConnectionId,
+            remoteId: currentParentRef,
+          }
+        : undefined;
+  const clearWorkHistory = async (work: ExternalItemKey) => {
+    await streamProgress.clearWork(work);
+    const subscription = subscriptions.find((p) =>
+      belongsToSourceWork(
+        { connectorId: p.connectorId, accountConnectionId: p.accountConnectionId, remoteId: p.collectionRemoteId },
+        p.collectionRemoteId,
+        work,
+      ),
+    );
+    await clearSourceWorkHistory({
+      state: optionsRef.current.state,
+      scope: optionsRef.current.settingsScope,
+      work,
+      releaseIds: [
+        ...(subscription?.knownReleaseIds ?? []),
+        ...rawItems
+          .filter((item) => belongsToSourceWork(item.key, item.collection?.remoteId, work))
+          .map((item) => item.key.remoteId),
+      ],
+    });
+  };
+  const clearBookSourceHistory = async (novel: Novel) => {
+    const allLinks = await optionsRef.current.state.listLinks();
+    const works = new Map<string, ExternalItemKey>();
+    for (const link of allLinks) {
+      if (link.localBookId !== novel.id || !link.collectionRemoteId) continue;
+      const work = { ...link.source, remoteId: link.collectionRemoteId };
+      works.set(externalItemKeyId(work), work);
+    }
+    if (!works.size) return;
+    for (const work of works.values()) await clearWorkHistory(work);
+    setReadingHistoryRevision((value) => value + 1);
+    await refreshLocalProjection();
+  };
+  const resetCurrentWorkHistory = async () => {
+    if (busy || importBusy || blockingBusy || streaming || (!workIdentity && !localSeriesBookId)) return;
+    if (
+      !optionsRef.current.confirm(
+        '읽은 기록을 초기화할까요?\n\n읽음 표시, 이어보기 위치와 누적 독서 시간이 지워집니다. 본문, 북마크와 메모는 유지됩니다.',
+      )
+    )
+      return;
+    setBusy(true);
+    try {
+      if (workIdentity) await streamProgress.clearWork(workIdentity);
+      const bookIds = new Set(
+        links
+          .filter(
+            (link) =>
+              !link.pendingImport &&
+              novelById.has(link.localBookId) &&
+              !novelById.get(link.localBookId)?.deletedAt &&
+              workIdentity &&
+              belongsToSourceWork(link.source, link.collectionRemoteId, workIdentity),
+          )
+          .map((link) => link.localBookId),
+      );
+      if (localSeriesBookId) bookIds.add(localSeriesBookId);
+      for (const bookId of bookIds) {
+        if (!optionsRef.current.clearReadingHistory) throw new Error('읽은 기록 초기화를 사용할 수 없습니다.');
+        await optionsRef.current.clearReadingHistory(bookId);
+      }
+      if (workIdentity) await clearWorkHistory(workIdentity);
+      setReadingHistoryRevision((value) => value + 1);
+      await optionsRef.current.onLibraryChanged();
+      await refreshLocalProjection();
+      if (localSeriesBookId) {
+        const novel = await optionsRef.current.getNovel(localSeriesBookId);
+        if (novel) await showLocalSeries(novel);
+      }
+      optionsRef.current.notify('읽은 기록을 초기화했습니다.', 'success');
+    } catch {
+      optionsRef.current.notify('읽은 기록을 모두 초기화하지 못했습니다. 다시 시도해 주세요.', 'danger');
+    } finally {
+      setBusy(false);
+    }
+  };
+
   const localSeriesNovel = localSeriesBookId
     ? (novels.find((novel) => novel.id === localSeriesBookId) ?? localSeriesSeedNovel)
     : undefined;
@@ -4773,6 +4878,10 @@ export function useExternalSourceController(options: UseExternalSourceController
     importItem,
     importAndOpen,
     streaming,
+    resetCurrentWorkHistory,
+    clearBookSourceHistory,
+    readingHistoryRevision,
+    workReadingSessionId: workIdentity ? sourceWorkSessionId(options.settingsScope, workIdentity) : undefined,
     streamingBookId: streaming
       ? links.find(
           (link) =>

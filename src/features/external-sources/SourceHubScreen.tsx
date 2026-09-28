@@ -1,6 +1,7 @@
 import { isTextStream } from '../../external-sources/source-text-stream';
 import type { SourceTextReaderOptions } from '../external-sources/SourceTextStreamReader';
-import { BookFileFacts } from '../library/BookFileFacts';
+import { SourceWorkManagement } from './SourceWorkManagement';
+import { useSourceWorkReadingTime } from './source-work-reading-time';
 import { useSourceStreamNavigation } from './use-source-stream-navigation';
 import { sourceReadingPreferences } from '../../external-sources/source-reading-preferences';
 import { SourceStreamReader } from './SourceStreamReader';
@@ -522,6 +523,10 @@ export default function SourceHubScreen({
   localSeriesNovel,
   localSeriesTitleEditor,
 }: SourceHubScreenProps) {
+  useSourceWorkReadingTime(
+    controller.workReadingSessionId,
+    Boolean(controller.streaming && !controller.streamingBookId),
+  );
   const streamNavigation = useSourceStreamNavigation(controller, sourceReadingPreferences().prefetch > 0);
   const scrollRef = useRef<HTMLDivElement>(null);
   const [workLayout, changeWorkLayout] = useSourceWorkLayout();
@@ -950,28 +955,7 @@ export default function SourceHubScreen({
               </section>
             )}
 
-            {hasWorkHero && seriesNovel && (
-              <details className="book-management-disclosure">
-                <summary>
-                  <span>작품 관리 및 파일 정보</span>
-                </summary>
-                <div className="book-management-body">
-                  <BookFileFacts novel={seriesNovel} className="book-management-facts" />
-                  <div className="book-management-actions">
-                    <button type="button" onClick={() => library.actions.books.editMetadata(seriesNovel)}>
-                      <FilePenLine size={17} /> 작품 정보 편집
-                    </button>
-                    <button
-                      type="button"
-                      disabled={!seriesNovel.sourceAssetId}
-                      onClick={() => void library.actions.books.downloadSource(seriesNovel)}
-                    >
-                      <Download size={17} /> 원본 다운로드
-                    </button>
-                  </div>
-                </div>
-              </details>
-            )}
+            {hasWorkHero && <SourceWorkManagement novel={seriesNovel} controller={controller} library={library} />}
 
             {activeSource?.supportsSubscriptions && !controller.detail && sourceSubscriptions.length > 0 && (
               <section className="source-hub-subscriptions" aria-labelledby="source-subscriptions-title">

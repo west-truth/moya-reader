@@ -107,7 +107,10 @@ export function buildBookWorkspaceReadingProjection(state: BookWorkspaceReadingS
     canMarkBookFinished: Boolean(selectedNovel && chapters.length > 0 && !isNovelFinished(selectedNovel)),
     canResetBookProgress: Boolean(
       selectedNovel &&
-      (localReadingPosition?.novelId === selectedNovel.id ||
+      ((selectedNovel.readingSeconds ?? 0) > 0 ||
+        selectedNovel.lastReadAt ||
+        chapters.some((chapter) => chapter.documentSectionReadAt) ||
+        localReadingPosition?.novelId === selectedNovel.id ||
         selectedNovel.lastReadChapterId ||
         selectedNovel.lastReadProgress > 0 ||
         selectedNovel.lastReadOffset > 0),

@@ -81,6 +81,10 @@ export async function persistReaderSyncEvent(
       `,
       [event.novelId, userId],
     );
+    await client.query(
+      "delete from reading_session_events where book_id = $1 and user_id = $2 and mode = 'reading' and ended_at <= $3::timestamptz",
+      [event.novelId, userId, event.createdAt],
+    );
     return true;
   }
 

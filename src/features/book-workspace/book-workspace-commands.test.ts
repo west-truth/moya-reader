@@ -158,6 +158,7 @@ describe('BookWorkspaceController commands', () => {
     await controller.resetBookProgress();
 
     expect(harness.calls).toEqual([
+      'transition.flushReaderSession',
       'repository.clearReadingPosition',
       'environment.notify:warning',
       'adjacent.refreshSyncState',
@@ -177,6 +178,7 @@ describe('BookWorkspaceController commands', () => {
     await controller.resetBookProgress();
 
     expect(harness.calls).toEqual([
+      'transition.flushReaderSession',
       'repository.clearReadingPosition',
       'repository.getNovel',
       'repository.getReadingPosition',

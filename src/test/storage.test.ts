@@ -1,3 +1,5 @@
+import { IndexedDbReaderPersonalizationRepository } from '../repositories/indexeddb-reader-personalization-repository';
+import { readingSessionEvent } from '../features/reader/session-event-recorder';
 import 'fake-indexeddb/auto';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import {
@@ -800,6 +802,28 @@ describe('IndexedDB reader storage', () => {
       paragraphIndex: 2,
       offsetInParagraph: 3,
     });
+    await addNovelReadingTime('novel-clear-progress', 60);
+    const sessions = new IndexedDbReaderPersonalizationRepository();
+    const event = readingSessionEvent({
+      bookId: 'novel-clear-progress',
+      mode: 'reading',
+      startedAt: Date.now() - 60000,
+      endedAt: Date.now(),
+      activeSeconds: 60,
+    });
+    await sessions.appendReadingSession(event);
+    await sessions.appendReadingSession({
+      ...event,
+      id: 'listening-event',
+      operationId: 'listening-event',
+      mode: 'listening',
+    });
+    await sessions.appendReadingSession({
+      ...event,
+      id: 'other-event',
+      operationId: 'other-event',
+      bookId: 'other-book',
+    });
     await clearReadingPosition('novel-clear-progress');
 
     expect(await getReadingPosition('novel-clear-progress')).toBeUndefined();
@@ -811,6 +835,12 @@ describe('IndexedDB reader storage', () => {
       lastReadProgress: 0,
     });
 
+    expect((await getNovel('novel-clear-progress'))?.readingSeconds).toBe(0);
+    expect((await getNovel('novel-clear-progress'))?.lastReadAt).toBeUndefined();
+    expect(await sessions.listReadingSessions({ bookId: 'novel-clear-progress' })).toMatchObject([
+      { mode: 'listening' },
+    ]);
+    expect(await sessions.listReadingSessions({ bookId: 'other-book' })).toHaveLength(1);
     const outbox = await listSyncOutbox('pending');
     expect(outbox.map((item) => item.event.type)).toEqual([
       'book_imported',

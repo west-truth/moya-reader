@@ -3,7 +3,8 @@ import {
   acknowledgeSourceStreamVisit,
 } from '../../external-sources/source-stream-visit-journal';
 import { useCallback, useRef } from 'react';
-import { externalItemKeyId } from '../../external-sources/contracts';
+import { belongsToSourceWork } from './source-work-history';
+import { externalItemKeyId, type ExternalItemKey } from '../../external-sources/contracts';
 import type { Novel } from '../../domain/types';
 import type { SourceReleasePreference } from '../../external-sources/source-user-state';
 import type { ExternalSourceItemView, UseExternalSourceControllerOptions } from './useExternalSourceController';
@@ -132,5 +133,14 @@ export function useSourceStreamProgress(options: {
       }),
     [enqueue, markRead, persist],
   );
-  return { record, recordVisit, reconcile };
+  const clearWork = useCallback(async (work: ExternalItemKey) => {
+    // Drain already running writes before clearing persisted history, then discard retry entries.
+    await queue.current;
+    visits.current.delete(externalItemKeyId(work));
+    positions.current.delete(externalItemKeyId(work));
+    for (const [key, entry] of unreadWrites.current) {
+      if (belongsToSourceWork(entry.item.key, entry.item.collection?.remoteId, work)) unreadWrites.current.delete(key);
+    }
+  }, []);
+  return { record, recordVisit, reconcile, clearWork };
 }

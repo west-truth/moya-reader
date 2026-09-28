@@ -70,6 +70,7 @@ function novel(overrides: Partial<Novel> = {}): Novel {
 }
 
 async function createHarness(input: {
+  clearReadingHistory?: (id: string) => Promise<void>;
   saveTextPosition?: import('../../repositories/reader-repository').ReaderRepository['saveReadingPosition'];
   getParagraphPage?: import('../../repositories/reader-repository').ReaderRepository['getParagraphPage'];
   saveStreamPosition?: (pageIndex: number, chapter: Chapter, novel: Novel) => Promise<void>;
@@ -287,6 +288,7 @@ async function createHarness(input: {
     controller = useExternalSourceController({
       saveStreamPosition: input.saveStreamPosition,
       saveTextPosition: input.saveTextPosition,
+      clearReadingHistory: input.clearReadingHistory,
       getParagraphPage: input.getParagraphPage,
       readingTarget,
       registry,
@@ -2881,6 +2883,56 @@ describe('source streaming connection', () => {
         expect(h.openNovel).not.toHaveBeenCalled();
       } finally {
         release();
+        await act(async () => h.renderer.unmount());
+      }
+    },
+  );
+
+  it.each([false, true])(
+    'resets source reading history with and without a downloaded book (downloaded=%s)',
+    async (downloaded) => {
+      const clearReadingHistory = vi.fn(async () => undefined);
+      const h = await createHarness({
+        downloadedContent: '',
+        serial: true,
+        serialCount: 2,
+        localBookMissing: !downloaded,
+        initialLinkOverrides: { collectionRemoteId: 'manga:1' },
+        clearReadingHistory,
+      });
+      const preferences = new Map<string, import('../../external-sources/source-user-state').SourceReleasePreference>();
+      h.state.listReleasePreferences = async () => [...preferences.values()];
+      h.state.saveReleasePreferences = async (records) => {
+        records.forEach((record) => preferences.set(record.id, record));
+      };
+      try {
+        await act(async () => {
+          await h.controller.saveStreamPosition!(h.controller.items[1], 1, 3);
+        });
+        expect(h.controller.canResumeCurrentWork).toBe(true);
+        await act(async () => {
+          await h.controller.resetCurrentWorkHistory!();
+        });
+        expect(h.notify).toHaveBeenLastCalledWith('읽은 기록을 초기화했습니다.', 'success');
+        expect(clearReadingHistory).toHaveBeenCalledTimes(downloaded ? 1 : 0);
+        expect(h.controller.canResumeCurrentWork).toBe(false);
+        expect([...preferences.values()].every((p) => !p.read && !p.lastReadAt)).toBe(true);
+        await h.refreshLibrary(42);
+        expect(h.controller.canResumeCurrentWork).toBe(false);
+        const resetAt = [...preferences.values()].find(
+          (p) => p.source.remoteId === h.controller.items[1].key.remoteId,
+        )!.readChangedAt!;
+        await act(async () => {
+          await h.controller.setReleasesRead!([h.controller.items[1]], true);
+        });
+        const manual = [...preferences.values()].find((p) => p.source.remoteId === h.controller.items[1].key.remoteId)!;
+        expect(manual.read).toBe(true);
+        expect(manual.readChangedAt! > resetAt).toBe(true);
+        await act(async () => {
+          await h.controller.saveStreamPosition!(h.controller.items[1], 0, 3);
+        });
+        expect(h.controller.canResumeCurrentWork).toBe(true);
+      } finally {
         await act(async () => h.renderer.unmount());
       }
     },

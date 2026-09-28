@@ -295,6 +295,43 @@ describe('book routes', () => {
     await app.close();
   });
 
+  it.each([true, false])('clears reading sessions with positions only when reset applies (%s)', async (applied) => {
+    const deleted: string[] = [];
+    const stamp = '2026-09-29T00:00:00.000Z';
+    const pool = {
+      query: vi.fn(async (sql: string, params?: unknown[]) => {
+        if (sql.includes('as book_exists')) return { rows: [{ book_exists: true, should_apply: applied }] };
+        if (sql.startsWith('delete from')) {
+          deleted.push(sql);
+          expect(params?.slice(0, 2)).toEqual(['book_1', 'user_test']);
+          if (sql.includes('reading_session_events')) {
+            expect(sql).toContain('ended_at <= $3');
+            expect(sql).toContain("mode = 'reading'");
+            expect(params?.[2]).toBe(stamp);
+          }
+          return { rows: [], rowCount: 1 };
+        }
+        if (sql.includes('insert into sync_events')) return { rows: [], rowCount: 1 };
+        throw new Error(`unexpected query: ${sql}`);
+      }),
+    } as unknown as pg.Pool;
+    const transaction = mockPositionTransaction(pool);
+    const app = await appWithBooks(pool);
+    try {
+      const response = await app.inject({
+        method: 'DELETE',
+        url: '/api/books/book_1/reading-position',
+        payload: { deviceId: 'device', updatedAt: stamp },
+      });
+      expect(response.statusCode).toBe(200);
+      expect(response.json()).toEqual({ ok: true, applied });
+      expect(deleted).toHaveLength(applied ? 3 : 0);
+      expect(transaction.query).toHaveBeenLastCalledWith(applied ? 'commit' : 'rollback');
+    } finally {
+      await app.close();
+    }
+  });
+
   it('saves reading position and emits a sync event only when the update is applied', async () => {
     const pool = {
       query: vi.fn(async (sql: string, params?: unknown[]) => {

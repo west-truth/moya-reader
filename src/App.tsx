@@ -1508,6 +1508,10 @@ export default function App() {
         offsetInParagraph: 0,
       }),
     saveTextPosition: (input) => readerRepository.saveReadingPosition(input),
+    clearReadingHistory: async (novelId) => {
+      await readingSession.flush();
+      await readerRepository.clearReadingPosition(novelId);
+    },
     downloadPolicy: settings.downloadPolicy ?? legacyDownloads,
     updateDownloadPolicy: (patch) =>
       updateSettings((previous) => ({
