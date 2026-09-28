@@ -1,11 +1,38 @@
 import { useEffect, useState } from 'react';
 import { isCoverView } from '../../components/work-view';
-import { SkeletonCoverGrid, SkeletonRows } from '../../shared/ui/Skeleton';
-import type { LibraryScreenProps } from './library-screen-contract';
+import type { LibraryScreenModel, LibraryScreenProps } from './library-screen-contract';
+
+export function sourceLibraryLoadingState(model: LibraryScreenModel) {
+  if (model.filter === 'favorite' || (model.management.activeShelfId && model.filter !== 'trash')) return undefined;
+  return model.externalSources.libraryBootstrap;
+}
+
+/** Occupies the same grid cell or list row as the source card that replaces it. */
+export function LibrarySourcePlaceholder({ viewMode }: { viewMode: LibraryScreenModel['viewMode'] }) {
+  const cover = isCoverView(viewMode);
+  return (
+    <div className={`${cover ? 'book-card' : 'book-list-row'} library-source-placeholder`} aria-hidden="true">
+      {viewMode !== 'text' && (
+        <div className="book-cover-wrap">
+          <div className={`book-cover skeleton${cover ? '' : ' thumb'}`} />
+        </div>
+      )}
+      <div className={cover ? 'book-info' : 'book-list-main'}>
+        <span className="skeleton skeleton-line is-wide" />
+        <span className="skeleton skeleton-line" />
+      </div>
+      {!cover && (
+        <div className="book-list-progress">
+          <span className="skeleton skeleton-line" />
+        </div>
+      )}
+    </div>
+  );
+}
 
 /** Source storage can arrive later than local books without blocking the library. */
 export function LibrarySourceLoading({ model, actions }: LibraryScreenProps) {
-  const state = model.externalSources.libraryBootstrap;
+  const state = sourceLibraryLoadingState(model);
   const [slow, setSlow] = useState(false);
   useEffect(() => {
     setSlow(false);
@@ -16,7 +43,7 @@ export function LibrarySourceLoading({ model, actions }: LibraryScreenProps) {
   if (!state || state.status === 'ready') return null;
   const failed = state.status === 'failed';
   return (
-    <section className="library-source-loading" aria-label="소스 작품 불러오기">
+    <section className={failed || slow ? 'library-source-loading' : 'sr-only'} aria-label="소스 작품 불러오기">
       <div className="library-source-loading-status" role="status">
         <span>
           {failed
@@ -31,7 +58,6 @@ export function LibrarySourceLoading({ model, actions }: LibraryScreenProps) {
           </button>
         )}
       </div>
-      {!failed && (isCoverView(model.viewMode) ? <SkeletonCoverGrid count={4} /> : <SkeletonRows count={3} />)}
     </section>
   );
 }

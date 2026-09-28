@@ -7,7 +7,7 @@ it('offers a scoped retry after eight seconds and clears it after the source is 
   vi.useFakeTimers();
   const retrySourceLibrary = vi.fn();
   const props = {
-    model: { viewMode: 'grid', externalSources: { libraryBootstrap: { status: 'loading' } } },
+    model: { viewMode: 'grid', management: {}, externalSources: { libraryBootstrap: { status: 'loading' } } },
     actions: { header: { retrySourceLibrary } },
   } as unknown as LibraryScreenProps;
   let renderer!: ReactTestRenderer;

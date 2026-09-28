@@ -104,17 +104,24 @@ try {
     await page.addInitScript(() => {
       globalThis.libraryCardSnapshots = [];
       new MutationObserver(() => {
-        const cards = document.querySelectorAll('.book-card');
+        const cards = document.querySelectorAll('.book-card:not(.library-source-placeholder)');
         if (cards.length)
           globalThis.libraryCardSnapshots.push({
             total: cards.length,
             remote: document.querySelectorAll('.external-work-card').length,
-            sourceSkeleton: Boolean(document.querySelector('.library-source-loading .skeleton')),
+            sourceSkeleton: Boolean(document.querySelector('.library-source-placeholder .skeleton')),
           });
       }).observe(document, { subtree: true, childList: true });
     });
     await page.reload();
+    await page.locator('.library-source-placeholder').first().waitFor();
+    const reservedSlot = await page.locator('.library-source-placeholder').first().boundingBox();
     await page.locator('.external-work-card').first().waitFor();
+    const loadedSlot = await page.locator('.external-work-card').first().boundingBox();
+    assert(
+      Math.abs(reservedSlot.x - loadedSlot.x) <= 1 && Math.abs(reservedSlot.y - loadedSlot.y) <= 1,
+      JSON.stringify({ reservedSlot, loadedSlot }),
+    );
     const firstCards = await page.evaluate(() => globalThis.libraryCardSnapshots[0]);
     assert(firstCards.total === 1 && firstCards.remote === 0 && firstCards.sourceSkeleton, JSON.stringify(firstCards));
     const before = await page.evaluate(
@@ -235,7 +242,7 @@ try {
     assert.deepEqual(restored.history, before);
     await page.goto(server.resolvedUrls.local[0] + '?sourceFailure');
     await page.getByText('소스 작품을 불러오지 못했습니다', { exact: true }).waitFor();
-    assert.equal(await page.locator('.book-card:not(.external-work-card)').count(), 1);
+    assert.equal(await page.locator('.book-card:not(.external-work-card):not(.library-source-placeholder)').count(), 1);
     await page.evaluate(() => history.replaceState(null, '', location.pathname));
     await page.locator('.library-source-loading').getByRole('button', { name: '다시 시도' }).click();
     await page.locator('.external-work-card').first().waitFor();
@@ -243,7 +250,10 @@ try {
     if (width === 390) {
       await page.goto(server.resolvedUrls.local[0] + '?sourceSlow');
       await page.getByText('소스 작품을 불러오는 데 시간이 걸립니다', { exact: true }).waitFor();
-      assert.equal(await page.locator('.book-card:not(.external-work-card)').count(), 1);
+      assert.equal(
+        await page.locator('.book-card:not(.external-work-card):not(.library-source-placeholder)').count(),
+        1,
+      );
       await page.screenshot({ path: '.tmp/source-library-review/slow-source-390.png' });
       await page.evaluate(() => history.replaceState(null, '', location.pathname));
       await page.locator('.library-source-loading').getByRole('button', { name: '다시 시도' }).click();
@@ -260,6 +270,7 @@ try {
         menuViews: 4,
         batchTrashRestore: true,
         independentLoadingAndRetry: true,
+        placeholderReplacedInPlace: true,
       }),
     );
     await context.close();

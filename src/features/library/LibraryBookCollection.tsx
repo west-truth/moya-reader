@@ -1,3 +1,4 @@
+import { LibrarySourcePlaceholder, sourceLibraryLoadingState } from './LibrarySourceLoading';
 import { externalSelectionId } from './library-batch';
 import { LibraryCountLabel } from './LibraryCountLabel';
 import { isCoverView } from '../../components/work-view';
@@ -299,6 +300,7 @@ export function LibraryBookCollection(props: LibraryScreenProps) {
             (!query || [task.title, task.fileName].some((value) => value?.toLocaleLowerCase().includes(query))),
         )
       : [];
+  const placeholders = sourceLibraryLoadingState(props.model)?.status === 'loading' ? [0, 1, 2, 3] : [];
   const items = [
     ...standaloneTasks.map((task) => ({ kind: 'task' as const, key: `task:${task.id}`, task })),
     ...props.model.collection.visibleBooks.map((book) => ({
@@ -307,10 +309,13 @@ export function LibraryBookCollection(props: LibraryScreenProps) {
       book,
     })),
     ...externalWorks.map((work) => ({ kind: 'external' as const, key: `external:${work.id}`, work })),
+    ...placeholders.map((index) => ({ kind: 'placeholder' as const, key: `source-loading:${index}` })),
   ];
   if (items.length > 100) {
     const renderItem = (index: number) => {
       const item = items[index];
+      if (item.kind === 'placeholder')
+        return <LibrarySourcePlaceholder key={item.key} viewMode={props.model.viewMode} />;
       if (item.kind === 'task') {
         return isCoverView(props.model.viewMode) ? (
           <LibraryImportTaskCard key={item.key} task={item.task} actions={props.actions} />
@@ -438,6 +443,9 @@ export function LibraryBookCollection(props: LibraryScreenProps) {
             />
           ),
         )}
+        {placeholders.map((index) => (
+          <LibrarySourcePlaceholder key={`source-loading:${index}`} viewMode={props.model.viewMode} />
+        ))}
       </div>
     </>
   );
