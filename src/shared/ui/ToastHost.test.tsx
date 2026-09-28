@@ -1,7 +1,8 @@
 import { renderToStaticMarkup } from 'react-dom/server';
 import { act, create } from 'react-test-renderer';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { ToastHost, toastAutoDismissDelay, useToastController } from './ToastHost';
+import { ToastHost } from './ToastHost';
+import { toastAutoDismissDelay, useToastController } from './toast-controller';
 
 describe('ToastHost', () => {
   it('announces messages and exposes reader layout state without sibling selectors', () => {
