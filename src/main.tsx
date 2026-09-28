@@ -34,6 +34,7 @@ import './styles/feedback.css';
 import './styles/responsive.css';
 import './styles/self-host-auth.css';
 import './styles/desktop-window.css';
+import './styles/motion.css';
 
 function registerWebAppServiceWorker(): void {
   if (!('serviceWorker' in navigator)) return;

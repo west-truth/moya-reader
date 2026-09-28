@@ -262,7 +262,7 @@ export function ReaderChrome({
             title="이전 화"
             aria-label="이전 화"
           >
-            <SkipBack size={18} /> <span>이전화</span>
+            <SkipBack size={18} /> <span>이전 화</span>
           </button>
           <span className="reader-flow-pill">{flowLabel(readingFlow)}</span>
           <span className="progress-label">{formatProgress(progress)}</span>
@@ -285,7 +285,7 @@ export function ReaderChrome({
             title="다음 화"
             aria-label="다음 화"
           >
-            <span>다음화</span> <SkipForward size={18} />
+            <span>다음 화</span> <SkipForward size={18} />
           </button>
         </div>
         <div className="reader-tool-row">

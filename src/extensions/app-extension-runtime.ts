@@ -66,7 +66,7 @@ export function createAppExtensionRuntime(dependencies: AppExtensionRuntimeDepen
             trustLevel: 'trusted' as const,
             defaultEnabled: true,
             canDisable: true,
-            description: '현재 작품과 읽기 상태를 Reader 보조 패널에서 확인합니다.',
+            description: '리더 보조 패널에서 현재 작품과 읽기 상태를 확인합니다.',
           },
           {
             definition: moyaAITrustedExtension,

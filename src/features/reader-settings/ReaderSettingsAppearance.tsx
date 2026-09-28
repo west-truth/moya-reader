@@ -47,7 +47,7 @@ export function ReaderSettingsAppearance({
     <>
       <section className="reader-settings-group">
         <div className="reader-settings-section-heading">
-          <h3>테마</h3>
+          <h3>{themeTarget === 'application' ? '앱 테마' : '리더 테마'}</h3>
         </div>
         <div className="reader-theme-grid">
           {THEMES.map((theme) => (
@@ -166,11 +166,12 @@ export function ReaderSettingsAppearance({
           <section className="reader-settings-group reader-settings-brightness">
             <SettingsSlider
               label="리더 밝기"
-              value={profile.brightness}
-              min={READING_PROFILE_LIMITS.brightness.min}
-              max={READING_PROFILE_LIMITS.brightness.max}
-              step={0.05}
-              onChange={(brightness) => updateProfile({ brightness })}
+              value={Math.round(profile.brightness * 100)}
+              min={Math.round(READING_PROFILE_LIMITS.brightness.min * 100)}
+              max={Math.round(READING_PROFILE_LIMITS.brightness.max * 100)}
+              step={5}
+              suffix="%"
+              onChange={(percent) => updateProfile({ brightness: percent / 100 })}
             />
           </section>
           <ReaderThemePresetManager

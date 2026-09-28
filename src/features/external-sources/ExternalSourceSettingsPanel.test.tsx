@@ -26,6 +26,14 @@ it('filters actual content/language metadata and persists favorites without gues
         connection: { state: 'connected' },
       },
       { id: 'unknown', title: '기타 소스', origin: 'plugin', connection: { state: 'disconnected' } },
+      ...['a', 'b', 'c', 'd'].map((id) => ({
+        id: `other-${id}`,
+        title: `추가 소스 ${id}`,
+        contentKind: 'image',
+        lang: 'ja',
+        origin: 'plugin',
+        connection: { state: 'disconnected' },
+      })),
     ],
   } as unknown as ExternalSourceController;
   let renderer!: ReactTestRenderer;
@@ -44,4 +52,14 @@ it('filters actual content/language metadata and persists favorites without gues
   act(() => controls[1]!.props.onChange({ target: { value: 'unknown' } }));
   expect(renderer.root.findByProps({ 'aria-label': '기타 소스 즐겨찾기' })).toBeDefined();
   act(() => renderer.unmount());
+});
+
+it('lists a few sources without search and filters', () => {
+  vi.stubGlobal('localStorage', { getItem: () => null, setItem: vi.fn() });
+  const controller = {
+    sources: [{ id: 'text', title: '텍스트 소스', origin: 'plugin', connection: { state: 'connected' } }],
+  } as unknown as ExternalSourceController;
+  const renderer = create(<ExternalSourceSettingsPanel controller={controller} />);
+  expect(renderer.root.findAllByType('select')).toHaveLength(0);
+  expect(renderer.root.findAllByProps({ className: 'external-source-settings-card' })).toHaveLength(1);
 });

@@ -135,12 +135,10 @@ export function useReaderSettingsDraft(options: ReaderSettingsDraftOptions) {
   );
   const resetReadingSettings = useCallback(() => {
     updateDraft(readingSettingsDefaults);
-    optionsRef.current.notify('읽기 화면 설정을 기본값으로 돌렸습니다.', 'success');
   }, [updateDraft]);
   const applyReadingPreset = useCallback(
     (preset: ReadingPreset) => {
       updateDraft(preset.settings);
-      optionsRef.current.notify(`${preset.label} 프리셋을 적용했습니다.`, 'success');
     },
     [updateDraft],
   );

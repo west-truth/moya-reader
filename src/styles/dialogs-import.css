@@ -1747,6 +1747,36 @@
   font-size: 0.82rem;
 }
 
+.import-text-options {
+  margin-top: 14px;
+  padding: 2px 12px 12px;
+  background: var(--app-surface-muted);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-panel);
+}
+
+.import-text-options > summary {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  padding: 10px 0 0;
+  color: var(--text);
+  font-size: 0.82rem;
+  font-weight: var(--ui-weight-semibold);
+  cursor: pointer;
+}
+
+.import-text-options:not([open]) {
+  padding-bottom: 10px;
+}
+
+.import-text-options > summary small {
+  margin-left: auto;
+  color: var(--text-2);
+  font-size: 0.72rem;
+  font-weight: var(--ui-weight-regular);
+}
+
 .drop-zone.is-disabled {
   cursor: wait;
   opacity: 0.68;

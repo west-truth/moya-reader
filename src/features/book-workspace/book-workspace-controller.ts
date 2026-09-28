@@ -489,9 +489,9 @@ export class BookWorkspaceController {
   };
 
   readonly removeNovel = async (novel: Novel): Promise<void> => {
-    const confirmed = this.ports.environment.confirm(
-      `"${novel.title}"을(를) 휴지통으로 이동할까요?\n\n본문, 읽던 위치와 주석은 복원할 때까지 보존됩니다.`,
-    );
+    // Moving to the trash is undoable from the toast, so only ask when restore is unavailable.
+    const confirmed =
+      Boolean(this.ports.catalog) || this.ports.environment.confirm(`"${novel.title}"을(를) 휴지통으로 이동할까요?`);
     if (!confirmed) return;
     try {
       await this.ports.repository.deleteNovel(novel.id, novel.metadataRevision ?? 0);
@@ -608,7 +608,6 @@ export class BookWorkspaceController {
       }
       await this.ports.adjacent.refreshNovels();
       await this.ports.adjacent.refreshAfterLocalMutation();
-      this.ports.environment.notify('책 제목을 저장했습니다.', 'success');
     } catch {
       this.ports.environment.notify('책 제목을 저장하지 못했습니다.', 'danger');
     }

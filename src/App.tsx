@@ -44,7 +44,6 @@ import { useAppRuntime } from './app/runtime/RuntimeProvider';
 import { useOptionalSelfHostAuth } from './features/auth/SelfHostAccountGate';
 import { useAnnotationsController } from './features/annotations/useAnnotationsController';
 import { BookWorkspaceScreens } from './features/book-workspace/BookWorkspaceScreens';
-import { OriginalFilesDialog } from './features/library/OriginalFilesDialog';
 import { BookWorkspaceStatsPanel } from './features/book-workspace/book-workspace-lazy-panels';
 import type {
   BookWorkspaceAdjacentFeaturePort,
@@ -206,7 +205,6 @@ import { NativePackageExecution } from './platform/tauri/native-package-executio
 import type { InstalledExtensionManager } from './extensions/packages/installed-extension-manager';
 import { RemoteInstalledExtensions } from './extensions/packages/remote-installed-extensions';
 import { RemoteDocumentAnnotationRepository } from './repositories/remote-document-annotation-repository';
-import { InstalledExtensionsPanel } from './features/extensions/InstalledExtensionsPanel';
 import { DropboxSourceAccountBroker } from './external-sources/dropbox-source-account-broker';
 import { GoogleDriveSourceAccountBroker } from './external-sources/google-drive-source-account-broker';
 import type { TrustedExternalSourceHostContext } from './external-sources/contracts';
@@ -297,7 +295,8 @@ import {
 import { verifyConnectedProviderServerBookAttached } from './sync/connected-provider-guard';
 import { runConnectedProviderPreflight } from './sync/connected-provider-preflight';
 import { connectedSyncFailureState, useConnectedReaderSync } from './sync/use-connected-reader-sync';
-import { ToastHost, useToastController } from './shared/ui/ToastHost';
+import { useToastController } from './shared/ui/toast-controller';
+import { LayerPresence } from './shared/ui/LayerPresence';
 import { abortableDelay, isAbortError } from './utils/async';
 import { clamp, formatBytes, formatCount } from './utils/format';
 import { jsonValue } from './utils/json';
@@ -308,6 +307,15 @@ const DEFAULT_HOSTED_TTS_BULK_WARMUP_CHAPTER_LIMIT = 3;
 const DEFAULT_HOSTED_TTS_BACKGROUND_WARMUP_CHAPTER_BATCH_LIMIT = 3;
 const SHOW_DEVELOPER_AI_TOOLS = import.meta.env.DEV;
 const ReaderScreen = lazy(() => import('./features/reader/ReaderScreen'));
+const OriginalFilesDialog = lazy(() =>
+  import('./features/library/OriginalFilesDialog').then((module) => ({ default: module.OriginalFilesDialog })),
+);
+const InstalledExtensionsPanel = lazy(() =>
+  import('./features/extensions/InstalledExtensionsPanel').then((module) => ({
+    default: module.InstalledExtensionsPanel,
+  })),
+);
+const ToastHost = lazy(() => import('./shared/ui/ToastHost').then((module) => ({ default: module.ToastHost })));
 const FixedDocumentScreen = lazy(() => import('./features/fixed-document/FixedDocumentScreen'));
 const AnnotationsPanel = lazy(() => import('./features/annotations/AnnotationsPanel'));
 const ReaderSettingsPanel = lazy(() => import('./features/reader-settings/ReaderSettingsPanel'));
@@ -1751,11 +1759,8 @@ export default function App() {
     if (readerRuntime.mode === 'remote') {
       const state = await refreshRemoteServerState();
       if (!state) return;
-      if (state.status === 'idle') {
-        showToast('서버 상태를 새로고침했습니다.', 'success');
-      } else {
-        showToast('서버 상태를 새로고침하지 못했습니다.', 'danger');
-      }
+      // A successful refresh is visible in the sync status itself; only failures need a toast.
+      if (state.status !== 'idle') showToast('서버 상태를 새로고침하지 못했습니다.', 'danger');
       return;
     }
     if (!syncService) {
@@ -2156,7 +2161,6 @@ export default function App() {
     await refreshNovels();
     await refreshAfterLocalMutation();
     await bookWorkspace.openNovel((await readerRepository.getNovel(parsed.novel.id)) ?? parsed.novel);
-    showToast('샘플 책을 추가했습니다.', 'success');
   };
 
   const [originalDownloadBook, setOriginalDownloadBook] = useState<Novel>();
@@ -2786,7 +2790,6 @@ export default function App() {
     }
     setRemoteReadingPosition(undefined);
     setSyncPanelOpen(false);
-    showToast('서버 읽기 위치로 이동했습니다.', 'success');
   };
 
   const openSelectionNote = (_selection?: ReaderSelection) => {
@@ -6182,15 +6185,17 @@ export default function App() {
   return (
     <div className="app-shell" style={styleVars}>
       {originalDownloadBook && bookAssetRepository && (
-        <OriginalFilesDialog
-          book={originalDownloadBook}
-          repository={bookAssetRepository}
-          onClose={() => setOriginalDownloadBook(undefined)}
-          onLegacyExport={() => {
-            setOriginalDownloadBook(undefined);
-            void exportBookSourceLegacy(originalDownloadBook);
-          }}
-        />
+        <Suspense fallback={<div className="modal-backdrop" aria-busy="true" />}>
+          <OriginalFilesDialog
+            book={originalDownloadBook}
+            repository={bookAssetRepository}
+            onClose={() => setOriginalDownloadBook(undefined)}
+            onLegacyExport={() => {
+              setOriginalDownloadBook(undefined);
+              void exportBookSourceLegacy(originalDownloadBook);
+            }}
+          />
+        </Suspense>
       )}
       {ProductLifecycle && <ProductLifecycle busy={productWorkBusy} reading={view === 'reader'} />}
       <BookWorkspaceScreens
@@ -6564,7 +6569,7 @@ export default function App() {
         </Suspense>
       )}
 
-      {settingsOpen && (
+      <LayerPresence open={settingsOpen}>
         <Suspense fallback={null}>
           <ReaderSettingsPanel
             serverApiBaseUrl={readerRuntime.mode === 'remote' ? readerRuntime.apiBaseUrl : undefined}
@@ -6581,27 +6586,29 @@ export default function App() {
             extensions={extensionSnapshots}
             installedPackages={
               installedExtensions ? (
-                <InstalledExtensionsPanel
-                  key={installedExtensions.target}
-                  manager={installedExtensions}
-                  sourceTarget={canChooseDesktopSourceTarget ? desktopSourceTarget : undefined}
-                  onSourceTargetChange={
-                    canChooseDesktopSourceTarget
-                      ? (target) => {
-                          setDesktopSourceTarget(target);
-                          try {
-                            globalThis.localStorage?.setItem('moya.desktopSourceTarget.v1', target);
-                          } catch {
-                            // The current session still uses the selected target.
+                <Suspense fallback={<p role="status">기능 확장을 불러오는 중…</p>}>
+                  <InstalledExtensionsPanel
+                    key={installedExtensions.target}
+                    manager={installedExtensions}
+                    sourceTarget={canChooseDesktopSourceTarget ? desktopSourceTarget : undefined}
+                    onSourceTargetChange={
+                      canChooseDesktopSourceTarget
+                        ? (target) => {
+                            setDesktopSourceTarget(target);
+                            try {
+                              globalThis.localStorage?.setItem('moya.desktopSourceTarget.v1', target);
+                            } catch {
+                              // The current session still uses the selected target.
+                            }
                           }
-                        }
-                      : undefined
-                  }
-                  suwayomi={
-                    externalSourceFeature.sources.find((source) => source.id === SUWAYOMI_EXTERNAL_SOURCE_ID)
-                      ?.extensionManager
-                  }
-                />
+                        : undefined
+                    }
+                    suwayomi={
+                      externalSourceFeature.sources.find((source) => source.id === SUWAYOMI_EXTERNAL_SOURCE_ID)
+                        ?.extensionManager
+                    }
+                  />
+                </Suspense>
               ) : undefined
             }
             externalSources={externalSourceFeature}
@@ -6658,35 +6665,38 @@ export default function App() {
             }}
           />
         </Suspense>
-      )}
-
-      {backupFeature.open && (
+      </LayerPresence>
+      <LayerPresence open={backupFeature.open}>
         <Suspense fallback={null}>
           <BackupPanel controller={backupFeature} />
         </Suspense>
-      )}
+      </LayerPresence>
 
-      {chapterStructureFeature.open && (
+      <LayerPresence open={chapterStructureFeature.open}>
         <Suspense fallback={null}>
           <ChapterStructurePanel controller={chapterStructureFeature} />
         </Suspense>
-      )}
+      </LayerPresence>
 
-      <ToastHost
-        toasts={toastList}
-        readerActive={view === 'reader'}
-        addonOpen={view === 'reader' && addonOpen}
-        onDismiss={dismissToast}
-      />
+      {toastList.length > 0 && (
+        <Suspense fallback={null}>
+          <ToastHost
+            toasts={toastList}
+            readerActive={view === 'reader'}
+            addonOpen={view === 'reader' && addonOpen}
+            onDismiss={dismissToast}
+          />
+        </Suspense>
+      )}
       <ImportFeatureHost
         controller={importFeature}
         showFloatingTrigger={(view === 'library' && !externalSourceFeature.open) || view === 'chapters'}
       />
-      {libraryFolderFeature.open && (
+      <LayerPresence open={libraryFolderFeature.open}>
         <Suspense fallback={null}>
           <LibraryFolderPanel controller={libraryFolderFeature} />
         </Suspense>
-      )}
+      </LayerPresence>
     </div>
   );
 }

@@ -84,7 +84,6 @@ describe('BookWorkspaceController commands', () => {
       'repository.getNovel',
       'adjacent.refreshNovels',
       'adjacent.refreshAfterLocalMutation',
-      'environment.notify:success',
     ]);
     expect(titleController.getSnapshot()).toMatchObject({
       selectedNovel: titledNovel,

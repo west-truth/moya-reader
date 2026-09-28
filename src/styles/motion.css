@@ -1,0 +1,283 @@
+/*
+ * Shared motion language. Screens push/pop along the navigation depth
+ * (library → book → reader) while persistent chrome stays still; overlays
+ * rise from the edge they belong to. Every rule here is presentation-only:
+ * removing this file must leave the app fully usable.
+ */
+
+html {
+  -webkit-tap-highlight-color: transparent;
+}
+
+button,
+a,
+summary,
+label,
+[role='button'],
+[role='tab'] {
+  touch-action: manipulation;
+}
+
+/* Screen transitions: only the content region moves, sidebar and top bars stay put. */
+[data-screen-motion='forward'] .library-workspace > :last-child {
+  animation: screen-push-in var(--motion-screen) var(--ease-emphasized-decelerate) both;
+}
+
+[data-screen-motion='back'] .library-workspace > :last-child {
+  animation: screen-pop-in var(--motion-screen) var(--ease-emphasized-decelerate) both;
+}
+
+[data-screen-motion='fade'] .library-workspace > :last-child {
+  animation: screen-fade-in var(--motion-base) var(--ease-standard) both;
+}
+
+/* Inside a source, opening a work is a push even though the hub itself stays mounted. */
+.library-workspace > .source-hub-scroll.is-work-detail {
+  animation: screen-push-in var(--motion-screen) var(--ease-emphasized-decelerate) both;
+}
+
+/* Readers hold fixed-position chrome, so they only cross-fade (no transform containing block). */
+[data-screen-motion] :is(.reader-screen, .fixed-doc-screen) {
+  animation: screen-fade-in var(--motion-base) var(--ease-standard) both;
+}
+
+@keyframes screen-push-in {
+  from {
+    opacity: 0;
+    transform: translateX(min(48px, 8vw));
+  }
+}
+
+@keyframes screen-pop-in {
+  from {
+    opacity: 0.4;
+    transform: translateX(max(-32px, -6vw));
+  }
+}
+
+@keyframes screen-fade-in {
+  from {
+    opacity: 0;
+  }
+}
+
+/* Dialogs, sheets and drawers. `data-state='closed'` is rendered briefly while exiting. */
+.modal-backdrop,
+.settings-layer,
+.modal-drawer-layer,
+.library-mobile-menu-backdrop,
+.reader-footnote-backdrop {
+  animation: overlay-fade-in var(--motion-base) var(--ease-standard) both;
+}
+
+.modal {
+  animation: dialog-in var(--motion-base) var(--ease-emphasized-decelerate) both;
+}
+
+.modal-drawer {
+  animation: drawer-in-start var(--motion-slow) var(--ease-emphasized-decelerate) both;
+}
+
+.modal-drawer-layer[data-side='end'] .modal-drawer {
+  animation-name: drawer-in-end;
+}
+
+:is(.modal-backdrop, .modal-drawer-layer)[data-state='closed'] {
+  pointer-events: none;
+  animation: overlay-fade-out var(--motion-exit) var(--ease-emphasized-accelerate) both;
+}
+
+.modal-backdrop[data-state='closed'] .modal {
+  animation: dialog-out var(--motion-exit) var(--ease-emphasized-accelerate) both;
+}
+
+.modal-drawer-layer[data-state='closed'] .modal-drawer {
+  animation: drawer-out-start var(--motion-exit) var(--ease-emphasized-accelerate) both;
+}
+
+.modal-drawer-layer[data-side='end'][data-state='closed'] .modal-drawer {
+  animation-name: drawer-out-end;
+}
+
+@keyframes overlay-fade-in {
+  from {
+    opacity: 0;
+  }
+}
+
+@keyframes overlay-fade-out {
+  to {
+    opacity: 0;
+  }
+}
+
+@keyframes dialog-in {
+  from {
+    opacity: 0;
+    transform: translateY(8px) scale(0.975);
+  }
+}
+
+@keyframes dialog-out {
+  to {
+    opacity: 0;
+    transform: translateY(4px) scale(0.985);
+  }
+}
+
+@keyframes drawer-in-start {
+  from {
+    transform: translateX(-100%);
+  }
+}
+
+@keyframes drawer-out-start {
+  to {
+    transform: translateX(-100%);
+  }
+}
+
+@keyframes drawer-in-end {
+  from {
+    transform: translateX(100%);
+  }
+}
+
+@keyframes drawer-out-end {
+  to {
+    transform: translateX(100%);
+  }
+}
+
+@keyframes sheet-in {
+  from {
+    transform: translateY(100%);
+  }
+}
+
+@keyframes sheet-out {
+  to {
+    transform: translateY(100%);
+  }
+}
+
+/* Menus and popovers grow from the control that opened them. */
+.library-mobile-popover {
+  transform-origin: top right;
+  animation: popover-in var(--motion-fast) var(--ease-emphasized-decelerate) both;
+}
+
+.reader-overflow-menu {
+  transform-origin: bottom right;
+  animation: popover-in var(--motion-fast) var(--ease-emphasized-decelerate) both;
+}
+
+.source-release-menu,
+.source-release-popover {
+  transform-origin: top right;
+  animation: popover-in var(--motion-fast) var(--ease-emphasized-decelerate) both;
+}
+
+.library-mobile-quick-shelves,
+.library-mobile-search {
+  animation: reveal-down var(--motion-fast) var(--ease-emphasized-decelerate) both;
+}
+
+@keyframes popover-in {
+  from {
+    opacity: 0;
+    transform: scale(0.94);
+  }
+}
+
+@keyframes reveal-down {
+  from {
+    opacity: 0;
+    transform: translateY(-6px);
+  }
+}
+
+.toast {
+  animation: toast-in var(--motion-base) var(--ease-emphasized-decelerate) backwards;
+}
+
+.toast[data-leaving] {
+  pointer-events: none;
+  animation: toast-out var(--motion-exit) var(--ease-emphasized-accelerate) both;
+}
+
+@keyframes toast-out {
+  to {
+    opacity: 0;
+    transform: scale(0.96);
+  }
+}
+
+@keyframes toast-in {
+  from {
+    opacity: 0;
+    transform: translateY(14px) scale(0.98);
+  }
+}
+
+/* Touch feedback: pressed controls settle slightly, like native list cells and buttons. */
+@media (hover: none) and (pointer: coarse) {
+  :is(.book-card-open, .book-direct-action, .library-mobile-icon, .reader-mobile-tool):active {
+    transform: scale(0.97);
+    transition: transform 90ms var(--ease-standard);
+  }
+
+  :is(.library-mobile-popover button, .library-sidebar-list button, .settings-nav button):active {
+    background: var(--app-surface-hover);
+  }
+}
+
+@media (max-width: 699px) {
+  /* Mobile dialogs are bottom sheets or full-screen pages: slide from the bottom edge. */
+  .modal {
+    animation: sheet-in var(--motion-slow) var(--ease-emphasized-decelerate) both;
+  }
+
+  .modal-backdrop[data-state='closed'] .modal {
+    animation: sheet-out var(--motion-exit) var(--ease-emphasized-accelerate) both;
+  }
+
+  .reader-footnote-sheet {
+    animation: sheet-in var(--motion-slow) var(--ease-emphasized-decelerate) both;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  [data-screen-motion] .library-workspace > :last-child,
+  .library-workspace > .source-hub-scroll.is-work-detail,
+  [data-screen-motion] :is(.reader-screen, .fixed-doc-screen),
+  .modal,
+  .modal-drawer,
+  .library-mobile-popover,
+  .reader-overflow-menu,
+  .source-release-menu,
+  .source-release-popover,
+  .library-mobile-quick-shelves,
+  .library-mobile-search,
+  .reader-footnote-sheet,
+  .toast {
+    animation: none;
+  }
+}
+
+@media (max-width: 699px) {
+  /* Settings on phones: category list → page is a push, the back button pops. */
+  .reader-settings-body[data-mobile-motion='forward'] .reader-settings-main {
+    animation: screen-push-in var(--motion-screen) var(--ease-emphasized-decelerate) both;
+  }
+
+  .reader-settings-body[data-mobile-motion='back'] .reader-settings-tabs {
+    animation: screen-pop-in var(--motion-screen) var(--ease-emphasized-decelerate) both;
+  }
+}
+
+@media (max-width: 699px) and (prefers-reduced-motion: reduce) {
+  .reader-settings-body[data-mobile-motion] :is(.reader-settings-main, .reader-settings-tabs) {
+    animation: none;
+  }
+}

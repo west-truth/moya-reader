@@ -10,6 +10,7 @@ import { LibraryControls } from './LibraryControls';
 import { LibraryInspector } from './LibraryInspector';
 import { LibraryReadingProgress } from './LibraryReadingProgress';
 import type { LibraryScreenProps } from './library-screen-contract';
+import { SkeletonCoverGrid } from '../../shared/ui/Skeleton';
 
 export type { LibraryScreenActions, LibraryScreenModel, LibraryScreenProps } from './library-screen-contract';
 
@@ -95,10 +96,9 @@ function LibraryEmptyState({ model, actions }: LibraryScreenProps) {
 function LibraryBootstrapState({ model, actions }: LibraryScreenProps) {
   if (model.bootstrap.status === 'loading') {
     return (
-      <div className="library-bootstrap-state" role="status" aria-live="polite">
-        <div className="library-bootstrap-mark" aria-hidden="true" />
-        <h2>책장을 불러오는 중입니다</h2>
-        <p>이 기기에 저장된 작품과 읽기 상태를 확인하고 있습니다.</p>
+      <div className="library-bootstrap-state is-loading" role="status" aria-live="polite">
+        <span className="sr-only">책장을 불러오는 중입니다</span>
+        <SkeletonCoverGrid />
       </div>
     );
   }

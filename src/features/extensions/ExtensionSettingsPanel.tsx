@@ -10,7 +10,7 @@ const permissionLabels: Record<ExtensionPermission, string> = {
   'book.enrichment.propose': '작품 정보·표지 후보 제안',
   'external.source.download': '선택한 외부 원문 가져오기',
   'external.source.list': '외부 작품·파일 목록 보기',
-  'reader.addon.render': 'Reader 보조 패널 표시',
+  'reader.addon.render': '리더 보조 패널 표시',
   'reader.context.read': '현재 Reader 문맥 사용',
 };
 
@@ -47,12 +47,14 @@ function ExtensionCard({
             <span className="extension-badge">{extension.origin === 'bundled' ? '내장' : '커뮤니티'}</span>
           </div>
           <span className="muted">
-            v{extension.version} · {extension.trustLevel === 'trusted' ? '앱과 함께 검증됨' : '격리 실행 미지원'}
+            v{extension.version}
+            {extension.trustLevel !== 'trusted' && ' · 격리 실행 미지원'}
           </span>
         </div>
         <label className="reader-settings-toggle extension-enable-toggle">
           <input
             type="checkbox"
+            className="switch"
             checked={extension.enabled}
             disabled={!extension.canDisable}
             onChange={(event) => setEnabled(extension.id, event.target.checked)}

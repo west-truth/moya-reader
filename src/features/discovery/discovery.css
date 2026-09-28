@@ -255,14 +255,31 @@
   min-height: 44px;
 }
 .discovery-empty {
-  padding: 50px 16px;
+  display: grid;
+  justify-items: center;
+  gap: 10px;
+  padding: 56px 16px;
+  color: var(--text-2);
   text-align: center;
+}
+.discovery-empty > svg {
+  margin-bottom: 4px;
+  color: var(--text-2);
+}
+.discovery-empty h2 {
+  color: var(--text);
+  font-size: 1.05rem;
+}
+.discovery-empty p {
+  max-width: 440px;
+  font-size: 0.82rem;
 }
 .discovery-empty > div {
   display: flex;
-  gap: 12px;
+  gap: 8px;
   justify-content: center;
   flex-wrap: wrap;
+  margin-top: 8px;
 }
 .modal-drawer.discovery-editor {
   width: min(640px, 100%);
@@ -397,6 +414,13 @@
 }
 .library-discovery-link {
   margin-bottom: 8px;
+}
+/* 홈 and 탐색 read as one primary group; section spacing only separates groups. */
+.library-sidebar-scroll > .library-discovery-link:has(+ .library-discovery-link) {
+  margin-bottom: -26px;
+}
+.library-mobile-drawer-scroll > .library-discovery-link:has(+ .library-discovery-link) {
+  margin-bottom: 2px;
 }
 @media (max-width: 699px) {
   .library-workspace.discovery-workspace {

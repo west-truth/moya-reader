@@ -1,6 +1,7 @@
 import { X } from 'lucide-react';
 import { type MouseEvent, type ReactNode, type RefObject, useId, useRef } from 'react';
 import { useDismissibleLayer } from './use-dismissible-layer';
+import { usePresence } from './use-presence';
 
 export type DialogCloseReason = 'backdrop' | 'close-button' | 'escape';
 
@@ -58,17 +59,23 @@ export function Dialog({
     onClose,
   });
 
-  if (!open) return null;
+  const { present, closing } = usePresence(open, backdropRef);
+  if (!present) return null;
 
   const requestClose = (reason: DialogCloseReason) => {
-    if (!closeDisabled) onClose(reason);
+    if (!closeDisabled && !closing) onClose(reason);
   };
   const closeFromBackdrop = (event: MouseEvent<HTMLDivElement>) => {
     if (event.target === event.currentTarget) requestClose('backdrop');
   };
 
   return (
-    <div ref={backdropRef} className={classNames('modal-backdrop', backdropClassName)} onClick={closeFromBackdrop}>
+    <div
+      ref={backdropRef}
+      className={classNames('modal-backdrop', backdropClassName)}
+      data-state={closing ? 'closed' : 'open'}
+      onClick={closeFromBackdrop}
+    >
       <section
         ref={dialogRef}
         className={classNames('modal', className)}

@@ -64,9 +64,31 @@
 }
 
 .detail-hero-cover > .book-cover {
+  container-type: inline-size;
   min-height: 168px;
   padding: 10px;
   box-shadow: 0 8px 22px color-mix(in srgb, #000 16%, transparent);
+}
+
+/* Generated covers fill the frame so the title keeps readable line lengths at small sizes. */
+.detail-hero-cover > .book-cover:has(> .book-cover-fallback) {
+  padding: 0;
+}
+
+.detail-hero-cover .book-cover-fallback {
+  gap: 8px;
+  padding: 14px 9px 12px;
+}
+
+.detail-hero-cover .book-cover-fallback strong {
+  font-size: clamp(11px, 13cqi, 17px);
+  line-height: 1.35;
+}
+
+.detail-hero-cover .book-cover-format {
+  top: 14px;
+  left: 9px;
+  right: 9px;
 }
 
 .detail-hero-copy {
@@ -202,6 +224,11 @@
 .detail-hero-actions > .detail-add-chapter-button {
   justify-content: center;
   white-space: nowrap;
+}
+
+/* Title and structure edits also live in 작품 관리; the hero keeps reading-first actions. */
+.detail-hero-actions > :is(.detail-title-button, .detail-structure-button) {
+  display: none;
 }
 
 .book-title-editor {
@@ -610,6 +637,10 @@
 .is-read .chapter-title-cell strong {
   color: var(--text-2);
 }
+
+.is-current .chapter-title-cell strong {
+  color: var(--app-text-strong);
+}
 .chapter-title-cell small {
   margin-top: 4px;
   color: var(--muted);
@@ -995,10 +1026,20 @@
 .chapter-row-with-menu > .icon-btn {
   flex: 0 0 40px;
   margin-right: 8px;
+  color: var(--text-2);
+  background: transparent;
+  border-color: transparent;
 }
 
+.chapter-row-with-menu > .icon-btn:hover,
+.chapter-row-with-menu > .icon-btn:focus-visible {
+  color: var(--text);
+  background: var(--app-surface-hover);
+}
+
+/* The head spans the full row (so its divider does too) but leaves room for the row menu. */
 .chapters-screen .chapter-list-head {
-  margin-right: 48px;
+  padding-right: 66px;
 }
 
 .chapter-actions-list {

@@ -59,6 +59,7 @@ import { SourceReleasePanel } from './SourceReleasePanel';
 import { SourceReleaseMenu } from './SourceReleaseMenu';
 import { SourceDownloadRecovery } from './SourceDownloadRecovery';
 import { navigateAppBack } from '../navigation/browser-navigation';
+import { SkeletonCoverGrid } from '../../shared/ui/Skeleton';
 import type {
   ExternalSourceController,
   ExternalSourceItemImportState,
@@ -1254,7 +1255,6 @@ export default function SourceHubScreen({
                     </div>
                   </div>
                 )}
-
                 {controller.loading && controller.items.length > 0 && (
                   <div className="source-hub-loading-status" role="status" aria-live="polite">
                     <LoaderCircle size={16} className="spin" aria-hidden="true" />
@@ -1263,8 +1263,8 @@ export default function SourceHubScreen({
                 )}
 
                 {controller.loading && controller.items.length === 0 ? (
-                  <div className="source-hub-empty" role="status">
-                    <LoaderCircle size={24} className="spin" /> 목록을 불러오고 있습니다.
+                  <div className="source-hub-list-skeleton" role="status" aria-label="목록을 불러오고 있습니다">
+                    <SkeletonCoverGrid count={12} />
                   </div>
                 ) : controller.items.length === 0 && !controller.listError ? (
                   <div className="source-hub-empty">

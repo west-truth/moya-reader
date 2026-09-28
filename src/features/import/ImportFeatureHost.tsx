@@ -1,6 +1,7 @@
 import { LoaderCircle, Plus } from 'lucide-react';
 import { lazy, Suspense } from 'react';
 import { Dialog } from '../../shared/ui/Dialog';
+import { LayerPresence } from '../../shared/ui/LayerPresence';
 import type { ImportFeatureController } from './useImportController';
 
 const ImportDialog = lazy(() => import('./ImportDialog'));
@@ -13,11 +14,11 @@ export interface ImportFeatureHostProps {
 export function ImportFeatureHost({ controller, showFloatingTrigger }: ImportFeatureHostProps) {
   return (
     <>
-      {controller.isOpen && (
+      <LayerPresence open={controller.isOpen}>
         <Suspense
           fallback={
             <Dialog
-              open
+              open={controller.isOpen}
               title="책 가져오기"
               onClose={controller.close}
               closeLabel="가져오기 닫기"
@@ -31,7 +32,7 @@ export function ImportFeatureHost({ controller, showFloatingTrigger }: ImportFea
         >
           <ImportDialog controller={controller} />
         </Suspense>
-      )}
+      </LayerPresence>
       {showFloatingTrigger && (
         <button
           className={`floating-import${controller.tasks.length > 0 ? ' is-active' : ''}`}

@@ -111,6 +111,7 @@ export default function DiscoveryScreen({
             {...library}
             sourceMode={{
               title: '탐색',
+              icon: <Compass size={15} />,
               query: draftQuery,
               setQuery: setDraftQuery,
               search: () => setQuery(draftQuery.trim()),

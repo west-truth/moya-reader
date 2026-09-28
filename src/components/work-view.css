@@ -3,19 +3,35 @@
   align-items: center;
   flex-shrink: 0;
   gap: 6px;
-  min-height: 44px;
-  padding: 0 10px;
+  height: 38px;
+  padding: 0 4px 0 10px;
   border: 1px solid var(--border);
-  border-radius: 10px;
+  border-radius: var(--radius-control);
   background: var(--app-surface);
   color: var(--text);
 }
 .work-view-control select {
   min-width: 0;
-  min-height: 42px;
+  height: 36px;
+  min-height: 0;
   max-width: 135px;
+  padding: 0 4px;
   border: 0;
   background: var(--app-surface);
   color: inherit;
   font: inherit;
+  font-size: var(--ui-meta-size);
+  font-weight: var(--ui-weight-medium);
+}
+
+.work-view-control:hover {
+  background: var(--app-surface-hover);
+}
+
+.work-view-control:hover select {
+  background: transparent;
+}
+
+.work-view-control:focus-within {
+  border-color: var(--primary);
 }

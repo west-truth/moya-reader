@@ -39,7 +39,7 @@ describe('ExtensionSettingsPanel', () => {
     expect(markup).toContain('Moya AI');
     expect(markup).toContain('v1.0.0');
     expect(markup).toContain('Beta');
-    expect(markup).toContain('앱과 함께 검증됨');
+    expect(markup).toContain('v1.0.0');
     expect(markup).toContain('Moya AI 분석');
     expect(markup).toContain('앱이 제공한 AI 실행 경계 사용');
     expect(markup).toContain('설치된 커뮤니티 기능 확장이 없습니다.');
