@@ -1,3 +1,4 @@
+import { LibraryCountLabel } from './LibraryCountLabel';
 import { isCoverView } from '../../components/work-view';
 import { Check, Pencil, Play, RotateCcw, Star, Trash2 } from 'lucide-react';
 import { bookFormatLabel, isFixedDocumentFormat } from '../../domain/book-format';
@@ -184,7 +185,15 @@ function LibraryBookCard(props: LibraryBookItemProps) {
         )}
         <div className="card-row">
           <strong>
-            {importTask ? importTaskLabel(importTask) : trashed ? '휴지통' : formatProgress(book.bookProgress)}
+            {importTask ? (
+              importTaskLabel(importTask)
+            ) : trashed ? (
+              '휴지통'
+            ) : model.presentation.showReadingCounts && book.readingCounts ? (
+              <LibraryCountLabel {...book.readingCounts} />
+            ) : (
+              formatProgress(book.bookProgress)
+            )}
           </strong>
           <span>{book.lastReadLabel}</span>
           {importTask?.phase === 'failed' ? (
@@ -313,6 +322,7 @@ export function LibraryBookCollection(props: LibraryScreenProps) {
       if (item.kind === 'external') {
         return isCoverView(props.model.viewMode) ? (
           <ExternalWorkCard
+            showReadingCounts={props.model.presentation.showReadingCounts}
             key={item.key}
             work={item.work}
             actions={props.actions}
@@ -394,6 +404,7 @@ export function LibraryBookCollection(props: LibraryScreenProps) {
         {externalWorks.map((work) =>
           isCoverView(props.model.viewMode) ? (
             <ExternalWorkCard
+              showReadingCounts={props.model.presentation.showReadingCounts}
               key={work.id}
               work={work}
               actions={props.actions}

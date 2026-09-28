@@ -23,6 +23,7 @@ export interface LibraryBookView {
   directActionLabel: '이어 읽기' | '첫 화 보기' | '이어 보기' | '문서 열기';
   bookProgress: number;
   readingPositionLabel: string;
+  readingCounts?: { current: number; total: number; unit: string };
   readingTimeLabel: string;
   lastReadLabel: string;
 }
@@ -99,6 +100,11 @@ export function buildLibraryBookView(novel: Novel, readState: NovelReadStateSele
         : '첫 화 보기',
     bookProgress: isUnread ? 0 : Math.min(1, Math.max(0, novel.lastReadProgress)),
     readingPositionLabel: readingPositionLabel(novel, isUnread),
+    readingCounts: {
+      current: isUnread ? 0 : (novel.lastReadChapterIndex ?? 0),
+      total: novel.totalChapters,
+      unit: bookUnitLabel(novel),
+    },
     readingTimeLabel: readingSeconds > 0 ? formatReadingDuration(readingSeconds) : '기록 없음',
     lastReadLabel: novel.lastReadAt ? formatDateTime(novel.lastReadAt) : '읽은 기록 없음',
   };

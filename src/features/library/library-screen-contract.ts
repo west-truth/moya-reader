@@ -64,6 +64,7 @@ export interface LibraryScreenModel {
   importTasks: readonly ImportTaskView[];
   presentation: {
     layoutMode: ResponsiveLayoutMode;
+    showReadingCounts?: boolean;
     focusedBookId?: string;
     inspectorOpen: boolean;
     shelfBookCounts: ReadonlyMap<string, number>;

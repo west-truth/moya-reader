@@ -296,6 +296,7 @@ export function BookWorkspaceScreens({
     importTasks,
     presentation: {
       layoutMode,
+      showReadingCounts: textReader?.settings.showLibraryReadingCounts === true,
       focusedBookId,
       inspectorOpen: layoutMode === 'wide' || inspectorOpen,
       shelfBookCounts,

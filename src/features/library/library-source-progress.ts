@@ -9,6 +9,7 @@ export function withSourceProgress(book: LibraryBookView, progress: SourceWorkPr
   return {
     ...book,
     bookProgress: progress.progress,
+    readingCounts: { current: progress.readCount, total: progress.totalCount, unit: '화' },
     readingPositionLabel: `${formatCount(progress.readCount)} / ${formatCount(progress.totalCount)}화`,
   };
 }

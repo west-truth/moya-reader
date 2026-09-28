@@ -44,6 +44,7 @@ describe('applySourceProgress', () => {
     views.forEach((book) => {
       expect(book?.bookProgress).toBeCloseTo(0.025);
       expect(book?.readingPositionLabel).toBe('3 / 120화');
+      expect(book?.readingCounts).toEqual({ current: 3, total: 120, unit: '화' });
     });
     // One view per book keeps selection and focus comparisons stable.
     expect(new Set(views).size).toBe(1);
