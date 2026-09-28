@@ -316,7 +316,7 @@ export function useCloudVaultController(options: UseCloudVaultControllerOptions)
       return;
     }
     if (!dropboxAppKey) {
-      notify('이 빌드에는 Dropbox 앱 키가 설정되지 않았습니다.', 'warning');
+      notify('이 버전에서는 Dropbox를 사용할 수 없습니다.', 'warning');
       return;
     }
     busyRef.current = true;

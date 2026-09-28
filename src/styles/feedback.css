@@ -20,49 +20,95 @@
 }
 
 .toast {
+  --toast-tone: var(--primary);
+  width: min(380px, calc(100vw - 36px));
+  max-width: 100%;
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  width: min(360px, calc(100vw - 36px));
-  max-width: 100%;
-  padding: 11px 13px;
+  gap: 10px;
+  padding: 10px 8px 10px 14px;
   overflow-wrap: anywhere;
   pointer-events: auto;
-  color: var(--text);
-  background: var(--app-surface-strong);
-  border: 1px solid var(--border);
-  border-left: 4px solid var(--primary);
-  border-radius: 0;
-  box-shadow: 0 8px 24px rgba(20, 22, 19, 0.16);
-}
-
-.toast > span {
-  min-width: 0;
-}
-
-.toast > button {
-  flex: none;
-  border: 0;
-  border-left: 1px solid color-mix(in srgb, currentColor 22%, transparent);
-  padding: 2px 0 2px 12px;
-  color: inherit;
-  background: transparent;
-  font: inherit;
-  font-weight: 700;
-  cursor: pointer;
+  touch-action: pan-y;
+  color: var(--app-text-strong);
+  background: color-mix(in srgb, var(--app-panel-elevated) 94%, transparent);
+  border: 1px solid var(--app-line);
+  border-radius: var(--radius-overlay);
+  box-shadow: var(--shadow-soft);
+  backdrop-filter: blur(18px);
+  font-size: var(--ui-body-size);
+  line-height: 1.45;
 }
 
 .toast.success {
-  border-left-color: var(--primary);
+  --toast-tone: var(--app-success);
 }
 
 .toast.warning {
-  border-left-color: var(--warning);
+  --toast-tone: var(--app-warning);
 }
 
 .toast.danger {
-  border-left-color: var(--danger);
+  --toast-tone: var(--app-danger);
+  border-color: color-mix(in srgb, var(--app-danger) 40%, var(--app-line));
+}
+
+.toast-icon {
+  flex: none;
+  color: var(--toast-tone);
+}
+
+.toast-message {
+  min-width: 0;
+  flex: 1;
+}
+
+.toast-action {
+  flex: none;
+  min-height: 32px;
+  padding: 0 10px;
+  color: var(--primary);
+  background: transparent;
+  border-radius: var(--radius-control);
+  font: inherit;
+  font-weight: var(--ui-weight-bold);
+  cursor: pointer;
+}
+
+.toast-action:hover {
+  background: var(--app-accent-soft);
+}
+
+.toast-close {
+  width: 30px;
+  height: 30px;
+  flex: none;
+  display: grid;
+  place-items: center;
+  color: var(--app-text-muted);
+  background: transparent;
+  border-radius: var(--radius-control);
+  cursor: pointer;
+}
+
+.toast-close:hover {
+  color: var(--app-text);
+  background: var(--app-surface-hover);
+}
+
+@media (max-width: 699px) {
+  /* Phones: a centered snackbar above the home indicator. */
+  .toast-region {
+    right: 12px;
+    left: 12px;
+    justify-items: center;
+    max-width: none;
+  }
+
+  .toast {
+    width: 100%;
+    max-width: 520px;
+  }
 }
 
 .floating-import {
@@ -87,4 +133,260 @@
 
 .reader-screen .floating-import {
   display: none;
+}
+
+/*
+ * Loading. Placeholders keep the final layout's shape and only fade in when loading is
+ * slow enough to notice, so fast loads never flash.
+ */
+.skeleton {
+  display: block;
+  background: linear-gradient(
+      100deg,
+      transparent 30%,
+      color-mix(in srgb, var(--app-text) 6%, transparent) 50%,
+      transparent 70%
+    )
+    var(--app-surface-muted);
+  background-size: 300% 100%;
+  border-radius: var(--radius-control);
+  animation: skeleton-shimmer 1.6s var(--ease-standard) infinite;
+}
+
+.skeleton-line {
+  width: 58%;
+  height: 11px;
+  border-radius: 6px;
+}
+
+.skeleton-line.is-wide {
+  width: 86%;
+}
+
+.skeleton-line.is-short {
+  width: 22%;
+}
+
+.skeleton-line.is-title {
+  width: 64%;
+  height: 22px;
+}
+
+.skeleton-line.is-index {
+  width: 36px;
+  flex: none;
+}
+
+.skeleton-line.is-meta {
+  width: 64px;
+  flex: none;
+  margin-left: auto;
+}
+
+.skeleton-button {
+  width: 144px;
+  height: 38px;
+}
+
+.skeleton-cover-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+  gap: 18px;
+}
+
+.skeleton-cover-card {
+  display: grid;
+  gap: 8px;
+}
+
+.skeleton-cover {
+  aspect-ratio: 2 / 3;
+  border-radius: 8px;
+}
+
+.skeleton-rows {
+  display: grid;
+}
+
+.skeleton-row {
+  min-height: 56px;
+  display: flex;
+  align-items: center;
+  gap: 18px;
+  padding: 0 18px;
+  border-bottom: 1px solid var(--border);
+}
+
+.skeleton-row > .skeleton-line.is-wide {
+  width: auto;
+  max-width: 420px;
+  flex: 1;
+}
+
+.library-bootstrap-state.is-loading,
+.workspace-skeleton-body,
+.book-detail-skeleton,
+.chapter-list-skeleton,
+.source-hub-list-skeleton {
+  animation: loading-appear var(--motion-base) var(--ease-standard) 180ms both;
+}
+
+.library-bootstrap-state.is-loading {
+  min-height: 0;
+  display: block;
+  padding: 0;
+  text-align: start;
+}
+
+.workspace-skeleton-topbar {
+  border-bottom: 1px solid var(--border);
+}
+
+.workspace-skeleton-body {
+  min-height: 0;
+  overflow: hidden;
+  padding: 24px 28px;
+}
+
+.book-detail-skeleton-hero {
+  display: grid;
+  grid-template-columns: 112px minmax(0, 1fr);
+  gap: 20px;
+  margin-bottom: 14px;
+  padding: 18px;
+  background: var(--app-surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-panel);
+}
+
+.book-detail-skeleton-cover {
+  height: 168px;
+  border-radius: 6px;
+}
+
+.book-detail-skeleton-copy {
+  display: grid;
+  align-content: start;
+  gap: 14px;
+  padding-top: 6px;
+}
+
+.book-detail-skeleton .skeleton-rows {
+  background: var(--app-surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-panel);
+}
+
+/* Screen-to-screen work in flight (opening a book or chapter): a thin indeterminate bar. */
+.app-navigation-progress {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  z-index: var(--layer-toast);
+  height: 2px;
+  overflow: hidden;
+  pointer-events: none;
+  animation: loading-appear var(--motion-fast) linear 120ms both;
+}
+
+.app-navigation-progress::before {
+  position: absolute;
+  inset: 0;
+  width: 40%;
+  background: var(--primary);
+  border-radius: 0 2px 2px 0;
+  content: '';
+  animation: navigation-progress 1.1s var(--ease-standard) infinite;
+}
+
+/* Reader code still loading: faint text lines where the chapter will appear. */
+.reader-screen.reader-loading::before {
+  position: absolute;
+  top: 16vh;
+  left: 50%;
+  width: min(var(--reading-width), 84vw);
+  height: 46vh;
+  background: repeating-linear-gradient(
+    to bottom,
+    color-mix(in srgb, var(--reader-text) 8%, transparent) 0 11px,
+    transparent 11px 34px
+  );
+  mask-image: linear-gradient(to bottom, #000 55%, transparent);
+  transform: translateX(-50%);
+  content: '';
+  animation: loading-appear var(--motion-base) var(--ease-standard) 180ms both;
+}
+
+.fixed-doc-screen:empty::after {
+  position: fixed;
+  inset: 0;
+  width: 28px;
+  height: 28px;
+  margin: auto;
+  border: 2px solid rgb(255 255 255 / 16%);
+  border-top-color: var(--primary);
+  border-radius: 50%;
+  content: '';
+  animation:
+    app-spinner-rotate 800ms linear infinite,
+    loading-appear var(--motion-base) var(--ease-standard) 200ms both;
+}
+
+@keyframes skeleton-shimmer {
+  from {
+    background-position: 100% 0;
+  }
+
+  to {
+    background-position: 0 0;
+  }
+}
+
+@keyframes loading-appear {
+  from {
+    opacity: 0;
+  }
+}
+
+@keyframes navigation-progress {
+  from {
+    transform: translateX(-100%);
+  }
+
+  to {
+    transform: translateX(260%);
+  }
+}
+
+@media (max-width: 699px) {
+  .skeleton-cover-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 14px;
+  }
+
+  .workspace-skeleton-topbar {
+    display: none;
+  }
+
+  .workspace-skeleton-body {
+    padding: 22px 14px;
+  }
+
+  .book-detail-skeleton-hero {
+    grid-template-columns: 84px minmax(0, 1fr);
+    gap: 13px;
+    padding: 14px;
+  }
+
+  .book-detail-skeleton-cover {
+    height: 126px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .skeleton,
+  .app-navigation-progress::before {
+    animation: none;
+  }
 }

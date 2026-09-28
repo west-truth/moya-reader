@@ -80,7 +80,7 @@ export class DropboxSourceAccountBroker implements ExternalSourceBroker {
     if (!this.appKey) {
       return {
         state: 'unavailable',
-        reason: '이 빌드에는 Dropbox 외부 소스 앱 키가 설정되지 않았습니다.',
+        reason: '이 버전에서는 Dropbox를 사용할 수 없습니다.',
       };
     }
     if (!defaultDropboxRedirectUri()) {

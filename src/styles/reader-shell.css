@@ -30,10 +30,11 @@
   backdrop-filter: blur(16px);
   opacity: 0;
   pointer-events: none;
-  transform: translateY(-8px);
+  transform: translateY(-100%);
   transition:
-    opacity 180ms ease,
-    transform 180ms ease;
+    opacity var(--motion-fast) var(--ease-standard),
+    transform var(--motion-base) var(--ease-emphasized-decelerate),
+    visibility var(--motion-base);
 }
 
 .reader-topbar {
@@ -46,7 +47,7 @@
   gap: 10px;
   padding-bottom: max(8px, env(safe-area-inset-bottom, 0px));
   border-top: 1px solid var(--border);
-  transform: translateY(8px);
+  transform: translateY(100%);
 }
 
 .reader-position-bar,

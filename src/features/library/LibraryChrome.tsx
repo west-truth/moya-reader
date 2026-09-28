@@ -19,7 +19,7 @@ import {
   MoreVertical,
   Plus,
   PlugZap,
-  RotateCcw,
+  RefreshCw,
   Search,
   Settings,
   Sparkles,
@@ -29,7 +29,7 @@ import {
   Upload,
   X,
 } from 'lucide-react';
-import { type RefObject, useEffect, useRef, useState } from 'react';
+import { type ReactNode, type RefObject, useEffect, useRef, useState } from 'react';
 import { ModalDrawer } from '../../shared/ui/ModalDrawer';
 import { formatCount } from '../../utils/format';
 import type { LibraryScreenProps } from './library-screen-contract';
@@ -43,10 +43,6 @@ const systemViews: Array<{ value: LibraryFilter; label: string; icon: typeof Lib
   { value: 'favorite', label: '즐겨찾기', icon: Star },
   { value: 'trash', label: '휴지통', icon: Trash2 },
 ];
-
-function goLibraryHome({ actions }: LibraryScreenProps): void {
-  actions.presentation.goHome();
-}
 
 function LibrarySearchShortcut() {
   useEffect(() => {
@@ -236,7 +232,7 @@ function NavigationSections(props: LibraryScreenProps & { close?: () => void }) 
         <button
           type="button"
           onClick={() => {
-            goLibraryHome(props);
+            props.actions.presentation.goHome();
             close?.();
           }}
         >
@@ -332,7 +328,7 @@ export function LibrarySidebar(props: LibraryScreenProps) {
       <button
         className="library-brand-lockup"
         type="button"
-        onClick={() => goLibraryHome(props)}
+        onClick={() => props.actions.presentation.goHome()}
         aria-label="라이브러리 메인"
       >
         <BrandWordmark />
@@ -455,7 +451,7 @@ function LibraryNavigationDrawer({
             <FolderPlus size={17} /> 폴더 가져오기
           </button>
           <button type="button" onClick={() => runGlobal(actions.header.openSync)}>
-            <RotateCcw size={17} /> 동기화
+            <RefreshCw size={17} /> 동기화
           </button>
           <button type="button" onClick={() => runGlobal(actions.header.openBackup)}>
             <DatabaseBackup size={17} /> 백업 및 복원
@@ -506,6 +502,7 @@ type MobilePanel = 'drawer' | 'display' | 'more' | null;
 
 export interface LibraryMobileSourceMode {
   readonly title: string;
+  readonly icon?: ReactNode;
   readonly query: string;
   readonly searchable?: boolean;
   setQuery(value: string): void;
@@ -558,7 +555,7 @@ export function LibraryMobileHeader(props: LibraryScreenProps & { sourceMode?: L
         </button>
         {sourceMode ? (
           <span className="library-mobile-shelf is-static">
-            <Cloud size={15} />
+            {sourceMode.icon ?? <PlugZap size={15} />}
             <span>{sourceMode.title}</span>
           </span>
         ) : (
@@ -732,7 +729,7 @@ export function LibraryMobileHeader(props: LibraryScreenProps & { sourceMode?: L
             </button>
           )}
           <button type="button" onClick={() => runGlobal(actions.header.openSync)}>
-            <RotateCcw size={17} /> 동기화 <small>{model.sync.label}</small>
+            <RefreshCw size={17} /> 동기화 <small>{model.sync.label}</small>
           </button>
           <button type="button" onClick={() => runGlobal(actions.header.openBackup)}>
             <DatabaseBackup size={17} /> 백업 및 복원

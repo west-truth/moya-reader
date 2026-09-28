@@ -65,16 +65,15 @@ export function ImportDialog({ controller }: ImportDialogProps) {
       >
         <Upload size={36} />
         <strong className="drop-zone-title">
-          {controller.pendingFiles.length ? '선택한 파일 변경' : '텍스트, EPUB, PDF 또는 만화 압축 파일 선택'}
+          {controller.pendingFiles.length ? '선택한 파일 변경' : '파일 선택 또는 끌어다 놓기'}
         </strong>
         <span>
           {controller.pendingFiles.length
-            ? '다른 파일을 고르면 현재 선택 목록을 교체합니다.'
-            : '여러 파일을 한 번에 선택하거나 여기에 끌어오세요.'}
+            ? '다른 파일을 고르면 현재 목록을 교체합니다.'
+            : 'TXT · EPUB · PDF · 만화 압축(ZIP·CBZ·RAR·7z)'}
         </span>
         <span className="drop-zone-hint">
-          텍스트 {formatImportBytes(LOCAL_IMPORT_TARGET_BYTES)} 이하 권장 · PDF/ZIP은 파일 크기에 따라 시간이 걸릴 수
-          있습니다.
+          텍스트는 {formatImportBytes(LOCAL_IMPORT_TARGET_BYTES)} 이하를 권장합니다
         </span>
       </button>
 
@@ -373,7 +372,19 @@ export function ImportDialog({ controller }: ImportDialogProps) {
       )}
 
       {hasTextSelection && (
-        <>
+        <details
+          className="import-text-options"
+          open={controller.encoding !== 'auto' || controller.chapterSplitMode !== 'auto'}
+        >
+          <summary>
+            텍스트 옵션
+            <small>
+              인코딩 {controller.encoding === 'auto' ? '자동' : TEXT_ENCODING_LABELS[controller.encoding]} · 화 분리{' '}
+              {controller.chapterSplitMode === 'auto'
+                ? '자동'
+                : formatImportChapterSplitMode(controller.chapterSplitMode)}
+            </small>
+          </summary>
           <label className="field-label" htmlFor={encodingId}>
             텍스트 인코딩
           </label>
@@ -390,7 +401,7 @@ export function ImportDialog({ controller }: ImportDialogProps) {
               </option>
             ))}
           </select>
-          <p className="field-help">글자가 깨지면 인코딩을 직접 선택해 주세요.</p>
+          <p className="field-help">글자가 깨지면 직접 선택하세요.</p>
           <label className="field-label" htmlFor={chapterSplitId}>
             텍스트 화 분리 방식
           </label>
@@ -404,10 +415,8 @@ export function ImportDialog({ controller }: ImportDialogProps) {
             <option value="mixed">혼합 표식 강화</option>
             <option value="single">분리하지 않음</option>
           </select>
-          <p className="field-help">
-            중간부터 회차 표식이 바뀐 텍스트는 혼합 표식 강화, 제목만 있는 파일은 분리하지 않음을 사용하세요.
-          </p>
-        </>
+          <p className="field-help">회차가 잘못 나뉘면 다른 방식을 선택하세요.</p>
+        </details>
       )}
     </Dialog>
   );

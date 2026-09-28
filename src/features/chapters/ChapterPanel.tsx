@@ -6,6 +6,7 @@ import { formatCount, formatProgress } from '../../utils/format';
 import { CHAPTER_PAGE_SIZE, paginateChapterRows, type ChapterListRowModel } from './chapters-screen-model';
 import type { ChaptersScreenProps } from './chapters-screen-contract';
 import { ChapterPagination } from './ChapterPagination';
+import { SkeletonRows } from '../../shared/ui/Skeleton';
 
 function classNames(...values: Array<string | false | undefined>): string {
   return values.filter(Boolean).join(' ');
@@ -161,8 +162,8 @@ export function ChapterPanel({ model, actions }: ChaptersScreenProps) {
         </label>
       </div>
       {model.loading ? (
-        <div className="empty-panel chapter-empty" role="status">
-          회차 정보를 불러오는 중입니다.
+        <div className="chapter-list-skeleton" role="status" aria-label="회차 정보를 불러오는 중">
+          <SkeletonRows count={8} />
         </div>
       ) : rows.length === 0 ? (
         <div className="empty-panel chapter-empty">

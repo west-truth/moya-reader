@@ -17,6 +17,8 @@ import { useResponsiveLayoutMode } from './useResponsiveLayoutMode';
 import { importTaskIsActive, type ImportTaskView } from '../import/import-task-projection';
 import { continueLibraryBook, openLibraryBook } from './book-workspace-source-navigation';
 import { navigateAppBack } from '../navigation/browser-navigation';
+import { useWorkspaceScreenMotion, visibleRemoteLibraryWorks } from './workspace-screen-support';
+import { BookDetailSkeleton, useIdleScreenPreload, WorkspaceScreenSkeleton } from './WorkspaceSkeletons';
 
 const ChaptersScreen = lazy(() =>
   import('../chapters/ChaptersScreen').then((module) => ({ default: module.ChaptersScreen })),
@@ -97,6 +99,8 @@ export function BookWorkspaceScreens({
   bookEnrichment,
 }: BookWorkspaceScreensProps) {
   const layoutMode = useResponsiveLayoutMode();
+  useWorkspaceScreenMotion(state, externalSources, discovery?.active);
+  useIdleScreenPreload(bootstrap.status === 'ready');
   const [saveListOpen, setSaveListOpen] = useState(false);
   const [focusedBookId, setFocusedBookId] = useState<string>();
   const [inspectorOpen, setInspectorOpen] = useState(false);
@@ -142,23 +146,16 @@ export function BookWorkspaceScreens({
     () => externalSources.libraryWorks.filter((work) => !work.localBookId),
     [externalSources.libraryWorks],
   );
-  const visibleRemoteLibraryWorks = useMemo(() => {
-    if (activeShelfBookIds || (state.libraryFilter !== 'all' && state.libraryFilter !== 'unread')) return [];
-    const query = state.libraryQuery.trim().toLocaleLowerCase();
-    return remoteLibraryWorks
-      .filter(
-        (work) =>
-          !query ||
-          [work.title, work.author, work.sourceLabel]
-            .filter((value): value is string => Boolean(value))
-            .some((value) => value.toLocaleLowerCase().includes(query)),
-      )
-      .sort((left, right) => {
-        if (state.librarySort === 'title') return left.title.localeCompare(right.title, 'ko');
-        if (state.librarySort === 'added') return right.createdAt.localeCompare(left.createdAt);
-        return right.updatedAt.localeCompare(left.updatedAt);
-      });
-  }, [activeShelfBookIds, remoteLibraryWorks, state.libraryFilter, state.libraryQuery, state.librarySort]);
+  const remoteWorksInView = useMemo(
+    () =>
+      visibleRemoteLibraryWorks(remoteLibraryWorks, {
+        shelved: Boolean(activeShelfBookIds),
+        filter: state.libraryFilter,
+        query: state.libraryQuery,
+        sort: state.librarySort,
+      }),
+    [activeShelfBookIds, remoteLibraryWorks, state.libraryFilter, state.libraryQuery, state.librarySort],
+  );
   const libraryCollection = useMemo(() => {
     const base = activeShelfBookIds
       ? {
@@ -242,7 +239,7 @@ export function BookWorkspaceScreens({
         kind: source.kind,
         newReleaseCount: source.newReleaseCount,
       })),
-      libraryWorks: visibleRemoteLibraryWorks.map((work) => ({
+      libraryWorks: remoteWorksInView.map((work) => ({
         id: work.id,
         title: work.title,
         author: work.author,
@@ -389,6 +386,7 @@ export function BookWorkspaceScreens({
 
   return (
     <>
+      {state.navigationPending && <div className="app-navigation-progress" aria-hidden="true" />}
       {saveListOpen && discovery && (
         <SaveDiscoveryList discovery={discovery} source={externalSources} close={() => setSaveListOpen(false)} />
       )}
@@ -397,7 +395,7 @@ export function BookWorkspaceScreens({
       )}
 
       {state.view === 'library' && !externalSources.open && discovery?.active && (
-        <Suspense fallback={null}>
+        <Suspense fallback={<WorkspaceScreenSkeleton model={libraryModel} actions={libraryActions} />}>
           <DiscoveryScreen
             library={{ model: libraryModel, actions: libraryActions }}
             discovery={discovery}
@@ -410,7 +408,7 @@ export function BookWorkspaceScreens({
       )}
 
       {state.view === 'library' && externalSources.open && (
-        <Suspense fallback={null}>
+        <Suspense fallback={<WorkspaceScreenSkeleton model={libraryModel} actions={libraryActions} />}>
           <SourceHubScreen
             textReader={textReader}
             controller={externalSources}
@@ -445,7 +443,7 @@ export function BookWorkspaceScreens({
             <section className="library-workspace book-detail-workspace">
               <LibraryMobileHeader model={libraryModel} actions={libraryActions} />
               <LibraryHeader model={libraryModel} actions={libraryActions} />
-              <Suspense fallback={null}>
+              <Suspense fallback={<BookDetailSkeleton />}>
                 <ChaptersScreen
                   model={{
                     loading: state.navigationPending,

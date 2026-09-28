@@ -533,7 +533,8 @@
 
 .library-sort-select select,
 .library-mobile-controls select {
-  min-height: 34px;
+  height: 38px;
+  min-height: 38px;
   padding: 0 28px 0 9px;
   background: var(--app-surface);
   border: 1px solid var(--border);
@@ -569,7 +570,7 @@
 }
 
 .library-select-start {
-  min-height: 34px;
+  min-height: 38px;
   padding: 0 10px;
   font-size: var(--ui-meta-size);
   font-weight: var(--ui-weight-medium);
@@ -2047,15 +2048,6 @@
   max-width: 460px;
   font-size: 0.82rem;
   line-height: 1.6;
-}
-
-.library-bootstrap-mark {
-  width: 26px;
-  height: 26px;
-  border: 2px solid var(--border);
-  border-top-color: var(--primary);
-  border-radius: 50%;
-  animation: library-bootstrap-spin 800ms linear infinite;
 }
 
 .library-bootstrap-state.is-error svg {

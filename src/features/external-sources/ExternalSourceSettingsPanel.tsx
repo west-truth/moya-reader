@@ -5,6 +5,8 @@ import type { ExternalSourceConnectionStatus } from '../../external-sources/cont
 import type { ExternalSourceController, ExternalSourceView } from './useExternalSourceController';
 import { SourceExtensionManagerPanel } from '../extensions/SourceExtensionManagerPanel';
 
+const SOURCE_FILTER_THRESHOLD = 6;
+
 function statusLabel(connection: ExternalSourceConnectionStatus): string {
   switch (connection.state) {
     case 'connected':
@@ -61,7 +63,13 @@ function SourceCard({
         onClick={() => void controller.selectSource(source.id)}
       >
         <span className="external-source-settings-icon" aria-hidden="true">
-          {unavailable ? <CloudOff size={20} /> : <Cloud size={20} />}
+          {unavailable ? (
+            <CloudOff size={20} />
+          ) : source.kind === 'cloud_file' ? (
+            <Cloud size={20} />
+          ) : (
+            <PlugZap size={20} />
+          )}
         </span>
         <span>
           <strong>{source.title}</strong>
@@ -73,22 +81,22 @@ function SourceCard({
         </span>
       </button>
 
-      <div className="installed-extension-actions">
+      <div className="external-source-settings-actions">
+        {connected && onBrowse && (
+          <button type="button" className="ghost-btn" onClick={() => onBrowse(source.id)}>
+            작품 탐색
+          </button>
+        )}
         <button
           type="button"
+          className="external-source-favorite"
           aria-pressed={favorite}
           aria-label={`${source.title} 즐겨찾기`}
           title={favorite ? '즐겨찾기 해제' : '즐겨찾기 필터에 추가'}
           onClick={() => toggleFavorite(source.id)}
         >
           <Star size={17} aria-hidden="true" fill={favorite ? 'currentColor' : 'none'} />
-          <span>즐겨찾기</span>
         </button>
-        {connected && onBrowse && (
-          <button type="button" onClick={() => onBrowse(source.id)}>
-            작품 탐색
-          </button>
-        )}
       </div>
       {active && (
         <div className="external-source-settings-controls">
@@ -279,57 +287,63 @@ export function ExternalSourceSettingsPanel({
       (language === '*' || (source.lang ?? 'unknown') === language) &&
       (state === 'all' || (state === 'favorite' ? favorites.includes(source.id) : source.connection.state === state)),
   );
+  // A handful of sources reads faster as a plain list than through search and filters.
+  const filterable = controller.sources.length > SOURCE_FILTER_THRESHOLD;
   const languages = [
     ...new Set(controller.sources.map((source) => source.lang).filter((lang): lang is string => Boolean(lang))),
   ].sort();
   return (
     <div className="external-source-settings-sections">
-      <div className="source-settings-filters">
-        <label>
-          소스 검색
-          <input
-            type="search"
-            value={query}
-            onChange={(event) => setQuery(event.target.value)}
-            placeholder="이름 또는 설명"
-          />
-        </label>
-        <label>
-          콘텐츠
-          <select value={kind} onChange={(event) => setKind(event.target.value)}>
-            <option value="all">전체</option>
-            <option value="text">소설·텍스트</option>
-            <option value="image">만화·이미지</option>
-            <option value="unknown">종류 정보 없음</option>
-          </select>
-        </label>
-        <label>
-          언어
-          <select value={language} onChange={(event) => setLanguage(event.target.value)}>
-            <option value="*">전체</option>
-            {languages.map((lang) => (
-              <option key={lang} value={lang}>
-                {lang === 'all' ? '다국어' : lang}
-              </option>
-            ))}
-            <option value="unknown">언어 정보 없음</option>
-          </select>
-        </label>
-        <label>
-          상태
-          <select value={state} onChange={(event) => setState(event.target.value)}>
-            <option value="all">전체</option>
-            <option value="favorite">즐겨찾기</option>
-            <option value="connected">연결됨</option>
-            <option value="disconnected">연결 안 됨</option>
-            <option value="reauthorization_required">다시 연결 필요</option>
-            <option value="unavailable">사용할 수 없음</option>
-          </select>
-        </label>
-      </div>
-      <p role="status">
-        {filtered.length} / {controller.sources.length}개 소스
-      </p>
+      {filterable && (
+        <div className="source-settings-filters">
+          <label>
+            소스 검색
+            <input
+              type="search"
+              value={query}
+              onChange={(event) => setQuery(event.target.value)}
+              placeholder="이름 또는 설명"
+            />
+          </label>
+          <label>
+            콘텐츠
+            <select value={kind} onChange={(event) => setKind(event.target.value)}>
+              <option value="all">전체</option>
+              <option value="text">소설·텍스트</option>
+              <option value="image">만화·이미지</option>
+              <option value="unknown">종류 정보 없음</option>
+            </select>
+          </label>
+          <label>
+            언어
+            <select value={language} onChange={(event) => setLanguage(event.target.value)}>
+              <option value="*">전체</option>
+              {languages.map((lang) => (
+                <option key={lang} value={lang}>
+                  {lang === 'all' ? '다국어' : lang}
+                </option>
+              ))}
+              <option value="unknown">언어 정보 없음</option>
+            </select>
+          </label>
+          <label>
+            상태
+            <select value={state} onChange={(event) => setState(event.target.value)}>
+              <option value="all">전체</option>
+              <option value="favorite">즐겨찾기</option>
+              <option value="connected">연결됨</option>
+              <option value="disconnected">연결 안 됨</option>
+              <option value="reauthorization_required">다시 연결 필요</option>
+              <option value="unavailable">사용할 수 없음</option>
+            </select>
+          </label>
+        </div>
+      )}
+      {filterable && (
+        <p role="status">
+          {filtered.length} / {controller.sources.length}개 소스
+        </p>
+      )}
       {error && <p role="alert">즐겨찾기를 저장하지 못했습니다. 브라우저 저장공간을 확인해 주세요.</p>}
       {filtered.length === 0 && <p>조건에 맞는 소스가 없습니다. 검색어나 필터를 바꿔 주세요.</p>}
       <SourceGroup

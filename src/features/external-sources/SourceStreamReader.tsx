@@ -1,10 +1,10 @@
+import { Suspense, lazy, useEffect, useMemo, useRef, useState } from 'react';
 import { isTextStream, type SourceReadingPort } from '../../external-sources/source-text-stream';
 import type { SourceTextReaderOptions } from './SourceTextStreamReader';
 const SourceTextStreamReader = lazy(() =>
   import('./SourceTextStreamReader').then((module) => ({ default: module.SourceTextStreamReader })),
 );
 import { packageOperationMessage } from '../../extensions/packages/package-operation-error';
-import { Suspense, lazy, useEffect, useMemo, useRef, useState } from 'react';
 import { ArrowLeft, RefreshCw } from 'lucide-react';
 const FixedDocumentScreen = lazy(() => import('../fixed-document/FixedDocumentScreen'));
 import '../fixed-document/fixed-document.css';

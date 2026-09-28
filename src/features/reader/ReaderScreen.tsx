@@ -466,17 +466,14 @@ function ReaderScreenComponent({ model, screenHandle, repository: bodyRepository
       model.localReadingPosition?.novelId === model.novel.id
         ? model.localReadingPosition
         : await repository.getReadingPosition(model.novel.id);
-    if (saved && (await goToReadingPosition(saved))) {
-      notify('저장된 읽기 위치로 이동했습니다.', 'success');
-      return;
-    }
+    // Jumping is its own feedback; only a missing position needs explaining.
+    if (saved && (await goToReadingPosition(saved))) return;
     const fallback = model.novel.lastReadChapterId
       ? (model.chapters.find((chapter) => chapter.id === model.novel.lastReadChapterId) ??
         (await repository.getChapter(model.novel.lastReadChapterId)))
       : undefined;
     if (fallback) {
       await screenHandle.getActions().openChapter(fallback, { restore: true });
-      notify('저장된 읽기 위치로 이동했습니다.', 'success');
     } else {
       notify('저장된 읽기 위치가 없습니다.');
     }

@@ -1,20 +1,21 @@
 import {
   ArrowLeft,
-  BookOpenText,
+  ArrowUpRight,
   ChevronRight,
-  Cloud,
   Download,
+  Hand,
   Info,
   HardDrive,
-  Keyboard,
   Network,
-  LayoutPanelTop,
   Palette,
+  PlugZap,
   Puzzle,
   RefreshCw,
+  Type,
   type LucideIcon,
 } from 'lucide-react';
-import { useRef, useState, type KeyboardEvent, type ReactNode } from 'react';
+import { useContext, useRef, useState, type KeyboardEvent, type ReactNode } from 'react';
+import { EmbeddedAccessContext } from '../../platform/embedded-access-context';
 import type { GestureBindings, ReadingProfile, ReadingProfileOverride } from '../../domain/types';
 import type { PlatformRuntimeInfo, ProviderExecutionRuntimeKind } from '../../platform/runtime';
 import type { ReaderPersonalizationRepository } from '../../repositories/reader-personalization-repository';
@@ -36,7 +37,6 @@ import { ReaderSettingsAppearance } from './ReaderSettingsAppearance';
 import { ReaderSettingsLayout } from './ReaderSettingsLayout';
 import { RemoteAccessSettings } from './RemoteAccessSettings';
 import { SyncSettings } from './SyncSettings';
-import { resolveReaderThemeColors } from './reader-theme-colors';
 import type { ReaderSettingsController } from './useReaderSettingsDraft';
 import './reader-settings-panel.css';
 
@@ -70,19 +70,19 @@ const SETTINGS_SECTIONS: readonly SettingsSection[] = [
     id: 'layout',
     label: '리더 보기',
     detail: '글자, 여백, 읽기 방식',
-    icon: LayoutPanelTop,
+    icon: Type,
   },
   {
     id: 'gesture',
     label: '리더 조작',
     detail: '탭, 스와이프, 화면 유지',
-    icon: Keyboard,
+    icon: Hand,
   },
   {
     id: 'sources',
     label: '콘텐츠 소스',
     detail: '연결, 패키지, 다운로드',
-    icon: Cloud,
+    icon: PlugZap,
   },
   {
     id: 'extensions',
@@ -95,7 +95,7 @@ const SETTINGS_SECTIONS: readonly SettingsSection[] = [
     id: 'sync',
     label: '동기화',
     detail: '연결, 동기화 상태',
-    icon: Cloud,
+    icon: RefreshCw,
   },
   {
     id: 'remote-access',
@@ -107,7 +107,7 @@ const SETTINGS_SECTIONS: readonly SettingsSection[] = [
     id: 'application',
     label: '앱 정보',
     detail: '버전, 환경, 라이선스',
-    icon: BookOpenText,
+    icon: Info,
   },
 ];
 
@@ -154,14 +154,24 @@ export default function ReaderSettingsPanel(props: ReaderSettingsPanelProps) {
     props.initialTab === 'downloads' ? 'storage' : (props.initialTab ?? 'appearance'),
   );
   const [mobileDetail, setMobileDetail] = useState(Boolean(props.initialTab));
+  /** Phone layouts push/pop between the category list and a page once the user has moved. */
+  const [mobileNavigated, setMobileNavigated] = useState(false);
   const [storageBusy, setStorageBusy] = useState(false);
   const [focusDownloads, setFocusDownloads] = useState(props.initialTab === 'downloads');
   const titleRef = useRef<HTMLHeadingElement>(null);
+  const embedded = useContext(EmbeddedAccessContext);
+  // Without an embedded server the sync page is only a link, so the category opens the sync panel directly;
+  // remote access is hidden when this library lives only in the browser.
+  const syncOpensPanel = !embedded;
+  const sections = SETTINGS_SECTIONS.filter(
+    (section) => section.id !== 'remote-access' || Boolean(embedded) || Boolean(props.serverApiBaseUrl),
+  );
   const selectTab = (next: SettingsTab) => {
     if (storageBusy) return;
     setFocusDownloads(next === 'downloads');
     setTab(next === 'downloads' ? 'storage' : next);
     setMobileDetail(true);
+    setMobileNavigated(true);
     requestAnimationFrame(() => {
       titleRef.current?.focus({ preventScroll: true });
       const content = titleRef.current?.closest('.reader-settings-content');
@@ -170,10 +180,10 @@ export default function ReaderSettingsPanel(props: ReaderSettingsPanelProps) {
   };
   const backToCategories = () => {
     setMobileDetail(false);
+    setMobileNavigated(true);
     requestAnimationFrame(() => document.getElementById(`reader-settings-tab-${tab}`)?.focus());
   };
-  const current = SETTINGS_SECTIONS.find((section) => section.id === tab) ?? SETTINGS_SECTIONS[0];
-  const readerThemeColors = resolveReaderThemeColors(profile);
+  const current = sections.find((section) => section.id === tab) ?? sections[0];
   const readingTab = tab === 'appearance' || tab === 'layout' || tab === 'gesture';
   const showReadingFooter = tab === 'layout';
   const openDestination = (destination: () => void) => {
@@ -189,10 +199,10 @@ export default function ReaderSettingsPanel(props: ReaderSettingsPanelProps) {
       event.key === 'Home'
         ? 0
         : event.key === 'End'
-          ? SETTINGS_SECTIONS.length - 1
-          : (index + (event.key === 'ArrowLeft' || event.key === 'ArrowUp' ? -1 : 1) + SETTINGS_SECTIONS.length) %
-            SETTINGS_SECTIONS.length;
-    const next = SETTINGS_SECTIONS[nextIndex];
+          ? sections.length - 1
+          : (index + (event.key === 'ArrowLeft' || event.key === 'ArrowUp' ? -1 : 1) + sections.length) %
+            sections.length;
+    const next = sections[nextIndex];
     if (!next) return;
     setFocusDownloads(false);
     setTab(next.id);
@@ -218,11 +228,16 @@ export default function ReaderSettingsPanel(props: ReaderSettingsPanelProps) {
       closeLabel="설정 닫기"
       closeDisabled={storageBusy}
     >
-      <div className="reader-settings-body" data-mobile-detail={mobileDetail}>
+      <div
+        className="reader-settings-body"
+        data-mobile-detail={mobileDetail}
+        data-mobile-motion={mobileNavigated ? (mobileDetail ? 'forward' : 'back') : undefined}
+      >
         <nav className="reader-settings-tabs" role="tablist" aria-label="설정 분류">
-          {SETTINGS_SECTIONS.map((section, index) => {
+          {sections.map((section, index) => {
             const Icon = section.icon;
             const selected = section.id === tab;
+            const opensPanel = section.id === 'sync' && syncOpensPanel;
             return (
               <button
                 key={section.id}
@@ -234,7 +249,7 @@ export default function ReaderSettingsPanel(props: ReaderSettingsPanelProps) {
                 aria-selected={selected}
                 tabIndex={0}
                 className={selected ? 'active' : ''}
-                onClick={() => selectTab(section.id)}
+                onClick={() => (opensPanel ? openDestination(props.openSync) : selectTab(section.id))}
                 onKeyDown={(event) => navigateTabs(event, index)}
               >
                 <Icon size={18} aria-hidden="true" />
@@ -242,7 +257,11 @@ export default function ReaderSettingsPanel(props: ReaderSettingsPanelProps) {
                   <strong>{section.label}</strong>
                   <small>{section.detail}</small>
                 </span>
-                <ChevronRight size={15} aria-hidden="true" />
+                {opensPanel ? (
+                  <ArrowUpRight size={15} aria-hidden="true" />
+                ) : (
+                  <ChevronRight size={15} aria-hidden="true" />
+                )}
               </button>
             );
           })}
@@ -258,11 +277,12 @@ export default function ReaderSettingsPanel(props: ReaderSettingsPanelProps) {
               <button
                 type="button"
                 className="ghost-btn reader-settings-mobile-back"
+                aria-label="설정 목록"
                 disabled={storageBusy}
                 onClick={backToCategories}
               >
                 <ArrowLeft size={18} />
-                설정 목록
+                설정
               </button>
               <h2 ref={titleRef} tabIndex={-1}>
                 {current.label}
@@ -323,30 +343,24 @@ export default function ReaderSettingsPanel(props: ReaderSettingsPanelProps) {
               )}
               {tab === 'sources' && (
                 <div className="reader-settings-source-sections">
-                  <section className="reader-settings-source-intro" aria-label="콘텐츠 소스 구성">
-                    <span>
-                      <strong>사용 중</strong>
-                      <small>연결하고 켠 작품 제공자</small>
-                    </span>
-                    <ChevronRight size={14} aria-hidden="true" />
-                    <span>
-                      <strong>패키지</strong>
-                      <small>소스를 설치·업데이트하는 단위</small>
-                    </span>
-                    <ChevronRight size={14} aria-hidden="true" />
-                    <span>
-                      <strong>저장소</strong>
-                      <small>설치 가능한 패키지 목록 주소</small>
-                    </span>
-                  </section>
-                  <button type="button" className="ghost-btn" onClick={() => selectTab('downloads')}>
-                    <Download size={18} aria-hidden="true" /> 다운로드 · 자동 정리
-                  </button>
                   {props.installedPackages}
                   <ExternalSourceSettingsPanel
                     controller={props.externalSources}
                     onBrowse={(id) => openDestination(() => props.externalSources.show(id))}
                   />
+                  <button
+                    type="button"
+                    className="reader-settings-link-row"
+                    aria-label="다운로드 · 자동 정리"
+                    onClick={() => selectTab('downloads')}
+                  >
+                    <Download size={18} aria-hidden="true" />
+                    <span>
+                      <strong>다운로드 · 자동 정리</strong>
+                      <small>저장공간에서 관리합니다</small>
+                    </span>
+                    <ChevronRight size={16} aria-hidden="true" />
+                  </button>
                 </div>
               )}
               {tab === 'storage' && (
@@ -387,27 +401,6 @@ export default function ReaderSettingsPanel(props: ReaderSettingsPanelProps) {
                 <button type="button" className="ghost-btn" onClick={controller.retrySave}>
                   다시 저장
                 </button>
-              </div>
-            )}
-            {tab === 'layout' && (
-              <div
-                className={`reader-settings-preview font-${controller.settings.font}`}
-                style={{
-                  color: readerThemeColors.foreground,
-                  background: readerThemeColors.background,
-                  fontSize: `${profile.fontSize}px`,
-                  fontWeight: profile.fontWeight,
-                  lineHeight: profile.lineHeight,
-                  letterSpacing: `${profile.letterSpacing}em`,
-                  textAlign: profile.textAlign,
-                  filter: `brightness(${profile.brightness})`,
-                }}
-                aria-label="본문 미리보기"
-              >
-                <p>
-                  비가 그친 뒤의 거리는 조용했다. 활자는 적당한 간격으로 놓였고, 눈은 다음 문장으로 자연스럽게 이동했다.
-                </p>
-                <p>“이 정도면 오래 읽어도 피로하지 않겠군요.”</p>
               </div>
             )}
           </div>

@@ -1,6 +1,7 @@
 import { X } from 'lucide-react';
 import { type MouseEvent, type ReactNode, type RefObject, useId, useRef } from 'react';
 import { useDismissibleLayer } from './use-dismissible-layer';
+import { usePresence } from './use-presence';
 
 export type ModalDrawerCloseReason = 'backdrop' | 'close-button' | 'escape';
 
@@ -52,17 +53,24 @@ export function ModalDrawer({
     onClose,
   });
 
-  if (!open) return null;
+  const { present, closing } = usePresence(open, layerRef);
+  if (!present) return null;
 
   const requestClose = (reason: ModalDrawerCloseReason) => {
-    if (!closeDisabled) onClose(reason);
+    if (!closeDisabled && !closing) onClose(reason);
   };
   const closeFromBackdrop = (event: MouseEvent<HTMLDivElement>) => {
     if (event.target === event.currentTarget) requestClose('backdrop');
   };
 
   return (
-    <div ref={layerRef} className="modal-drawer-layer" data-side={side} onClick={closeFromBackdrop}>
+    <div
+      ref={layerRef}
+      className="modal-drawer-layer"
+      data-side={side}
+      data-state={closing ? 'closed' : 'open'}
+      onClick={closeFromBackdrop}
+    >
       <aside
         ref={drawerRef}
         className={classNames('modal-drawer', className)}

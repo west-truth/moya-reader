@@ -298,6 +298,7 @@ import { verifyConnectedProviderServerBookAttached } from './sync/connected-prov
 import { runConnectedProviderPreflight } from './sync/connected-provider-preflight';
 import { connectedSyncFailureState, useConnectedReaderSync } from './sync/use-connected-reader-sync';
 import { ToastHost, useToastController } from './shared/ui/ToastHost';
+import { LayerPresence } from './shared/ui/LayerPresence';
 import { abortableDelay, isAbortError } from './utils/async';
 import { clamp, formatBytes, formatCount } from './utils/format';
 import { jsonValue } from './utils/json';
@@ -1751,11 +1752,8 @@ export default function App() {
     if (readerRuntime.mode === 'remote') {
       const state = await refreshRemoteServerState();
       if (!state) return;
-      if (state.status === 'idle') {
-        showToast('서버 상태를 새로고침했습니다.', 'success');
-      } else {
-        showToast('서버 상태를 새로고침하지 못했습니다.', 'danger');
-      }
+      // A successful refresh is visible in the sync status itself; only failures need a toast.
+      if (state.status !== 'idle') showToast('서버 상태를 새로고침하지 못했습니다.', 'danger');
       return;
     }
     if (!syncService) {
@@ -2156,7 +2154,6 @@ export default function App() {
     await refreshNovels();
     await refreshAfterLocalMutation();
     await bookWorkspace.openNovel((await readerRepository.getNovel(parsed.novel.id)) ?? parsed.novel);
-    showToast('샘플 책을 추가했습니다.', 'success');
   };
 
   const [originalDownloadBook, setOriginalDownloadBook] = useState<Novel>();
@@ -2786,7 +2783,6 @@ export default function App() {
     }
     setRemoteReadingPosition(undefined);
     setSyncPanelOpen(false);
-    showToast('서버 읽기 위치로 이동했습니다.', 'success');
   };
 
   const openSelectionNote = (_selection?: ReaderSelection) => {
@@ -6564,7 +6560,7 @@ export default function App() {
         </Suspense>
       )}
 
-      {settingsOpen && (
+      <LayerPresence open={settingsOpen}>
         <Suspense fallback={null}>
           <ReaderSettingsPanel
             serverApiBaseUrl={readerRuntime.mode === 'remote' ? readerRuntime.apiBaseUrl : undefined}
@@ -6658,19 +6654,18 @@ export default function App() {
             }}
           />
         </Suspense>
-      )}
-
-      {backupFeature.open && (
+      </LayerPresence>
+      <LayerPresence open={backupFeature.open}>
         <Suspense fallback={null}>
           <BackupPanel controller={backupFeature} />
         </Suspense>
-      )}
+      </LayerPresence>
 
-      {chapterStructureFeature.open && (
+      <LayerPresence open={chapterStructureFeature.open}>
         <Suspense fallback={null}>
           <ChapterStructurePanel controller={chapterStructureFeature} />
         </Suspense>
-      )}
+      </LayerPresence>
 
       <ToastHost
         toasts={toastList}
@@ -6682,11 +6677,11 @@ export default function App() {
         controller={importFeature}
         showFloatingTrigger={(view === 'library' && !externalSourceFeature.open) || view === 'chapters'}
       />
-      {libraryFolderFeature.open && (
+      <LayerPresence open={libraryFolderFeature.open}>
         <Suspense fallback={null}>
           <LibraryFolderPanel controller={libraryFolderFeature} />
         </Suspense>
-      )}
+      </LayerPresence>
     </div>
   );
 }

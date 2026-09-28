@@ -4118,7 +4118,7 @@ export default function FixedDocumentScreen({
             onClick={() => navigateSection(-1)}
             aria-label="이전 회차"
           >
-            <ChevronLeft size={15} /> <span>이전화</span>
+            <ChevronLeft size={15} /> <span>이전 화</span>
           </button>
         )}
         <span>
@@ -4151,7 +4151,7 @@ export default function FixedDocumentScreen({
             onClick={() => navigateSection(1)}
             aria-label="다음 회차"
           >
-            <span>다음화</span> <ChevronRight size={15} />
+            <span>다음 화</span> <ChevronRight size={15} />
           </button>
         )}
       </footer>

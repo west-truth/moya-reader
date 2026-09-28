@@ -4033,7 +4033,6 @@ export function useExternalSourceController(options: UseExternalSourceController
       await optionsRef.current.state.saveSubscription(next);
       if (!mountedRef.current) return;
       replaceSubscription(next);
-      optionsRef.current.notify('새 회차 표시를 확인 완료로 변경했습니다.', 'success');
     } catch (error) {
       optionsRef.current.notify(
         error instanceof Error ? error.message : '새 회차 상태를 저장하지 못했습니다.',

@@ -14,7 +14,7 @@ export const READER_INFO_ADDON_ID = 'moya.reader.tools.info' as const;
 const manifest = {
   manifestVersion: MOYA_EXTENSION_MANIFEST_VERSION,
   id: READER_INFO_EXTENSION_ID,
-  name: 'Moya Reader information',
+  name: '리더 정보 패널',
   version: '1.0.0',
   engine: { moyaApi: MOYA_EXTENSION_API_VERSION },
   permissions: ['reader.addon.render', 'reader.context.read'],

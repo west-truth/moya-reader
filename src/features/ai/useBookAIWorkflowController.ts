@@ -405,7 +405,7 @@ export function useBookAIWorkflowController(input: BookAIWorkflowControllerInput
             workflow: restoredWorkflow?.novelId === bookId ? restoredWorkflow : undefined,
           };
         },
-        () => inputRef.current.notify('작품 전체 AI/TTS 계획을 불러왔습니다.', 'success'),
+        () => undefined,
         '작품 전체 AI/TTS 계획을 불러오지 못했습니다',
       ),
     [bookId, runPassiveOperation],
@@ -419,7 +419,7 @@ export function useBookAIWorkflowController(input: BookAIWorkflowControllerInput
     }
     await runPassiveOperation(
       async (workflowRunner, _workflowId, signal) => ({ workflow: await workflowRunner.refresh(workflowId, signal) }),
-      () => inputRef.current.notify('작품 전체 AI/TTS 상태를 새로고침했습니다.', 'success'),
+      () => undefined,
       '작품 전체 AI/TTS 상태를 새로고침하지 못했습니다',
     );
   }, [bookId, refreshPlan, runPassiveOperation, store]);

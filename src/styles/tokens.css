@@ -86,6 +86,16 @@
   --app-topbar-height: 70px;
   --reader-bottombar-height: 64px;
 
+  /* Motion: decelerate into place, accelerate out of the way; exits are shorter than entrances. */
+  --motion-fast: 150ms;
+  --motion-base: 210ms;
+  --motion-slow: 300ms;
+  --motion-screen: 280ms;
+  --motion-exit: 160ms;
+  --ease-standard: cubic-bezier(0.2, 0, 0, 1);
+  --ease-emphasized-decelerate: cubic-bezier(0.05, 0.7, 0.1, 1);
+  --ease-emphasized-accelerate: cubic-bezier(0.3, 0, 0.8, 0.15);
+
   --layer-chrome: 20;
   --layer-floating: 40;
   --layer-drawer: 70;

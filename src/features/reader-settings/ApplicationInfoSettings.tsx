@@ -3,12 +3,12 @@ import { publicAssetUrl } from '../../utils/public-asset-url';
 import { BrandWordmark } from '../../shared/ui/BrandWordmark';
 import {
   ExternalLink,
-  FileArchive,
+  FileScan,
   FileText,
   Globe2,
   HardDriveDownload,
   Headphones,
-  Languages,
+  Images,
   Laptop,
   ShieldCheck,
   Smartphone,
@@ -49,43 +49,15 @@ interface ApplicationInfoSettingsProps {
   readonly logoutSelfHostAccount?: () => Promise<void>;
 }
 
-interface RuntimeHelpItem {
-  readonly kind: PlatformRuntimeKind;
-  readonly label: string;
-  readonly icon: typeof Globe2;
-  readonly summary: string;
-  readonly limit: string;
-}
-
-const runtimeHelpItems: readonly RuntimeHelpItem[] = [
-  {
-    kind: 'browser',
-    label: '웹 브라우저',
-    icon: Globe2,
-    summary: '브라우저 저장소 · 파일 선택 · 전역 미니 플레이어',
-    limit: '백그라운드 재생과 미디어 키는 브라우저와 운영체제가 허용하는 범위에서 동작합니다.',
-  },
-  {
-    kind: 'tauri-desktop',
-    label: '데스크톱 앱',
-    icon: Laptop,
-    summary: '네이티브 파일 입출력 · 보안 저장소 · TTS 오디오 캐시',
-    limit: '미디어 키와 잠금 화면 제어는 운영체제 WebView의 Media Session 지원 범위를 따릅니다.',
-  },
-  {
-    kind: 'tauri-mobile',
-    label: 'Android 앱',
-    icon: Smartphone,
-    summary: 'SAF 파일 열기 · Media3 백그라운드 재생 · 네이티브 캐시',
-    limit: '오프라인 다운로드는 네트워크·충전 정책에 따라 WorkManager가 이어서 처리합니다.',
-  },
-] as const;
+const runtimeLabels: Record<PlatformRuntimeKind, string> = {
+  browser: '웹 브라우저',
+  'tauri-desktop': '데스크톱 앱',
+  'tauri-mobile': '모바일 앱',
+};
 
 function runtimeLabel(runtime: PlatformRuntimeInfo): string {
-  if (runtime.kind !== 'tauri-mobile') {
-    return runtimeHelpItems.find((item) => item.kind === runtime.kind)?.label ?? '알 수 없는 환경';
-  }
-  return /Android/i.test(runtime.userAgent) ? 'Android 앱' : '모바일 앱';
+  if (runtime.kind === 'tauri-mobile' && /Android/i.test(runtime.userAgent)) return 'Android 앱';
+  return runtimeLabels[runtime.kind] ?? '알 수 없는 환경';
 }
 
 function providerRuntimeLabel(runtime: ProviderExecutionRuntimeKind): string {
@@ -209,68 +181,41 @@ export function ApplicationInfoSettings(props: ApplicationInfoSettingsProps) {
         </section>
       )}
 
-      <section aria-labelledby="platform-help-title">
-        <h3 id="platform-help-title">플랫폼별 동작</h3>
-        <div className="application-info-platforms">
-          {runtimeHelpItems
-            .filter((item) => !product || item.kind === 'browser')
-            .map((item) => {
-              const Icon = item.icon;
-              const current = item.kind === props.platformRuntime.kind;
-              return (
-                <article key={item.kind} data-current={current || undefined}>
-                  <div className="application-info-platform-heading">
-                    <Icon size={17} aria-hidden="true" />
-                    <strong>{item.label}</strong>
-                    {current && <span>현재</span>}
-                  </div>
-                  <p>{item.summary}</p>
-                  <small>{item.limit}</small>
-                </article>
-              );
-            })}
-        </div>
-      </section>
-
       <section aria-labelledby="supported-formats-title">
         <h3 id="supported-formats-title">지원 형식</h3>
-        <div className="application-info-capabilities">
-          <article>
-            <FileText size={17} aria-hidden="true" />
-            <div>
-              <strong>TXT · EPUB</strong>
-              <p>본문 검색, 선택·주석, 정확한 청취 위치와 TTS를 지원합니다.</p>
-            </div>
-          </article>
-          <article>
-            <Languages size={17} aria-hidden="true" />
-            <div>
-              <strong>PDF</strong>
-              <p>내장 텍스트, 필요한 페이지의 OCR, 검색·주석·TTS를 지원합니다.</p>
-            </div>
-          </article>
-          <article>
-            <FileArchive size={17} aria-hidden="true" />
-            <div>
-              <strong>ZIP · CBZ · RAR · CBR · 7z · CB7</strong>
-              <p>연속·양면 보기, 좌→우·우→좌 진행, crop·색 보정과 ComicInfo.xml을 지원합니다.</p>
-            </div>
-          </article>
-        </div>
+        <dl className="application-info-formats">
+          <div>
+            <dt>
+              <FileText size={16} aria-hidden="true" /> TXT · EPUB
+            </dt>
+            <dd>검색·주석·TTS</dd>
+          </div>
+          <div>
+            <dt>
+              <FileScan size={16} aria-hidden="true" /> PDF
+            </dt>
+            <dd>텍스트 추출·OCR·검색·주석·TTS</dd>
+          </div>
+          <div>
+            <dt>
+              <Images size={16} aria-hidden="true" /> ZIP · CBZ · RAR · CBR · 7z · CB7
+            </dt>
+            <dd>연속·양면 보기, 우→좌 진행, 자르기·색 보정</dd>
+          </div>
+        </dl>
         <p className="application-info-note">
-          분할 압축 파일은 지원하지 않습니다. 암호는 현재 열기 세션의 메모리에만 보관되며 로그·설정·백업에 저장되지
-          않습니다.
+          분할 압축 파일은 지원하지 않습니다. 암호는 현재 열기 세션의 메모리에만 보관되며 저장되지 않습니다.
         </p>
       </section>
 
       <section aria-labelledby="privacy-info-title">
-        <h3 id="privacy-info-title">데이터와 AI·TTS 연결</h3>
+        <h3 id="privacy-info-title">데이터</h3>
         <div className="application-info-inline">
           <ShieldCheck size={17} aria-hidden="true" />
           <p>
             {product
-              ? '책과 독서 기록은 이 브라우저에 저장됩니다. 클라우드는 연결한 경우에만 사용합니다. 현재 Web 버전은 시스템 음성 읽어주기를 지원하며 AI 분석과 고품질 음성 합성은 제공하지 않습니다. 시스템 음성 중 일부는 기기의 온라인 서비스를 이용할 수 있습니다.'
-              : '책과 독서 기록은 기본적으로 기기에 저장됩니다. AI와 TTS 요청은 UI에서 외부 API를 직접 호출하지 않고 설정한 서버 작업자 또는 기기의 보안 연결을 통해 처리됩니다.'}
+              ? '책과 독서 기록은 이 브라우저에 저장되며, 클라우드는 연결한 경우에만 사용합니다. 웹 버전은 시스템 음성 읽어주기만 제공합니다.'
+              : '책과 독서 기록은 기본적으로 기기에 저장됩니다. AI와 TTS 요청은 설정한 서버 작업자나 기기의 보안 연결로만 처리됩니다.'}
           </p>
         </div>
       </section>
@@ -282,34 +227,36 @@ export function ApplicationInfoSettings(props: ApplicationInfoSettingsProps) {
             고지 전문 <ExternalLink size={13} aria-hidden="true" />
           </a>
         </div>
-        <p className="application-info-note">
-          아래 항목은 현재 배포물에 포함되는 압축 파일 구성요소입니다. 전체 라이선스 원문은 배포물의
-          <code> third_party/licenses </code> 디렉터리에 함께 제공됩니다.
-        </p>
-        <div className="application-info-licenses">
-          {archiveBackends.map((backend) => (
-            <article key={backend.name}>
-              <div>
-                <strong>{backend.name}</strong>
-                <span>{backend.purpose}</span>
-                <small>
-                  {backend.license}
-                  {backend.licenseFile ? (
-                    <>
-                      {' · '}
-                      <a href={publicAssetUrl(backend.licenseFile)} target="_blank" rel="noreferrer">
-                        LGPL 2.1
-                      </a>
-                    </>
-                  ) : null}
-                </small>
-              </div>
-              <a href={backend.source} target="_blank" rel="noreferrer" aria-label={`${backend.name} 소스 열기`}>
-                소스 <ExternalLink size={13} aria-hidden="true" />
-              </a>
-            </article>
-          ))}
-        </div>
+        <details className="application-info-license-details">
+          <summary>압축 파일 구성요소</summary>
+          <p className="application-info-note">
+            라이선스 원문은 배포물의 <code>third_party/licenses</code> 디렉터리에 함께 제공됩니다.
+          </p>
+          <div className="application-info-licenses">
+            {archiveBackends.map((backend) => (
+              <article key={backend.name}>
+                <div>
+                  <strong>{backend.name}</strong>
+                  <span>{backend.purpose}</span>
+                  <small>
+                    {backend.license}
+                    {backend.licenseFile ? (
+                      <>
+                        {' · '}
+                        <a href={publicAssetUrl(backend.licenseFile)} target="_blank" rel="noreferrer">
+                          LGPL 2.1
+                        </a>
+                      </>
+                    ) : null}
+                  </small>
+                </div>
+                <a href={backend.source} target="_blank" rel="noreferrer" aria-label={`${backend.name} 소스 열기`}>
+                  소스 <ExternalLink size={13} aria-hidden="true" />
+                </a>
+              </article>
+            ))}
+          </div>
+        </details>
         <p className="application-info-note">
           모야의 소스 코드는{' '}
           <a href={publicAssetUrl('/LICENSE')} target="_blank" rel="noreferrer">

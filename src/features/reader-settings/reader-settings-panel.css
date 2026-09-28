@@ -224,37 +224,6 @@
   gap: 24px;
 }
 
-.reader-settings-source-intro {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr) auto minmax(0, 1fr);
-  align-items: center;
-  gap: 8px;
-  padding: 12px 14px;
-  background: var(--app-surface-muted);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-control);
-}
-
-.reader-settings-source-intro > span {
-  min-width: 0;
-  display: grid;
-  gap: 3px;
-}
-
-.reader-settings-source-intro strong {
-  font-size: 0.73rem;
-}
-
-.reader-settings-source-intro small {
-  color: var(--text-2);
-  font-size: 0.64rem;
-  line-height: 1.4;
-}
-
-.reader-settings-source-intro > svg {
-  color: var(--muted);
-}
-
 .reader-settings-destination-card {
   display: grid;
   justify-items: start;
@@ -385,6 +354,9 @@
 }
 
 .external-source-settings-card {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
   overflow: hidden;
   background: var(--app-surface-muted);
   border: 1px solid var(--border);
@@ -1393,8 +1365,7 @@
 }
 
 .application-info-capabilities,
-.application-info-licenses,
-.application-info-platforms {
+.application-info-licenses {
   display: grid;
   gap: 7px;
 }
@@ -1491,58 +1462,54 @@
   line-height: 1.45;
 }
 
-.application-info-platforms {
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-}
-
-.application-info-platforms article {
-  min-width: 0;
-  padding: 11px 12px;
-  background: var(--app-surface);
-  border: 1px solid var(--border);
-}
-
-.application-info-platforms article[data-current='true'] {
-  background: var(--app-accent-soft);
-  border-color: color-mix(in srgb, var(--primary) 45%, var(--border));
-}
-
-.application-info-platform-heading {
+.application-info-formats {
   display: grid;
-  grid-template-columns: auto minmax(0, 1fr) auto;
+  margin: 0;
+  background: var(--app-surface-muted);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-control);
+}
+
+.application-info-formats > div {
+  display: flex;
+  flex-wrap: wrap;
   align-items: center;
-  gap: 7px;
-  margin-bottom: 7px;
+  justify-content: space-between;
+  gap: 4px 14px;
+  padding: 10px 12px;
 }
 
-.application-info-platform-heading svg {
-  color: var(--primary);
+.application-info-formats > div + div {
+  border-top: 1px solid var(--border);
 }
 
-.application-info-platform-heading strong {
+.application-info-formats dt {
+  display: flex;
+  align-items: center;
+  gap: 8px;
   font-size: 0.78rem;
+  font-weight: var(--ui-weight-semibold);
 }
 
-.application-info-platform-heading span {
-  padding: 2px 5px;
+.application-info-formats dt svg {
   color: var(--primary);
-  background: var(--app-surface);
-  border: 1px solid color-mix(in srgb, var(--primary) 30%, var(--border));
-  font-size: 0.64rem;
 }
 
-.application-info-platforms p,
-.application-info-platforms small {
-  display: block;
+.application-info-formats dd {
   margin: 0;
   color: var(--text-2);
-  font-size: 0.7rem;
-  line-height: 1.5;
+  font-size: 0.72rem;
 }
 
-.application-info-platforms p {
-  margin-bottom: 5px;
-  color: var(--text);
+.application-info-license-details {
+  display: grid;
+  gap: 8px;
+}
+
+.application-info-license-details > summary {
+  color: var(--text-2);
+  font-size: 0.76rem;
+  cursor: pointer;
 }
 
 .application-info-capabilities article,
@@ -2388,14 +2355,6 @@
     grid-template-columns: 1fr;
   }
 
-  .reader-settings-source-intro {
-    grid-template-columns: 1fr;
-  }
-
-  .reader-settings-source-intro > svg {
-    display: none;
-  }
-
   .reader-settings-slider {
     padding: 13px 0;
   }
@@ -2439,8 +2398,7 @@
     align-items: start;
   }
 
-  .application-info-runtime-summary dl,
-  .application-info-platforms {
+  .application-info-runtime-summary dl {
     grid-template-columns: 1fr;
   }
 
@@ -2558,11 +2516,24 @@
   .reader-settings-save-note {
     display: flex;
   }
+  /* A native-style back affordance: tinted chevron and label, no boxed button. */
   .reader-settings-mobile-back {
     display: inline-flex;
     align-items: center;
-    gap: 8px;
+    gap: 4px;
     align-self: flex-start;
+  }
+  .reader-settings-page-title .reader-settings-mobile-back.ghost-btn {
+    min-height: 36px;
+    margin: -6px 0 16px -10px;
+    padding: 0 10px 0 4px;
+    color: var(--primary-2);
+    background: transparent;
+    border-color: transparent;
+    font-weight: var(--ui-weight-semibold);
+  }
+  .reader-settings-page-title .reader-settings-mobile-back.ghost-btn:active {
+    background: var(--app-surface-hover);
   }
   .reader-settings-mobile-status {
     display: block;
@@ -2595,4 +2566,112 @@
   align-items: center;
   gap: 10px;
   min-height: 44px;
+}
+
+.reader-settings-link-row {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 14px;
+  color: var(--text);
+  background: var(--app-surface-muted);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-panel);
+  text-align: start;
+}
+
+.reader-settings-link-row:hover {
+  background: var(--app-surface-hover);
+}
+
+.reader-settings-link-row > svg:first-child {
+  color: var(--primary);
+}
+
+.reader-settings-link-row > span {
+  flex: 1;
+  display: grid;
+  gap: 2px;
+}
+
+.reader-settings-link-row strong {
+  font-size: 0.8rem;
+}
+
+.reader-settings-link-row small {
+  color: var(--text-2);
+  font-size: 0.7rem;
+}
+
+.external-source-settings-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding-right: 12px;
+}
+
+.external-source-settings-actions .ghost-btn {
+  min-height: 34px;
+  font-size: 0.72rem;
+}
+
+.external-source-favorite {
+  width: 34px;
+  height: 34px;
+  display: grid;
+  place-items: center;
+  color: var(--text-2);
+  background: transparent;
+  border-radius: var(--radius-control);
+}
+
+.external-source-favorite:hover {
+  color: var(--text);
+  background: var(--app-surface-hover);
+}
+
+.external-source-favorite[aria-pressed='true'] {
+  color: var(--app-warning);
+}
+
+.external-source-settings-card > .external-source-settings-controls {
+  grid-column: 1 / -1;
+}
+
+.reader-settings-choice-group .reader-settings-subsection {
+  display: grid;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.reader-settings-choice-group .reader-settings-subsection > h3:not(:first-child) {
+  margin-top: 8px;
+}
+
+.reader-settings-choice-group .field-help {
+  margin: 0;
+}
+
+@media (max-width: 699px) {
+  /* Narrow rows stack label over control so neither gets truncated. */
+  .reader-settings-select-row {
+    align-items: stretch;
+    flex-direction: column;
+    gap: 8px;
+  }
+
+  .reader-settings-select-row select {
+    width: 100%;
+  }
+
+  .external-source-settings-card-heading {
+    padding-bottom: 6px;
+  }
+
+  .external-source-settings-actions {
+    grid-column: 1 / -1;
+    justify-content: flex-end;
+    padding: 0 10px 8px;
+  }
 }

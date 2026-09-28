@@ -56,11 +56,11 @@ describe('ImportDialog', () => {
     expect(markup).toContain('role="dialog"');
     expect(markup).toContain('aria-modal="true"');
     expect(markup).toContain('책 가져오기');
-    expect(markup).toContain('텍스트, EPUB, PDF 또는 만화 압축 파일 선택');
+    expect(markup).toContain('파일 선택 또는 끌어다 놓기');
     expect(markup).toContain(
       'accept=".txt,.md,.markdown,.epub,.pdf,.zip,.cbz,.rar,.cbr,.7z,.cb7,text/plain,application/epub+zip,application/pdf,application/zip,application/vnd.comicbook+zip,application/vnd.comicbook-rar,application/x-7z-compressed"',
     );
-    expect(markup).toContain('중간부터 회차 표식이 바뀐 텍스트는 혼합 표식 강화');
+    expect(markup).toContain('회차가 잘못 나뉘면 다른 방식을 선택하세요.');
     expect(markup).toMatch(/<label class="field-label" for="[^"]+">텍스트 인코딩<\/label><select id="[^"]+"/);
     expect(markup).toMatch(/<label class="field-label" for="[^"]+">텍스트 화 분리 방식<\/label><select id="[^"]+"/);
   });

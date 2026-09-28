@@ -41,8 +41,6 @@ describe('ApplicationInfoSettings', () => {
     expect(markup).toContain('백그라운드 재생 · 알림/잠금 화면 · 오디오 포커스');
     expect(markup).toContain('네이티브 캐시 · WorkManager 실패 복구');
     expect(markup).toContain('Android 문서 선택기(SAF)');
-    expect(markup).toContain('웹 브라우저');
-    expect(markup).toContain('데스크톱 앱');
   });
 
   it('shows the signed-in self-host owner without exposing session credentials', () => {

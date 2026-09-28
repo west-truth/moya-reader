@@ -106,7 +106,7 @@ try {
       await page.keyboard.press('Escape');
       await page.getByRole('tab', { name: /^동기화/ }).waitFor();
       await page.keyboard.press('Escape');
-      assert.equal(await page.getByRole('dialog').count(), 0);
+      await page.getByRole('dialog').waitFor({ state: 'detached', timeout: 2000 });
     } else {
       await page.getByRole('tab', { name: /^콘텐츠 소스/ }).click();
       await page.getByRole('button', { name: '다운로드 · 자동 정리' }).click();
@@ -129,7 +129,8 @@ try {
     assert(after.y < before.y - 350, 'Settings description did not scroll with content');
     const favorite = page.getByRole('button', { name: '검증용 소스 0 즐겨찾기' });
     await favorite.scrollIntoViewIfNeeded();
-    assert.equal(await favorite.evaluate((node) => getComputedStyle(node).borderRadius), '10px');
+    // Favorites are a compact icon toggle beside the source status, not a full-width row.
+    assert.equal(await favorite.evaluate((node) => Math.round(node.getBoundingClientRect().width)), 34);
     const nextPressed = (await favorite.getAttribute('aria-pressed')) !== 'true';
     await favorite.click();
     await page.waitForFunction(

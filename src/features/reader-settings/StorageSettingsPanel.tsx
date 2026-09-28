@@ -69,6 +69,17 @@ export function StorageSettingsPanel({
     return () => cancelAnimationFrame(frame);
   }, [focusDownloads]);
   const retention = controller.downloadRetention;
+  const downloadOptions = (
+    <details
+      ref={downloads}
+      className="storage-download-options"
+      open={downloadOpen}
+      onToggle={(e) => setDownloadOpen(e.currentTarget.open)}
+    >
+      <summary>소스 다운로드 · 자동 정리 설정</summary>
+      <DownloadSettingsPanel controller={controller} />
+    </details>
+  );
   const refreshButton = (
     <button
       type="button"
@@ -108,7 +119,13 @@ export function StorageSettingsPanel({
           </h3>
           {refreshButton}
         </div>
-        {loading && !usage && <p role="status">사용량 확인 중…</p>}
+        {loading && !usage && (
+          <div className="storage-usage-skeleton" role="status" aria-label="사용량 확인 중">
+            <span className="skeleton-line is-wide" />
+            <span className="skeleton-line" />
+            <span className="skeleton-line" />
+          </div>
+        )}
         {error && <p role="alert">{error}</p>}
         {hosted && usage && <StorageCapacityCard capacity={usage.capacity} />}
         {usage && (
@@ -148,10 +165,6 @@ export function StorageSettingsPanel({
         )}
         {usage && <StorageUsageDetails usage={usage} />}
       </section>
-      <details className="storage-device-details">
-        <summary>이 기기 사용량</summary>
-        <DeviceStorageEstimate />
-      </details>
       {retention && (
         <section className="settings-section-card storage-cleanup-card">
           <div className="settings-section-heading">
@@ -205,8 +218,10 @@ export function StorageSettingsPanel({
             </div>
           )}
           {retention.error && <p role="alert">{retention.error}</p>}
+          {downloadOptions}
         </section>
       )}
+      {!retention && downloadOptions}
       <button type="button" className="storage-destination" aria-label="백업과 복원 열기" onClick={openBackup}>
         <ArchiveRestore size={22} aria-hidden="true" />
         <span>
@@ -215,14 +230,9 @@ export function StorageSettingsPanel({
         </span>
         <ChevronRight size={18} aria-hidden="true" />
       </button>
-      <details
-        ref={downloads}
-        className="storage-download-options"
-        open={downloadOpen}
-        onToggle={(e) => setDownloadOpen(e.currentTarget.open)}
-      >
-        <summary>소스 다운로드 · 자동 정리</summary>
-        <DownloadSettingsPanel controller={controller} />
+      <details className="storage-device-details">
+        <summary>이 기기 사용량</summary>
+        <DeviceStorageEstimate />
       </details>
     </div>
   );
