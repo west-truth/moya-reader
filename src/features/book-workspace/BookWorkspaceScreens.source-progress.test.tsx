@@ -22,12 +22,13 @@ const sourceBook = testNovel({
   lastReadAt: '2026-09-02T00:00:00.000Z',
 });
 
-function render(settings: ReaderSettings) {
+function render(settings: ReaderSettings, libraryBootstrap?: ExternalSourceController['libraryBootstrap']) {
   const state = testWorkspaceState({ view: 'library', novels: [sourceBook] });
   const projection = buildBookWorkspaceLibraryProjection(state) as BookWorkspaceProjection;
   const externalSources = {
     sources: [],
     libraryWorks: [],
+    libraryBootstrap,
     open: false,
     busy: false,
     sourceWorkProgress: {
@@ -95,4 +96,14 @@ describe('BookWorkspaceScreens source work progress', () => {
     expect(markup).toContain('100%');
     expect(markup).not.toContain('25%');
   });
+});
+
+it('holds downloaded cards until source membership is ready and shows a retry on failure', () => {
+  const loading = render(defaultSettings, { status: 'loading' });
+  expect(loading).toContain('책장을 불러오는 중입니다');
+  expect(loading).not.toContain('class="book-card');
+  const failed = render(defaultSettings, { status: 'failed', message: '소스 작품 확인 실패' });
+  expect(failed).toContain('소스 작품 확인 실패');
+  expect(failed).toContain('다시 시도');
+  expect(render(defaultSettings, { status: 'ready' })).toContain('class="book-card');
 });

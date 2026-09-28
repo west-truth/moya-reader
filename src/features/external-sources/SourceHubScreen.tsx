@@ -602,8 +602,9 @@ export default function SourceHubScreen({
       : sourceFileExtension(seriesNovel.sourceFileName)
     : undefined;
   const sourceSubscriptions = activeSource
-    ? controller.subscriptions.filter(
+    ? controller.libraryWorks.filter(
         (subscription) =>
+          !subscription.deletedAt &&
           subscription.connectorId === activeSource.id &&
           (subscription.accountConnectionId ?? '') === (activeSource.connection.accountConnectionId ?? ''),
       )
@@ -741,11 +742,20 @@ export default function SourceHubScreen({
                 <div className="detail-hero-body">
                   <div className="detail-hero-cover">
                     {seriesNovel && (seriesNovel.coverAssetId || !controller.detail?.thumbnailUrl) ? (
-                      <BookCover novel={seriesNovel} className="book-cover source-hub-detail-cover" />
+                      <BookCover
+                        key={seriesNovel.id}
+                        novel={seriesNovel}
+                        className="book-cover source-hub-detail-cover"
+                      />
                     ) : (
                       <div className="book-cover source-hub-detail-cover source-hub-remote-cover">
                         {controller.detail?.thumbnailUrl ? (
-                          <img src={controller.detail.thumbnailUrl} alt="" referrerPolicy="no-referrer" />
+                          <img
+                            key={controller.detail.thumbnailUrl}
+                            src={controller.detail.thumbnailUrl}
+                            alt=""
+                            referrerPolicy="no-referrer"
+                          />
                         ) : (
                           <BookOpen size={36} aria-hidden="true" />
                         )}
@@ -842,15 +852,6 @@ export default function SourceHubScreen({
                           onClick={() => void controller.addCurrentWorkToLibrary()}
                         >
                           <Plus size={15} /> 라이브러리에 추가
-                        </button>
-                      )}
-                      {controller.activeSubscription && (
-                        <button
-                          type="button"
-                          disabled={controller.busy || controller.loading}
-                          onClick={() => void controller.removeLibraryWork(controller.activeSubscription!)}
-                        >
-                          <X size={15} /> 라이브러리에서 제거
                         </button>
                       )}
                       {seriesNovel && (
@@ -958,12 +959,18 @@ export default function SourceHubScreen({
             {hasWorkHero && <SourceWorkManagement novel={seriesNovel} controller={controller} library={library} />}
 
             {activeSource?.supportsSubscriptions && !controller.detail && sourceSubscriptions.length > 0 && (
-              <section className="source-hub-subscriptions" aria-labelledby="source-subscriptions-title">
+              <details
+                key={activeSource.id}
+                className="source-hub-subscriptions"
+                aria-labelledby="source-subscriptions-title"
+              >
+                <summary className="source-hub-subscriptions-toggle">
+                  <span id="source-subscriptions-title">
+                    라이브러리에 추가한 작품 <small>{formatCount(sourceSubscriptions.length)}개</small>
+                  </span>
+                  <ChevronRight size={16} aria-hidden="true" />
+                </summary>
                 <div className="source-hub-section-heading source-hub-subscription-heading">
-                  <div>
-                    <h2 id="source-subscriptions-title">라이브러리에 추가한 작품</h2>
-                    <span>{formatCount(sourceSubscriptions.length)}개</span>
-                  </div>
                   <button
                     type="button"
                     className="ghost-btn"
@@ -1005,7 +1012,7 @@ export default function SourceHubScreen({
                 <p className="source-hub-subscription-note">
                   라이브러리에 추가해도 회차는 자동으로 다운로드하지 않습니다.
                 </p>
-              </section>
+              </details>
             )}
 
             {controller.activeSubscription && controller.activeSubscription.newReleaseIds.length > 0 && (

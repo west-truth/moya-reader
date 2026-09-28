@@ -60,6 +60,8 @@ jobs:
         env:
           WEB_BASE_PATH: /moya-reader/
       - run: pnpm exec playwright-core install --with-deps chromium
+      - name: Verify streamed library loading, trash and offline actions
+        run: node scripts/performance/source-library-ux-smoke.mjs
       - name: Verify native asset CSP and reader selections
         run: node --test --test-concurrency=1 scripts/desktop/source-cover-csp.test.mjs scripts/desktop/user-font-csp.test.mjs scripts/desktop/reader-selection.test.mjs
       - run: pnpm check:web-pages:browser

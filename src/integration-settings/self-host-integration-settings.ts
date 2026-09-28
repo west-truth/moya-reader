@@ -201,6 +201,7 @@ function subscription(value: unknown): ExternalSourceSubscriptionRecord | undefi
   const createdAt = isoDate(input?.createdAt);
   const updatedAt = isoDate(input?.updatedAt);
   const lastCheckedAt = isoDate(input?.lastCheckedAt);
+  const deletedAt = input?.deletedAt === undefined ? undefined : isoDate(input.deletedAt);
   if (
     input?.schemaVersion !== 1 ||
     !id ||
@@ -213,6 +214,7 @@ function subscription(value: unknown): ExternalSourceSubscriptionRecord | undefi
     !createdAt ||
     !updatedAt ||
     !lastCheckedAt ||
+    (input.deletedAt !== undefined && !deletedAt) ||
     typeof input.availableReleaseCount !== 'number' ||
     !Number.isSafeInteger(input.availableReleaseCount) ||
     input.availableReleaseCount < 0
@@ -251,6 +253,7 @@ function subscription(value: unknown): ExternalSourceSubscriptionRecord | undefi
       : {}),
     availableReleaseCount: input.availableReleaseCount,
     lastCheckedAt,
+    ...(deletedAt ? { deletedAt } : {}),
     createdAt,
     updatedAt,
     schemaVersion: 1,

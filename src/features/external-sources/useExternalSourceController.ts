@@ -1,3 +1,4 @@
+import { changeSourceLibraryTrash } from './source-library-trash';
 import { belongsToSourceWork, clearSourceWorkHistory } from './source-work-history';
 import { sourceWorkSessionId } from './source-work-reading-time';
 import { recoverSourceStreamVisits } from '../../external-sources/source-stream-visit-journal';
@@ -243,6 +244,11 @@ export interface ExternalSourceController {
   readonly progress?: ExternalSourceImportProgress;
   readonly subscriptions: readonly ExternalSourceSubscriptionRecord[];
   readonly libraryWorks: readonly ExternalSourceLibraryWork[];
+  readonly libraryBootstrap?: { status: 'loading' | 'ready' | 'failed'; message?: string };
+  retryLibrary?(): Promise<void>;
+  restoreLibraryWork?(id: string): Promise<void>;
+  purgeLibraryWork?(id: string): Promise<void>;
+  emptyLibraryTrash?(): Promise<number>;
   /** Read releases against the source's full release list, per library book and per saved work. */
   readonly sourceWorkProgress?: SourceWorkProgressProjection;
   readonly activeSubscription?: ExternalSourceSubscriptionRecord;
@@ -379,12 +385,11 @@ async function loadSourceLibrary(options: UseExternalSourceControllerOptions) {
     catalogIncludesTrash: true,
     resolveImporterApplied: (staged, novel) => importerResolvedSeriesIsActive(options.assets, staged, novel),
   });
-  return {
-    links: reconciled,
-    novels,
-    subscriptions: await options.state.listSubscriptions(),
-    preferences: await recoverSourceStreamVisits(options.settingsScope, options.state),
-  };
+  const [subscriptions, preferences] = await Promise.all([
+    options.state.listSubscriptions(),
+    recoverSourceStreamVisits(options.settingsScope, options.state),
+  ]);
+  return { links: reconciled, novels, subscriptions, preferences };
 }
 
 function cachePageId(
@@ -510,6 +515,10 @@ export function useExternalSourceController(options: UseExternalSourceController
     if (!open) setStreaming(undefined);
   }, [open]);
   const [loading, setLoading] = useState(false);
+  const [libraryBootstrap, setLibraryBootstrap] = useState<NonNullable<ExternalSourceController['libraryBootstrap']>>({
+    status: 'loading',
+  });
+  const libraryLoaded = useRef(false);
   const [blockingBusy, setBusy] = useState(false);
   const [readingHistoryLoading, setReadingHistoryLoading] = useState(false);
   const [catalogLoading, setCatalogLoading] = useState(false);
@@ -673,6 +682,7 @@ export function useExternalSourceController(options: UseExternalSourceController
         const connection = options.registry.getExternalSourceStatus(descriptor.id, options.hostContext);
         const sourceSubscriptions = subscriptions.filter(
           (item) =>
+            !item.deletedAt &&
             item.connectorId === descriptor.id &&
             (item.accountConnectionId ?? '') === (connection.accountConnectionId ?? ''),
         );
@@ -720,8 +730,13 @@ export function useExternalSourceController(options: UseExternalSourceController
         setReleasePreferences(preferences);
         setLinks(links);
         setNovels(novels);
+        libraryLoaded.current = true;
+        setLibraryBootstrap({ status: 'ready' });
       })
-      .catch(() => undefined);
+      .catch(() => {
+        if (current && mountedRef.current && !libraryLoaded.current)
+          setLibraryBootstrap({ status: 'failed', message: '소스 작품을 불러오지 못했습니다. 다시 시도해 주세요.' });
+      });
     return () => {
       current = false;
     };
@@ -749,6 +764,7 @@ export function useExternalSourceController(options: UseExternalSourceController
   const currentParentRef = breadcrumbs.at(-1)?.parentRef;
 
   const refreshLocalProjection = useCallback(async () => {
+    if (!libraryLoaded.current) setLibraryBootstrap({ status: 'loading' });
     try {
       const next = await loadSourceLibrary(optionsRef.current);
       if (!mountedRef.current) return;
@@ -756,7 +772,11 @@ export function useExternalSourceController(options: UseExternalSourceController
       setNovels(next.novels);
       setSubscriptions(next.subscriptions);
       setReleasePreferences(next.preferences);
+      libraryLoaded.current = true;
+      setLibraryBootstrap({ status: 'ready' });
     } catch (error) {
+      if (!libraryLoaded.current)
+        setLibraryBootstrap({ status: 'failed', message: '소스 작품을 불러오지 못했습니다. 다시 시도해 주세요.' });
       optionsRef.current.notify(
         error instanceof Error ? error.message : '라이브러리를 확인하지 못했습니다. 다시 시도해 주세요.',
         'warning',
@@ -1853,6 +1873,7 @@ export function useExternalSourceController(options: UseExternalSourceController
     const connection = sources.find((source) => source.id === activeSourceId)?.connection;
     return subscriptions.find(
       (item) =>
+        !item.deletedAt &&
         item.connectorId === activeSourceId &&
         item.collectionRemoteId === currentParentRef &&
         (item.accountConnectionId ?? '') === (connection?.accountConnectionId ?? ''),
@@ -1924,6 +1945,7 @@ export function useExternalSourceController(options: UseExternalSourceController
       if (item.kind !== 'work' || !item.navigationRef) return false;
       return subscriptions.some(
         (subscription) =>
+          !subscription.deletedAt &&
           subscription.connectorId === item.key.connectorId &&
           (subscription.accountConnectionId ?? '') === (item.key.accountConnectionId ?? '') &&
           subscription.collectionRemoteId === item.navigationRef,
@@ -4172,7 +4194,12 @@ export function useExternalSourceController(options: UseExternalSourceController
           (record.accountConnectionId ?? '') === (input.accountConnectionId ?? '') &&
           record.collectionRemoteId === input.navigationRef,
       );
-      if (existing) return existing;
+      if (existing) {
+        if (!existing.deletedAt) return existing;
+        const restored = await changeSourceLibraryTrash(optionsRef.current.state, existing.id, 'restore');
+        if (restored && mountedRef.current) replaceSubscription(restored);
+        if (restored) return restored;
+      }
       const now = currentIso();
       const releaseIds = input.items.filter((item) => item.release).map((item) => item.key.remoteId);
       const resolvedThumbnail = await resolveDetailThumbnail(
@@ -4300,30 +4327,77 @@ export function useExternalSourceController(options: UseExternalSourceController
     [busy, currentParentRef, isWorkInLibrary, persistLibraryWork, sources],
   );
 
-  const removeLibraryWork = useCallback(
-    async (subscription: ExternalSourceSubscriptionRecord) => {
-      if (busy) return;
-      if (
-        !optionsRef.current.confirm(
-          `${subscription.title}을(를) 라이브러리에서 제거할까요? 이미 받은 로컬 회차는 유지됩니다.`,
-        )
-      ) {
-        return;
-      }
+  const libraryTrashBusy = useRef(false);
+  const clearTrashedWorkHistory = useCallback(
+    async (work: ExternalSourceSubscriptionRecord) => {
+      const identity = {
+        connectorId: work.connectorId,
+        accountConnectionId: work.accountConnectionId,
+        remoteId: work.collectionRemoteId,
+      };
+      await streamProgress.clearWork(identity);
+      await clearSourceWorkHistory({
+        state: optionsRef.current.state,
+        scope: optionsRef.current.settingsScope,
+        work: identity,
+        releaseIds: work.knownReleaseIds,
+      });
+    },
+    [streamProgress],
+  );
+  const changeLibraryTrash = useCallback(
+    async (id: string, action: 'trash' | 'restore' | 'purge') => {
+      if (busy || libraryTrashBusy.current) return;
+      if (action === 'purge' && !optionsRef.current.confirm('이 작품을 휴지통에서 영구 삭제할까요?')) return;
+      libraryTrashBusy.current = true;
+      subscriptionAbortRef.current?.abort();
+      listAbortRef.current?.abort();
+      resumeAbortRef.current?.abort();
+      setBusy(true);
       try {
-        await optionsRef.current.state.deleteSubscription(subscription.id);
+        const next = await changeSourceLibraryTrash(optionsRef.current.state, id, action, clearTrashedWorkHistory);
         if (!mountedRef.current) return;
-        setSubscriptions((current) => current.filter((item) => item.id !== subscription.id));
-        optionsRef.current.notify('원격 작품을 라이브러리에서 제거했습니다. 받아 둔 회차는 유지됩니다.', 'success');
-      } catch (error) {
+        setSubscriptions((current) => [...current.filter((item) => item.id !== id), ...(next ? [next] : [])]);
+        if (action === 'trash') setOpen(false);
+        if (action === 'purge') await refreshLocalProjection();
         optionsRef.current.notify(
-          error instanceof Error ? error.message : '작품을 라이브러리에서 제거하지 못했습니다.',
-          'danger',
+          action === 'trash'
+            ? '휴지통으로 이동했습니다.'
+            : action === 'restore'
+              ? '작품을 복원했습니다.'
+              : '작품을 영구 삭제했습니다.',
+          'success',
         );
+      } catch (error) {
+        optionsRef.current.notify(error instanceof Error ? error.message : '작품을 변경하지 못했습니다.', 'danger');
+      } finally {
+        libraryTrashBusy.current = false;
+        if (mountedRef.current) setBusy(false);
       }
     },
-    [busy],
+    [busy, clearTrashedWorkHistory, refreshLocalProjection],
   );
+  const removeLibraryWork = useCallback(
+    (work: ExternalSourceSubscriptionRecord) => changeLibraryTrash(work.id, 'trash'),
+    [changeLibraryTrash],
+  );
+  const restoreLibraryWork = useCallback((id: string) => changeLibraryTrash(id, 'restore'), [changeLibraryTrash]);
+  const purgeLibraryWork = useCallback((id: string) => changeLibraryTrash(id, 'purge'), [changeLibraryTrash]);
+  const emptyLibraryTrash = useCallback(async () => {
+    if (busy || libraryTrashBusy.current) throw new Error('작업이 끝난 뒤 휴지통을 비워 주세요.');
+    libraryTrashBusy.current = true;
+    setBusy(true);
+    try {
+      const trashed = (await optionsRef.current.state.listSubscriptions()).filter((work) => work.deletedAt);
+      for (const work of trashed)
+        await changeSourceLibraryTrash(optionsRef.current.state, work.id, 'purge', clearTrashedWorkHistory);
+      return trashed.length;
+    } finally {
+      libraryTrashBusy.current = false;
+      if (mountedRef.current) setBusy(false);
+      await refreshLocalProjection();
+    }
+  }, [busy, clearTrashedWorkHistory, refreshLocalProjection]);
 
   const subscribeCurrentWork = addCurrentWorkToLibrary;
 
@@ -4374,6 +4448,7 @@ export function useExternalSourceController(options: UseExternalSourceController
     if (!source?.supportsSubscriptions || source.connection.state !== 'connected') return;
     const targets = subscriptions.filter(
       (item) =>
+        !item.deletedAt &&
         item.connectorId === activeSourceId &&
         (item.accountConnectionId ?? '') === (source.connection.accountConnectionId ?? ''),
     );
@@ -4482,6 +4557,7 @@ export function useExternalSourceController(options: UseExternalSourceController
 
   const openSubscription = useCallback(
     async (subscription: ExternalSourceSubscriptionRecord) => {
+      if (subscription.deletedAt) return;
       resumeAbortRef.current?.abort();
       const sourceId = subscription.connectorId as ExtensionContributionId;
       if (blockingBusy || (importBusy && sourceId !== activeSourceId)) return;
@@ -4494,6 +4570,20 @@ export function useExternalSourceController(options: UseExternalSourceController
       const navigation = new AbortController();
       listAbortRef.current = navigation;
       setLoading(true);
+      setDetail({
+        title: subscription.title,
+        author: subscription.author,
+        description: subscription.description,
+        thumbnailUrl: subscription.thumbnailUrl,
+        sourceLabel: subscription.sourceLabel,
+      });
+      setRawItems([]);
+      setNextCursor(undefined);
+      setListFailure(undefined);
+      setCatalogLoading(false);
+      setBrowse(undefined);
+      setStreaming(undefined);
+      localSeriesPageSeedRef.current = undefined;
       setLocalSeriesBookId(undefined);
       setLocalSeriesSeedNovel(undefined);
       setLocalSeriesSourceId(undefined);
@@ -4528,7 +4618,7 @@ export function useExternalSourceController(options: UseExternalSourceController
         await current.waitForReadingHistory?.();
         const work = (await current.state.listSubscriptions?.())?.find((candidate) => candidate.id === workId);
         abort.signal.throwIfAborted();
-        if (!work || !mountedRef.current) return;
+        if (!work || work.deletedAt || !mountedRef.current) return;
         const sourceId = work.connectorId as ExtensionContributionId;
         const connection = current.registry.getExternalSourceStatus(sourceId, current.hostContext);
         if (connection.state !== 'connected' || connection.accountConnectionId !== work.accountConnectionId) {
@@ -4902,6 +4992,11 @@ export function useExternalSourceController(options: UseExternalSourceController
     progress,
     subscriptions,
     libraryWorks,
+    libraryBootstrap,
+    retryLibrary: refreshLocalProjection,
+    restoreLibraryWork,
+    purgeLibraryWork,
+    emptyLibraryTrash,
     sourceWorkProgress,
     activeSubscription,
     checkingSubscriptions,

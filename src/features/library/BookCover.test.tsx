@@ -35,6 +35,44 @@ describe('BookCover hosted loading', () => {
     vi.unstubAllGlobals();
   });
 
+  it('drops the previous cover immediately when a new work has a delayed cover', async () => {
+    vi.stubGlobal('IntersectionObserver', undefined);
+    vi.stubGlobal('URL', { ...URL, createObjectURL: vi.fn(() => 'blob:first-cover'), revokeObjectURL: vi.fn() });
+    let finish!: (value: { blob: Blob }) => void;
+    const nextCover = new Promise<{ blob: Blob }>((resolve) => {
+      finish = resolve;
+    });
+    const getActiveCover = vi
+      .fn()
+      .mockResolvedValueOnce({ blob: new Blob(['first']) })
+      .mockReturnValueOnce(nextCover);
+    const runtime = { readerRuntime: { bookAssetRepository: { getActiveCover } } } as unknown as AppRuntime;
+    const first = { ...novel(), id: 'cover-switch-first' };
+    const second = { ...novel(), id: 'cover-switch-second', title: '다음 작품', coverAssetId: 'cover-2' };
+    const render = (book: Novel) => (
+      <RuntimeProvider runtime={runtime}>
+        <BookCover novel={book} className="book-cover" />
+      </RuntimeProvider>
+    );
+    let renderer!: ReactTestRenderer;
+    try {
+      await act(async () => {
+        renderer = create(render(first));
+      });
+      expect(renderer.root.findByType('img').props.src).toBe('blob:first-cover');
+      await act(async () => renderer.update(render(second)));
+      expect(renderer.root.findAllByType('img')).toHaveLength(0);
+      expect(renderer.root.findByType('strong').children).toEqual(['다음 작품']);
+      await act(async () => {
+        finish({ blob: new Blob(['second']) });
+      });
+      expect(renderer.root.findAllByType('img')).toHaveLength(1);
+    } finally {
+      finish({ blob: new Blob() });
+      await act(async () => renderer?.unmount());
+    }
+  });
+
   it('does not download an offscreen cover until it approaches the viewport', async () => {
     let callback: IntersectionObserverCallback | undefined;
     class FakeIntersectionObserver implements IntersectionObserver {

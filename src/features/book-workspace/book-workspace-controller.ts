@@ -554,14 +554,15 @@ export class BookWorkspaceController {
     }
   };
 
-  readonly emptyTrash = async (): Promise<void> => {
-    if (!this.ports.catalog) return;
+  readonly emptyTrash = async (emptyExternalTrash?: () => Promise<number>): Promise<void> => {
+    if (!this.ports.catalog && !emptyExternalTrash) return;
     const confirmed = this.ports.environment.confirm(
       '휴지통을 비울까요?\n\n휴지통의 모든 책과 관련 데이터를 복구할 수 없게 됩니다.',
     );
     if (!confirmed) return;
     try {
-      const count = await this.ports.catalog.emptyTrash();
+      const externalCount = (await emptyExternalTrash?.()) ?? 0;
+      const count = externalCount + ((await this.ports.catalog?.emptyTrash()) ?? 0);
       await this.ports.adjacent.refreshNovels();
       await this.ports.adjacent.refreshAfterLocalMutation();
       this.ports.environment.notify(`휴지통에서 ${count}권을 영구 삭제했습니다.`, 'info');

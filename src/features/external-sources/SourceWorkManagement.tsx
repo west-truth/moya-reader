@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Download, FilePenLine, RotateCcw } from 'lucide-react';
+import { Download, FilePenLine, RotateCcw, Trash2 } from 'lucide-react';
 import type { Novel } from '../../domain/types';
 import type { LibraryScreenProps } from '../library/library-screen-contract';
 import { BookFileFacts } from '../library/BookFileFacts';
@@ -95,6 +95,22 @@ export function SourceWorkManagement({
           >
             <RotateCcw size={17} /> 읽은 기록 초기화
           </button>
+          {(novel || controller.activeSubscription) && (
+            <button
+              type="button"
+              className="danger"
+              disabled={controller.busy || controller.loading}
+              onClick={async () => {
+                if (novel) {
+                  await library.actions.books.remove(novel);
+                  controller.close();
+                } else if (controller.activeSubscription)
+                  void controller.removeLibraryWork(controller.activeSubscription);
+              }}
+            >
+              <Trash2 size={17} /> 휴지통으로 이동
+            </button>
+          )}
         </div>
       </div>
     </details>

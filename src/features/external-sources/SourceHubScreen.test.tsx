@@ -546,7 +546,7 @@ describe('SourceHubScreen', () => {
             },
           ],
           activeSourceId: 'moya.external.suwayomi',
-          subscriptions: [
+          libraryWorks: [
             {
               id: 'subscription-1',
               connectorId: 'moya.external.suwayomi',
@@ -644,6 +644,9 @@ describe('SourceHubScreen', () => {
     expect(browseMarkup).toContain('라이브러리 추가');
     expect(browseMarkup).not.toContain('연동 작품 선택');
     expect(browseMarkup).toContain('라이브러리에 추가한 작품');
+    const disclosure = browseMarkup.match(/<details[^>]*class="source-hub-subscriptions"[^>]*>/u)?.[0];
+    expect(disclosure).toBeDefined();
+    expect(disclosure).not.toMatch(/\sopen(?:=|\s|>)/u);
     expect(browseMarkup).toContain('새 회차 1');
     expect(browseMarkup).toContain('새 회차 확인');
     expect(detailMarkup).toContain('작품 설명');
@@ -661,7 +664,8 @@ describe('SourceHubScreen', () => {
     expect(detailMarkup).toContain('연재 상태');
     expect(detailMarkup).not.toContain('WEBTOON');
     expect(detailMarkup).not.toContain('기본 폴더로 설정');
-    expect(detailMarkup).toContain('라이브러리에서 제거');
+    expect(detailMarkup).toContain('휴지통으로 이동');
+    expect(detailMarkup).not.toContain('라이브러리에서 제거');
     expect(detailMarkup).toContain('새 회차 선택');
   });
 

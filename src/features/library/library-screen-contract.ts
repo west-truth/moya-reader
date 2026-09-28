@@ -11,6 +11,7 @@ import type { ImportTaskView } from '../import/import-task-projection';
 type MaybePromise = void | Promise<void>;
 
 export interface LibraryExternalWorkView {
+  readonly deletedAt?: string;
   readonly id: string;
   readonly title: string;
   readonly author?: string;
@@ -141,6 +142,8 @@ export interface LibraryScreenActions {
     /** Resume the last visited release of a streamed work, or open its first release. */
     continueExternal?(workId: string): MaybePromise;
     removeExternal(workId: string): MaybePromise;
+    restoreExternal?(workId: string): MaybePromise;
+    purgeExternal?(workId: string): MaybePromise;
   };
   imports: {
     open(task?: ImportTaskView): void;

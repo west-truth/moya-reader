@@ -189,10 +189,11 @@ export function BookWorkspaceScreens({
     );
     return {
       ...base,
-      totalBooks: base.totalBooks + remoteLibraryWorks.length,
+      totalBooks: base.totalBooks + remoteLibraryWorks.filter((work) => !work.deletedAt).length,
       filterCounts: {
         ...base.filterCounts,
-        all: base.filterCounts.all + remoteLibraryWorks.length,
+        all: base.filterCounts.all + remoteLibraryWorks.filter((work) => !work.deletedAt).length,
+        trash: base.filterCounts.trash + remoteLibraryWorks.filter((work) => work.deletedAt).length,
         unread: base.filterCounts.unread + remoteCounts.unread,
         reading: base.filterCounts.reading + remoteCounts.reading,
         finished: base.filterCounts.finished + remoteCounts.finished,
@@ -254,7 +255,7 @@ export function BookWorkspaceScreens({
 
   const libraryModel: LibraryScreenModel = {
     discovery: discovery ? { active: discovery.active && !externalSources.open, scope: discovery.scope } : undefined,
-    bootstrap: { status: bootstrap.status, message: bootstrap.message },
+    bootstrap: bootstrap.status !== 'ready' ? bootstrap : (externalSources.libraryBootstrap ?? bootstrap),
     drop: libraryDrop,
     query: state.libraryQuery,
     sync,
@@ -281,6 +282,7 @@ export function BookWorkspaceScreens({
         newReleaseCount: work.newReleaseIds.length,
         addedAt: work.createdAt,
         updatedAt: work.updatedAt,
+        deletedAt: work.deletedAt,
       })),
       browse: externalSources.catalogBrowse
         ? {
@@ -324,7 +326,10 @@ export function BookWorkspaceScreens({
           }
         : undefined,
       setQuery: controller.setLibraryQuery,
-      retryBootstrap: bootstrap.retry,
+      retryBootstrap: () => {
+        bootstrap.retry();
+        void externalSources.retryLibrary?.();
+      },
       openSync,
       openSettings,
       openBackup,
@@ -359,7 +364,7 @@ export function BookWorkspaceScreens({
       },
       setSort: controller.setLibrarySort,
       setViewMode: controller.setLibraryViewMode,
-      emptyTrash: controller.emptyTrash,
+      emptyTrash: () => controller.emptyTrash(externalSources.emptyLibraryTrash),
       setShelf: (shelfId) => {
         discovery?.setActive(false);
         externalSources.close();
@@ -396,6 +401,8 @@ export function BookWorkspaceScreens({
         controller.setView('library');
         await externalSources.continueLibraryWork(workId);
       },
+      restoreExternal: (id) => externalSources.restoreLibraryWork?.(id),
+      purgeExternal: (id) => externalSources.purgeLibraryWork?.(id),
       removeExternal: async (workId) => {
         if (externalWorkHasActiveImport(workId)) return;
         const work = externalSources.libraryWorks.find((candidate) => candidate.id === workId);
