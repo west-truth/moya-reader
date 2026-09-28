@@ -492,6 +492,8 @@ test('opens image lists without downloading pages; reading and saving reuse the 
   assert.equal(download.result.assets.length, 1);
   assert.equal(calls.filter((c) => c.method === 'image').length, 1);
   assert.equal(calls.filter((c) => c.method === 'pages').length, 1);
+  await catalog.streamPage(source, stream.token, 0, signal, true);
+  assert.equal(calls.filter((c) => c.method === 'image').length, 2, 'Explicit retry fetches fresh bytes');
   await assert.rejects(catalog.streamPage(source, stream.token, 1, signal), /invalid_source_invocation/);
   catalog.closeStream(source, stream.token);
   await assert.rejects(catalog.streamPage(source, stream.token, 0, signal), /source_stream_expired/);

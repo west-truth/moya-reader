@@ -1,3 +1,4 @@
+import { useComicViewportPosition, type ComicViewportPosition } from './use-comic-viewport-position';
 import { AutoScrollControls } from '../reader/AutoScrollControls';
 import { useComicAutoReading } from './use-comic-auto-reading';
 import { SettingsSlider } from '../reader-settings/SettingsSlider';
@@ -184,14 +185,31 @@ interface PdfRegionSelection {
   readonly quad: { x: number; y: number; width: number; height: number };
 }
 
+export interface ComicRemoteNavigation {
+  readonly invalidatePage?: (index: number) => void;
+  readonly scope: string;
+  readonly nextScope: string;
+  readonly nextTitle?: string;
+  readonly error?: string;
+  readonly retry?: () => void;
+  readonly busy?: boolean;
+  readonly prefetchPages: number;
+  readonly profileKey: string;
+  readonly initialPosition?: ComicViewportPosition;
+  readonly savePosition?: (position: ComicViewportPosition) => void;
+  readonly previous?: (isCurrent?: () => boolean) => Promise<void>;
+  readonly next?: (isCurrent?: () => boolean) => Promise<void>;
+}
+
 export interface FixedDocumentScreenProps {
+  readonly remoteNavigation?: ComicRemoteNavigation;
   readonly novel: Novel;
   readonly chapters: readonly Chapter[];
   readonly readingPosition?: ReadingPosition;
   readonly initialChapterId?: string;
   readonly entryRequestVersion?: number;
-  readonly repository: ReaderRepository;
-  readonly assets: BookAssetRepository;
+  readonly repository: Pick<ReaderRepository, 'getParagraphPage'>;
+  readonly assets: Pick<BookAssetRepository, 'getEmbeddedResource' | 'openSource' | 'saveGeneratedCover'>;
   readonly onBack: () => void;
   readonly onPageSettled: (pageIndex: number, chapter: Chapter, novel: Novel) => void | Promise<void>;
   readonly onGeneratedCover?: (cover: BookAssetMetadata) => void;
@@ -348,13 +366,15 @@ function ArchiveThumbnailPreview({
   repository,
   assets,
   onPageHint,
+  persistent = true,
 }: {
+  readonly persistent?: boolean;
   readonly bookId: string;
   readonly sourceIdentity: string;
   readonly chapterId: string;
   readonly pageIndex: number;
-  readonly repository: ReaderRepository;
-  readonly assets: BookAssetRepository;
+  readonly repository: Pick<ReaderRepository, 'getParagraphPage'>;
+  readonly assets: Pick<BookAssetRepository, 'getEmbeddedResource' | 'openSource' | 'saveGeneratedCover'>;
   readonly onPageHint: (pageIndex: number, hint: ComicPageLayoutHint) => void;
 }) {
   const [url, setUrl] = useState<string>();
@@ -374,24 +394,29 @@ function ArchiveThumbnailPreview({
       if (!assetId) throw new Error('이미지 페이지 정보를 찾을 수 없습니다.');
       const pageHash = archiveThumbnailPageHash(assetId, pageIndex);
       const renderFingerprint = archiveThumbnailFingerprint();
-      const cached = await getDocumentThumbnail({ bookId, pageIndex, pageHash, renderFingerprint });
+      const cached = persistent
+        ? await getDocumentThumbnail({ bookId, pageIndex, pageHash, renderFingerprint })
+        : undefined;
       let blob = cached?.blob;
       if (!blob) {
         const resource = await assets.getEmbeddedResource(bookId, assetId, controller.signal);
         if (!resource) throw new Error('이미지 페이지를 찾을 수 없습니다.');
         const rendered = await renderArchiveThumbnail(resource.blob, controller.signal);
         blob = rendered.blob;
-        await saveDocumentThumbnail({
-          bookId,
-          pageIndex,
-          pageHash,
-          renderFingerprint: rendered.renderFingerprint,
-          contentType: rendered.contentType,
-          pixelWidth: rendered.pixelWidth,
-          pixelHeight: rendered.pixelHeight,
-          blob,
-        }).catch(() => undefined);
-        void pruneDocumentThumbnails(bookId).catch(() => undefined);
+        controller.signal.throwIfAborted();
+        if (persistent) {
+          await saveDocumentThumbnail({
+            bookId,
+            pageIndex,
+            pageHash,
+            renderFingerprint: rendered.renderFingerprint,
+            contentType: rendered.contentType,
+            pixelWidth: rendered.pixelWidth,
+            pixelHeight: rendered.pixelHeight,
+            blob,
+          }).catch(() => undefined);
+          void pruneDocumentThumbnails(bookId).catch(() => undefined);
+        }
       }
       controller.signal.throwIfAborted();
       objectUrl = URL.createObjectURL(blob);
@@ -401,7 +426,7 @@ function ArchiveThumbnailPreview({
       controller.abort();
       if (objectUrl) URL.revokeObjectURL(objectUrl);
     };
-  }, [assets, bookId, chapterId, onPageHint, pageIndex, repository, sourceIdentity]);
+  }, [assets, bookId, chapterId, onPageHint, pageIndex, repository, sourceIdentity, persistent]);
   return url ? <img src={url} alt="" draggable={false} /> : <span>{pageIndex + 1}</span>;
 }
 
@@ -656,6 +681,7 @@ function PdfCanvas({
 }
 
 export default function FixedDocumentScreen({
+  remoteNavigation,
   novel,
   chapters,
   readingPosition,
@@ -674,6 +700,7 @@ export default function FixedDocumentScreen({
   annotationSyncRevision,
   documentAnnotationRepository = localDocumentAnnotationRepository,
 }: FixedDocumentScreenProps) {
+  const persistThumbnails = !remoteNavigation;
   const sortedChapters = useMemo(() => [...chapters].sort((left, right) => left.index - right.index), [chapters]);
   const documentSections = useMemo(
     () => projectFixedDocumentSections(novel.id, sortedChapters),
@@ -700,6 +727,8 @@ export default function FixedDocumentScreen({
   const [imageDimensions, setImageDimensions] = useState<Map<string, ContinuousImageDimensions>>(() => new Map());
   const [status, setStatus] = useState<'loading' | 'ready' | 'failed'>('loading');
   const [errorMessage, setErrorMessage] = useState('');
+  const [navigationError, setNavigationError] = useState('');
+  useEffect(() => setNavigationError(''), [novel.id]);
   const viewportRef = useRef<HTMLElement>(null);
   const continuousContentRef = useRef<HTMLDivElement>(null);
   const sidebarRef = useRef<HTMLElement>(null);
@@ -918,6 +947,20 @@ export default function FixedDocumentScreen({
   const currentDocumentSection = documentSections[currentDocumentSectionIndex];
   const previousDocumentSection = documentSections[currentDocumentSectionIndex - 1];
   const nextDocumentSection = documentSections[currentDocumentSectionIndex + 1];
+  const hasPreviousSection = Boolean(previousDocumentSection || remoteNavigation?.previous);
+  const hasNextSection = Boolean(nextDocumentSection || remoteNavigation?.next);
+  const navigateSection = (direction: -1 | 1) => {
+    const section = direction === -1 ? previousDocumentSection : nextDocumentSection;
+    if (section) {
+      goToPage(section.startPageIndex);
+      return;
+    }
+    const action = direction === -1 ? remoteNavigation?.previous : remoteNavigation?.next;
+    setNavigationError('');
+    void action?.().catch((error: unknown) =>
+      setNavigationError(error instanceof Error ? error.message : '회차를 열지 못했습니다.'),
+    );
+  };
   const continuousPageIndexes = useMemo(
     () =>
       continuousComicPageIndexes(
@@ -998,14 +1041,34 @@ export default function FixedDocumentScreen({
         : [pageIndex + 1];
     return pages.length && pages[0] < end ? pages.filter((index) => index < totalPages) : [];
   }, [currentDocumentSection, totalPages, effectiveViewMode, comicSpreads, pageIndex]);
+  const streamVisiblePageKey = (stableComicFlow ? comicFlow.visible : displayedPages).join(',');
+  const streamPrefetch = remoteNavigation?.prefetchPages;
   const imageWantedPageIndexes = useMemo(() => {
     const displayed = displayedPageKey.split(',').filter(Boolean).map(Number);
-    const wanted = archiveFullImageWindow(displayed, pageIndex, totalPages);
+    const wanted =
+      streamPrefetch !== undefined
+        ? [
+            ...new Set([
+              pageIndex,
+              ...streamVisiblePageKey.split(',').filter(Boolean).map(Number),
+              ...Array.from({ length: streamPrefetch }, (_, offset) => pageIndex + offset + 1),
+            ]),
+          ].filter((index) => index < totalPages)
+        : archiveFullImageWindow(displayed, pageIndex, totalPages);
     if (!continuousView) return new Set([...wanted, ...nextAutoPages]);
     if (!currentDocumentSection) return new Set(wanted);
     const sectionEnd = currentDocumentSection.startPageIndex + currentDocumentSection.pageCount;
     return new Set(wanted.filter((index) => index >= currentDocumentSection.startPageIndex && index < sectionEnd));
-  }, [continuousView, currentDocumentSection, displayedPageKey, pageIndex, totalPages, nextAutoPages]);
+  }, [
+    continuousView,
+    currentDocumentSection,
+    displayedPageKey,
+    pageIndex,
+    totalPages,
+    nextAutoPages,
+    streamPrefetch,
+    streamVisiblePageKey,
+  ]);
 
   const recordArchiveImageDimensions = useCallback(
     (index: number, dimensions: ContinuousImageDimensions) => {
@@ -1026,8 +1089,9 @@ export default function FixedDocumentScreen({
     wantedPages: imageWantedPageIndexes,
     repository,
     assets,
-    retainedPages: stableComicFlow ? continuousPageIndexes : undefined,
+    retainedPages: stableComicFlow && !remoteNavigation ? continuousPageIndexes : undefined,
     onDimensions: recordArchiveImageDimensions,
+    onPageInvalid: remoteNavigation?.invalidatePage,
   });
   const archiveError = archiveImages.errors.get(pageIndex);
   const documentStatus =
@@ -1038,6 +1102,17 @@ export default function FixedDocumentScreen({
           ? 'ready'
           : 'loading'
       : status;
+
+  useComicViewportPosition({
+    identity: `${novel.id}:${entryRequestVersion ?? 0}`,
+    continuous: continuousView,
+    page: pageIndex,
+    ready: documentStatus === 'ready',
+    viewport: viewportRef,
+    content: continuousContentRef,
+    initial: remoteNavigation?.initialPosition,
+    save: remoteNavigation?.savePosition,
+  });
 
   const goToPage = useCallback(
     (next: number) => {
@@ -1100,11 +1175,11 @@ export default function FixedDocumentScreen({
     (change: Partial<ComicReadingProfile>) => {
       setComicProfile((current) => {
         const next = { ...current, ...change };
-        void comicReadingProfileRepository.save(novel.id, next);
+        void comicReadingProfileRepository.save(remoteNavigation?.profileKey ?? novel.id, next);
         return next;
       });
     },
-    [novel.id],
+    [novel.id, remoteNavigation?.profileKey],
   );
 
   const recordComicPageHint = useCallback((index: number, hint: ComicPageLayoutHint) => {
@@ -1251,6 +1326,7 @@ export default function FixedDocumentScreen({
     const pdfDocument = pdf;
     const isPdf = novel.format === 'pdf';
     if (
+      !persistThumbnails ||
       (isPdf && !pdfDocument) ||
       (!isPdf && novel.format !== 'image_archive') ||
       thumbnailBatchControllerRef.current
@@ -1344,7 +1420,7 @@ export default function FixedDocumentScreen({
       if (thumbnailBatchControllerRef.current === controller) thumbnailBatchControllerRef.current = undefined;
       setThumbnailBatchProgress(undefined);
     }
-  }, [assets, novel, pdf, pdfPages, repository, sortedChapters, totalPages]);
+  }, [assets, novel, pdf, pdfPages, repository, sortedChapters, totalPages, persistThumbnails]);
 
   const recognizePdfPage = useCallback(
     async (index: number, signal: AbortSignal, current = 1, total = 1) => {
@@ -1808,18 +1884,23 @@ export default function FixedDocumentScreen({
   useEffect(() => {
     if (novel.format !== 'image_archive') return;
     let active = true;
-    setComicProfile(DEFAULT_COMIC_READING_PROFILE);
+    // Keep shared view settings while switching stream episodes; only page-specific crops reset.
+    setComicProfile((current) =>
+      remoteNavigation?.profileKey ? { ...current, pageCrops: undefined } : DEFAULT_COMIC_READING_PROFILE,
+    );
     setComicPageHints(new Map());
-    void comicReadingProfileRepository.get(novel.id, { direction: novel.readingDirection ?? 'ltr' }).then((profile) => {
-      if (!active) return;
-      setComicProfile(profile);
-      setViewMode(comicProfileModeToViewMode(profile.mode, profile.seamlessVertical));
-      setFit(profile.fit);
-    });
+    void comicReadingProfileRepository
+      .get(remoteNavigation?.profileKey ?? novel.id, { direction: novel.readingDirection ?? 'ltr' })
+      .then((profile) => {
+        if (!active) return;
+        setComicProfile(profile);
+        setViewMode(comicProfileModeToViewMode(profile.mode, profile.seamlessVertical));
+        setFit(profile.fit);
+      });
     return () => {
       active = false;
     };
-  }, [novel.format, novel.id, novel.readingDirection]);
+  }, [novel.format, novel.id, novel.readingDirection, remoteNavigation?.profileKey]);
 
   useEffect(() => {
     const viewport = viewportRef.current;
@@ -2182,7 +2263,7 @@ export default function FixedDocumentScreen({
   } as CSSProperties;
   const continuousSectionFooterHeight =
     continuousView && currentDocumentSection
-      ? nextDocumentSection
+      ? hasNextSection
         ? CONTINUOUS_SECTION_BOUNDARY_HEIGHT
         : CONTINUOUS_SECTION_NAV_HEIGHT
       : 0;
@@ -2198,9 +2279,11 @@ export default function FixedDocumentScreen({
     viewport: viewportRef,
     content: continuousContentRef,
     continuous: continuousView,
-    scope: `${novel.id}:${continuousSectionKey}:${autoScopeSuffix}`,
+    scope: remoteNavigation
+      ? `${remoteNavigation.scope}:${autoScopeSuffix}`
+      : `${novel.id}:${continuousSectionKey}:${autoScopeSuffix}`,
     allowed: autoReadingAllowed && documentStatus !== 'failed',
-    ready: documentStatus === 'ready',
+    ready: documentStatus === 'ready' && !remoteNavigation?.busy,
     visiblePages: displayedPages,
     nearbyPages: stableComicFlow ? comicFlow.nearby : displayedPages,
     nextPages: nextAutoPages,
@@ -2216,7 +2299,9 @@ export default function FixedDocumentScreen({
             if (isCurrent()) goToPage(nextDocumentSection.startPageIndex);
           },
         }
-      : undefined,
+      : remoteNavigation?.next
+        ? { scope: `${remoteNavigation.nextScope}:${autoScopeSuffix}`, open: remoteNavigation.next }
+        : undefined,
   });
   useEffect(() => {
     if (continuousView) {
@@ -2234,9 +2319,9 @@ export default function FixedDocumentScreen({
     rootRef: viewportRef,
     contentRef: continuousContentRef,
     chapterId: continuousSectionKey,
-    enabled: continuousView && !autoReading.running && Boolean(currentDocumentSection && nextDocumentSection),
+    enabled: continuousView && !autoReading.running && Boolean(currentDocumentSection && hasNextSection),
     onNextChapter: () => {
-      if (nextDocumentSection) goToPage(nextDocumentSection.startPageIndex);
+      navigateSection(1);
     },
   });
 
@@ -2733,7 +2818,7 @@ export default function FixedDocumentScreen({
                   <button type="button" onClick={() => thumbnailBatchControllerRef.current?.abort()}>
                     취소
                   </button>
-                ) : (
+                ) : persistThumbnails ? (
                   <button
                     type="button"
                     onClick={() => void prepareAllDocumentThumbnails()}
@@ -2741,7 +2826,7 @@ export default function FixedDocumentScreen({
                   >
                     전체 준비
                   </button>
-                )}
+                ) : null}
               </div>
             )}
             <div className="fixed-doc-sidebar-list" style={{ height: sidebarVirtualizer.getTotalSize() }}>
@@ -2778,6 +2863,7 @@ export default function FixedDocumentScreen({
                         />
                       ) : novel.format === 'image_archive' ? (
                         <ArchiveThumbnailPreview
+                          persistent={persistThumbnails}
                           bookId={novel.id}
                           sourceIdentity={archivePageSourceIdentity(
                             chapter,
@@ -3016,30 +3102,30 @@ export default function FixedDocumentScreen({
                   <nav className="fixed-doc-section-nav" aria-label="만화 회차 이동">
                     <button
                       type="button"
-                      disabled={!previousDocumentSection}
+                      disabled={!hasPreviousSection || remoteNavigation?.busy}
                       onClick={() => {
-                        if (previousDocumentSection) goToPage(previousDocumentSection.startPageIndex);
+                        navigateSection(-1);
                       }}
                     >
                       <ChevronLeft size={16} /> 이전 회차
                     </button>
                     <button
                       type="button"
-                      disabled={!nextDocumentSection}
+                      disabled={!hasNextSection || remoteNavigation?.busy}
                       onClick={() => {
-                        if (nextDocumentSection) goToPage(nextDocumentSection.startPageIndex);
+                        navigateSection(1);
                       }}
                     >
                       다음 회차 <ChevronRight size={16} />
                     </button>
                   </nav>
-                  {nextDocumentSection && (
+                  {hasNextSection && (
                     <div
                       className={`fixed-doc-next-section-boundary${scrollSectionBoundary.armed ? ' is-armed' : ''}`}
                       aria-live="polite"
                     >
                       <span>다음 회차</span>
-                      <strong>{nextDocumentSection.title}</strong>
+                      <strong>{nextDocumentSection?.title ?? remoteNavigation?.nextTitle ?? '다음 회차'}</strong>
                       <small>{scrollSectionBoundary.armed ? '한 번 더 아래로 스크롤' : '마지막까지 읽었습니다'}</small>
                     </div>
                   )}
@@ -4009,13 +4095,23 @@ export default function FixedDocumentScreen({
           )}
         </aside>
       )}
+      {(navigationError || remoteNavigation?.error) && (
+        <p className="fixed-doc-navigation-error" role="alert">
+          {navigationError || remoteNavigation?.error}
+          {remoteNavigation?.error && remoteNavigation.retry && (
+            <button type="button" className="secondary-btn" onClick={remoteNavigation.retry}>
+              다시 시도
+            </button>
+          )}
+        </p>
+      )}
       <footer className={`fixed-doc-footer${novel.format === 'image_archive' ? ' has-chapter-steps' : ''}`}>
         {novel.format === 'image_archive' && (
           <button
             type="button"
             className="fixed-doc-chapter-step"
-            disabled={!previousDocumentSection}
-            onClick={() => previousDocumentSection && goToPage(previousDocumentSection.startPageIndex)}
+            disabled={!hasPreviousSection || remoteNavigation?.busy}
+            onClick={() => navigateSection(-1)}
             aria-label="이전 회차"
           >
             <ChevronLeft size={15} /> <span>이전화</span>
@@ -4047,8 +4143,8 @@ export default function FixedDocumentScreen({
           <button
             type="button"
             className="fixed-doc-chapter-step"
-            disabled={!nextDocumentSection}
-            onClick={() => nextDocumentSection && goToPage(nextDocumentSection.startPageIndex)}
+            disabled={!hasNextSection || remoteNavigation?.busy}
+            onClick={() => navigateSection(1)}
             aria-label="다음 회차"
           >
             <span>다음화</span> <ChevronRight size={15} />

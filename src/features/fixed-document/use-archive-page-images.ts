@@ -25,16 +25,28 @@ export function useArchivePageImages(input: {
   readonly chapters: readonly Chapter[];
   readonly currentPage: number;
   readonly wantedPages: ReadonlySet<number>;
-  readonly repository: ReaderRepository;
-  readonly assets: BookAssetRepository;
+  readonly repository: Pick<ReaderRepository, 'getParagraphPage'>;
+  readonly assets: Pick<BookAssetRepository, 'getEmbeddedResource'>;
   readonly retainedPages?: readonly number[];
   readonly onDimensions?: (index: number, dimensions: ContinuousImageDimensions) => void;
+  readonly onPageInvalid?: (index: number) => void;
 }): ArchivePageImages {
-  const { enabled, bookId, sourceRevision, chapters, currentPage, wantedPages, repository, assets, retainedPages } =
-    input;
+  const {
+    enabled,
+    bookId,
+    sourceRevision,
+    chapters,
+    currentPage,
+    wantedPages,
+    repository,
+    assets,
+    retainedPages,
+    onPageInvalid,
+  } = input;
   const sessionKey = `${bookId}:${sourceRevision}`;
   const dimensionsCallbackRef = useRef(input.onDimensions);
   dimensionsCallbackRef.current = input.onDimensions;
+  const invalidCallbackRef = useRef(onPageInvalid);
   const [state, setState] = useState({ bookId, sessionKey, snapshot: EMPTY_SNAPSHOT });
   const loaderRef = useRef<ArchivePageLoader>();
   const metadataRef = useRef(new Map<string, NonNullable<Awaited<ReturnType<ReaderRepository['getParagraphPage']>>>>());
@@ -74,7 +86,11 @@ export function useArchivePageImages(input: {
     }
     loaderRef.current?.retry(index);
   }, []);
-  const reportError = useCallback((index: number, url: string) => loaderRef.current?.reportError(index, url), []);
+  const reportError = useCallback((index: number, url: string) => {
+    if (snapshotRef.current.pages.get(index)?.url !== url) return;
+    invalidCallbackRef.current?.(index);
+    loaderRef.current?.reportError(index, url);
+  }, []);
   const resolvedIdentity = useCallback((index: number, planChapters: readonly Chapter[], revision: string) => {
     const chapter = planChapters[index];
     if (!chapter || chapter.documentSectionSourceContentHash) return pageIdentity(chapter, revision);
@@ -85,6 +101,7 @@ export function useArchivePageImages(input: {
   }, []);
 
   useEffect(() => {
+    invalidCallbackRef.current = onPageInvalid;
     snapshotRef.current = EMPTY_SNAPSHOT;
     setState({ bookId, sessionKey: sessionKeyRef.current, snapshot: EMPTY_SNAPSHOT });
     if (!enabled) return;
@@ -128,7 +145,7 @@ export function useArchivePageImages(input: {
       loader.dispose();
       if (loaderRef.current === loader) loaderRef.current = undefined;
     };
-  }, [assets, bookId, enabled, loadMetadata]);
+  }, [assets, bookId, enabled, loadMetadata, onPageInvalid]);
 
   useEffect(() => {
     sessionKeyRef.current = sessionKey;

@@ -28,7 +28,7 @@ export class ApkSourceCatalog implements InstalledSourceCatalogPort {
     input: { workId: string; releaseId: string; imageMinutes?: number },
     signal: AbortSignal,
   ): Promise<{ token: string; pageCount: number }>;
-  streamPage(source: string, token: string, index: number, signal: AbortSignal): Promise<Blob>;
+  streamPage(source: string, token: string, index: number, signal: AbortSignal, reload?: boolean): Promise<Blob>;
   closeStream(source: string, token: string): void;
   close(): void;
   setCacheOwner(owner: symbol): void;

@@ -1,4 +1,6 @@
+import { BookFileFacts } from '../library/BookFileFacts';
 import { useSourceStreamNavigation } from './use-source-stream-navigation';
+import { sourceReadingPreferences } from '../../external-sources/source-reading-preferences';
 import { SourceStreamReader } from './SourceStreamReader';
 import { TaskProgressRing } from '../../components/TaskProgressRing';
 import { WorkViewControl } from '../../components/WorkViewControl';
@@ -8,6 +10,7 @@ import {
   Bell,
   BookOpen,
   Check,
+  CircleCheck,
   ChevronRight,
   Cloud,
   Download,
@@ -229,7 +232,7 @@ function ReleaseDownloadAction({
         void (updating || (queueing && !streaming) ? controller.importItem(item) : controller.importAndOpen(item))
       }
     >
-      {updating ? <RefreshCw size={16} /> : streaming ? <BookOpen size={16} /> : <Download size={16} />}
+      {updating ? <RefreshCw size={16} /> : streaming ? <Play size={16} /> : <Download size={16} />}
     </button>
   );
 }
@@ -262,7 +265,7 @@ function ItemAction({
               aria-label={`${item.title} 바로 읽기`}
               onClick={() => void controller.importAndOpen(item)}
             >
-              <BookOpen size={16} />
+              <Play size={16} />
             </button>
           )}
         {canRead && (
@@ -270,11 +273,11 @@ function ItemAction({
             className="icon-btn source-hub-release-action"
             type="button"
             disabled={controller.blockingBusy}
-            title="회차 보기"
+            title="저장된 회차 보기"
             aria-label={`${item.title} 보기`}
             onClick={() => void controller.openImported(item)}
           >
-            <BookOpen size={16} />
+            <CircleCheck size={16} />
           </button>
         )}
         {(item.importState !== 'imported' || (task && importTaskIsActive(task)) || !controller.renameRelease) && (
@@ -515,7 +518,7 @@ export default function SourceHubScreen({
   localSeriesNovel,
   localSeriesTitleEditor,
 }: SourceHubScreenProps) {
-  const streamNavigation = useSourceStreamNavigation(controller);
+  const streamNavigation = useSourceStreamNavigation(controller, sourceReadingPreferences().prefetch > 0);
   const scrollRef = useRef<HTMLDivElement>(null);
   const [workLayout, changeWorkLayout] = useSourceWorkLayout();
   const taskByItemKey = useMemo(() => {
@@ -567,6 +570,7 @@ export default function SourceHubScreen({
   ]
     .filter((value): value is string => Boolean(value))
     .join(' · ');
+  const workTags = controller.detail?.tags ?? seriesNovel?.tags;
   const workSourceLabel = controller.detail?.sourceLabel ?? activeSource?.title ?? '로컬 라이브러리';
   const seriesLibraryBook = seriesNovel ? library.model.collection.booksByNovelId?.get(seriesNovel.id) : undefined;
   const seriesReadingStatus =
@@ -602,20 +606,44 @@ export default function SourceHubScreen({
   if (controller.streaming) {
     const { item, port } = controller.streaming;
     const task = controller.tasks.find((task) => task.externalItemKey === externalItemKeyId(item.key));
+    const nextItem = streamNavigation.nextItem;
+    const nextTask =
+      nextItem && controller.tasks.find((task) => task.externalItemKey === externalItemKeyId(nextItem.key));
     return (
       <SourceStreamReader
+        fromStart={controller.streaming.fromStart}
         historyKey={controller.streaming.historyKey ?? externalItemKeyId(item.key)}
         title={item.title}
+        profileKey={controller.streaming.historyKey ?? externalItemKeyId(item.key)}
+        nextEpisode={
+          nextItem && controller.canStreamItem?.(nextItem)
+            ? {
+                remoteId: nextItem.key.remoteId,
+                title: nextItem.title,
+                saved:
+                  nextItem.importState === 'imported' ||
+                  nextItem.importState === 'update_available' ||
+                  nextTask?.phase === 'complete',
+                busy:
+                  controller.importBusy || controller.blockingBusy || Boolean(nextTask && importTaskIsActive(nextTask)),
+                save: () => (controller.saveStream ?? controller.importItem)(nextItem),
+              }
+            : undefined
+        }
         remoteId={item.key.remoteId}
         port={port}
         onClose={() => controller.closeStream?.()}
         onSave={() => (controller.saveStream ?? controller.importItem)(item)}
         onPageSettled={(page, count) => controller.saveStreamPosition?.(item, page, count)}
-        saved={task?.phase === 'complete'}
-        saveStatus={task ? importTaskLabel(task) : undefined}
-        saveBusy={task ? importTaskIsActive(task) : false}
-        saveFailed={task?.phase === 'failed'}
-        onCancelSave={controller.cancel}
+        saved={
+          task?.phase === 'complete' ||
+          controller.items.some(
+            (candidate) =>
+              externalItemKeyId(candidate.key) === externalItemKeyId(item.key) &&
+              ['imported', 'update_available'].includes(candidate.importState),
+          )
+        }
+        saveBusy={controller.importBusy || controller.blockingBusy || Boolean(task && importTaskIsActive(task))}
         previous={streamNavigation.previous}
         next={streamNavigation.next}
         navigationBusy={streamNavigation.busy}
@@ -753,12 +781,14 @@ export default function SourceHubScreen({
                     )}
                     {workByline && <p className="detail-byline">{workByline}</p>}
                     {(controller.detail?.description ?? seriesNovel?.description) && (
-                      <p className="detail-description">{controller.detail?.description ?? seriesNovel?.description}</p>
+                      <p className="detail-description" tabIndex={0} aria-label="작품 설명">
+                        {controller.detail?.description ?? seriesNovel?.description}
+                      </p>
                     )}
-                    {controller.detail?.tags && controller.detail.tags.length > 0 && (
-                      <div className="detail-tags" aria-label="작품 태그">
+                    {workTags && workTags.length > 0 && (
+                      <div className="detail-tags" tabIndex={0} aria-label="작품 태그">
                         <Tags size={14} />
-                        {controller.detail.tags.slice(0, 8).map((tag) => (
+                        {workTags.map((tag) => (
                           <span key={tag}>#{tag}</span>
                         ))}
                       </div>
@@ -902,6 +932,29 @@ export default function SourceHubScreen({
                   </div>
                 )}
               </section>
+            )}
+
+            {hasWorkHero && seriesNovel && (
+              <details className="book-management-disclosure">
+                <summary>
+                  <span>작품 관리 및 파일 정보</span>
+                </summary>
+                <div className="book-management-body">
+                  <BookFileFacts novel={seriesNovel} className="book-management-facts" />
+                  <div className="book-management-actions">
+                    <button type="button" onClick={() => library.actions.books.editMetadata(seriesNovel)}>
+                      <FilePenLine size={17} /> 작품 정보 편집
+                    </button>
+                    <button
+                      type="button"
+                      disabled={!seriesNovel.sourceAssetId}
+                      onClick={() => void library.actions.books.downloadSource(seriesNovel)}
+                    >
+                      <Download size={17} /> 원본 다운로드
+                    </button>
+                  </div>
+                </div>
+              </details>
             )}
 
             {activeSource?.supportsSubscriptions && !controller.detail && sourceSubscriptions.length > 0 && (

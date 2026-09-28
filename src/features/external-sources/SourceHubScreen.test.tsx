@@ -140,6 +140,44 @@ const library = {
 } as unknown as LibraryScreenProps;
 
 describe('SourceHubScreen', () => {
+  it('exposes saved source book facts and all tags even without a catalog detail response', () => {
+    const tags = Array.from({ length: 12 }, (_, index) => `태그${index + 1}`);
+    const markup = renderToStaticMarkup(
+      <SourceHubScreen
+        controller={controller({
+          localSeriesNovel: testNovel({
+            sourceFileName: 'saved-series.txt',
+            sourceByteLength: 2097152,
+            readingSeconds: 3665,
+            tags,
+          }),
+        })}
+        library={library}
+        openSourceSettings={vi.fn()}
+      />,
+    );
+    expect(markup).toContain('작품 관리 및 파일 정보');
+    expect(markup).toContain('saved-series.txt');
+    expect(markup).toContain('2 MB');
+    expect(markup).toContain('1시간 1분');
+    for (const tag of tags) expect(markup).toContain(`#${tag}</span>`);
+  });
+
+  it('shows all remote tags without inventing local file or reading information', () => {
+    const markup = renderToStaticMarkup(
+      <SourceHubScreen
+        controller={controller({
+          detail: { title: 'Remote', tags: Array.from({ length: 12 }, (_, i) => `remote${i}`) },
+        })}
+        library={library}
+        openSourceSettings={vi.fn()}
+      />,
+    );
+    expect(markup).toContain('#remote11</span>');
+    expect(markup).not.toContain('작품 관리 및 파일 정보');
+    expect(markup).not.toContain('누적 독서');
+  });
+
   it('keeps saved reading and download deletion available regardless of source connection', () => {
     for (const mode of ['connected', 'offline', 'different-account', 'local'] as const) {
       const item = {

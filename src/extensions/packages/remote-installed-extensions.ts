@@ -104,10 +104,22 @@ export class RemoteInstalledExtensions implements InstalledExtensionManager {
           },
           150000,
         );
+        const invalidPages = new Set<number>();
         return {
           pageCount,
-          loadPage: async (index, signal) =>
-            (await this.api.requestBlob(`${prefix}/${encodeURIComponent(token)}/${index}`, { signal }, 60000)).blob,
+          invalidatePage: (index) => {
+            invalidPages.add(index);
+          },
+          loadPage: async (index, signal) => {
+            const reload = invalidPages.has(index) ? '?reload=1' : '';
+            const result = await this.api.requestBlob(
+              `${prefix}/${encodeURIComponent(token)}/${index}${reload}`,
+              { signal },
+              60000,
+            );
+            invalidPages.delete(index);
+            return result.blob;
+          },
           close: () => {
             void this.api.request(`${prefix}/${encodeURIComponent(token)}`, { method: 'DELETE' }).catch(() => {});
           },

@@ -98,33 +98,43 @@
 
 .detail-description {
   max-width: 720px;
+  max-height: 4.65em;
   margin-top: 10px;
-  overflow: hidden;
+  overflow-y: auto;
+  overflow-wrap: anywhere;
+  white-space: pre-line;
+  scrollbar-width: thin;
   color: var(--text);
   font-size: 0.78rem;
   line-height: 1.55;
-  display: -webkit-box;
-  -webkit-box-orient: vertical;
-  -webkit-line-clamp: 2;
 }
 
 .detail-tags {
   max-width: 720px;
+  /* Two chip rows: line height + vertical padding/borders, with one row gap. */
+  max-height: calc(3em + 22px);
+  overflow-y: auto;
+  scrollbar-width: thin;
   display: flex;
   align-items: center;
   flex-wrap: wrap;
   gap: 6px;
   margin-top: 9px;
   color: var(--muted);
+  font-size: 0.66rem;
+  line-height: 1.5;
 }
 
 .detail-tags span {
+  min-width: 0;
+  max-width: 100%;
+  overflow-wrap: anywhere;
   padding: 3px 7px;
   color: var(--text-2);
   background: var(--app-surface-muted);
   border: 1px solid var(--border);
   border-radius: 999px;
-  font-size: 0.66rem;
+  font-size: inherit;
 }
 
 .detail-reading-progress {
@@ -777,14 +787,9 @@
   .detail-description {
     margin-top: 7px;
     font-size: 0.7rem;
-    -webkit-line-clamp: 2;
   }
   .detail-tags {
-    max-height: 48px;
     margin-top: 7px;
-    overflow: hidden;
-  }
-  .detail-tags span {
     font-size: 0.6rem;
   }
   .detail-reading-progress {
@@ -960,10 +965,6 @@
   }
   .detail-hero-cover > .book-cover {
     min-height: 108px;
-  }
-  .detail-description,
-  .detail-tags {
-    display: none;
   }
   .detail-stats > div {
     padding-inline: 9px;
