@@ -66,14 +66,14 @@ export class InstalledPackageSourceRegistry<
   getSourceStream(id: string): import('./source-text-stream').SourceTextStreamPort | undefined {
     const profile = this.catalog.getSource(id)?.descriptor.seriesProfile;
     if (profile?.kind !== 'document_series' || profile.format !== 'txt') return undefined;
-    return { kind: 'text', open: (remoteId, signal) => this.textContent(id, remoteId, signal) };
+    return { kind: 'text', open: (remoteId, signal, revision) => this.textContent(id, remoteId, signal, revision) };
   }
 
-  private async textContent(id: string, remoteId: string, signal: AbortSignal) {
+  private async textContent(id: string, remoteId: string, signal: AbortSignal, remoteRevision?: string) {
     const generation = this.catalog.getSource(id)?.generation;
     const [workId, releaseId] = parseRelease(remoteId);
     const result = await this.reads.read(
-      JSON.stringify(['text', id, generation, remoteId]),
+      JSON.stringify(['text', id, generation, remoteId, remoteRevision]),
       120_000,
       120_000,
       signal,
@@ -264,7 +264,7 @@ export class InstalledPackageSourceRegistry<
       source.descriptor.seriesProfile?.kind === 'document_series' &&
       source.descriptor.seriesProfile.format === 'txt'
     ) {
-      const { text } = await this.textContent(id, ref.key.remoteId, signal);
+      const { text } = await this.textContent(id, ref.key.remoteId, signal, ref.remoteRevision);
       const file = new File([text], fileName(ref.fileName.replace(/\.txt$/i, ''), 'txt'), { type: 'text/plain' });
       if (file.size > (ref.context?.maxBytes ?? MAX_SOURCE_CONTENT_BYTES)) throw new Error('source_body_limit');
       return {

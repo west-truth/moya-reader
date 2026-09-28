@@ -36,8 +36,8 @@ export function DownloadSettingsPanel({ controller }: { readonly controller: Ext
         {cacheError && <p role="alert">{cacheError}</p>}
         <label className="reader-settings-select-row">
           <span>
-            <strong>다운로드하지 않은 만화 열기</strong>
-            <small>망가요미·APK 이미지 소스에서 지원합니다.</small>
+            <strong>다운로드하지 않은 회차 열기</strong>
+            <small>바로 읽기를 지원하는 만화·소설 소스에 적용됩니다.</small>
           </span>
           <select
             value={sourceReading.mode}

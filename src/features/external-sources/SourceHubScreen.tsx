@@ -625,11 +625,13 @@ export default function SourceHubScreen({
           nextItem && controller.canStreamItem?.(nextItem)
             ? {
                 remoteId: nextItem.key.remoteId,
+                remoteRevision: nextItem.remoteRevision,
                 title: nextItem.title,
               }
             : undefined
         }
         remoteId={item.key.remoteId}
+        remoteRevision={item.remoteRevision}
         port={port}
         onClose={() => controller.closeStream?.()}
         onSave={() => (controller.saveStream ?? controller.importItem)(item)}

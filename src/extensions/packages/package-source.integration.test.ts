@@ -134,10 +134,15 @@ describe('installed package source adapter and lifecycle', () => {
     const item = releases.items[0];
     const invoke = vi.spyOn(catalog, 'invoke');
     const port = registry.getSourceStream!(id)!;
-    expect('kind' in port && port.kind).toBe('text');
+    if (!('kind' in port) || port.kind !== 'text') throw new Error('expected text port');
     const [session, downloaded] = await Promise.all([
-      port.open(item.key.remoteId, signal()),
-      registry.downloadExternalSource(id, context, { key: item.key, fileName: item.importFileName! }, signal()),
+      port.open(item.key.remoteId, signal(), 'revision-1'),
+      registry.downloadExternalSource(
+        id,
+        context,
+        { key: item.key, fileName: item.importFileName!, remoteRevision: 'revision-1' },
+        signal(),
+      ),
     ]);
     if (!('text' in session)) throw new Error('expected text');
     expect(session.text).toBe(await downloaded.file.text());
@@ -145,6 +150,37 @@ describe('installed package source adapter and lifecycle', () => {
     await catalog.disable(id);
     expect(registry.getSourceStream!(id)).toBeUndefined();
     await expect(port.open(item.key.remoteId, signal())).rejects.toThrow();
+  });
+  it('fetches edited text again instead of saving cached old text under a new revision', async () => {
+    const { catalog, sources, id } = await setup('text-catalog');
+    const invoke = vi.spyOn(catalog, 'invoke');
+    const remoteId = JSON.stringify(['work', 'chapter']);
+    const original = {
+      kind: 'text' as const,
+      asset: {
+        handle: 'body',
+        contentType: 'text/plain',
+        byteLength: 3,
+        sha256: await packageSha256(new TextEncoder().encode('old')),
+      },
+    };
+    invoke.mockResolvedValueOnce({ result: original, assets: new Map([['body', new Blob(['old'])]]) });
+    const port = sources.getSourceStream(id)!;
+    expect(await port.open(remoteId, signal())).toEqual({ text: 'old' });
+    invoke.mockResolvedValueOnce({
+      result: {
+        ...original,
+        asset: { ...original.asset, byteLength: 6, sha256: await packageSha256(new TextEncoder().encode('edited')) },
+      },
+      assets: new Map([['body', new Blob(['edited'])]]),
+    });
+    const saved = await sources.downloadExternalSource(
+      id,
+      context,
+      { key: { connectorId: id, remoteId }, fileName: 'chapter.txt', remoteRevision: 'edited' },
+      signal(),
+    );
+    expect(await saved.content.file.text()).toBe('edited');
   });
   it('feeds real guest TXT bytes through the existing registry and document-series assembler', async () => {
     const { catalog, registry, id } = await setup('text-catalog');

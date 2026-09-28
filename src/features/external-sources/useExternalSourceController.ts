@@ -3458,7 +3458,7 @@ export function useExternalSourceController(options: UseExternalSourceController
       isTextStream(port) && getParagraphPage
         ? {
             kind: 'text',
-            open: async (remoteId, signal) => {
+            open: async (remoteId, signal, remoteRevision) => {
               const current = optionsRef.current;
               const link = (await current.state.listLinks(item.key.connectorId)).find(
                 (candidate) =>
@@ -3466,7 +3466,7 @@ export function useExternalSourceController(options: UseExternalSourceController
                   externalItemKeyId(candidate.source) === externalItemKeyId({ ...item.key, remoteId }),
               );
               signal.throwIfAborted();
-              if (!link) return port.open(remoteId, signal);
+              if (!link) return port.open(remoteId, signal, remoteRevision);
               const novel = await current.getNovel(link.localBookId);
               if (!novel || novel.deletedAt) throw new Error('저장된 회차를 찾을 수 없습니다.');
               const sectionId = externalItemSectionId({ ...item, key: { ...item.key, remoteId } });

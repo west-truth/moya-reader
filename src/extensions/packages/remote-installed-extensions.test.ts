@@ -62,10 +62,19 @@ describe('remote package inventory and source client', () => {
     await client.refresh();
     const port = client.getSourceStream('org.example.catalog.source')!;
     const signal = new AbortController().signal;
-    expect(await port.open('episode', signal)).toEqual({ text: '소설 본문' });
+    if (!('kind' in port) || port.kind !== 'text') throw new Error('expected text port');
+    expect(await port.open('episode', signal, 'revision-2')).toEqual({ text: '소설 본문' });
     expect(requestBlob).toHaveBeenCalledWith(
       expect.stringMatching(/\/download$/),
-      expect.objectContaining({ method: 'POST', signal }),
+      expect.objectContaining({
+        method: 'POST',
+        signal,
+        body: JSON.stringify({
+          key: { connectorId: 'org.example.catalog.source', remoteId: 'episode' },
+          remoteRevision: 'revision-2',
+          fileName: 'chapter.txt',
+        }),
+      }),
       expect.any(Number),
     );
     requestBlob.mockResolvedValueOnce({ blob: new Blob(['']) });

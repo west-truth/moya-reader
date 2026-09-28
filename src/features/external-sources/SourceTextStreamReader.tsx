@@ -35,6 +35,7 @@ export function SourceTextStreamReader(
   const {
     port,
     remoteId,
+    remoteRevision,
     historyKey = remoteId,
     profileKey = historyKey,
     textReader,
@@ -66,7 +67,9 @@ export function SourceTextStreamReader(
     setError('');
     const onPosition = latest.current.onTextPosition;
     void cache
-      .read(remoteId, 120000, 120000, controller.signal, false, (signal) => port.open(remoteId, signal))
+      .read(JSON.stringify([remoteId, remoteRevision]), 120000, 120000, controller.signal, false, (signal) =>
+        port.open(remoteId, signal, remoteRevision),
+      )
       .then(async ({ value }) => {
         controller.signal.throwIfAborted();
         return sourceTextDocument({
@@ -111,7 +114,7 @@ export function SourceTextStreamReader(
         }
       });
     return () => controller.abort();
-  }, [port, cache, remoteId, historyKey, profileKey, props.title, props.fromStart, attempt, handle]);
+  }, [port, cache, remoteId, remoteRevision, historyKey, profileKey, props.title, props.fromStart, attempt, handle]);
   useEffect(() => {
     if (
       !opened ||
@@ -132,6 +135,7 @@ export function SourceTextStreamReader(
         .catch(() => latest.current.textReader.actions.notify('읽던 위치를 저장하지 못했습니다.', 'warning'));
   }, [props.saved, opened, historyKey]);
   const nextId = props.nextEpisode?.remoteId;
+  const nextRevision = props.nextEpisode?.remoteRevision;
   useEffect(() => {
     let controller = new AbortController();
     let timer: number | undefined;
@@ -152,7 +156,9 @@ export function SourceTextStreamReader(
       const id = nextId;
       timer = window.setTimeout(() => {
         void cache
-          .read(id, 120000, 120000, controller.signal, false, (signal) => port.open(id, signal))
+          .read(JSON.stringify([id, nextRevision]), 120000, 120000, controller.signal, false, (signal) =>
+            port.open(id, signal, nextRevision),
+          )
           .catch(() => undefined);
       }, 200);
     };
@@ -167,19 +173,20 @@ export function SourceTextStreamReader(
       window.removeEventListener('online', warm);
       window.removeEventListener('offline', warm);
     };
-  }, [opened, historyKey, preferences.prefetch, nextId, cache, port]);
-  const move = async (action: typeof next) => {
-    if (!action || movement.current || navigationBusy || opened?.key !== historyKey) return;
+  }, [opened, historyKey, preferences.prefetch, nextId, nextRevision, cache, port]);
+  const move = async (action: typeof next, isCurrent = () => true) => {
+    if (!action || movement.current || navigationBusy || opened?.key !== historyKey || !isCurrent()) return;
     direction.current = action === previous ? -1 : 1;
     retryMove.current = undefined;
     movement.current = true;
     setMoving(true);
     try {
-      await action(() => latest.current.remoteId === remoteId);
+      await action(() => latest.current.remoteId === remoteId && isCurrent());
     } catch (error) {
-      retryMove.current = () => move(action);
       movement.current = false;
       setMoving(false);
+      if (!isCurrent()) return;
+      retryMove.current = () => move(action);
       setError(
         packageOperationMessage(error) ?? (error instanceof Error ? error.message : '회차 이동에 실패했습니다.'),
       );
@@ -258,6 +265,9 @@ export function SourceTextStreamReader(
         openRequestVersion: opened.epoch,
         transient: true,
         navigation: {
+          scope: `source-text:${profileKey}:${opened.epoch}`,
+          nextScope: `source-text:${profileKey}:${opened.epoch + 1}`,
+          openNext: (isCurrent) => move(next, isCurrent),
           busy: moving || Boolean(navigationBusy) || opened.key !== historyKey,
           error,
           retry: () => {

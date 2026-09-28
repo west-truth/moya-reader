@@ -60,7 +60,15 @@ export interface ReaderOverlayState {
 
 export interface ReaderScreenModel {
   readonly transient?: boolean;
-  readonly navigation?: { readonly busy: boolean; readonly error?: string; retry(): void };
+  readonly navigation?: {
+    readonly busy: boolean;
+    readonly error?: string;
+    /** Streaming can discover the next chapter ID only after loading another catalog page. */
+    readonly scope?: string;
+    readonly nextScope?: string;
+    openNext?(isCurrent: () => boolean): Promise<void>;
+    retry(): void;
+  };
   readonly novel: Pick<
     Novel,
     'id' | 'title' | 'totalChapters' | 'lastReadChapterId' | 'activeContentRevisionId' | 'format'

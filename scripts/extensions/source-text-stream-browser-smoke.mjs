@@ -20,7 +20,8 @@ const port={kind:'text',open:async(id,signal)=>{opens.push(id);if(id==='2')await
 const runtime={readerRuntime:{readerRepository:{},bookAssetRepository:{}}};
 function Fixture(){const[episode,setEpisode]=React.useState(1);const[settings,setSettings]=React.useState({...defaultSettings,readingProfile:{...defaultSettings.readingProfile,modeLock:'auto'}});globalThis.episode=episode;
 const items=Array.from({length:4},(_,i)=>({key:{connectorId:'fixture',remoteId:String(i+1)},title:(i+1)+'화',release:{title:(i+1)+'화',sourceOrder:i+1},importState:i===3?'imported':'available'}));
-const nav=useSourceStreamNavigation({streaming:{item:items[episode-1]},items,openStreamItem:async item=>{targets.push(item.key.remoteId);setEpisode(Number(item.key.remoteId))}});
+const[catalogReady,setCatalogReady]=React.useState(!params.has('catalog'));
+const nav=useSourceStreamNavigation({streaming:{item:items[episode-1]},items:catalogReady?items:items.slice(0,1),nextCursor:catalogReady?undefined:'next',loadMore:async()=>{await new Promise(resolve=>globalThis.releaseCatalog=resolve);setCatalogReady(true)},openStreamItem:async item=>{targets.push(item.key.remoteId);setEpisode(Number(item.key.remoteId))}});
 const actions={...new ReaderScreenHandle().getActions(),notify:message=>console.log(message),updateReadingProfile:patch=>setSettings(s=>({...s,readingProfile:{...s.readingProfile,...patch}}))};
 return <RuntimeProvider runtime={runtime}><SourceStreamReader title={episode+'화'} port={port} remoteId={String(episode)} historyKey={String(episode)} profileKey="work" fromStart={episode>1} textReader={{settings,settingsOpen:false,actions}} onClose={()=>{globalThis.closed=true}} onSave={()=>{saves.push(episode);return new Promise(resolve=>{(globalThis.releaseSaves??=[]).push(resolve)})}} onTextPosition={async p=>positions.push([episode,p])} previous={nav.previous} next={nav.next} navigationBusy={nav.busy} nextEpisode={nav.nextItem?{remoteId:nav.nextItem.key.remoteId,title:nav.nextItem.title}:undefined}/></RuntimeProvider>;
 }
@@ -175,7 +176,7 @@ try {
   }
   const scroll = await browser.newPage({ viewport: { width: 390, height: 844 } });
   scroll.setDefaultTimeout(15000);
-  await scroll.goto('http://127.0.0.1:' + server.address().port + '/?prefetch=0&mode=stream');
+  await scroll.goto('http://127.0.0.1:' + server.address().port + '/?prefetch=0&mode=stream&catalog=1');
   await scroll.waitForFunction(() =>
     document.querySelector('.reader-scroll.is-active:not(.is-opening) [data-paragraph-id]'),
   );
@@ -190,6 +191,8 @@ try {
   await scroll.getByRole('button', { name: '자동 스크롤 설정' }).click();
   await scroll.getByLabel('회차 끝에서 다음 회차로 이동').check();
   await scroll.getByRole('button', { name: '시작', exact: true }).click();
+  await scroll.waitForFunction(() => typeof releaseCatalog === 'function');
+  await scroll.evaluate(() => releaseCatalog());
   await scroll.waitForFunction(() => episode === 2 && typeof releaseOpen === 'function');
   await scroll.waitForTimeout(500);
   assert.deepEqual(await scroll.evaluate(() => targets), ['2']);
@@ -220,8 +223,39 @@ try {
     ['2', '3'],
     'scroll boundary must only move to the immediate neighbor once',
   );
-  console.log('PASS scroll boundary and auto-reading continuation');
+  console.log('PASS scroll boundary and auto-reading across catalog pages');
   await scroll.close();
+  const cancel = await browser.newPage({ viewport: { width: 390, height: 844 } });
+  cancel.setDefaultTimeout(15000);
+  await cancel.goto('http://127.0.0.1:' + server.address().port + '/?prefetch=0&mode=stream&catalog=1');
+  await cancel.waitForFunction(() =>
+    document.querySelector('.reader-scroll.is-active:not(.is-opening) [data-paragraph-id]'),
+  );
+  await cancel.keyboard.press('End');
+  await cancel.waitForFunction(() => document.querySelector('.reader-scroll.is-active')?.scrollTop > 1000);
+  const cancelViewport = cancel.locator('.reader-scroll.is-active');
+  const cancelBox = await cancelViewport.boundingBox();
+  await cancelViewport.click({ position: { x: cancelBox.width / 2, y: cancelBox.height / 2 } });
+  await cancel.getByRole('button', { name: '자동 스크롤 설정' }).click();
+  await cancel.getByLabel('회차 끝에서 다음 회차로 이동').check();
+  await cancel.getByRole('button', { name: '시작', exact: true }).click();
+  await cancel.waitForFunction(() => typeof releaseCatalog === 'function');
+  await cancel.getByRole('button', { name: '자동 읽기 일시정지' }).click();
+  await cancel.evaluate(() => releaseCatalog());
+  await cancel.waitForTimeout(500);
+  assert.deepEqual(
+    await cancel.evaluate(() => targets),
+    [],
+    'pausing during catalog lookup must cancel automatic navigation',
+  );
+  assert.equal(await cancel.locator('[role="alert"]').count(), 0, 'a user pause is not a loading error');
+  // The cancellation must also release navigation ownership for a later manual move.
+  await cancel.keyboard.press(']');
+  await cancel.waitForFunction(() => episode === 2 && typeof releaseOpen === 'function');
+  await cancel.evaluate(() => releaseOpen());
+  await cancel.waitForFunction(() => document.querySelector('.reader-title strong')?.textContent === '2화');
+  console.log('PASS automatic navigation cancellation and manual retry');
+  await cancel.close();
 } finally {
   await browser.close();
   await new Promise((resolve) => server.close(resolve));

@@ -1,3 +1,4 @@
+import type { SourceStreamPort } from '../../external-sources/source-stream';
 import { MAX_SOURCE_TEXT_BYTES } from '../../../packages/extension-runtime/content-limits.mjs';
 import { sourceReadingPreferences } from '../../external-sources/source-reading-preferences';
 import { withRequestProgress } from '../../services/remote/request-progress';
@@ -93,13 +94,13 @@ export class RemoteInstalledExtensions implements InstalledExtensionManager {
     ) {
       return {
         kind: 'text',
-        open: async (remoteId, signal) => {
+        open: async (remoteId, signal, remoteRevision) => {
           const { blob } = await this.api
             .requestBlob(
               `/extensions/sources/${encodeURIComponent(id)}/download`,
               {
                 method: 'POST',
-                body: JSON.stringify({ key: { connectorId: id, remoteId }, fileName: 'chapter.txt' }),
+                body: JSON.stringify({ key: { connectorId: id, remoteId }, remoteRevision, fileName: 'chapter.txt' }),
                 headers: { 'Content-Type': 'application/json' },
                 signal,
               },
@@ -158,7 +159,7 @@ export class RemoteInstalledExtensions implements InstalledExtensionManager {
           },
         };
       },
-    };
+    } satisfies SourceStreamPort;
   }
   private preparedImageImports = false;
   private preparedDocumentImports = false;

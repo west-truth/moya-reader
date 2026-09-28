@@ -226,6 +226,7 @@ function ComicStreamReader({
 export type SourceStreamReaderProps = {
   title: string;
   remoteId: string;
+  remoteRevision?: string;
   historyKey?: string;
   profileKey?: string;
   fromStart?: boolean;
@@ -244,7 +245,7 @@ export type SourceStreamReaderProps = {
   saveBusy?: boolean;
   previous?: (isCurrent?: () => boolean) => Promise<void>;
   next?: (isCurrent?: () => boolean) => Promise<void>;
-  nextEpisode?: { remoteId: string; title: string };
+  nextEpisode?: { remoteId: string; title: string; remoteRevision?: string };
   navigationBusy?: boolean;
 };
 export function SourceStreamReader(props: SourceStreamReaderProps) {

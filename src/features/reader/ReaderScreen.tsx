@@ -722,15 +722,17 @@ function ReaderScreenComponent({ model, screenHandle, repository: bodyRepository
   const nextAutoChapter = model.chapters.find((chapter) => chapter.index === model.chapter.index + 1);
   const autoScroll = useAutoScroll(
     viewportApiRef,
-    `${model.novel.id}:${model.chapter.id}`,
-    autoScrollAllowed,
+    model.navigation?.scope ?? `${model.novel.id}:${model.chapter.id}`,
+    autoScrollAllowed && !model.navigation?.error,
     autoScrollReady,
     nextAutoChapter
       ? {
-          scope: `${model.novel.id}:${nextAutoChapter.id}`,
+          scope: model.navigation?.nextScope ?? `${model.novel.id}:${nextAutoChapter.id}`,
           open: async (isCurrent) => {
             await viewportApiRef.current?.flushPosition();
-            if (isCurrent()) await screenHandle.getActions().openChapter(nextAutoChapter, { restore: false });
+            if (!isCurrent()) return;
+            if (model.navigation?.openNext) await model.navigation.openNext(isCurrent);
+            else await screenHandle.getActions().openChapter(nextAutoChapter, { restore: false });
           },
         }
       : undefined,
