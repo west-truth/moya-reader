@@ -2943,6 +2943,73 @@ describe('source streaming connection', () => {
       await act(async () => h.renderer.unmount());
     }
   });
+  it('keeps streamed reading marks after refreshing the episode list without any downloaded book', async () => {
+    const h = await createHarness({ downloadedContent: '', serial: true, serialCount: 2, localBookMissing: true });
+    const preferences = new Map<string, import('../../external-sources/source-user-state').SourceReleasePreference>();
+    h.state.listReleasePreferences = async () => [...preferences.values()];
+    h.state.saveReleasePreferences = async (records) => {
+      records.forEach((record) => preferences.set(record.id, record));
+    };
+    try {
+      await act(async () => {
+        await h.controller.saveStreamPosition!(h.controller.items[0], 1, 3);
+      });
+      await act(async () => {
+        await h.controller.saveTextStreamPosition!(h.controller.items[1], {
+          paragraphIndex: 2,
+          offset: 0,
+          textHash: 'text',
+          count: 3,
+        });
+      });
+      expect(h.controller.items.map((item) => item.readingState)).toEqual(['read', 'read']);
+      await h.refreshLibrary(1);
+      expect(h.controller.items.map((item) => item.readingState)).toEqual(['read', 'read']);
+      await act(async () => {
+        await h.controller.setReleasesRead!([h.controller.items[0]], false);
+      });
+      await h.refreshLibrary(2);
+      expect(h.controller.items[0].readingState).toBe('unread');
+      await act(async () => {
+        await h.controller.saveStreamPosition!(h.controller.items[0], 0, 3);
+      });
+      expect(h.controller.items[0].readingState).toBe('read');
+    } finally {
+      await act(async () => h.renderer.unmount());
+    }
+  });
+
+  it('applies the latest streamed page after its background download becomes visible', async () => {
+    let ready = false;
+    let book = novel({ format: 'image_archive', documentSectionCount: 1 });
+    const save = vi.fn(async (_page: number, chapter: Chapter) => {
+      book = { ...book, lastReadChapterId: chapter.id };
+    });
+    const chapters = [testChapter(1, { documentSectionId: 'work-1' }), testChapter(2, { documentSectionId: 'work-1' })];
+    const h = await createHarness({
+      downloadedContent: '',
+      serial: true,
+      chapters,
+      getNovel: async () => (ready ? book : undefined),
+      libraryBooks: async () => (ready ? [book] : []),
+      saveStreamPosition: save,
+    });
+    h.state.listLinks = async () => (ready ? [h.currentLink] : []);
+    try {
+      await act(async () => {
+        await h.controller.saveStreamPosition!(h.controller.items[0], 1, 2);
+      });
+      expect(save).not.toHaveBeenCalled();
+      ready = true;
+      await h.refreshLibrary(1);
+      expect(save).toHaveBeenCalledExactlyOnceWith(1, chapters[1], expect.anything());
+      await h.refreshLibrary(2);
+      expect(save).toHaveBeenCalledTimes(1);
+    } finally {
+      await act(async () => h.renderer.unmount());
+    }
+  });
+
   it('reads saved text first and writes matching paragraph positions without leaving streaming', async () => {
     const chapters: Chapter[] = [];
     const saveTextPosition = vi.fn(async () => undefined);
