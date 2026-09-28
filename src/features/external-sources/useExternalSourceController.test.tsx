@@ -171,6 +171,8 @@ async function createHarness(input: {
           input.importedContent ??
           novel({
             id: request.clientBookId ?? 'book-new',
+            format: input.novelOverrides?.format,
+            documentSectionCount: input.novelOverrides?.documentSectionCount,
             sourceContentHash: input.serial ? await sha256(await request.file.arrayBuffer()) : downloadedHash,
             activeContentRevisionId: 'content-new',
           });
@@ -2754,6 +2756,133 @@ describe('useExternalSourceController remote updates', () => {
 });
 
 describe('source streaming connection', () => {
+  it.each([0, 1, 3])(
+    'honors %i automatic following downloads while streaming without changing the open episode',
+    async (count) => {
+      const h = await createHarness({
+        downloadedContent: '',
+        downloadedFile: await singlePageComicFile(),
+        serial: true,
+        serialCount: 5,
+        localBookMissing: true,
+        novelOverrides: { format: 'image_archive', documentSectionCount: 1 },
+        supportsIncrementalImageSeriesAppend: true,
+        supportsExpectedSourceContentHash: true,
+      });
+      h.registry.getSourceStream = () => ({ open: vi.fn() });
+      try {
+        await act(async () => h.controller.setAutoDownloadNext?.(false));
+        await act(async () => h.controller.importAndOpen(h.controller.items[0]!));
+        if (count) {
+          await act(async () => h.controller.setAutoDownloadNextCount?.(count as 1 | 3));
+          await act(async () => h.controller.setAutoDownloadNext?.(true));
+          await act(async () => {
+            await vi.waitFor(() => expect(h.registry.downloadExternalSource).toHaveBeenCalledTimes(count));
+          });
+          await act(async () => {
+            await vi.waitFor(() => expect(h.controller.importBusy).toBe(false));
+          });
+        }
+        expect(vi.mocked(h.registry.downloadExternalSource).mock.calls.map((call) => call[2].key.remoteId)).toEqual(
+          ['work-2', 'work-3', 'work-4'].slice(0, count),
+        );
+        expect(h.controller.tasks.filter((task) => task.phase !== 'complete')).toEqual([]);
+        expect(h.importFile).toHaveBeenCalledTimes(count);
+        expect(h.controller.streaming?.item.key.remoteId).toBe('work-1');
+        expect(h.openNovel).not.toHaveBeenCalled();
+      } finally {
+        await act(async () => h.renderer.unmount());
+      }
+    },
+  );
+
+  it('does not download an already saved neighbor when the streaming chapter itself is not saved', async () => {
+    const h = await createHarness({
+      downloadedContent: '',
+      serial: true,
+      serialCount: 3,
+      initialLinkOverrides: { source: { ...ITEM_KEY, remoteId: 'work-2' }, collectionRemoteId: 'manga:1' },
+      chapters: [testChapter(2, { documentSectionId: 'work-2' })],
+      novelOverrides: { format: 'image_archive', documentSectionCount: 1 },
+    });
+    h.registry.getSourceStream = () => ({ open: vi.fn() });
+    try {
+      await act(async () => h.controller.setAutoDownloadNext?.(false));
+      await act(async () => h.controller.importAndOpen(h.controller.items[0]!));
+      await act(async () => h.controller.setAutoDownloadNext?.(true));
+      expect(h.registry.downloadExternalSource).not.toHaveBeenCalled();
+      expect(h.controller.streaming?.item.key.remoteId).toBe('work-1');
+    } finally {
+      await act(async () => h.renderer.unmount());
+    }
+  });
+
+  it.each([false, true])(
+    'keeps accepted downloads during rapid navigation and follows the latest chapter (auto remains enabled: %s)',
+    async (keepAuto) => {
+      let release!: () => void;
+      const gate = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      const h = await createHarness({
+        downloadedContent: '',
+        downloadedFile: await singlePageComicFile(),
+        serial: true,
+        serialCount: 6,
+        localBookMissing: true,
+        downloadGate: gate,
+        novelOverrides: { format: 'image_archive', documentSectionCount: 1 },
+        assets: {} as BookAssetRepository,
+        getParagraphPage: vi.fn(),
+        supportsIncrementalImageSeriesAppend: true,
+        supportsExpectedSourceContentHash: true,
+      });
+      h.registry.getSourceStream = () => ({ open: vi.fn() });
+      try {
+        await act(async () => h.controller.setAutoDownloadNext?.(false));
+        await act(async () => h.controller.importAndOpen(h.controller.items[0]!));
+        await act(async () => h.controller.setAutoDownloadNextCount?.(1));
+        await act(async () => h.controller.setAutoDownloadNext?.(true));
+        await act(async () => {
+          await vi.waitFor(() => expect(h.registry.downloadExternalSource).toHaveBeenCalledTimes(1));
+        });
+        for (const index of [1, 2, 3]) {
+          const item = h.controller.items[index]!;
+          await act(async () => h.controller.openStreamItem!(item));
+          expect(h.controller.streaming?.item.key.remoteId).toBe(item.key.remoteId);
+          expect(h.controller.canQueueItem(item)).toBe(true);
+          await act(async () => h.controller.saveStream!(item));
+        }
+        if (!keepAuto) await act(async () => h.controller.setAutoDownloadNext?.(false));
+        await h.read('book-1', 'work-1'); // A stale normal-reader target must not displace the streaming episode.
+        await act(async () => {
+          release();
+          await vi.waitFor(() => expect(h.controller.importBusy).toBe(false));
+        });
+        // Flush the reading-target scheduler after the first batch releases its queue.
+        await act(async () => {
+          await vi.waitFor(() => {
+            expect(h.importFile).toHaveBeenCalledTimes(keepAuto ? 4 : 3);
+            expect(h.controller.importBusy).toBe(false);
+          });
+        });
+        expect(vi.mocked(h.registry.downloadExternalSource).mock.calls.map((call) => call[2].key.remoteId)).toEqual([
+          'work-2',
+          'work-3',
+          'work-4',
+          ...(keepAuto ? ['work-5'] : []),
+        ]);
+        expect(h.controller.tasks.filter((task) => task.phase !== 'complete')).toEqual([]);
+        expect(h.importFile).toHaveBeenCalledTimes(keepAuto ? 4 : 3);
+        expect(h.controller.streaming?.item.key.remoteId).toBe('work-4');
+        expect(h.openNovel).not.toHaveBeenCalled();
+      } finally {
+        release();
+        await act(async () => h.renderer.unmount());
+      }
+    },
+  );
+
   it('opens a stream without downloading or importing the entire episode first', async () => {
     const h = await createHarness({ downloadedContent: '', serial: true, localBookMissing: true });
     const port = { open: vi.fn() };
@@ -2785,7 +2914,7 @@ describe('source streaming connection', () => {
       chapters,
       getParagraphPage,
       assets: { getEmbeddedResource } as unknown as BookAssetRepository,
-      novelOverrides: { format: 'image_archive' },
+      novelOverrides: { format: 'image_archive', documentSectionCount: 1 },
     });
     const remote = { open: vi.fn() };
     h.registry.getSourceStream = () => remote;
@@ -2797,6 +2926,10 @@ describe('source streaming connection', () => {
       });
       expect(h.controller.streaming?.fromStart).toBe(true);
       expect(h.controller.streamingBookId).toBe('book-1');
+      await act(async () => h.controller.closeStream?.());
+      await act(async () => h.controller.openImported(item));
+      expect(h.controller.streaming?.fromStart).toBe(false);
+      expect(h.openNovel).not.toHaveBeenCalled();
       const signal = new AbortController().signal;
       const session = await h.controller.streaming!.port.open(item.key.remoteId, signal);
       expect(await session.loadPage(0, signal)).toBe(blob);
@@ -2833,7 +2966,7 @@ describe('source streaming connection', () => {
       serial: true,
       chapters,
       saveStreamPosition: save,
-      novelOverrides: { format: 'image_archive' },
+      novelOverrides: { format: 'image_archive', documentSectionCount: 1 },
     });
     const item = h.controller.items[0];
     chapters.push(

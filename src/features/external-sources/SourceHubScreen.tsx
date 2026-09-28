@@ -10,7 +10,6 @@ import {
   Bell,
   BookOpen,
   Check,
-  CircleCheck,
   ChevronRight,
   Cloud,
   Download,
@@ -277,7 +276,7 @@ function ItemAction({
             aria-label={`${item.title} 보기`}
             onClick={() => void controller.openImported(item)}
           >
-            <CircleCheck size={16} />
+            <BookOpen size={16} />
           </button>
         )}
         {(item.importState !== 'imported' || (task && importTaskIsActive(task)) || !controller.renameRelease) && (
@@ -607,8 +606,6 @@ export default function SourceHubScreen({
     const { item, port } = controller.streaming;
     const task = controller.tasks.find((task) => task.externalItemKey === externalItemKeyId(item.key));
     const nextItem = streamNavigation.nextItem;
-    const nextTask =
-      nextItem && controller.tasks.find((task) => task.externalItemKey === externalItemKeyId(nextItem.key));
     return (
       <SourceStreamReader
         fromStart={controller.streaming.fromStart}
@@ -620,13 +617,6 @@ export default function SourceHubScreen({
             ? {
                 remoteId: nextItem.key.remoteId,
                 title: nextItem.title,
-                saved:
-                  nextItem.importState === 'imported' ||
-                  nextItem.importState === 'update_available' ||
-                  nextTask?.phase === 'complete',
-                busy:
-                  controller.importBusy || controller.blockingBusy || Boolean(nextTask && importTaskIsActive(nextTask)),
-                save: () => (controller.saveStream ?? controller.importItem)(nextItem),
               }
             : undefined
         }
@@ -643,7 +633,11 @@ export default function SourceHubScreen({
               ['imported', 'update_available'].includes(candidate.importState),
           )
         }
-        saveBusy={controller.importBusy || controller.blockingBusy || Boolean(task && importTaskIsActive(task))}
+        saveBusy={
+          controller.blockingBusy ||
+          (controller.importBusy && !controller.canQueueItem?.(item)) ||
+          Boolean(task && importTaskIsActive(task))
+        }
         previous={streamNavigation.previous}
         next={streamNavigation.next}
         navigationBusy={streamNavigation.busy}

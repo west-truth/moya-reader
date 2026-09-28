@@ -40,7 +40,7 @@ export function SourceStreamReader({
   saveBusy?: boolean;
   previous?: (isCurrent?: () => boolean) => Promise<void>;
   next?: (isCurrent?: () => boolean) => Promise<void>;
-  nextEpisode?: { remoteId: string; title: string; saved: boolean; busy: boolean; save(): Promise<void> };
+  nextEpisode?: { remoteId: string; title: string };
   navigationBusy?: boolean;
 }) {
   const [preferences] = useState(sourceReadingPreferences);
@@ -55,7 +55,8 @@ export function SourceStreamReader({
   const [error, setError] = useState('');
   const [attempt, setAttempt] = useState(0);
   const [loaded, setLoaded] = useState('');
-  const [prepared, setPrepared] = useState('');
+  const movingRef = useRef(false);
+  const [moving, setMoving] = useState(false);
   const [foreground, setForeground] = useState(() => document.visibilityState !== 'hidden' && navigator.onLine);
   const callbacks = useRef({ onSave, onPageSettled, nextEpisode });
   callbacks.current = { onSave, onPageSettled, nextEpisode };
@@ -80,13 +81,18 @@ export function SourceStreamReader({
       .then((session) => {
         if (controller.signal.aborted) return;
         setOpened((before) => ({ session, key: historyKey, title, fromStart, epoch: (before?.epoch ?? -1) + 1 }));
+        movingRef.current = false;
+        setMoving(false);
         buffer.retain([remoteId, ...(callbacks.current.nextEpisode ? [callbacks.current.nextEpisode.remoteId] : [])]);
       })
       .catch((error) => {
-        if (!controller.signal.aborted)
+        if (!controller.signal.aborted) {
+          movingRef.current = false;
+          setMoving(false);
           setError(
             packageOperationMessage(error) ?? (error instanceof Error ? error.message : '회차를 열지 못했습니다.'),
           );
+        }
       });
     return () => controller.abort();
   }, [buffer, remoteId, historyKey, title, attempt, fromStart]);
@@ -146,7 +152,6 @@ export function SourceStreamReader({
             }
           }
           controller.signal.throwIfAborted();
-          setPrepared(nextId);
         })
         .catch(() => undefined);
     }, 200);
@@ -154,25 +159,22 @@ export function SourceStreamReader({
       window.clearTimeout(timer);
       controller.abort();
     };
-  }, [buffer, nextId, opened, historyKey, loaded, preferences.prefetch, foreground, nextEpisode?.saved]);
-  useEffect(() => {
-    const target = callbacks.current.nextEpisode;
-    if (
-      !foreground ||
-      preferences.mode !== 'stream-save' ||
-      !saved ||
-      saveBusy ||
-      !target ||
-      target.remoteId !== prepared ||
-      target.saved ||
-      target.busy
-    )
+  }, [buffer, nextId, opened, historyKey, loaded, preferences.prefetch, foreground]);
+  const move = async (action: typeof next, isCurrent?: () => boolean) => {
+    if (!action || movingRef.current || navigationBusy || opened?.key !== historyKey || (isCurrent && !isCurrent()))
       return;
-    const key = `save:${target.remoteId}`;
-    if (saveAttempts.current.has(key)) return;
-    saveAttempts.current.add(key);
-    void target.save().catch(() => undefined);
-  }, [foreground, preferences.mode, saved, saveBusy, prepared, nextId, nextEpisode?.saved, nextEpisode?.busy]);
+    // The controller selects a target before its stream has opened. Keep ownership
+    // with the displayed episode until that open completes, including repeated wheel gestures.
+    movingRef.current = true;
+    setMoving(true);
+    try {
+      await action(isCurrent);
+    } catch (error) {
+      movingRef.current = false;
+      setMoving(false);
+      throw error;
+    }
+  };
   if (!opened || !projection)
     return (
       <main className="fixed-doc-screen">
@@ -212,10 +214,10 @@ export function SourceStreamReader({
             scope: `stream:${opened.epoch}`,
             nextScope: `stream:${opened.epoch + 1}`,
             profileKey,
-            busy: navigationBusy || opened.key !== historyKey,
+            busy: moving || navigationBusy || opened.key !== historyKey,
             prefetchPages: foreground ? preferences.prefetch : 0,
-            previous,
-            next,
+            previous: previous ? (isCurrent) => move(previous, isCurrent) : undefined,
+            next: next ? (isCurrent) => move(next, isCurrent) : undefined,
             nextTitle: nextEpisode?.title,
             error,
             retry: () => setAttempt((value) => value + 1),

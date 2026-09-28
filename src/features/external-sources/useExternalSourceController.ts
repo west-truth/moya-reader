@@ -1578,9 +1578,7 @@ export function useExternalSourceController(options: UseExternalSourceController
         ? new Set(knownChapters.map((chapter) => chapter.documentSectionId))
         : undefined;
     const remoteItems = localSeriesPageSeedRef.current?.remoteItems;
-    const remoteKeys = remoteItems?.length
-      ? new Set(remoteItems.map((item) => externalItemKeyId(item.key)))
-      : undefined;
+    const remoteKeys = remoteItems ? new Set(remoteItems.map((item) => externalItemKeyId(item.key))) : undefined;
     return rawItems.map((item) => {
       const key = externalItemKeyId(item.key);
       const preference = preferenceByKey.get(key);
@@ -3318,9 +3316,11 @@ export function useExternalSourceController(options: UseExternalSourceController
   const automaticDownload = useNextReleaseDownload({
     policy: options.downloadPolicy,
     updatePolicy: options.updateDownloadPolicy,
-    readingKey: options.readingTarget
-      ? JSON.stringify([options.readingTarget.novelId, options.readingTarget.sectionId])
-      : undefined,
+    readingKey: streaming
+      ? `stream:${externalItemKeyId(streaming.item.key)}`
+      : options.readingTarget
+        ? JSON.stringify([options.readingTarget.novelId, options.readingTarget.sectionId])
+        : undefined,
     busy: busy || importBusy || blockingBusy,
     reportError: () =>
       optionsRef.current.notify(
@@ -3329,17 +3329,26 @@ export function useExternalSourceController(options: UseExternalSourceController
       ),
     run: async (signal, count) => {
       const target = optionsRef.current.readingTarget;
-      if (!target) return;
+      const streamItem = streaming?.item;
+      if (!target && !streamItem) return;
       const allLinks = await optionsRef.current.state.listLinks();
-      const related = allLinks.filter((link) => link.localBookId === target.novelId && link.collectionRemoteId);
-      const link = related[0];
-      if (!link?.collectionRemoteId) return;
-      const sourceId = link.source.connectorId as ExtensionContributionId;
+      const link = streamItem
+        ? (allLinks.find((link) => externalItemKeyId(link.source) === externalItemKeyId(streamItem.key)) ??
+          allLinks.find(
+            (link) =>
+              link.collectionRemoteId === streamItem.collection?.remoteId &&
+              link.source.connectorId === streamItem.key.connectorId &&
+              link.source.accountConnectionId === streamItem.key.accountConnectionId,
+          ))
+        : allLinks.find((link) => link.localBookId === target!.novelId && link.collectionRemoteId);
+      const collectionRemoteId = streamItem?.collection?.remoteId ?? link?.collectionRemoteId;
+      const source = streamItem?.key ?? link?.source;
+      if (!source || !collectionRemoteId) return;
+      const sourceId = source.connectorId as ExtensionContributionId;
       const context = optionsRef.current.hostContext;
       const connection = optionsRef.current.registry.getExternalSourceStatus(sourceId, context);
-      if (connection.state !== 'connected' || connection.accountConnectionId !== link.source.accountConnectionId)
-        return;
-      const input = { parentRef: link.collectionRemoteId };
+      if (connection.state !== 'connected' || connection.accountConnectionId !== source.accountConnectionId) return;
+      const input = { parentRef: collectionRemoteId };
       const id = cachePageId(
         sourceId,
         connection.accountConnectionId,
@@ -3389,17 +3398,22 @@ export function useExternalSourceController(options: UseExternalSourceController
         return;
       const ordered = filterAndSortReleases(
         catalog
-          .filter((item) => item.release && item.collection?.remoteId === link.collectionRemoteId)
+          .filter((item) => item.release && item.collection?.remoteId === collectionRemoteId)
           .map((item) => ({ ...item, selected: false, importState: 'available' as const })),
         '',
         'all',
         'asc',
       );
-      const index = ordered.findIndex((item) => externalItemSectionId(item) === target.sectionId);
+      const index = ordered.findIndex((item) =>
+        streamItem
+          ? externalItemKeyId(item.key) === externalItemKeyId(streamItem.key)
+          : externalItemSectionId(item) === target!.sectionId,
+      );
       if (index < 0) return;
       const upcoming = ordered.slice(index + 1, index + 1 + count);
       // Check the active stored chapters, including downloads completed while metadata was loading.
-      const chapters = await optionsRef.current.listChapters(target.novelId);
+      const novelId = streamItem ? link?.localBookId : target!.novelId;
+      const chapters = novelId ? await optionsRef.current.listChapters(novelId) : [];
       const next = upcoming.filter(
         (item): item is SerialSourceItem =>
           isSerialSourceItem(item) &&
@@ -3416,6 +3430,8 @@ export function useExternalSourceController(options: UseExternalSourceController
         importRef.current
       )
         return;
+      // Once accepted, a streaming background download belongs to the queue, not
+      // to the episode on screen. Moving ahead must not cancel that download.
       await importSerialItems(sourceId, next, signal);
     },
   });
@@ -3519,6 +3535,14 @@ export function useExternalSourceController(options: UseExternalSourceController
         if (reportRejection) throw new Error('저장된 회차를 찾을 수 없습니다. 회차 목록을 확인해 주세요.');
         return;
       }
+      if (
+        item.release &&
+        optionsRef.current.assets &&
+        optionsRef.current.getParagraphPage &&
+        sourceReadingPreferences().mode !== 'download' &&
+        beginStream(item)
+      )
+        return;
       if (item.release) {
         const chapters = await optionsRef.current.listChapters(novel.id);
         setLocalSeriesBookId(novel.id);
@@ -3541,7 +3565,7 @@ export function useExternalSourceController(options: UseExternalSourceController
       else await optionsRef.current.openNovel(novel);
       setOpen(false);
     },
-    [blockingBusy, rawItems, refreshLocalProjection],
+    [blockingBusy, rawItems, refreshLocalProjection, beginStream],
   );
 
   const cancel = useCallback(() => {

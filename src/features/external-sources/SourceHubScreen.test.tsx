@@ -3,6 +3,8 @@ import { act, create, type ReactTestRenderer } from 'react-test-renderer';
 import { describe, expect, it, vi } from 'vitest';
 import type { LibraryScreenProps } from '../library/library-screen-contract';
 import SourceHubScreen from './SourceHubScreen';
+import { SourceStreamReader } from './SourceStreamReader';
+vi.mock('./SourceStreamReader', () => ({ SourceStreamReader: () => null }));
 import type { ExternalSourceController } from './useExternalSourceController';
 import { testNovel } from '../book-workspace/book-workspace-test-fixtures';
 
@@ -140,6 +142,73 @@ const library = {
 } as unknown as LibraryScreenProps;
 
 describe('SourceHubScreen', () => {
+  it.each([
+    ['imported', true, '보기', 'lucide-book-open'],
+    ['available', true, '바로 읽기', 'lucide-play'],
+    ['available', false, '다운로드 후 보기', 'lucide-download'],
+  ] as const)('uses the expected episode icon for %s (streaming: %s)', (state, stream, label, icon) => {
+    const item = {
+      ...controller().items[0]!,
+      kind: 'file' as const,
+      title: '1화',
+      collection: { remoteId: 'manga:1', title: '연동 작품' },
+      release: { title: '1화', sourceOrder: 1 },
+      importState: state,
+      localBookId: state === 'imported' ? 'book-1' : undefined,
+    };
+    let renderer!: ReactTestRenderer;
+    act(() => {
+      renderer = create(
+        <SourceHubScreen
+          controller={controller({
+            items: [item],
+            detail: { title: '연동 작품' },
+            canStreamItem: () => stream,
+            importBusy: stream,
+            busy: stream,
+          })}
+          library={library}
+          openSourceSettings={vi.fn()}
+        />,
+      );
+    });
+    try {
+      const button = renderer.root.findByProps({ 'aria-label': `1화 ${label}` });
+      expect(button.props.disabled).not.toBe(true);
+      expect(button.findByType('svg').props.className).toContain(icon);
+    } finally {
+      act(() => renderer.unmount());
+    }
+  });
+
+  it.each([true, false])('allows the viewed episode to save into its active work queue: %s', (canQueue) => {
+    const item = {
+      ...controller().items[0]!,
+      release: { title: '1화', sourceOrder: 1 },
+      collection: { remoteId: 'manga:1', title: '연동 작품' },
+    };
+    let renderer!: ReactTestRenderer;
+    act(() => {
+      renderer = create(
+        <SourceHubScreen
+          controller={controller({
+            items: [item],
+            importBusy: true,
+            streaming: { item, port: { open: vi.fn() } },
+            canQueueItem: () => canQueue,
+          })}
+          library={library}
+          openSourceSettings={vi.fn()}
+        />,
+      );
+    });
+    try {
+      expect(renderer.root.findByType(SourceStreamReader).props.saveBusy).toBe(!canQueue);
+    } finally {
+      act(() => renderer.unmount());
+    }
+  });
+
   it('exposes saved source book facts and all tags even without a catalog detail response', () => {
     const tags = Array.from({ length: 12 }, (_, index) => `태그${index + 1}`);
     const markup = renderToStaticMarkup(

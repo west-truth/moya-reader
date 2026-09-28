@@ -950,6 +950,7 @@ export default function FixedDocumentScreen({
   const hasPreviousSection = Boolean(previousDocumentSection || remoteNavigation?.previous);
   const hasNextSection = Boolean(nextDocumentSection || remoteNavigation?.next);
   const navigateSection = (direction: -1 | 1) => {
+    if (remoteNavigation?.busy) return;
     const section = direction === -1 ? previousDocumentSection : nextDocumentSection;
     if (section) {
       goToPage(section.startPageIndex);
@@ -957,7 +958,7 @@ export default function FixedDocumentScreen({
     }
     const action = direction === -1 ? remoteNavigation?.previous : remoteNavigation?.next;
     setNavigationError('');
-    void action?.().catch((error: unknown) =>
+    return action?.().catch((error: unknown) =>
       setNavigationError(error instanceof Error ? error.message : '회차를 열지 못했습니다.'),
     );
   };
@@ -2319,10 +2320,13 @@ export default function FixedDocumentScreen({
     rootRef: viewportRef,
     contentRef: continuousContentRef,
     chapterId: continuousSectionKey,
-    enabled: continuousView && !autoReading.running && Boolean(currentDocumentSection && hasNextSection),
-    onNextChapter: () => {
-      navigateSection(1);
-    },
+    enabled:
+      continuousView &&
+      !autoReading.running &&
+      !remoteNavigation?.busy &&
+      documentStatus === 'ready' &&
+      Boolean(currentDocumentSection && hasNextSection),
+    onNextChapter: () => navigateSection(1),
   });
 
   const pointerDown = (event: ReactPointerEvent<HTMLElement>) => {

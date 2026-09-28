@@ -48,6 +48,49 @@ async function harness(prefetch = false) {
   };
 }
 describe('stream navigation across catalog pages', () => {
+  it('fetches missing catalog neighbors instead of jumping to a later locally saved release', async () => {
+    const h = await harness();
+    try {
+      const later = { ...item(9), importState: 'imported' as const, localOrderOnly: true };
+      await h.update({ items: [h.first, later] });
+      vi.mocked(h.controller.loadMore).mockImplementation(async () => {
+        await h.update({ items: [h.first, h.second, later], nextCursor: undefined });
+      });
+      let pending!: Promise<void>;
+      await act(async () => {
+        pending = h.result.next!();
+      });
+      await pending;
+      expect(h.controller.loadMore).toHaveBeenCalledOnce();
+      expect(h.controller.importAndOpen).toHaveBeenCalledWith(h.second);
+      expect(h.controller.openImported).not.toHaveBeenCalled();
+    } finally {
+      await h.dispose();
+    }
+  });
+  it('waits for the remote catalog while only a sparse local list is displayed', async () => {
+    const h = await harness();
+    try {
+      await h.update({
+        items: [
+          { ...h.first, localOrderOnly: true },
+          { ...item(9), localOrderOnly: true },
+        ],
+        catalogLoading: true,
+        nextCursor: undefined,
+      });
+      let pending!: Promise<void>;
+      await act(async () => {
+        pending = h.result.next!();
+      });
+      expect(h.controller.importAndOpen).not.toHaveBeenCalled();
+      await h.update({ items: [h.first, h.second, item(9)], catalogLoading: false });
+      await pending;
+      expect(h.controller.importAndOpen).toHaveBeenCalledWith(h.second);
+    } finally {
+      await h.dispose();
+    }
+  });
   it('prepares a neighbor across catalog cursors without navigating or importing it', async () => {
     const h = await harness(true);
     try {
