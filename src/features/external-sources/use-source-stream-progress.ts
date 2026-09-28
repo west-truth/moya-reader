@@ -1,3 +1,7 @@
+import {
+  stageSourceStreamVisit,
+  acknowledgeSourceStreamVisit,
+} from '../../external-sources/source-stream-visit-journal';
 import { useCallback, useRef } from 'react';
 import { externalItemKeyId } from '../../external-sources/contracts';
 import type { Novel } from '../../domain/types';
@@ -20,14 +24,29 @@ export function useSourceStreamProgress(options: {
   latest.current = options;
   const queue = useRef(Promise.resolve());
   const unreadWrites = useRef(
-    new Map<string, { item: ExternalSourceItemView; readAt: string; mode: 'stream' | 'download' }>(),
+    new Map<
+      string,
+      {
+        item: ExternalSourceItemView;
+        readAt: string;
+        mode: 'stream' | 'download';
+        current: UseExternalSourceControllerOptions;
+      }
+    >(),
   );
   const markRead = useCallback(async (key: string) => {
     const entry = unreadWrites.current.get(key);
     if (!entry) return;
     const { recordStreamReleaseRead } = await import('./source-stream-library');
-    const preference = await recordStreamReleaseRead(latest.current.current(), entry.item, entry.readAt, entry.mode);
-    if (preference) latest.current.onRead(preference);
+    const preference = await recordStreamReleaseRead(entry.current, entry.item, entry.readAt, entry.mode);
+    if (preference) {
+      acknowledgeSourceStreamVisit(entry.current.settingsScope, entry.item.key, entry.readAt);
+      if (
+        latest.current.current().state === entry.current.state &&
+        latest.current.current().settingsScope === entry.current.settingsScope
+      )
+        latest.current.onRead(preference);
+    }
     if (unreadWrites.current.get(key) === entry) unreadWrites.current.delete(key);
   }, []);
   const positions = useRef(new Map<string, { item: ExternalSourceItemView; position: StreamReadingPosition }>());
@@ -57,7 +76,10 @@ export function useSourceStreamProgress(options: {
         visitClock.current + 1,
         (Date.parse(latest.current.lastReadAt ?? '') || 0) + 1,
       );
-      unreadWrites.current.set(itemKey, { item, readAt: new Date(visitClock.current).toISOString(), mode });
+      const readAt = new Date(visitClock.current).toISOString();
+      if (mode === 'stream' && item.collection && item.release)
+        stageSourceStreamVisit(latest.current.current().settingsScope, item.key, item.collection.remoteId, readAt);
+      unreadWrites.current.set(itemKey, { item, readAt, mode, current: latest.current.current() });
       visits.current.set(workKey, `${mode}:${itemKey}`);
     }
     return { workKey, itemKey };

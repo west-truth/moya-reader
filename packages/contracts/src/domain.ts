@@ -612,6 +612,8 @@ export interface DownloadPolicy {
   keepRead: 5 | 10 | 20;
 }
 
+export type SourceProgressBasis = 'source' | 'downloaded';
+
 export interface ReaderSettings {
   downloadPolicy?: DownloadPolicy;
   id: 'reader-settings';
@@ -621,6 +623,13 @@ export interface ReaderSettings {
   applicationTheme?: ReadingProfileTheme;
   /** Hide decorative branding on this device. */
   hideAppLogo?: boolean;
+  /**
+   * How library progress is shown for works added from an extension source: read releases out of
+   * everything the source lists (default), or the downloaded chapters as for any local book.
+   */
+  sourceProgressBasis?: SourceProgressBasis;
+  /** Device startup destination; absent preserves the last library shelf. */
+  startupScreen?: { kind: 'library'; shelfId?: string } | { kind: 'discovery'; tabId?: string };
   /** Custom application colors. Kept separate from book-specific Reader colors. */
   applicationThemeColors?: Partial<ApplicationThemeColors>;
   theme: ReaderTheme;

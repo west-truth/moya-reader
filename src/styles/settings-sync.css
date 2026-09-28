@@ -756,7 +756,7 @@
   font-weight: 700;
 }
 
-.cloud-vault-preferences input {
+.cloud-vault-preferences input:not(.switch) {
   width: 15px;
   height: 15px;
   margin: 0;
@@ -919,4 +919,22 @@
   .cloud-vault-sync-row > div {
     text-align: left;
   }
+}
+
+/* Embedded sync uses the settings page's scrolling and dialog focus boundary. */
+.sync-panel-embedded {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  min-width: 0;
+}
+.sync-panel-embedded > section {
+  margin: 0;
+  padding: 16px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--app-surface);
+}
+.sync-panel-embedded > section:last-child {
+  border-bottom: 1px solid var(--border);
 }

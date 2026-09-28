@@ -2675,3 +2675,26 @@
     padding: 0 10px 8px;
   }
 }
+
+.reader-source-advanced {
+  display: grid;
+  gap: 4px;
+  border-top: 1px solid var(--border);
+}
+
+.reader-source-advanced > summary {
+  padding-block: 12px;
+  color: var(--text-2);
+  font-size: 0.78rem;
+  font-weight: var(--ui-weight-semibold);
+  cursor: pointer;
+}
+
+.startup-screen-select > span {
+  flex: none;
+}
+.startup-screen-select > select {
+  flex: 1;
+  min-width: 0;
+  width: auto;
+}

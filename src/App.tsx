@@ -1,3 +1,5 @@
+import { useSessionExtensionUpdates } from './features/extensions/use-session-extension-updates';
+import { useStartupScreen } from './features/navigation/use-startup-screen';
 import { legacyDownloadPolicy } from './features/external-sources/download-policy';
 import { useDiscoveryController } from './features/discovery/useDiscoveryController';
 import { X } from 'lucide-react';
@@ -661,11 +663,7 @@ export default function App() {
   }>({ status: 'loading' });
   const [cloudVaultMutationRevisions, setCloudVaultMutationRevisions] = useState(initialCloudVaultMutationRevisions);
   const [syncPanelOpen, setSyncPanelOpen] = useState(false);
-  const syncOutboxDetails = useSyncOutboxDetails(
-    readerRepository,
-    syncPanelOpen,
-    `${syncState?.updatedAt}:${syncState?.nextSequence}:${syncState?.pendingCount}`,
-  );
+
   const [syncFlushing, setSyncFlushing] = useState(false);
   const [syncApiBaseUrlDraft, setSyncApiBaseUrlDraft] = useState(
     () => getStoredSyncApiBaseUrl() || readerRuntime.apiBaseUrl || '',
@@ -678,6 +676,7 @@ export default function App() {
   const [correctionSpeakerDraft, setCorrectionSpeakerDraft] = useState('unknown');
   const [correctionEmotionDraft, setCorrectionEmotionDraft] = useState('neutral');
   const [correctionScope, setCorrectionScope] = useState<UserCorrection['applyScope']>('segment');
+  const [updatesRequest, setUpdatesRequest] = useState(0);
   const [settingsInitialTab, setSettingsInitialTab] = useState<SettingsTab>();
 
   const voiceProfilesRef = useRef<VoiceProfile[]>([]);
@@ -725,6 +724,11 @@ export default function App() {
     updateSettings,
     open: settingsOpen,
   } = readerSettingsController;
+  const syncOutboxDetails = useSyncOutboxDetails(
+    readerRepository,
+    syncPanelOpen || settingsOpen,
+    `${syncState?.updatedAt}:${syncState?.nextSequence}:${syncState?.pendingCount}`,
+  );
   const downloadSettingsScope = `${remoteApiClient?.readerSettingsScope ?? 'local'}:${selfHostAuth?.account.username ?? 'local'}`;
   const legacyDownloads = useMemo(() => legacyDownloadPolicy(downloadSettingsScope), [downloadSettingsScope]);
   useEffect(() => {
@@ -758,10 +762,12 @@ export default function App() {
     legacyDownloads,
   ]);
   const openReaderSettings = useCallback(() => {
+    setUpdatesRequest(0);
     setSettingsInitialTab(undefined);
     readerSettingsController.openPanel();
   }, [readerSettingsController]);
   const openExternalSourceSettings = useCallback(() => {
+    setUpdatesRequest(0);
     setSettingsInitialTab('sources');
     readerSettingsController.openPanel();
   }, [readerSettingsController]);
@@ -1564,6 +1570,30 @@ export default function App() {
     remoteApiClient?.readerSettingsScope ?? 'local',
     readerRuntime.mode === 'remote' ? remoteApiClient : undefined,
   );
+  const startupSettled = useStartupScreen({
+    ready: bootstrapState.status === 'ready',
+    preference: settings.startupScreen,
+    shelvesReady: libraryManagement.shelvesReady === true,
+    shelves: libraryManagement.shelves,
+    discoveryReady: discovery.ready || Boolean(discovery.error),
+    tabs: discovery.config.tabs,
+    discoveryScope: discovery.scope,
+    atLibraryRoot: view === 'library' && !externalSourceFeature.open && !discovery.active,
+    setShelf: libraryManagement.setActiveShelf,
+    openDiscovery: () => discovery.setActive(true),
+  });
+  useSessionExtensionUpdates({
+    ready: bootstrapState.status === 'ready' && externalSourceBrokerRevision > 0,
+    manager: installedExtensions,
+    suwayomi: externalSourceFeature.sources.find((source) => source.id === SUWAYOMI_EXTERNAL_SOURCE_ID)
+      ?.extensionManager,
+    notify: showToast,
+    openUpdates: () => {
+      setUpdatesRequest((value) => value + 1);
+      setSettingsInitialTab('sources');
+      readerSettingsController.openPanel();
+    },
+  });
   openImportedSeriesRef.current = externalSourceFeature.showLocalSeries;
   const importBusy = importFeature.busy;
 
@@ -5769,7 +5799,7 @@ export default function App() {
   const closeActiveAppLayer = () => Boolean(dismissTopAppBackLayer(appBackLayers));
 
   useAppBrowserNavigation({
-    enabled: platformRuntime.kind === 'browser',
+    enabled: platformRuntime.kind === 'browser' && startupSettled,
     workspace: bookWorkspace,
     state: bookWorkspaceState,
     sources: externalSourceFeature,
@@ -6192,6 +6222,61 @@ export default function App() {
     cloudVault.activity === 'syncing' ||
     cloudVault.activity === 'connecting' ||
     cloudVault.activity === 'disconnecting';
+  const renderSyncPanel = (embedded: boolean) => (
+    <SyncPanel
+      embedded={embedded}
+      data={{
+        cloudVault,
+        mode: readerRuntime.mode,
+        apiBaseUrl: readerRuntime.apiBaseUrl,
+        syncState,
+        syncOutbox: syncOutboxDetails.items,
+        outboxDetailsTruncated: syncOutboxDetails.truncated,
+        outboxDetailsLoading: syncOutboxDetails.loading,
+        outboxDetailsError: syncOutboxDetails.error,
+        syncFlushing,
+        syncServiceConnected: Boolean(syncService),
+        remoteReadingPosition,
+        remoteReadingPositionChapterTitle: remoteReadingPositionChapter?.title,
+        serverAttachAvailable: serverAttach.available,
+        serverAttachBusy,
+        serverAttachProgress,
+        serverAttachPercent,
+        importBusy,
+        selectedNovel,
+        syncApiBaseUrlDraft,
+        syncConnectionTest,
+        apiAuthTokenDraft,
+        apiAuthTokenConfigured,
+        apiAuthTokenStorage: apiAuthTokenUsesNativeSecureStore() ? 'native_secure_store' : 'browser_storage',
+        mergeSelections: syncMergeSelections.selections,
+      }}
+      actions={{
+        close: () => setSyncPanelOpen(false),
+        loadCompleteOutbox: syncOutboxDetails.loadComplete,
+        retry: retrySyncNow,
+        acceptRemoteState: acceptRemoteSyncState,
+        goToRemoteReadingPosition,
+        uploadSelectedNovelToServer: serverAttach.upload,
+        cancelServerAttach: serverAttach.cancel,
+        setSyncApiBaseUrlDraft: (value) => {
+          setSyncApiBaseUrlDraft(value);
+          setSyncConnectionTest({ status: 'idle' });
+        },
+        testSyncConnection,
+        saveSyncApiBaseUrl,
+        setApiAuthTokenDraft,
+        saveApiAuthToken,
+        discardOutboxItem: discardSyncOutboxItem,
+        discardOutboxGroup: discardSyncOutboxGroup,
+        setMergeSelection: syncMergeSelections.setSelection,
+        clearMergeSelection: syncMergeSelections.clearGroup,
+        loadRemoteSnapshot: syncApiClient ? loadSyncRemoteSnapshot : undefined,
+        applySelectedLocalFields: applyAiTtsSelectedLocalFields,
+        applyRemoteSnapshot: applyAiTtsRemoteSnapshotGroup,
+      }}
+    />
+  );
   return (
     <div className="app-shell" style={styleVars}>
       {originalDownloadBook && bookAssetRepository && (
@@ -6244,7 +6329,11 @@ export default function App() {
           importFeature.dismissTask(taskId);
           externalSourceFeature.dismissTask(taskId);
         }}
-        bootstrap={{ ...bootstrapState, retry: retryAppBootstrap }}
+        bootstrap={{
+          ...bootstrapState,
+          status: bootstrapState.status === 'ready' && !startupSettled ? 'loading' : bootstrapState.status,
+          retry: retryAppBootstrap,
+        }}
         sync={{ label: syncLabel, tone: syncTone }}
         annotationTotals={{ bookmarks: bookmarks.length, highlights: highlights.length, notes: notes.length }}
         openSync={() => setSyncPanelOpen(true)}
@@ -6524,58 +6613,7 @@ export default function App() {
             </div>
           }
         >
-          <SyncPanel
-            data={{
-              cloudVault,
-              mode: readerRuntime.mode,
-              apiBaseUrl: readerRuntime.apiBaseUrl,
-              syncState,
-              syncOutbox: syncOutboxDetails.items,
-              outboxDetailsTruncated: syncOutboxDetails.truncated,
-              outboxDetailsLoading: syncOutboxDetails.loading,
-              outboxDetailsError: syncOutboxDetails.error,
-              syncFlushing,
-              syncServiceConnected: Boolean(syncService),
-              remoteReadingPosition,
-              remoteReadingPositionChapterTitle: remoteReadingPositionChapter?.title,
-              serverAttachAvailable: serverAttach.available,
-              serverAttachBusy,
-              serverAttachProgress,
-              serverAttachPercent,
-              importBusy,
-              selectedNovel,
-              syncApiBaseUrlDraft,
-              syncConnectionTest,
-              apiAuthTokenDraft,
-              apiAuthTokenConfigured,
-              apiAuthTokenStorage: apiAuthTokenUsesNativeSecureStore() ? 'native_secure_store' : 'browser_storage',
-              mergeSelections: syncMergeSelections.selections,
-            }}
-            actions={{
-              close: () => setSyncPanelOpen(false),
-              loadCompleteOutbox: syncOutboxDetails.loadComplete,
-              retry: retrySyncNow,
-              acceptRemoteState: acceptRemoteSyncState,
-              goToRemoteReadingPosition,
-              uploadSelectedNovelToServer: serverAttach.upload,
-              cancelServerAttach: serverAttach.cancel,
-              setSyncApiBaseUrlDraft: (value) => {
-                setSyncApiBaseUrlDraft(value);
-                setSyncConnectionTest({ status: 'idle' });
-              },
-              testSyncConnection,
-              saveSyncApiBaseUrl,
-              setApiAuthTokenDraft,
-              saveApiAuthToken,
-              discardOutboxItem: discardSyncOutboxItem,
-              discardOutboxGroup: discardSyncOutboxGroup,
-              setMergeSelection: syncMergeSelections.setSelection,
-              clearMergeSelection: syncMergeSelections.clearGroup,
-              loadRemoteSnapshot: syncApiClient ? loadSyncRemoteSnapshot : undefined,
-              applySelectedLocalFields: applyAiTtsSelectedLocalFields,
-              applyRemoteSnapshot: applyAiTtsRemoteSnapshotGroup,
-            }}
-          />
+          {renderSyncPanel(false)}
         </Suspense>
       )}
 
@@ -6600,6 +6638,7 @@ export default function App() {
                   <InstalledExtensionsPanel
                     key={installedExtensions.target}
                     manager={installedExtensions}
+                    updatesRequest={updatesRequest}
                     sourceTarget={canChooseDesktopSourceTarget ? desktopSourceTarget : undefined}
                     onSourceTargetChange={
                       canChooseDesktopSourceTarget
@@ -6642,6 +6681,12 @@ export default function App() {
               },
             }}
             initialTab={settingsInitialTab}
+            updatesRequest={updatesRequest}
+            startupShelves={libraryManagement.shelves}
+            startupTabs={discovery.config.tabs}
+            syncContent={
+              <Suspense fallback={<p role="status">동기화 상태를 불러오는 중…</p>}>{renderSyncPanel(true)}</Suspense>
+            }
             openSync={() => setSyncPanelOpen(true)}
             openBackup={backupFeature.openPanel}
             updateProfile={changeReadingProfile}

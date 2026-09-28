@@ -103,6 +103,7 @@ export interface LibraryManagementController {
   readonly shelves: readonly Shelf[];
   readonly memberships: readonly ShelfMembership[];
   readonly activeShelfId?: string;
+  readonly shelvesReady?: boolean;
   readonly selectionMode: boolean;
   readonly selectedBookIds: ReadonlySet<string>;
   readonly panel?: LibraryManagementPanel;
@@ -142,6 +143,7 @@ export interface UseLibraryManagementControllerInput {
 export function useLibraryManagementController(
   input: UseLibraryManagementControllerInput,
 ): LibraryManagementController {
+  const [loadedCatalog, setLoadedCatalog] = useState<typeof input.catalog>();
   const [shelves, setShelves] = useState<Shelf[]>([]);
   const [memberships, setMemberships] = useState<ShelfMembership[]>([]);
   const [activeShelfId, setActiveShelfIdState] = useState<string | undefined>(
@@ -182,6 +184,8 @@ export function useLibraryManagementController(
       setError(undefined);
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : '책장 정보를 불러오지 못했습니다.');
+    } finally {
+      setLoadedCatalog(input.catalog);
     }
   }, [input.catalog]);
 
@@ -213,6 +217,7 @@ export function useLibraryManagementController(
   return useMemo<LibraryManagementController>(
     () => ({
       available: Boolean(input.catalog && input.assets),
+      shelvesReady: !input.catalog || loadedCatalog === input.catalog,
       shelves,
       memberships,
       activeShelfId,
@@ -444,6 +449,7 @@ export function useLibraryManagementController(
       run,
       selectedBookIds,
       selectionMode,
+      loadedCatalog,
       shelves,
     ],
   );

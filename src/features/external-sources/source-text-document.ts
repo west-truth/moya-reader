@@ -49,9 +49,13 @@ export async function sourceTextDocument(input: {
     chapterId,
   }));
   const novel = { ...parsed.novel, id, title: input.title, activeContentRevisionId: revision, totalChapters: 3 };
-  // Include the body hash so an edited chapter cannot restore an unrelated offset.
-  const historyKey = `${input.historyKey}:text:${hash}`;
-  const saved = input.fromStart ? undefined : readSourceStreamPosition(historyKey);
+  // Downloads reconstruct text from parsed paragraphs. Ignore only that representation change;
+  // actual paragraph edits still invalidate offsets. Keep a fallback for existing raw-text keys.
+  const paragraphHash = hashSync(paragraphs.map((paragraph) => paragraph.text).join('\n\n'));
+  const historyKey = `${input.historyKey}:text:${paragraphHash}`;
+  const saved = input.fromStart
+    ? undefined
+    : (readSourceStreamPosition(historyKey) ?? readSourceStreamPosition(`${input.historyKey}:text:${hash}`));
   let position: ReadingPosition | undefined = saved
     ? {
         id: chapterId,
@@ -66,6 +70,7 @@ export async function sourceTextDocument(input: {
         updatedAt: new Date(saved.updatedAt).toISOString(),
       }
     : undefined;
+  let pendingPositionSave: Promise<void> = Promise.resolve();
   const repository: ReaderBodyRepository = {
     getChapter: async (key) => (key === chapterId ? chapter : undefined),
     getParagraph: async (key, signal) => {
@@ -124,12 +129,6 @@ export async function sourceTextDocument(input: {
         updatedAt: new Date().toISOString(),
       };
       const index = Math.max(0, Math.min(paragraphs.length - 1, value.paragraphIndex - 1));
-      await input.onPosition?.({
-        paragraphIndex: index + 1,
-        offset: value.offsetInParagraph ?? 0,
-        textHash: paragraphs[index].textHash,
-        count: paragraphs.length,
-      });
       saveSourceStreamPosition(historyKey, {
         page: index,
         count: paragraphs.length,
@@ -139,6 +138,15 @@ export async function sourceTextDocument(input: {
         ),
         ratio: 1,
       });
+      pendingPositionSave =
+        input.onPosition?.({
+          paragraphIndex: index + 1,
+          offset: value.offsetInParagraph ?? 0,
+          textHash: paragraphs[index].textHash,
+          count: paragraphs.length,
+        }) ?? Promise.resolve();
+      // Library/network writes must not hold the reader's serialized local position queue.
+      void pendingPositionSave.catch(() => undefined);
     },
   };
   return {
@@ -147,7 +155,10 @@ export async function sourceTextDocument(input: {
     repository,
     position,
     flushSavedPosition: async () => {
-      if (position) await repository.saveReadingPosition(position);
+      if (position) {
+        await repository.saveReadingPosition(position);
+        await pendingPositionSave;
+      }
     },
   };
 }

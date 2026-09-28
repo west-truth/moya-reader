@@ -42,6 +42,7 @@ export function CloudAccountsPanel({ controller }: { readonly controller: CloudV
             <label className="web-google-files">
               <input
                 type="checkbox"
+                className="switch"
                 checked={controller.config?.scope.sourceFiles ?? false}
                 disabled={busy || !controller.config}
                 onChange={(event) => void controller.setScope('sourceFiles', event.target.checked)}

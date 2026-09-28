@@ -69,6 +69,7 @@ export interface SyncPanelActions {
 }
 
 export interface SyncPanelProps {
+  readonly embedded?: boolean;
   readonly data: SyncPanelData;
   readonly actions: SyncPanelActions;
 }

@@ -17,7 +17,12 @@ import { useResponsiveLayoutMode } from './useResponsiveLayoutMode';
 import { importTaskIsActive, type ImportTaskView } from '../import/import-task-projection';
 import { continueLibraryBook, openLibraryBook } from './book-workspace-source-navigation';
 import { navigateAppBack } from '../navigation/browser-navigation';
-import { useWorkspaceScreenMotion, visibleRemoteLibraryWorks } from './workspace-screen-support';
+import { applySourceProgress, withSourceProgress } from '../library/library-source-progress';
+import {
+  useWorkspaceScreenMotion,
+  visibleRemoteLibraryWorks,
+  remoteLibraryReadCounts,
+} from './workspace-screen-support';
 import { BookDetailSkeleton, useIdleScreenPreload, WorkspaceScreenSkeleton } from './WorkspaceSkeletons';
 
 const ChaptersScreen = lazy(() =>
@@ -148,33 +153,58 @@ export function BookWorkspaceScreens({
   );
   const remoteWorksInView = useMemo(
     () =>
-      visibleRemoteLibraryWorks(remoteLibraryWorks, {
-        shelved: Boolean(activeShelfBookIds),
-        filter: state.libraryFilter,
-        query: state.libraryQuery,
-        sort: state.librarySort,
-      }),
-    [activeShelfBookIds, remoteLibraryWorks, state.libraryFilter, state.libraryQuery, state.librarySort],
+      visibleRemoteLibraryWorks(
+        remoteLibraryWorks,
+        {
+          shelved: Boolean(activeShelfBookIds),
+          filter: state.libraryFilter,
+          query: state.libraryQuery,
+          sort: state.librarySort,
+        },
+        externalSources.sourceWorkProgress?.bySubscriptionId,
+      ),
+    [
+      activeShelfBookIds,
+      remoteLibraryWorks,
+      state.libraryFilter,
+      state.libraryQuery,
+      state.librarySort,
+      externalSources.sourceWorkProgress,
+    ],
   );
+  // Source works count read releases against the source's list unless downloads are chosen in settings.
+  const sourceProgress =
+    textReader?.settings.sourceProgressBasis === 'downloaded' ? undefined : externalSources.sourceWorkProgress;
   const libraryCollection = useMemo(() => {
+    const progressed = applySourceProgress(projection.libraryCollection, sourceProgress?.byNovelId);
     const base = activeShelfBookIds
       ? {
-          ...projection.libraryCollection,
-          visibleBooks: projection.libraryCollection.visibleBooks.filter((book) =>
-            activeShelfBookIds.has(book.novel.id),
-          ),
+          ...progressed,
+          visibleBooks: progressed.visibleBooks.filter((book) => activeShelfBookIds.has(book.novel.id)),
         }
-      : projection.libraryCollection;
+      : progressed;
+    const remoteCounts = remoteLibraryReadCounts(
+      remoteLibraryWorks,
+      externalSources.sourceWorkProgress?.bySubscriptionId,
+    );
     return {
       ...base,
       totalBooks: base.totalBooks + remoteLibraryWorks.length,
       filterCounts: {
         ...base.filterCounts,
         all: base.filterCounts.all + remoteLibraryWorks.length,
-        unread: base.filterCounts.unread + remoteLibraryWorks.length,
+        unread: base.filterCounts.unread + remoteCounts.unread,
+        reading: base.filterCounts.reading + remoteCounts.reading,
+        finished: base.filterCounts.finished + remoteCounts.finished,
       },
     };
-  }, [activeShelfBookIds, projection.libraryCollection, remoteLibraryWorks.length]);
+  }, [
+    activeShelfBookIds,
+    projection.libraryCollection,
+    remoteLibraryWorks,
+    sourceProgress,
+    externalSources.sourceWorkProgress,
+  ]);
   const bookHasActiveImport = (bookId: string) =>
     importTasks.some((task) => task.targetBookId === bookId && importTaskIsActive(task));
   const externalWorkHasActiveImport = (workId: string) =>
@@ -245,6 +275,9 @@ export function BookWorkspaceScreens({
         thumbnailUrl: work.thumbnailUrl,
         sourceLabel: work.sourceLabel,
         availableReleaseCount: work.availableReleaseCount,
+        // Streamed-only works have nothing downloaded, so they always count against the source.
+        readReleaseCount: externalSources.sourceWorkProgress?.bySubscriptionId.get(work.id)?.readCount,
+        lastReadAt: externalSources.sourceWorkProgress?.bySubscriptionId.get(work.id)?.lastReadAt,
         newReleaseCount: work.newReleaseIds.length,
         addedAt: work.createdAt,
         updatedAt: work.updatedAt,
@@ -358,6 +391,10 @@ export function BookWorkspaceScreens({
         controller.setView('library');
         await externalSources.openSubscription(work);
       },
+      continueExternal: async (workId) => {
+        controller.setView('library');
+        await externalSources.continueLibraryWork(workId);
+      },
       removeExternal: async (workId) => {
         if (externalWorkHasActiveImport(workId)) return;
         const work = externalSources.libraryWorks.find((candidate) => candidate.id === workId);
@@ -446,7 +483,10 @@ export function BookWorkspaceScreens({
                 <ChaptersScreen
                   model={{
                     loading: state.navigationPending,
-                    book: projection.selectedNovelScreenBook,
+                    book: withSourceProgress(
+                      projection.selectedNovelScreenBook,
+                      sourceProgress?.byNovelId.get(projection.selectedNovelScreenBook.novel.id),
+                    ),
                     titleEditor: { editing: state.bookTitleEditing, draft: state.bookTitleDraft },
                     query: state.chapterQuery,
                     readFilter: state.chapterReadFilter,
