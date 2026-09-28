@@ -142,30 +142,21 @@ try {
     await page.screenshot({ path: root + `/.tmp/source-stream-review/shared-${view}-${mode}-${width}.png` });
     if (view === 'vertical') {
       await page.locator('article[data-page-index="5"]').scrollIntoViewIfNeeded();
+      // Scrolling a failed prefetch into the foreground retries it once.
+      // Wait for that attempt to settle before simulating upstream recovery.
+      await page.waitForTimeout(400);
       await page.getByText('연결을 확인해 주세요.', { exact: true }).waitFor();
-      await page.getByRole('button', { name: '6페이지 다시 불러오기', exact: true }).evaluate((button) =>
-        button.addEventListener(
-          'click',
-          () => {
-            globalThis.retryPage = true;
-          },
-          { once: true, capture: true },
-        ),
-      );
+      await page.evaluate(() => {
+        globalThis.retryPage = true;
+      });
       await page.getByRole('button', { name: '6페이지 다시 불러오기', exact: true }).click();
       await page.waitForFunction(() => document.querySelector('article[data-page-index="5"] img')?.naturalWidth > 0);
       await page.locator('article[data-page-index="6"]').scrollIntoViewIfNeeded();
       await page.getByRole('button', { name: '7페이지 다시 불러오기', exact: true }).waitFor();
       await page.waitForTimeout(250);
-      await page.getByRole('button', { name: '7페이지 다시 불러오기', exact: true }).evaluate((button) =>
-        button.addEventListener(
-          'click',
-          () => {
-            globalThis.repairCorrupt = true;
-          },
-          { once: true, capture: true },
-        ),
-      );
+      await page.evaluate(() => {
+        globalThis.repairCorrupt = true;
+      });
       const corruptRequests = await page.evaluate(
         () => calls.filter(([id, index]) => id === 'fixture-1' && index === 6).length,
       );
@@ -304,6 +295,10 @@ try {
     await page.waitForTimeout(400);
     await page.mouse.wheel(0, 160);
     await page.waitForFunction(() => episode === 2 && typeof globalThis.releaseOpen === 'function');
+    await page.locator('.fixed-doc-transition-status').waitFor({ state: 'visible' });
+    assert.equal(await page.getByRole('button', { name: '1페이지 다시 불러오기', exact: true }).count(), 0);
+    await page.screenshot({ path: root + '/.tmp/source-stream-review/mobile-transition-' + prefetch + '.png' });
+
     for (let i = 0; i < 5; i++) {
       await page.waitForTimeout(350);
       await page.mouse.wheel(0, 160);
@@ -317,6 +312,9 @@ try {
         document.querySelector('article[data-page-index="0"] img')?.naturalWidth > 0,
     );
     await page.waitForFunction(() => saves.includes(2));
+    await page.locator('.fixed-doc-transition-status').waitFor({ state: 'hidden' });
+    await page.waitForFunction(() => document.querySelector('.fixed-doc-viewport').scrollTop < 5);
+
     await reveal(page);
     const next = page.locator('.fixed-doc-footer').getByRole('button', { name: '다음 회차', exact: true });
     await next.evaluate((button) => {
@@ -357,6 +355,19 @@ try {
     console.log(JSON.stringify({ rapidNavigation: true, prefetch, pendingSaves: true, retry: true, passed: true }));
     await page.close();
   }
+} catch (error) {
+  for (const context of browser.contexts())
+    for (const page of context.pages()) {
+      await page.screenshot({ path: root + '/.tmp/source-stream-review/failure.png' });
+      console.error(
+        await page.evaluate(() => ({
+          calls: globalThis.calls?.slice(-20),
+          retry: globalThis.retryPage,
+          text: document.body.innerText.slice(-3000),
+        })),
+      );
+    }
+  throw error;
 } finally {
   await browser.close();
   await new Promise((resolve) => server.close(resolve));

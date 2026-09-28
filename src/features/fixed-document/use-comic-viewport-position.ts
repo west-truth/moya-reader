@@ -1,4 +1,4 @@
-import { useEffect, useRef, type RefObject } from 'react';
+import { useEffect, useLayoutEffect, useRef, type RefObject } from 'react';
 export interface ComicViewportPosition {
   page: number;
   fraction: number;
@@ -15,6 +15,12 @@ export function useComicViewportPosition(input: {
   initial?: ComicViewportPosition;
   save?: (position: ComicViewportPosition) => void;
 }) {
+  // New streamed entries without history start at the top before pages are measured.
+  useLayoutEffect(() => {
+    if (input.save && !input.initial && input.viewport.current) input.viewport.current.scrollTop = 0;
+    // The entry identity owns its initial position.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [input.identity]);
   const callback = useRef(input.save);
   callback.current = input.save;
   useEffect(() => {

@@ -1,3 +1,4 @@
+import { useStreamSaveQueue } from './use-stream-save-queue';
 import { isTextStream, type SourceReadingPort } from '../../external-sources/source-text-stream';
 import { sourceReadingPreferences } from '../../external-sources/source-reading-preferences';
 import { taskProgressPercent } from '../../components/task-progress';
@@ -5,12 +6,10 @@ import { randomUuid } from '../../utils/random-uuid';
 import { useSourceWorkLayout } from './source-work-layout';
 import { sourceCachePolicy, sourcePageTime, transientSourceFailure } from '../../external-sources/cache-policy';
 import { storedSourcePage, saveSourceCache } from '../../external-sources/cached-page';
-import { createHostedImageDownloadQueue } from '../../external-sources/series/hosted-image-download-queue';
 import type { HostedImageDownload, PreparedServerImport } from '../../services/import/hosted-image-import';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { TextServerRequestError } from '../../external-sources/text-server/text-server-errors';
 import { packageOperationMessage } from '../../extensions/packages/package-operation-error';
-import { createSeriesDownloadQueue } from '../../external-sources/series/series-download-queue';
 import { filterAndSortReleases } from './source-release-list-model';
 import { completeSeriesCatalog } from './complete-series-catalog';
 import { useNextReleaseDownload } from './use-next-release-download';
@@ -1956,6 +1955,12 @@ export function useExternalSourceController(options: UseExternalSourceController
         return true;
       }
 
+      const [{ createSeriesDownloadQueue }, { createHostedImageDownloadQueue }] = await Promise.all([
+        import('../../external-sources/series/series-download-queue'),
+        import('../../external-sources/series/hosted-image-download-queue'),
+      ]);
+      background?.throwIfAborted();
+      if (background && automaticDownloadBlockedRef.current) return true;
       const createDownloads = (signal: AbortSignal, taskIds: Map<string, string>) =>
         createSeriesDownloadQueue({
           sourceId,
@@ -2795,8 +2800,10 @@ export function useExternalSourceController(options: UseExternalSourceController
   );
 
   const executeImportItems = useCallback(
-    async (selected: readonly ExternalSourceItemView[]) => {
-      const sourceId = activeSourceId;
+    async (selected: readonly ExternalSourceItemView[], detached = false) => {
+      const sourceId = detached
+        ? (selected[0]?.key.connectorId as ExtensionContributionId | undefined)
+        : activeSourceId;
       const importable = selected.filter(
         (item) =>
           item.kind !== 'folder' &&
@@ -2848,7 +2855,11 @@ export function useExternalSourceController(options: UseExternalSourceController
         return;
       }
       if (busy) return;
-      if (serialItems.length === importable.length && (await importSerialItems(sourceId, serialItems))) return;
+      if (
+        serialItems.length === importable.length &&
+        (await importSerialItems(sourceId, serialItems, undefined, detached))
+      )
+        return;
       const selectedUpdateCount = importable.filter((item) => item.importState === 'update_available').length;
       if (
         selectedUpdateCount > 0 &&
@@ -3196,7 +3207,7 @@ export function useExternalSourceController(options: UseExternalSourceController
   }, []);
 
   const importItems = useCallback(
-    async (selected: readonly ExternalSourceItemView[], reportRejection = false) => {
+    async (selected: readonly ExternalSourceItemView[], reportRejection = false, detached = false) => {
       if (recoveryBusyRef.current || blockingBusy || (importBusy && !selected.every(canQueueItem))) {
         if (reportRejection) throw new Error('다른 다운로드가 끝난 후 저장할 수 있습니다.');
         return;
@@ -3206,7 +3217,7 @@ export function useExternalSourceController(options: UseExternalSourceController
         try {
           queue = await persistDownloadIntent(selected);
           if (queue) activeQueueIdRef.current = queue.id;
-          await executeImportItems(selected);
+          await executeImportItems(selected, detached);
         } catch (error) {
           if (reportRejection) throw error;
           optionsRef.current.notify(
@@ -3234,6 +3245,23 @@ export function useExternalSourceController(options: UseExternalSourceController
     },
     [executeImportItems, persistDownloadIntent, refreshRecovery, importBusy, blockingBusy, canQueueItem],
   );
+
+  const { enqueue: saveStream, cancel: cancelStreamSaves } = useStreamSaveQueue<ExternalSourceItemView>({
+    key: (item) => externalItemKeyId(item.key),
+    ready: (item) => !recoveryBusyRef.current && !blockingBusy && (!importBusy || canQueueItem(item)),
+    save: async (item) => {
+      try {
+        await importItems(
+          [item],
+          true,
+          item.key.connectorId !== activeSourceId || item.collection?.remoteId !== currentParentRef,
+        );
+      } catch (error) {
+        optionsRef.current.notify(error instanceof Error ? error.message : '회차를 저장하지 못했습니다.', 'warning');
+        throw error;
+      }
+    },
+  });
 
   const resumeDownloadQueue = useCallback(
     async (queue: SourceDownloadQueue) => {
@@ -3573,6 +3601,7 @@ export function useExternalSourceController(options: UseExternalSourceController
   );
 
   const cancel = useCallback(() => {
+    cancelStreamSaves();
     if (serialImportQueueRef.current) serialImportQueueRef.current.accepting = false;
     setTasks((current) =>
       current.map((task) =>
@@ -3583,7 +3612,7 @@ export function useExternalSourceController(options: UseExternalSourceController
     downloadAbortRef.current?.abort();
     subscriptionAbortRef.current?.abort();
     importRef.current?.cancel();
-  }, []);
+  }, [cancelStreamSaves]);
 
   const dismissTask = useCallback((taskId: string) => {
     setTasks((current) =>
@@ -4485,11 +4514,7 @@ export function useExternalSourceController(options: UseExternalSourceController
       });
       return streamPositionWrites.current;
     },
-    saveStream: async (item) => {
-      if (recoveryBusyRef.current || blockingBusy || (importBusy && !canQueueItem(item)))
-        throw new Error('다른 다운로드가 끝난 후 저장할 수 있습니다.');
-      await importItems([item], true);
-    },
+    saveStream,
     canStreamItem: (item) =>
       sourceReadingPreferences().mode !== 'download' &&
       Boolean(optionsRef.current.registry.getSourceStream?.(item.key.connectorId as ExtensionContributionId)),
