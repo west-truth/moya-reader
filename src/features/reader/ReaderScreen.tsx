@@ -1,3 +1,4 @@
+import type { ReaderBodyRepository } from '../../repositories/reader-repository';
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { Bookmark, Chapter, Paragraph, ReaderAnchor, ReaderHighlight } from '../../domain/types';
 import { useAppRuntime } from '../../app/runtime/RuntimeProvider';
@@ -78,13 +79,14 @@ function activeHighlightAt(
 }
 
 export interface ReaderScreenProps {
+  readonly repository?: ReaderBodyRepository;
   readonly model: ReaderScreenModel;
   readonly screenHandle: ReaderScreenHandle;
 }
 
-function ReaderScreenComponent({ model, screenHandle }: ReaderScreenProps) {
+function ReaderScreenComponent({ model, screenHandle, repository: bodyRepository }: ReaderScreenProps) {
   const { readerRuntime } = useAppRuntime();
-  const repository = readerRuntime.readerRepository;
+  const repository = bodyRepository ?? readerRuntime.readerRepository;
   const viewportApiRef = useRef<ReaderViewportApi>();
   const [viewportApi, setViewportApi] = useState<ReaderViewportApi>();
   const [mode, setModeState] = useState<ReaderMode>('read');
@@ -103,8 +105,11 @@ function ReaderScreenComponent({ model, screenHandle }: ReaderScreenProps) {
   const initialMode = openRequest?.initialMode;
   const modeLock = model.settings.readingProfile.modeLock ?? 'auto';
   const [readingFlow, setReadingFlow] = useState<ReaderRuntimeFlow>(() =>
-    modeLock === 'paginated' ? 'paginated' : 'scroll',
+    modeLock === 'auto' ? screenHandle.getReadingFlow(model.novel.id) : modeLock,
   );
+  useEffect(() => {
+    screenHandle.setReadingFlow(model.novel.id, readingFlow);
+  }, [screenHandle, model.novel.id, readingFlow]);
   const [pageToScrollSettling, setPageToScrollSettling] = useState(false);
   const [scrollToPageSettling, setScrollToPageSettling] = useState(false);
   const settleFrameRef = useRef<number>();
@@ -375,6 +380,10 @@ function ReaderScreenComponent({ model, screenHandle }: ReaderScreenProps) {
 
   useEffect(() => {
     const pending = pendingFlowTransitionRef.current;
+    if (pending && pending.anchor.sectionId !== model.chapter.id) {
+      pendingFlowTransitionRef.current = undefined;
+      return;
+    }
     if (!pending || !viewportApi || pending.targetFlow !== readingFlow || viewportApi.flow !== pending.targetFlow)
       return;
     let cancelled = false;
@@ -410,13 +419,15 @@ function ReaderScreenComponent({ model, screenHandle }: ReaderScreenProps) {
     return () => {
       cancelled = true;
     };
-  }, [readingFlow, startScrollHandoff, viewportApi]);
+  }, [readingFlow, startScrollHandoff, viewportApi, model.chapter.id]);
 
   useEffect(() => {
     window.cancelAnimationFrame(settleFrameRef.current ?? 0);
     cancelScrollHandoff();
     setPageToScrollSettling(false);
     setScrollToPageSettling(false);
+    pendingFlowTransitionRef.current = undefined;
+    pageIntentRequestRef.current = undefined;
   }, [cancelScrollHandoff, model.chapter.id]);
 
   useEffect(
@@ -706,7 +717,8 @@ function ReaderScreenComponent({ model, screenHandle }: ReaderScreenProps) {
     !model.addonOpen &&
     !selection &&
     !footnote;
-  const autoScrollReady = viewportApi?.flow === readingFlow && !openRequest && !pageToScrollSettling;
+  const autoScrollReady =
+    !model.navigation?.busy && viewportApi?.flow === readingFlow && !openRequest && !pageToScrollSettling;
   const nextAutoChapter = model.chapters.find((chapter) => chapter.index === model.chapter.index + 1);
   const autoScroll = useAutoScroll(
     viewportApiRef,
@@ -782,8 +794,16 @@ function ReaderScreenComponent({ model, screenHandle }: ReaderScreenProps) {
       />
       {search.query.trim() && (
         <aside className="reader-search-results-layer" aria-label="본문 검색 결과">
-          <ReaderSearchResults search={search} chapters={model.chapters} />
+          <ReaderSearchResults chapterOnly={model.transient} search={search} chapters={model.chapters} />
         </aside>
+      )}
+      {model.navigation?.error && (
+        <div className="reader-error" role="alert">
+          {model.navigation.error}
+          <button type="button" className="secondary-btn" onClick={model.navigation.retry}>
+            다시 시도
+          </button>
+        </div>
       )}
       <ReaderViewport
         key={model.chapter.id}
@@ -794,6 +814,7 @@ function ReaderScreenComponent({ model, screenHandle }: ReaderScreenProps) {
         settings={model.settings}
         readingFlow={readingFlow}
         pageTransitionPending={scrollToPageSettling}
+        navigationBusy={model.navigation?.busy}
         mode={mode}
         ttsIndex={model.ttsIndex}
         search={search}
@@ -821,7 +842,7 @@ function ReaderScreenComponent({ model, screenHandle }: ReaderScreenProps) {
           }}
         />
       )}
-      {selection && (
+      {selection && !model.transient && (
         <ReaderSelectionToolbar
           selection={selection}
           location={location}

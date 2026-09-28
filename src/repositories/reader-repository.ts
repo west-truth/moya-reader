@@ -238,3 +238,6 @@ export interface ReaderRepository
 }
 
 export interface RevisionPinnedReaderRepository extends ReaderRepository, RevisionPinnedBookSource {}
+
+/** The existing reader only needs body queries and position persistence. */
+export type ReaderBodyRepository = ReaderQueries & Pick<ReaderCommands, 'saveReadingPosition'>;

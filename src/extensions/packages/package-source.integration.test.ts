@@ -122,6 +122,30 @@ describe('installed package source adapter and lifecycle', () => {
     expect(catalog.getSource(id)).toBeUndefined();
   });
 
+  it('shares real text acquisition between streaming and saving, and disables streaming with the source', async () => {
+    const { catalog, registry, id } = await setup('text-catalog');
+    const works = await registry.listExternalSource(id, context, {}, signal());
+    const releases = await registry.listExternalSource(
+      id,
+      context,
+      { parentRef: works.items[0].navigationRef },
+      signal(),
+    );
+    const item = releases.items[0];
+    const invoke = vi.spyOn(catalog, 'invoke');
+    const port = registry.getSourceStream!(id)!;
+    expect('kind' in port && port.kind).toBe('text');
+    const [session, downloaded] = await Promise.all([
+      port.open(item.key.remoteId, signal()),
+      registry.downloadExternalSource(id, context, { key: item.key, fileName: item.importFileName! }, signal()),
+    ]);
+    if (!('text' in session)) throw new Error('expected text');
+    expect(session.text).toBe(await downloaded.file.text());
+    expect(invoke.mock.calls.filter((call) => call[1] === 'source.getContent')).toHaveLength(1);
+    await catalog.disable(id);
+    expect(registry.getSourceStream!(id)).toBeUndefined();
+    await expect(port.open(item.key.remoteId, signal())).rejects.toThrow();
+  });
   it('feeds real guest TXT bytes through the existing registry and document-series assembler', async () => {
     const { catalog, registry, id } = await setup('text-catalog');
     const works = await registry.listExternalSource(id, context, {}, signal());

@@ -164,6 +164,7 @@ export async function registerExtensionPackageRoutes(
       await catalog.refresh();
       return {
         sourceStreaming: true,
+        sourceTextStreaming: true,
         preparedImageImports: Boolean(stageImageImport),
         preparedDocumentImports: Boolean(documentImports),
         packages: await store.list(),

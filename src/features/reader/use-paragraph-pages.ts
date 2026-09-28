@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { Paragraph } from '../../domain/types';
-import type { ReaderRepository } from '../../repositories/reader-repository';
+import type { ReaderBodyRepository } from '../../repositories/reader-repository';
 import { PARAGRAPHS_PER_PAGE } from '../../repositories/reader-defaults';
 import { ParagraphPageCache } from './paragraph-page-cache';
 
@@ -50,7 +50,7 @@ export class ParagraphPageCacheOwner {
 }
 
 export function useParagraphPages(
-  repository: ReaderRepository,
+  repository: ReaderBodyRepository,
   chapterId: string,
   paragraphCount: number,
 ): ParagraphPagesController {

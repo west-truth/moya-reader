@@ -78,7 +78,11 @@ export function useAutoScroll(
       /* Optional preference. */
     }
   };
-  const flow = viewport.current?.flow;
+  // Replacing a chapter temporarily detaches its viewport. Keep the chosen mode
+  // while readiness pauses motion; only a real flow switch should stop reading.
+  const knownFlow = useRef(viewport.current?.flow);
+  const flow = viewport.current?.flow ?? knownFlow.current;
+  if (viewport.current?.flow) knownFlow.current = viewport.current.flow;
   const supportedModes =
     flow === 'paginated'
       ? kind === 'comic'

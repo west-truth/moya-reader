@@ -4,7 +4,7 @@ import { sentenceRanges } from '@noveldesk/text-core/sentence-boundaries';
 import { SkipBack, SkipForward } from 'lucide-react';
 import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type MutableRefObject } from 'react';
 import type { Chapter, Novel, Paragraph, ReaderAnchor, ReaderSettings } from '../../domain/types';
-import type { ReaderRepository } from '../../repositories/reader-repository';
+import type { ReaderBodyRepository } from '../../repositories/reader-repository';
 import type { BookAssetRepository } from '../../repositories/book-asset-repository';
 import { PARAGRAPHS_PER_PAGE } from '../../repositories/reader-defaults';
 import { resolveRestoreReadingPositionTarget } from '../../reader/reading-position';
@@ -63,13 +63,14 @@ export type ReaderRuntimeFlow = 'scroll' | 'paginated';
 export type ReaderAnchorPlacement = 'contain' | 'page-start' | 'previous-page';
 
 export interface ReaderViewportProps {
-  readonly repository: ReaderRepository;
+  readonly repository: ReaderBodyRepository;
   readonly novel: Pick<Novel, 'id' | 'title' | 'totalChapters' | 'activeContentRevisionId' | 'format'>;
   readonly chapter: Chapter;
   readonly chapters: readonly Chapter[];
   readonly settings: ReaderSettings;
   readonly readingFlow: ReaderRuntimeFlow;
   readonly pageTransitionPending?: boolean;
+  readonly navigationBusy?: boolean;
   readonly mode: ReaderMode;
   readonly ttsIndex?: number;
   readonly search: ReaderSearchController;
@@ -247,6 +248,7 @@ function VirtualizedReaderViewportComponent({
   onDocumentLink,
   assetRepository,
   isActive,
+  navigationBusy,
   positionPersistence,
 }: ReaderViewportLayerProps) {
   const rootRef = useRef<HTMLDivElement>(null);
@@ -444,6 +446,7 @@ function VirtualizedReaderViewportComponent({
 
   const goChapter = useCallback(
     async (direction: -1 | 1, openAtEnd = false) => {
+      if (navigationBusy) return;
       const next = chapters.find((candidate) => candidate.index === chapter.index + direction);
       if (!next) return;
       if (!openAtEnd) {
@@ -465,14 +468,14 @@ function VirtualizedReaderViewportComponent({
         },
       });
     },
-    [chapter.index, chapters, novel.id, screenHandle],
+    [chapter.index, chapters, novel.id, screenHandle, navigationBusy],
   );
   const nextChapter = chapters.find((candidate) => candidate.index === chapter.index + 1);
   const scrollChapterBoundary = useScrollChapterBoundary({
     rootRef,
     contentRef: documentRef,
     chapterId: chapter.id,
-    enabled: isActive && !opening && Boolean(nextChapter),
+    enabled: isActive && !opening && !navigationBusy && Boolean(nextChapter),
     onNextChapter: () => goChapter(1),
   });
 

@@ -1,3 +1,5 @@
+import { isTextStream } from '../../external-sources/source-text-stream';
+import type { SourceTextReaderOptions } from '../external-sources/SourceTextStreamReader';
 import { BookFileFacts } from '../library/BookFileFacts';
 import { useSourceStreamNavigation } from './use-source-stream-navigation';
 import { sourceReadingPreferences } from '../../external-sources/source-reading-preferences';
@@ -64,6 +66,7 @@ import type {
 } from './useExternalSourceController';
 
 export interface SourceHubScreenProps {
+  readonly textReader?: SourceTextReaderOptions;
   readonly controller: ExternalSourceController;
   readonly library: LibraryScreenProps;
   readonly openSourceSettings: () => void;
@@ -510,6 +513,7 @@ function SourceItemCard({
 }
 
 export default function SourceHubScreen({
+  textReader,
   controller,
   library,
   openSourceSettings,
@@ -608,10 +612,15 @@ export default function SourceHubScreen({
     const nextItem = streamNavigation.nextItem;
     return (
       <SourceStreamReader
+        textReader={textReader}
         fromStart={controller.streaming.fromStart}
         historyKey={controller.streaming.historyKey ?? externalItemKeyId(item.key)}
         title={item.title}
-        profileKey={controller.streaming.historyKey ?? externalItemKeyId(item.key)}
+        profileKey={
+          isTextStream(port)
+            ? JSON.stringify([item.key.connectorId, item.key.accountConnectionId, item.collection?.remoteId])
+            : (controller.streaming.historyKey ?? externalItemKeyId(item.key))
+        }
         nextEpisode={
           nextItem && controller.canStreamItem?.(nextItem)
             ? {
@@ -624,6 +633,7 @@ export default function SourceHubScreen({
         port={port}
         onClose={() => controller.closeStream?.()}
         onSave={() => (controller.saveStream ?? controller.importItem)(item)}
+        onTextPosition={(position) => controller.saveTextStreamPosition?.(item, position) ?? Promise.resolve()}
         onPageSettled={(page, count) => controller.saveStreamPosition?.(item, page, count)}
         saved={
           task?.phase === 'complete' ||

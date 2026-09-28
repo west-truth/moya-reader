@@ -1,3 +1,5 @@
+import { PARAGRAPHS_PER_PAGE } from '../../repositories/reader-defaults';
+import { isTextStream, type SourceReadingPort } from '../../external-sources/source-text-stream';
 import { savedFirstSourceStream } from '../../external-sources/saved-source-stream';
 import { sourceReadingPreferences } from '../../external-sources/source-reading-preferences';
 import { taskProgressPercent } from '../../components/task-progress';
@@ -265,12 +267,16 @@ export interface ExternalSourceController {
   readonly streamingBookId?: string;
   readonly streaming?: {
     item: ExternalSourceItemView;
-    port: import('../../external-sources/source-stream').SourceStreamPort;
+    port: SourceReadingPort;
     historyKey?: string;
     fromStart?: boolean;
   };
   closeStream?(): void;
   openStreamItem?(item: ExternalSourceItemView): Promise<void>;
+  saveTextStreamPosition?(
+    item: ExternalSourceItemView,
+    position: { paragraphIndex: number; offset: number; textHash: string; count: number },
+  ): Promise<void>;
   saveStream?(item: ExternalSourceItemView): Promise<void>;
   saveStreamPosition?(item: ExternalSourceItemView, page: number, count: number): Promise<void>;
   canStreamItem?(item: ExternalSourceItemView): boolean;
@@ -317,6 +323,7 @@ export interface ExternalSourceNavigationSnapshot {
 }
 
 export interface UseExternalSourceControllerOptions {
+  saveTextPosition?: import('../../repositories/reader-repository').ReaderRepository['saveReadingPosition'];
   getParagraphPage?: import('../../repositories/reader-repository').ReaderRepository['getParagraphPage'];
   saveStreamPosition?(pageIndex: number, chapter: Chapter, novel: Novel): Promise<void>;
   readonly downloadPolicy?: import('../../domain/types').DownloadPolicy;
@@ -3447,8 +3454,46 @@ export function useExternalSourceController(options: UseExternalSourceController
     const port = optionsRef.current.registry.getSourceStream?.(item.key.connectorId as ExtensionContributionId);
     if (!port) return false;
     const { assets, getParagraphPage } = optionsRef.current;
+    const textPort: SourceReadingPort =
+      isTextStream(port) && getParagraphPage
+        ? {
+            kind: 'text',
+            open: async (remoteId, signal) => {
+              const current = optionsRef.current;
+              const link = (await current.state.listLinks(item.key.connectorId)).find(
+                (candidate) =>
+                  !candidate.pendingImport &&
+                  externalItemKeyId(candidate.source) === externalItemKeyId({ ...item.key, remoteId }),
+              );
+              signal.throwIfAborted();
+              if (!link) return port.open(remoteId, signal);
+              const novel = await current.getNovel(link.localBookId);
+              if (!novel || novel.deletedAt) throw new Error('저장된 회차를 찾을 수 없습니다.');
+              const sectionId = externalItemSectionId({ ...item, key: { ...item.key, remoteId } });
+              const chapters = (await current.listChapters(novel.id))
+                .filter((chapter) => chapter.documentSectionId === sectionId)
+                .sort((a, b) => a.index - b.index);
+              if (!chapters.length) throw new Error('저장된 회차 본문을 찾을 수 없습니다.');
+              const text: string[] = [];
+              for (const chapter of chapters) {
+                for (
+                  let pageIndex = 0;
+                  pageIndex < Math.ceil(chapter.paragraphCount / PARAGRAPHS_PER_PAGE);
+                  pageIndex++
+                ) {
+                  signal.throwIfAborted();
+                  const page = await getParagraphPage(chapter.id, pageIndex, signal);
+                  if (!page) throw new Error('저장된 회차 본문이 누락됐습니다.');
+                  text.push(...page.paragraphs.map((p) => p.text));
+                }
+              }
+              signal.throwIfAborted();
+              return { text: text.join('\n\n') };
+            },
+          }
+        : port;
     const savedPort =
-      assets && getParagraphPage
+      !isTextStream(port) && assets && getParagraphPage
         ? savedFirstSourceStream(port, {
             assets,
             getParagraphPage,
@@ -3470,7 +3515,7 @@ export function useExternalSourceController(options: UseExternalSourceController
               };
             },
           })
-        : port;
+        : textPort;
     setStreaming((current) => ({
       item,
       fromStart,
@@ -4457,6 +4502,49 @@ export function useExternalSourceController(options: UseExternalSourceController
             if (!item.release || !beginStream(item, true)) throw new Error('이 회차를 바로 열 수 없습니다.');
           }
         : undefined,
+    saveTextStreamPosition: (item, position) => {
+      const run = async () => {
+        const current = optionsRef.current;
+        if (!current.getParagraphPage || !current.saveTextPosition) return;
+        const link = (await current.state.listLinks(item.key.connectorId)).find(
+          (link) => !link.pendingImport && externalItemKeyId(link.source) === externalItemKeyId(item.key),
+        );
+        if (!link) return;
+        const novel = await current.getNovel(link.localBookId);
+        if (!novel || novel.deletedAt) return;
+        const chapters = (await current.listChapters(novel.id))
+          .filter((chapter) => chapter.documentSectionId === externalItemSectionId(item))
+          .sort((a, b) => a.index - b.index);
+        if (chapters.reduce((sum, c) => sum + c.paragraphCount, 0) !== position.count) return;
+        let index = position.paragraphIndex;
+        for (const chapter of chapters) {
+          if (index > chapter.paragraphCount) {
+            index -= chapter.paragraphCount;
+            continue;
+          }
+          const page = await current.getParagraphPage(chapter.id, Math.floor((index - 1) / PARAGRAPHS_PER_PAGE));
+          const paragraph = page?.paragraphs.find((p) => p.index === index);
+          if (!paragraph || paragraph.textHash !== position.textHash) return;
+          await current.saveTextPosition({
+            novelId: novel.id,
+            expectedContentRevisionId: novel.activeContentRevisionId,
+            chapterId: chapter.id,
+            documentSectionId: chapter.documentSectionId,
+            paragraphIndex: index,
+            paragraphId: paragraph.id,
+            offsetInParagraph: position.offset,
+            chapterProgress: (index - 1) / Math.max(1, chapter.paragraphCount),
+            scrollTop: 0,
+          });
+          break;
+        }
+      };
+      const pending = streamPositionWrites.current.then(run);
+      streamPositionWrites.current = pending.catch(() =>
+        optionsRef.current.notify('읽던 위치를 저장하지 못했습니다.', 'warning'),
+      );
+      return streamPositionWrites.current;
+    },
     saveStreamPosition: (item, page, count) => {
       const run = async () => {
         const current = optionsRef.current;

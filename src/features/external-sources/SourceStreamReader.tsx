@@ -1,3 +1,8 @@
+import { isTextStream, type SourceReadingPort } from '../../external-sources/source-text-stream';
+import type { SourceTextReaderOptions } from './SourceTextStreamReader';
+const SourceTextStreamReader = lazy(() =>
+  import('./SourceTextStreamReader').then((module) => ({ default: module.SourceTextStreamReader })),
+);
 import { packageOperationMessage } from '../../extensions/packages/package-operation-error';
 import { Suspense, lazy, useEffect, useMemo, useRef, useState } from 'react';
 import { ArrowLeft, RefreshCw } from 'lucide-react';
@@ -10,7 +15,7 @@ import { readSourceStreamPosition, saveSourceStreamPosition } from '../../extern
 import { sourceStreamDocument } from './source-stream-document';
 import { stableId } from '../../domain/hash';
 
-export function SourceStreamReader({
+function ComicStreamReader({
   title,
   remoteId,
   historyKey = remoteId,
@@ -26,23 +31,7 @@ export function SourceStreamReader({
   next,
   nextEpisode,
   navigationBusy,
-}: {
-  title: string;
-  remoteId: string;
-  historyKey?: string;
-  profileKey?: string;
-  fromStart?: boolean;
-  port: SourceStreamPort;
-  onClose(): void;
-  onSave(): Promise<void>;
-  onPageSettled?(page: number, count: number): void | Promise<void>;
-  saved?: boolean;
-  saveBusy?: boolean;
-  previous?: (isCurrent?: () => boolean) => Promise<void>;
-  next?: (isCurrent?: () => boolean) => Promise<void>;
-  nextEpisode?: { remoteId: string; title: string };
-  navigationBusy?: boolean;
-}) {
+}: Omit<SourceStreamReaderProps, 'port'> & { port: SourceStreamPort }) {
   const [preferences] = useState(sourceReadingPreferences);
   const buffer = useMemo(() => new SourceStreamBuffer(port), [port]);
   const [opened, setOpened] = useState<{
@@ -232,4 +221,40 @@ export function SourceStreamReader({
       </Suspense>
     </>
   );
+}
+
+export type SourceStreamReaderProps = {
+  title: string;
+  remoteId: string;
+  historyKey?: string;
+  profileKey?: string;
+  fromStart?: boolean;
+  port: SourceReadingPort;
+  textReader?: SourceTextReaderOptions;
+  onTextPosition?: (position: {
+    paragraphIndex: number;
+    offset: number;
+    textHash: string;
+    count: number;
+  }) => Promise<void>;
+  onClose(): void;
+  onSave(): Promise<void>;
+  onPageSettled?(page: number, count: number): void | Promise<void>;
+  saved?: boolean;
+  saveBusy?: boolean;
+  previous?: (isCurrent?: () => boolean) => Promise<void>;
+  next?: (isCurrent?: () => boolean) => Promise<void>;
+  nextEpisode?: { remoteId: string; title: string };
+  navigationBusy?: boolean;
+};
+export function SourceStreamReader(props: SourceStreamReaderProps) {
+  if (isTextStream(props.port)) {
+    if (!props.textReader) throw new Error('텍스트 리더 설정을 불러오지 못했습니다.');
+    return (
+      <Suspense fallback={<div role="status">리더 불러오는 중</div>}>
+        <SourceTextStreamReader {...props} port={props.port} textReader={props.textReader} />
+      </Suspense>
+    );
+  }
+  return <ComicStreamReader {...props} port={props.port} />;
 }

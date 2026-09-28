@@ -45,6 +45,32 @@ function compatibilityInventory(
 }
 const context = { brokers: { get: () => undefined } };
 describe('remote package inventory and source client', () => {
+  it('negotiates plain text streaming independently of image compatibility formats', async () => {
+    const snapshot = inventory();
+    const descriptor = {
+      ...snapshot.sources[0]!.descriptor,
+      schemaVersion: 2,
+      seriesProfile: { kind: 'document_series', format: 'txt' },
+    };
+    let supported = false;
+    const request = vi.fn(async () => ({ ...snapshot, sourceTextStreaming: supported, sources: [{ descriptor }] }));
+    const requestBlob = vi.fn(async () => ({ blob: new Blob(['소설 본문'], { type: 'text/plain' }) }));
+    const client = new RemoteInstalledExtensions({ request, requestBlob } as unknown as RemoteApiClient);
+    await client.refresh();
+    expect(client.getSourceStream('org.example.catalog.source')).toBeUndefined();
+    supported = true;
+    await client.refresh();
+    const port = client.getSourceStream('org.example.catalog.source')!;
+    const signal = new AbortController().signal;
+    expect(await port.open('episode', signal)).toEqual({ text: '소설 본문' });
+    expect(requestBlob).toHaveBeenCalledWith(
+      expect.stringMatching(/\/download$/),
+      expect.objectContaining({ method: 'POST', signal }),
+      expect.any(Number),
+    );
+    requestBlob.mockResolvedValueOnce({ blob: new Blob(['']) });
+    await expect(port.open('empty', signal)).rejects.toThrow('invalid_source_content');
+  });
   it('reloads a rejected image through the authenticated stream endpoint, then resumes normal caching', async () => {
     const snapshot = inventory();
     const descriptor = {
@@ -62,6 +88,7 @@ describe('remote package inventory and source client', () => {
     await client.refresh();
     const signal = new AbortController().signal;
     const session = await client.getSourceStream('org.example.catalog.source')!.open('episode', signal);
+    if ('text' in session) throw new Error('expected image stream');
     await session.loadPage(0, signal);
     expect(requestBlob).toHaveBeenLastCalledWith(expect.stringMatching(/\/session\/0$/), { signal }, 60000);
     session.invalidatePage?.(0);

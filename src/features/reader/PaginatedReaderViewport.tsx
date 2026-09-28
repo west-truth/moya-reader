@@ -3,7 +3,7 @@ import { AutoReadingPresentation } from './auto-reading-modes';
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
 import type { Paragraph, ReaderAnchor, ReaderPageBoundary } from '../../domain/types';
 import { PARAGRAPHS_PER_PAGE } from '../../repositories/reader-defaults';
-import type { ReaderRepository } from '../../repositories/reader-repository';
+import type { ReaderBodyRepository } from '../../repositories/reader-repository';
 import {
   loadReaderPageMap,
   pruneReaderPageMaps,
@@ -42,7 +42,7 @@ const sharedParagraphPages = new LruMap<string, readonly Paragraph[]>(SHARED_PAR
 const sharedParagraphPageLoads = new Map<string, Promise<readonly Paragraph[]>>();
 
 async function loadSharedParagraphPage(
-  repository: ReaderRepository,
+  repository: ReaderBodyRepository,
   contentRevisionId: string,
   chapterId: string,
   pageIndex: number,
@@ -574,6 +574,7 @@ export function PaginatedReaderViewport(
 
   const goChapter = useCallback(
     async (direction: -1 | 1) => {
+      if (props.navigationBusy) return;
       const next = chapters.find((candidate) => candidate.index === chapter.index + direction);
       if (!next) return;
       await screenHandle.getActions().openChapter(
@@ -596,7 +597,7 @@ export function PaginatedReaderViewport(
           : undefined,
       );
     },
-    [chapter.index, chapters, novel.id, screenHandle],
+    [chapter.index, chapters, novel.id, screenHandle, props.navigationBusy],
   );
   const pageJump = useCallback(
     (direction: -1 | 1) => {

@@ -222,6 +222,32 @@ describe('automatic text scrolling', () => {
     expect(controller.running).toBe(false);
   });
 
+  it('keeps automatic reading through the temporary viewport gap between chapters', async () => {
+    viewport.current = { ...viewport.current, flow: 'scroll' };
+    render();
+    const open = vi.fn(async () => undefined);
+    next = { scope: 'book:2', open };
+    render();
+    act(() => controller.setContinueChapter(true));
+    act(() => controller.start());
+    step.mockReturnValue('end');
+    advance(20);
+    await act(async () => undefined);
+    expect(open).toHaveBeenCalledTimes(1);
+    const old = viewport.current;
+    viewport.current = undefined as unknown as ReaderViewportApi;
+    ready = false;
+    render();
+    expect(controller.running).toBe(true);
+    scope = 'book:2';
+    viewport.current = old;
+    step.mockReturnValue('moving');
+    ready = true;
+    render();
+    advance(4);
+    expect(controller.running).toBe(true);
+    expect(open).toHaveBeenCalledTimes(1);
+  });
   it('requires a stable end and opens the opted-in next chapter exactly once, then continues', async () => {
     const open = vi.fn(async () => undefined);
     next = { scope: 'book:2', open };

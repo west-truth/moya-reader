@@ -1,3 +1,4 @@
+import type { SourceTextReaderOptions } from '../external-sources/SourceTextStreamReader';
 import { SaveDiscoveryList } from '../discovery/SaveDiscoveryList';
 import type { DiscoveryController } from '../discovery/useDiscoveryController';
 import type { ExtensionContributionId } from '@noveldesk/extension-contracts';
@@ -27,6 +28,7 @@ const SourceHubScreen = lazy(() => import('../external-sources/SourceHubScreen')
 export interface BookWorkspaceScreensProps {
   readonly discovery?: DiscoveryController;
   readonly libraryNotice?: ReactNode;
+  readonly textReader?: SourceTextReaderOptions;
   readonly controller: BookWorkspaceController;
   readonly state: BookWorkspaceState;
   readonly projection: BookWorkspaceProjection;
@@ -68,6 +70,7 @@ export interface BookWorkspaceScreensProps {
 export function BookWorkspaceScreens({
   discovery,
   libraryNotice,
+  textReader,
   controller,
   state,
   projection,
@@ -409,6 +412,7 @@ export function BookWorkspaceScreens({
       {state.view === 'library' && externalSources.open && (
         <Suspense fallback={null}>
           <SourceHubScreen
+            textReader={textReader}
             controller={externalSources}
             library={{ model: libraryModel, actions: libraryActions }}
             openSourceSettings={openExternalSourceSettings}

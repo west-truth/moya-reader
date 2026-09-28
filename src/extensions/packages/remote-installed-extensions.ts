@@ -1,3 +1,4 @@
+import { MAX_SOURCE_TEXT_BYTES } from '../../../packages/extension-runtime/content-limits.mjs';
 import { sourceReadingPreferences } from '../../external-sources/source-reading-preferences';
 import { withRequestProgress } from '../../services/remote/request-progress';
 import { SessionCoverCache } from '../../external-sources/session-cover-cache';
@@ -33,6 +34,7 @@ import {
 } from './apk-extension-manager';
 type Inventory = Pick<InstalledExtensionsSnapshot, 'packages' | 'sources' | 'errors'> & {
   sourceStreaming?: boolean;
+  sourceTextStreaming?: boolean;
   preparedImageImports?: boolean;
   preparedDocumentImports?: boolean;
 };
@@ -78,9 +80,40 @@ export class RemoteInstalledExtensions implements InstalledExtensionManager {
   readonly mangayomi: import('./apk-extension-manager').ApkExtensionManager;
   readonly target = 'server' as const;
   private sourceStreaming = false;
+  private sourceTextStreaming = false;
   getSourceStream(
     id: ExtensionContributionId,
-  ): import('../../external-sources/source-stream').SourceStreamPort | undefined {
+  ): import('../../external-sources/source-text-stream').SourceReadingPort | undefined {
+    const profile = this.snapshot.sources.find((source) => source.descriptor.id === id)?.descriptor;
+    if (
+      this.sourceTextStreaming &&
+      profile?.schemaVersion === 2 &&
+      profile.seriesProfile?.kind === 'document_series' &&
+      profile.seriesProfile.format === 'txt'
+    ) {
+      return {
+        kind: 'text',
+        open: async (remoteId, signal) => {
+          const { blob } = await this.api
+            .requestBlob(
+              `/extensions/sources/${encodeURIComponent(id)}/download`,
+              {
+                method: 'POST',
+                body: JSON.stringify({ key: { connectorId: id, remoteId }, fileName: 'chapter.txt' }),
+                headers: { 'Content-Type': 'application/json' },
+                signal,
+              },
+              SOURCE_DOWNLOAD_TIMEOUT_MS,
+            )
+            .catch(translatePackageOperationError);
+          if (blob.size > MAX_SOURCE_TEXT_BYTES) throw new Error('source_body_limit');
+          const text = await blob.text();
+          signal.throwIfAborted();
+          if (!text.trim() || text.includes('\0')) throw new Error('invalid_source_content');
+          return { text };
+        },
+      };
+    }
     if (
       !this.sourceStreaming ||
       !this.snapshot.sources.some(
@@ -429,6 +462,7 @@ export class RemoteInstalledExtensions implements InstalledExtensionManager {
         if (!value || !Array.isArray(value.packages) || !Array.isArray(value.sources) || !Array.isArray(value.errors))
           throw new Error('invalid_inventory');
         this.sourceStreaming = value.sourceStreaming === true;
+        this.sourceTextStreaming = value.sourceTextStreaming === true;
         this.preparedImageImports = value.preparedImageImports === true;
         this.preparedDocumentImports = value.preparedDocumentImports === true;
         this.publish({ ...value, available: true });
@@ -501,6 +535,7 @@ export class RemoteInstalledExtensions implements InstalledExtensionManager {
       )
         throw new Error('package_install_unconfirmed');
       this.sourceStreaming = value.sourceStreaming === true;
+      this.sourceTextStreaming = value.sourceTextStreaming === true;
       this.preparedImageImports = value.preparedImageImports === true;
       this.preparedDocumentImports = value.preparedDocumentImports === true;
       this.publish({ ...value, available: true });

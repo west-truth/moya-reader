@@ -70,6 +70,7 @@ function novel(overrides: Partial<Novel> = {}): Novel {
 }
 
 async function createHarness(input: {
+  saveTextPosition?: import('../../repositories/reader-repository').ReaderRepository['saveReadingPosition'];
   getParagraphPage?: import('../../repositories/reader-repository').ReaderRepository['getParagraphPage'];
   saveStreamPosition?: (pageIndex: number, chapter: Chapter, novel: Novel) => Promise<void>;
   downloadedContent: string;
@@ -285,6 +286,7 @@ async function createHarness(input: {
   }) {
     controller = useExternalSourceController({
       saveStreamPosition: input.saveStreamPosition,
+      saveTextPosition: input.saveTextPosition,
       getParagraphPage: input.getParagraphPage,
       readingTarget,
       registry,
@@ -2932,11 +2934,122 @@ describe('source streaming connection', () => {
       expect(h.openNovel).not.toHaveBeenCalled();
       const signal = new AbortController().signal;
       const session = await h.controller.streaming!.port.open(item.key.remoteId, signal);
+      if ('text' in session) throw new Error('expected image stream');
       expect(await session.loadPage(0, signal)).toBe(blob);
       expect(remote.open).not.toHaveBeenCalled();
       expect(h.importFile).not.toHaveBeenCalled();
       session.close();
     } finally {
+      await act(async () => h.renderer.unmount());
+    }
+  });
+  it('reads saved text first and writes matching paragraph positions without leaving streaming', async () => {
+    const chapters: Chapter[] = [];
+    const saveTextPosition = vi.fn(async () => undefined);
+    const getParagraphPage = vi.fn(
+      async () =>
+        ({
+          paragraphs: [
+            { id: 'p1', index: 1, text: '첫 문단', textHash: 'hash1' },
+            { id: 'p2', index: 2, text: '다음 문단', textHash: 'hash2' },
+          ],
+        }) as import('../../domain/types').ParagraphPage,
+    );
+    const h = await createHarness({
+      downloadedContent: '본문',
+      serial: true,
+      documentSerial: true,
+      chapters,
+      getParagraphPage,
+      saveTextPosition,
+      assets: {} as BookAssetRepository,
+    });
+    const remote = { kind: 'text' as const, open: vi.fn(async () => ({ text: 'remote' })) };
+    h.registry.getSourceStream = () => remote;
+    const item = h.controller.items[0];
+    chapters.push(testChapter(1, { documentSectionId: externalItemSectionId(item), paragraphCount: 2 }));
+    try {
+      await act(async () => h.controller.openStreamItem!(item));
+      expect(await h.controller.streaming!.port.open(item.key.remoteId, new AbortController().signal)).toEqual({
+        text: '첫 문단\n\n다음 문단',
+      });
+      expect(remote.open).not.toHaveBeenCalled();
+      await h.controller.saveTextStreamPosition!(item, { paragraphIndex: 2, offset: 2, textHash: 'hash2', count: 2 });
+      expect(saveTextPosition).toHaveBeenCalledWith(
+        expect.objectContaining({
+          chapterId: chapters[0].id,
+          paragraphId: 'p2',
+          paragraphIndex: 2,
+          offsetInParagraph: 2,
+        }),
+      );
+      await h.controller.saveTextStreamPosition!(item, { paragraphIndex: 2, offset: 2, textHash: 'changed', count: 2 });
+      expect(saveTextPosition).toHaveBeenCalledTimes(1);
+      expect(h.openNovel).not.toHaveBeenCalled();
+    } finally {
+      await act(async () => h.renderer.unmount());
+    }
+  });
+  it.each([0, 1, 3])('keeps %i whole following text downloads enabled during streaming', async (count) => {
+    const h = await createDocumentHarness(5);
+    h.registry.getSourceStream = () => ({ kind: 'text', open: vi.fn(async () => ({ text: '본문' })) });
+    try {
+      await act(async () => h.controller.setAutoDownloadNext?.(false));
+      await act(async () => h.controller.importAndOpen(h.controller.items[0]));
+      if (count) {
+        await act(async () => h.controller.setAutoDownloadNextCount?.(count as 1 | 3));
+        await act(async () => h.controller.setAutoDownloadNext?.(true));
+        await act(async () => {
+          await vi.waitFor(() => expect(h.importFile).toHaveBeenCalledTimes(count));
+        });
+        await act(async () => {
+          await vi.waitFor(() => expect(h.controller.importBusy).toBe(false));
+        });
+      }
+      expect(vi.mocked(h.registry.downloadExternalSource).mock.calls.map((call) => call[2].key.remoteId)).toEqual(
+        ['work-2', 'work-3', 'work-4'].slice(0, count),
+      );
+      expect(h.controller.streaming?.item.key.remoteId).toBe('work-1');
+      expect(h.openNovel).not.toHaveBeenCalled();
+    } finally {
+      await act(async () => h.renderer.unmount());
+    }
+  });
+  it('queues rapid streamed text saves behind automatic downloads without changing the visible episode', async () => {
+    const h = await createDocumentHarness(5);
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const download = h.download.getMockImplementation()!;
+    h.download.mockImplementation(async (...args) => {
+      if (args[2].key.remoteId === 'work-2') await gate;
+      return download(...args);
+    });
+    h.registry.getSourceStream = () => ({ kind: 'text', open: vi.fn(async () => ({ text: '본문' })) });
+    try {
+      await act(async () => h.controller.setAutoDownloadNext?.(false));
+      await act(async () => h.controller.importAndOpen(h.controller.items[0]));
+      await act(async () => h.controller.setAutoDownloadNextCount?.(1));
+      await act(async () => h.controller.setAutoDownloadNext?.(true));
+      await act(async () => {
+        await vi.waitFor(() => expect(h.download).toHaveBeenCalledTimes(1));
+      });
+      for (const index of [1, 2, 3]) {
+        await act(async () => h.controller.importAndOpen(h.controller.items[index]));
+        expect(h.controller.streaming?.item.key.remoteId).toBe(`work-${index + 1}`);
+        await act(async () => h.controller.saveStream!(h.controller.items[index]));
+      }
+      await act(async () => h.controller.setAutoDownloadNext?.(false));
+      await act(async () => {
+        release();
+        await vi.waitFor(() => expect(h.controller.importBusy).toBe(false));
+      });
+      expect(h.download.mock.calls.map((call) => call[2].key.remoteId)).toEqual(['work-2', 'work-3', 'work-4']);
+      expect(h.controller.streaming?.item.key.remoteId).toBe('work-4');
+      expect(h.openNovel).not.toHaveBeenCalled();
+    } finally {
+      release();
       await act(async () => h.renderer.unmount());
     }
   });

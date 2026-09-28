@@ -5,7 +5,7 @@ import { DETAIL_FRESH_MS, sourceCachePolicy, sourceListIdentity } from './cache-
 import { SessionCoverCache } from './session-cover-cache';
 import type { ExternalSourceContributionDescriptorV2 } from '@noveldesk/extension-contracts';
 import type { SourceWork } from '@noveldesk/extension-contracts/source-sdk';
-import { MAX_SOURCE_CONTENT_BYTES } from '../../packages/extension-runtime/content-limits.mjs';
+import { MAX_SOURCE_CONTENT_BYTES, MAX_SOURCE_TEXT_BYTES } from '../../packages/extension-runtime/content-limits.mjs';
 import type { PackageRuntimeCatalog } from '../extensions/packages/package-runtime-catalog';
 import type { ExternalSourceProviderRegistryPort } from './app-external-source-registry';
 import type {
@@ -61,6 +61,35 @@ export class InstalledPackageSourceRegistry<
     };
     changed();
     this.unsubscribe = catalog.subscribe(changed);
+  }
+
+  getSourceStream(id: string): import('./source-text-stream').SourceTextStreamPort | undefined {
+    const profile = this.catalog.getSource(id)?.descriptor.seriesProfile;
+    if (profile?.kind !== 'document_series' || profile.format !== 'txt') return undefined;
+    return { kind: 'text', open: (remoteId, signal) => this.textContent(id, remoteId, signal) };
+  }
+
+  private async textContent(id: string, remoteId: string, signal: AbortSignal) {
+    const generation = this.catalog.getSource(id)?.generation;
+    const [workId, releaseId] = parseRelease(remoteId);
+    const result = await this.reads.read(
+      JSON.stringify(['text', id, generation, remoteId]),
+      120_000,
+      120_000,
+      signal,
+      false,
+      async (shared) => {
+        const { result, assets } = await this.catalog.invoke(id, 'source.getContent', { workId, releaseId }, shared);
+        if (result.kind !== 'text') throw new Error('unsupported_source_content');
+        const blob = assets.get(result.asset.handle);
+        if (!blob || blob.size > MAX_SOURCE_TEXT_BYTES) throw new Error('source_body_limit');
+        const text = await blob.text();
+        if (!text.trim() || text.includes('\0')) throw new Error('invalid_source_content');
+        if (this.catalog.getSource(id)?.generation !== generation) throw new Error('package_generation_changed');
+        return { text };
+      },
+    );
+    return result.value;
   }
 
   getExternalSources() {
@@ -231,6 +260,24 @@ export class InstalledPackageSourceRegistry<
       (ref.context?.connectionGeneration && ref.context.connectionGeneration !== source.generation)
     )
       throw new Error('source_connection_mismatch');
+    if (
+      source.descriptor.seriesProfile?.kind === 'document_series' &&
+      source.descriptor.seriesProfile.format === 'txt'
+    ) {
+      const { text } = await this.textContent(id, ref.key.remoteId, signal);
+      const file = new File([text], fileName(ref.fileName.replace(/\.txt$/i, ''), 'txt'), { type: 'text/plain' });
+      if (file.size > (ref.context?.maxBytes ?? MAX_SOURCE_CONTENT_BYTES)) throw new Error('source_body_limit');
+      return {
+        content: {
+          kind: 'document' as const,
+          file,
+          format: 'txt' as const,
+          encoding: 'utf-8' as const,
+          chapterSplitMode: 'single' as const,
+        },
+        remoteRevision: ref.remoteRevision,
+      };
+    }
     const [workId, releaseId] = parseRelease(ref.key.remoteId);
     const { result, assets } = await this.catalog.invoke(id, 'source.getContent', { workId, releaseId }, signal, {
       onProgress,
