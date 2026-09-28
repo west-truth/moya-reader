@@ -29,7 +29,7 @@ export interface ToastController {
   dismissToast(id: string): void;
 }
 
-/** More toasts than this push the oldest routine ones out; errors stay until read. */
+/** Overflow removes routine messages first; errors and actions keep their allotted time. */
 export const MAX_VISIBLE_TOASTS = 3;
 const TOAST_EXIT_MS = 180;
 const ACTION_TOAST_MS = 8000;
@@ -101,7 +101,7 @@ export function useToastController(durationMs = 2800): ToastController {
       const overflow = visible.length + 1 - MAX_VISIBLE_TOASTS;
       if (overflow > 0) {
         visible
-          .filter((toast) => toast.tone !== 'danger')
+          .filter((toast) => toast.tone !== 'danger' && !toast.action)
           .slice(0, overflow)
           .forEach((toast) => dismissToast(toast.id));
       }

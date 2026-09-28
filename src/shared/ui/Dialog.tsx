@@ -74,6 +74,8 @@ export function Dialog({
       ref={backdropRef}
       className={classNames('modal-backdrop', backdropClassName)}
       data-state={closing ? 'closed' : 'open'}
+      {...(closing ? { inert: '' } : {})}
+      aria-hidden={closing || undefined}
       onClick={closeFromBackdrop}
     >
       <section

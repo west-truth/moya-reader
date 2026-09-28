@@ -280,15 +280,19 @@ export function ExternalSourceSettingsPanel({
       setError(true);
     }
   };
-  const filtered = controller.sources.filter(
-    (source) =>
-      `${source.title} ${source.description ?? ''}`.toLocaleLowerCase().includes(query.trim().toLocaleLowerCase()) &&
-      (kind === 'all' || (source.contentKind ?? 'unknown') === kind) &&
-      (language === '*' || (source.lang ?? 'unknown') === language) &&
-      (state === 'all' || (state === 'favorite' ? favorites.includes(source.id) : source.connection.state === state)),
-  );
-  // A handful of sources reads faster as a plain list than through search and filters.
   const filterable = controller.sources.length > SOURCE_FILTER_THRESHOLD;
+  const filtered = !filterable
+    ? controller.sources
+    : controller.sources.filter(
+        (source) =>
+          `${source.title} ${source.description ?? ''}`
+            .toLocaleLowerCase()
+            .includes(query.trim().toLocaleLowerCase()) &&
+          (kind === 'all' || (source.contentKind ?? 'unknown') === kind) &&
+          (language === '*' || (source.lang ?? 'unknown') === language) &&
+          (state === 'all' ||
+            (state === 'favorite' ? favorites.includes(source.id) : source.connection.state === state)),
+      );
   const languages = [
     ...new Set(controller.sources.map((source) => source.lang).filter((lang): lang is string => Boolean(lang))),
   ].sort();

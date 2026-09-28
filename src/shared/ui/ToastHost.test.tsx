@@ -65,6 +65,21 @@ describe('useToastController', () => {
     vi.unstubAllGlobals();
   });
 
+  it('keeps undo available when routine notifications arrive together', () => {
+    vi.useFakeTimers();
+    vi.stubGlobal('window', { setTimeout, clearTimeout });
+    const controller = harness();
+    const undo = { label: '실행 취소', onSelect: vi.fn() };
+    act(() => {
+      controller().showToast('책을 휴지통으로 이동했습니다.', 'info', undo);
+      controller().showToast('동기화 완료');
+      controller().showToast('저장 완료');
+      controller().showToast('새 회차 확인');
+    });
+    expect(controller().toasts.find((toast) => toast.action === undo)?.leaving).not.toBe(true);
+    expect(controller().toasts.filter((toast) => !toast.leaving)).toHaveLength(3);
+  });
+
   it('merges repeated messages and caps how many routine toasts stack up', () => {
     vi.useFakeTimers();
     vi.stubGlobal('window', {

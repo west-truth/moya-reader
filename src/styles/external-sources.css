@@ -1294,7 +1294,10 @@
 .source-release-popover {
   position: fixed;
   z-index: 160;
-  width: 224px;
+  box-sizing: border-box;
+  width: min(224px, calc(100vw - 16px));
+  max-height: calc(100dvh - 16px);
+  overflow-y: auto;
   padding: 5px;
   background: var(--app-surface);
   border: 1px solid var(--border);

@@ -18,13 +18,14 @@ label,
   touch-action: manipulation;
 }
 
+/* Entrance transforms must expire so fixed-position descendants return to viewport coordinates. */
 /* Screen transitions: only the content region moves, sidebar and top bars stay put. */
 [data-screen-motion='forward'] .library-workspace > :last-child {
-  animation: screen-push-in var(--motion-screen) var(--ease-emphasized-decelerate) both;
+  animation: screen-push-in var(--motion-screen) var(--ease-emphasized-decelerate) backwards;
 }
 
 [data-screen-motion='back'] .library-workspace > :last-child {
-  animation: screen-pop-in var(--motion-screen) var(--ease-emphasized-decelerate) both;
+  animation: screen-pop-in var(--motion-screen) var(--ease-emphasized-decelerate) backwards;
 }
 
 [data-screen-motion='fade'] .library-workspace > :last-child {
@@ -33,7 +34,7 @@ label,
 
 /* Inside a source, opening a work is a push even though the hub itself stays mounted. */
 .library-workspace > .source-hub-scroll.is-work-detail {
-  animation: screen-push-in var(--motion-screen) var(--ease-emphasized-decelerate) both;
+  animation: screen-push-in var(--motion-screen) var(--ease-emphasized-decelerate) backwards;
 }
 
 /* Readers hold fixed-position chrome, so they only cross-fade (no transform containing block). */
@@ -71,11 +72,11 @@ label,
 }
 
 .modal {
-  animation: dialog-in var(--motion-base) var(--ease-emphasized-decelerate) both;
+  animation: dialog-in var(--motion-base) var(--ease-emphasized-decelerate) backwards;
 }
 
 .modal-drawer {
-  animation: drawer-in-start var(--motion-slow) var(--ease-emphasized-decelerate) both;
+  animation: drawer-in-start var(--motion-slow) var(--ease-emphasized-decelerate) backwards;
 }
 
 .modal-drawer-layer[data-side='end'] .modal-drawer {
@@ -164,23 +165,22 @@ label,
 /* Menus and popovers grow from the control that opened them. */
 .library-mobile-popover {
   transform-origin: top right;
-  animation: popover-in var(--motion-fast) var(--ease-emphasized-decelerate) both;
+  animation: popover-in var(--motion-fast) var(--ease-emphasized-decelerate) backwards;
 }
 
 .reader-overflow-menu {
   transform-origin: bottom right;
-  animation: popover-in var(--motion-fast) var(--ease-emphasized-decelerate) both;
+  animation: popover-in var(--motion-fast) var(--ease-emphasized-decelerate) backwards;
 }
 
-.source-release-menu,
 .source-release-popover {
   transform-origin: top right;
-  animation: popover-in var(--motion-fast) var(--ease-emphasized-decelerate) both;
+  animation: popover-in var(--motion-fast) var(--ease-emphasized-decelerate) backwards;
 }
 
 .library-mobile-quick-shelves,
 .library-mobile-search {
-  animation: reveal-down var(--motion-fast) var(--ease-emphasized-decelerate) both;
+  animation: reveal-down var(--motion-fast) var(--ease-emphasized-decelerate) backwards;
 }
 
 @keyframes popover-in {
@@ -235,7 +235,7 @@ label,
 @media (max-width: 699px) {
   /* Mobile dialogs are bottom sheets or full-screen pages: slide from the bottom edge. */
   .modal {
-    animation: sheet-in var(--motion-slow) var(--ease-emphasized-decelerate) both;
+    animation: sheet-in var(--motion-slow) var(--ease-emphasized-decelerate) backwards;
   }
 
   .modal-backdrop[data-state='closed'] .modal {
@@ -243,7 +243,7 @@ label,
   }
 
   .reader-footnote-sheet {
-    animation: sheet-in var(--motion-slow) var(--ease-emphasized-decelerate) both;
+    animation: sheet-in var(--motion-slow) var(--ease-emphasized-decelerate) backwards;
   }
 }
 
@@ -255,7 +255,6 @@ label,
   .modal-drawer,
   .library-mobile-popover,
   .reader-overflow-menu,
-  .source-release-menu,
   .source-release-popover,
   .library-mobile-quick-shelves,
   .library-mobile-search,
@@ -268,11 +267,11 @@ label,
 @media (max-width: 699px) {
   /* Settings on phones: category list → page is a push, the back button pops. */
   .reader-settings-body[data-mobile-motion='forward'] .reader-settings-main {
-    animation: screen-push-in var(--motion-screen) var(--ease-emphasized-decelerate) both;
+    animation: screen-push-in var(--motion-screen) var(--ease-emphasized-decelerate) backwards;
   }
 
   .reader-settings-body[data-mobile-motion='back'] .reader-settings-tabs {
-    animation: screen-pop-in var(--motion-screen) var(--ease-emphasized-decelerate) both;
+    animation: screen-pop-in var(--motion-screen) var(--ease-emphasized-decelerate) backwards;
   }
 }
 

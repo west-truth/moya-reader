@@ -20,17 +20,20 @@ export function SourceReleaseMenu({
   const menu = useMenuPopover(open, setOpen);
   useEffect(() => {
     if (!open) return;
-    const close = () => setOpen(false);
+    const close = (event: Event) => {
+      if (event.target instanceof Node && menu.menuRef.current?.contains(event.target)) return;
+      setOpen(false);
+    };
     window.addEventListener('scroll', close, true);
     window.addEventListener('resize', close);
     return () => {
       window.removeEventListener('scroll', close, true);
       window.removeEventListener('resize', close);
     };
-  }, [open]);
+  }, [open, menu.menuRef]);
   const invoke = (action: () => Promise<void> | undefined) => {
     setOpen(false);
-    menu.triggerRef.current?.focus();
+    menu.triggerRef.current?.focus({ preventScroll: true });
     void action()?.catch(() => undefined);
   };
   const canDelete = Boolean(item.localBookId && ['imported', 'update_available'].includes(item.importState));
@@ -56,59 +59,61 @@ export function SourceReleaseMenu({
       >
         <MoreHorizontal size={18} />
       </button>
-      {open && (
-        <div
-          ref={menu.menuRef}
-          role="menu"
-          className="source-release-popover"
-          style={position}
-          onKeyDown={menu.onMenuKeyDown}
-        >
-          <button
-            role="menuitem"
-            type="button"
-            onClick={() => invoke(() => controller.setReleasesRead?.([item], item.readingState !== 'read'))}
+      {open &&
+        createPortal(
+          <div
+            ref={menu.menuRef}
+            role="menu"
+            className="source-release-popover"
+            style={position}
+            onKeyDown={menu.onMenuKeyDown}
           >
-            {item.readingState === 'read' ? <Circle size={16} /> : <Check size={16} />}
-            {item.readingState === 'read' ? '안 읽음으로 변경' : '읽음으로 변경'}
-          </button>
-          <button
-            role="menuitem"
-            type="button"
-            onClick={() => invoke(() => controller.markPreviousReleasesRead?.(item))}
-          >
-            <ListChecks size={16} />
-            이전 회차 모두 읽음
-          </button>
-          <button
-            role="menuitem"
-            type="button"
-            onClick={() => {
-              setOpen(false);
-              setTitle(item.title);
-              setError('');
-              setEditing(true);
-            }}
-          >
-            <Pencil size={16} />
-            제목 수정
-          </button>
-          {canDelete && (
-            <>
-              <hr />
-              <button
-                role="menuitem"
-                type="button"
-                aria-label={`${item.title} 다운로드 삭제`}
-                onClick={() => invoke(() => controller.deleteDownloads([item]))}
-              >
-                <Trash2 size={16} />
-                다운로드 삭제
-              </button>
-            </>
-          )}
-        </div>
-      )}
+            <button
+              role="menuitem"
+              type="button"
+              onClick={() => invoke(() => controller.setReleasesRead?.([item], item.readingState !== 'read'))}
+            >
+              {item.readingState === 'read' ? <Circle size={16} /> : <Check size={16} />}
+              {item.readingState === 'read' ? '안 읽음으로 변경' : '읽음으로 변경'}
+            </button>
+            <button
+              role="menuitem"
+              type="button"
+              onClick={() => invoke(() => controller.markPreviousReleasesRead?.(item))}
+            >
+              <ListChecks size={16} />
+              이전 회차 모두 읽음
+            </button>
+            <button
+              role="menuitem"
+              type="button"
+              onClick={() => {
+                setOpen(false);
+                setTitle(item.title);
+                setError('');
+                setEditing(true);
+              }}
+            >
+              <Pencil size={16} />
+              제목 수정
+            </button>
+            {canDelete && (
+              <>
+                <hr />
+                <button
+                  role="menuitem"
+                  type="button"
+                  aria-label={`${item.title} 다운로드 삭제`}
+                  onClick={() => invoke(() => controller.deleteDownloads([item]))}
+                >
+                  <Trash2 size={16} />
+                  다운로드 삭제
+                </button>
+              </>
+            )}
+          </div>,
+          document.body,
+        )}
       {editing &&
         createPortal(
           <Dialog
