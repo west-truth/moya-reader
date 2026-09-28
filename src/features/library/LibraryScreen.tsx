@@ -1,3 +1,4 @@
+import { LibrarySourceLoading } from './LibrarySourceLoading';
 import { FileText, Library, Play, Plus, RotateCcw, Search, Upload } from 'lucide-react';
 import { useRef, type DragEvent } from 'react';
 import { useNavigationScroll } from '../navigation/navigation-view-state';
@@ -135,6 +136,8 @@ export function LibraryScreen({ model, actions, notice }: LibraryScreenProps) {
       (task) =>
         !importQuery || [task.title, task.fileName].some((value) => value?.toLocaleLowerCase().includes(importQuery)),
     );
+  const sourcePending =
+    model.externalSources.libraryBootstrap && model.externalSources.libraryBootstrap.status !== 'ready';
   return (
     <main
       className={classNames('library-screen', model.drop.active && 'is-drop-active')}
@@ -170,11 +173,13 @@ export function LibraryScreen({ model, actions, notice }: LibraryScreenProps) {
                   <LibraryControls model={model} actions={actions} />
                   {model.collection.visibleBooks.length === 0 &&
                   (model.externalSources.libraryWorks?.length ?? 0) === 0 &&
-                  !hasStandaloneImportTask ? (
+                  !hasStandaloneImportTask &&
+                  !sourcePending ? (
                     <LibraryEmptyState model={model} actions={actions} />
                   ) : (
                     <LibraryBookCollection model={model} actions={actions} />
                   )}
+                  <LibrarySourceLoading model={model} actions={actions} />
                 </>
               )}
             </section>

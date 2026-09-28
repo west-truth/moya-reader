@@ -1,3 +1,4 @@
+import { executeLibraryBatch, type ExternalLibraryBatch } from './library-batch';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { BookMetadataPatch } from '@noveldesk/text-core/library-metadata';
 import type { Novel, Shelf, ShelfMembership } from '../../domain/types';
@@ -126,7 +127,11 @@ export interface LibraryManagementController {
   deleteShelf(shelf: Shelf): Promise<void>;
   setMembership(shelfId: string, bookId: string, included: boolean): Promise<void>;
   saveBookDetails(book: Novel, patch: BookMetadataPatch, cover: CoverDraftAction): Promise<void>;
-  applyBatch(command: BatchLibraryCommand, books: readonly Novel[]): Promise<BatchLibraryReceipt | undefined>;
+  applyBatch(
+    command: BatchLibraryCommand,
+    books: readonly Novel[],
+    external?: ExternalLibraryBatch,
+  ): Promise<BatchLibraryReceipt | undefined>;
   exportSelectedMetadata(books: readonly Novel[]): void;
 }
 
@@ -405,19 +410,17 @@ export function useLibraryManagementController(
           setPanel(undefined);
         }, '책 정보를 저장했습니다.');
       },
-      applyBatch: async (command, books) => {
-        if (!input.catalog || selectedBookIds.size === 0 || busy) return undefined;
+      applyBatch: async (command, books, external) => {
+        if (selectedBookIds.size === 0 || busy) return undefined;
         let receipt: BatchLibraryReceipt | undefined;
         await run(async () => {
-          const selected = books.filter((book) => selectedBookIds.has(book.id));
-          receipt = await input.catalog!.applyBatch(
-            command,
-            selected.map((book) => ({ bookId: book.id, expectedRevision: book.metadataRevision ?? 0 })),
-            globalThis.crypto?.randomUUID?.() ?? `batch-${Date.now()}`,
-          );
+          receipt = await executeLibraryBatch(command, selectedBookIds, books, input.catalog, external);
           setLastBatchReceipt(receipt);
-          setSelectedBookIds(new Set());
-          setSelectionMode(false);
+          const failedIds = new Set(
+            receipt.results.filter((item) => item.status === 'failed').map((item) => item.bookId),
+          );
+          setSelectedBookIds(failedIds);
+          setSelectionMode(failedIds.size > 0);
           await Promise.all([input.refreshNovels(), refresh(), input.refreshAfterMutation()]);
           const failed = receipt.results.filter((item) => item.status === 'failed').length;
           input.notify(

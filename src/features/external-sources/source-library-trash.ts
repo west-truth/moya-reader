@@ -1,3 +1,4 @@
+import type { BatchLibraryItemResult } from '../../repositories/library-catalog-repository';
 import type { ExternalSourceLocalState, ExternalSourceSubscriptionRecord } from '../../external-sources/local-state';
 
 /** Only changes library membership. Reading positions and release preferences survive trash/restore. */
@@ -20,4 +21,31 @@ export async function changeSourceLibraryTrash(
   else delete next.deletedAt;
   await state.saveSubscription(next);
   return next;
+}
+
+export async function batchSourceLibraryTrash(
+  state: ExternalSourceLocalState,
+  ids: readonly string[],
+  action: 'trash' | 'restore',
+  onChanged?: (work: ExternalSourceSubscriptionRecord) => void,
+): Promise<BatchLibraryItemResult[]> {
+  const results: BatchLibraryItemResult[] = [];
+  for (const id of new Set(ids)) {
+    try {
+      const work = await changeSourceLibraryTrash(state, id, action);
+      if (work) onChanged?.(work);
+      results.push({
+        bookId: id,
+        status: work ? 'applied' : 'failed',
+        ...(!work && { reason: '작품을 찾을 수 없습니다.' }),
+      });
+    } catch (error) {
+      results.push({
+        bookId: id,
+        status: 'failed',
+        reason: error instanceof Error ? error.message : '작품을 변경하지 못했습니다.',
+      });
+    }
+  }
+  return results;
 }

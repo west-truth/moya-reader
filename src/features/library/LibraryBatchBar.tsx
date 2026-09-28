@@ -20,6 +20,7 @@ function ActiveLibraryBatchBar({ model, actions }: LibraryScreenProps) {
   const [tag, setTag] = useState('');
   const [expanded, setExpanded] = useState(false);
   const detailsId = useId();
+  const includesStreaming = [...model.management.selectedBookIds].some((id) => id.startsWith('external:'));
   const disabled = model.management.selectedBookIds.size === 0 || model.management.busy;
 
   useEffect(() => {
@@ -44,6 +45,9 @@ function ActiveLibraryBatchBar({ model, actions }: LibraryScreenProps) {
       </div>
 
       <div className="library-batch-details" id={detailsId}>
+        {includesStreaming && (
+          <span className="library-batch-label">스트리밍 작품은 휴지통 이동·복원을 지원합니다.</span>
+        )}
         {model.management.shelves.length > 0 && (
           <div className="library-batch-group library-batch-shelf">
             <span className="library-batch-label">책장 · 컬렉션</span>
@@ -56,14 +60,14 @@ function ActiveLibraryBatchBar({ model, actions }: LibraryScreenProps) {
             </select>
             <button
               className="ghost-btn"
-              disabled={disabled || !shelfId}
+              disabled={includesStreaming || disabled || !shelfId}
               onClick={() => void actions.controls.applyBatch({ kind: 'add_to_shelf', shelfId })}
             >
               <FolderPlus size={16} /> 선택 책장에 추가
             </button>
             <button
               className="ghost-btn"
-              disabled={disabled || !shelfId}
+              disabled={includesStreaming || disabled || !shelfId}
               onClick={() => void actions.controls.applyBatch({ kind: 'remove_from_shelf', shelfId })}
             >
               <FolderMinus size={16} /> 선택 책장에서 제외
@@ -85,14 +89,14 @@ function ActiveLibraryBatchBar({ model, actions }: LibraryScreenProps) {
           </label>
           <button
             className="ghost-btn"
-            disabled={disabled || !tag.trim()}
+            disabled={includesStreaming || disabled || !tag.trim()}
             onClick={() => void actions.controls.applyBatch({ kind: 'add_tag', tag })}
           >
             추가
           </button>
           <button
             className="ghost-btn"
-            disabled={disabled || !tag.trim()}
+            disabled={includesStreaming || disabled || !tag.trim()}
             onClick={() => void actions.controls.applyBatch({ kind: 'remove_tag', tag })}
           >
             제거
@@ -101,7 +105,7 @@ function ActiveLibraryBatchBar({ model, actions }: LibraryScreenProps) {
 
         <button
           className="ghost-btn library-batch-mobile-unfavorite"
-          disabled={disabled}
+          disabled={includesStreaming || disabled}
           onClick={() => void actions.controls.applyBatch({ kind: 'set_favorite', favorite: false })}
         >
           <StarOff size={17} /> 즐겨찾기 해제
@@ -111,7 +115,7 @@ function ActiveLibraryBatchBar({ model, actions }: LibraryScreenProps) {
       <div className="library-batch-utilities">
         <button
           className="icon-btn"
-          disabled={disabled}
+          disabled={includesStreaming || disabled}
           aria-label="선택한 책 즐겨찾기 설정"
           onClick={() => void actions.controls.applyBatch({ kind: 'set_favorite', favorite: true })}
         >
@@ -119,7 +123,7 @@ function ActiveLibraryBatchBar({ model, actions }: LibraryScreenProps) {
         </button>
         <button
           className="icon-btn library-batch-desktop-unfavorite"
-          disabled={disabled}
+          disabled={includesStreaming || disabled}
           aria-label="선택한 책 즐겨찾기 해제"
           onClick={() => void actions.controls.applyBatch({ kind: 'set_favorite', favorite: false })}
         >
@@ -127,7 +131,7 @@ function ActiveLibraryBatchBar({ model, actions }: LibraryScreenProps) {
         </button>
         <button
           className="icon-btn"
-          disabled={disabled}
+          disabled={includesStreaming || disabled}
           aria-label="선택한 책 정보 내보내기"
           onClick={actions.controls.exportSelectedMetadata}
         >

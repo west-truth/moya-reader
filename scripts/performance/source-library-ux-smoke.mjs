@@ -37,7 +37,14 @@ const server = await createServer({
         const signature = 'async function loadSourceLibrary(options: UseExternalSourceControllerOptions) {';
         assert(code.includes(signature));
         delayedProjection = true;
-        return code.replace(signature, signature + '\n  await new Promise(resolve => setTimeout(resolve, 700));');
+        return code.replace(
+          signature,
+          signature +
+            `
+  const smokeQuery = new URLSearchParams(location.search);
+  if (smokeQuery.has('sourceFailure')) throw new Error('Simulated source storage failure');
+  await new Promise(resolve => setTimeout(resolve, smokeQuery.has('sourceSlow') ? 12000 : 1200));`,
+        );
       },
     },
   ],
@@ -102,13 +109,14 @@ try {
           globalThis.libraryCardSnapshots.push({
             total: cards.length,
             remote: document.querySelectorAll('.external-work-card').length,
+            sourceSkeleton: Boolean(document.querySelector('.library-source-loading .skeleton')),
           });
       }).observe(document, { subtree: true, childList: true });
     });
     await page.reload();
     await page.locator('.external-work-card').first().waitFor();
     const firstCards = await page.evaluate(() => globalThis.libraryCardSnapshots[0]);
-    assert(firstCards.total > firstCards.remote && firstCards.remote > 0, JSON.stringify(firstCards));
+    assert(firstCards.total === 1 && firstCards.remote === 0 && firstCards.sourceSkeleton, JSON.stringify(firstCards));
     const before = await page.evaluate(
       async () =>
         await new (
@@ -179,6 +187,68 @@ try {
         ).find((work) => work.title === '검증 작품 1')?.deletedAt,
     );
     assert(deletedAt);
+    // The same selection toolbar must handle remote, local and mixed trash/restore.
+    await page.getByRole('button', { name: '선택', exact: true }).click();
+    for (const view of ['compact', 'list', 'text', 'grid']) {
+      await page.getByRole('combobox', { name: '라이브러리 보기 방식' }).selectOption(view);
+      const choose = page.getByRole('button', { name: '검증 작품 0 선택', exact: true });
+      await choose.click();
+      assert.equal(
+        await page.getByRole('button', { name: '검증 작품 0 선택 해제', exact: true }).getAttribute('aria-pressed'),
+        'true',
+      );
+      assert.equal(await page.getByRole('button', { name: '선택한 책 즐겨찾기 설정' }).isEnabled(), false);
+      const selectedRow = page.locator('.external-work-card.is-selected, .external-work-list-row.is-selected');
+      const rowBox = await selectedRow.boundingBox();
+      const markBox = await selectedRow.locator('.book-selection-mark').boundingBox();
+      assert(markBox.y >= rowBox.y && markBox.y + markBox.height <= rowBox.y + rowBox.height);
+      if (view === 'text') await page.screenshot({ path: `.tmp/source-library-review/selection-text-${width}.png` });
+      await page.getByRole('button', { name: '검증 작품 0 선택 해제', exact: true }).click();
+    }
+    await page.getByRole('button', { name: '모두 선택', exact: true }).click();
+    assert.equal(await page.locator('.book-card-open[aria-pressed="true"]').count(), 12);
+    await page.getByRole('button', { name: '선택한 책 휴지통으로 이동' }).click();
+    await page.locator('.library-batch-bar').waitFor({ state: 'hidden' });
+    assert.equal(await page.locator('.book-card').count(), 0);
+    if (width < 700) await page.getByRole('button', { name: '라이브러리 메뉴', exact: true }).click();
+    await page
+      .locator(width < 700 ? '.library-mobile-drawer' : '.library-sidebar')
+      .getByRole('button', { name: /^휴지통/ })
+      .click();
+    assert.equal(await page.locator('.book-card').count(), 13);
+    await page.getByRole('button', { name: '선택', exact: true }).click();
+    // Restore a stream-only selection first, then restore the remaining mixed selection.
+    await page.getByRole('button', { name: '검증 작품 0 선택', exact: true }).click();
+    await page.getByRole('button', { name: '선택한 책 복원' }).click();
+    await page.locator('.library-batch-bar').waitFor({ state: 'hidden' });
+    assert.equal(await page.locator('.book-card').count(), 12);
+    await page.getByRole('button', { name: '선택', exact: true }).click();
+    await page.getByRole('button', { name: '모두 선택', exact: true }).click();
+    await page.getByRole('button', { name: '선택한 책 복원' }).click();
+    await page.locator('.library-batch-bar').waitFor({ state: 'hidden' });
+    const restored = await page.evaluate(async () => {
+      const { ExternalSourceLocalStateStore } = await import('/src/external-sources/local-state.ts');
+      const state = new ExternalSourceLocalStateStore();
+      return { works: await state.listSubscriptions(), history: await state.listReleasePreferences() };
+    });
+    assert.equal(restored.works.filter((work) => work.deletedAt).length, 0);
+    assert.deepEqual(restored.history, before);
+    await page.goto(server.resolvedUrls.local[0] + '?sourceFailure');
+    await page.getByText('소스 작품을 불러오지 못했습니다', { exact: true }).waitFor();
+    assert.equal(await page.locator('.book-card:not(.external-work-card)').count(), 1);
+    await page.evaluate(() => history.replaceState(null, '', location.pathname));
+    await page.locator('.library-source-loading').getByRole('button', { name: '다시 시도' }).click();
+    await page.locator('.external-work-card').first().waitFor();
+    assert.equal(await page.locator('.external-work-card').count(), 12);
+    if (width === 390) {
+      await page.goto(server.resolvedUrls.local[0] + '?sourceSlow');
+      await page.getByText('소스 작품을 불러오는 데 시간이 걸립니다', { exact: true }).waitFor();
+      assert.equal(await page.locator('.book-card:not(.external-work-card)').count(), 1);
+      await page.screenshot({ path: '.tmp/source-library-review/slow-source-390.png' });
+      await page.evaluate(() => history.replaceState(null, '', location.pathname));
+      await page.locator('.library-source-loading').getByRole('button', { name: '다시 시도' }).click();
+      await page.locator('.external-work-card').first().waitFor();
+    }
     assert.deepEqual(errors, []);
     console.log(
       JSON.stringify({
@@ -188,6 +258,8 @@ try {
         trashRestorePreservesHistory: true,
         offlineRemoval: true,
         menuViews: 4,
+        batchTrashRestore: true,
+        independentLoadingAndRetry: true,
       }),
     );
     await context.close();

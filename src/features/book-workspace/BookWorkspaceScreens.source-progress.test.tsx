@@ -98,12 +98,13 @@ describe('BookWorkspaceScreens source work progress', () => {
   });
 });
 
-it('holds downloaded cards until source membership is ready and shows a retry on failure', () => {
+it('keeps downloaded cards usable while source works load or fail', () => {
   const loading = render(defaultSettings, { status: 'loading' });
-  expect(loading).toContain('책장을 불러오는 중입니다');
-  expect(loading).not.toContain('class="book-card');
+  expect(loading).toContain('소스 작품 불러오는 중');
+  expect(loading).toContain('class="book-card');
   const failed = render(defaultSettings, { status: 'failed', message: '소스 작품 확인 실패' });
-  expect(failed).toContain('소스 작품 확인 실패');
+  expect(failed).toContain('소스 작품을 불러오지 못했습니다');
+  expect(failed).toContain('class="book-card');
   expect(failed).toContain('다시 시도');
   expect(render(defaultSettings, { status: 'ready' })).toContain('class="book-card');
 });

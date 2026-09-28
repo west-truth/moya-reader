@@ -1,4 +1,6 @@
-import { changeSourceLibraryTrash } from './source-library-trash';
+import { sourceLibraryLoad } from './source-library-load';
+import type { BatchLibraryItemResult } from '../../repositories/library-catalog-repository';
+import { batchSourceLibraryTrash, changeSourceLibraryTrash } from './source-library-trash';
 import { belongsToSourceWork, clearSourceWorkHistory } from './source-work-history';
 import { sourceWorkSessionId } from './source-work-reading-time';
 import { recoverSourceStreamVisits } from '../../external-sources/source-stream-visit-journal';
@@ -246,6 +248,7 @@ export interface ExternalSourceController {
   readonly libraryWorks: readonly ExternalSourceLibraryWork[];
   readonly libraryBootstrap?: { status: 'loading' | 'ready' | 'failed'; message?: string };
   retryLibrary?(): Promise<void>;
+  batchLibraryTrash?(ids: readonly string[], action: 'trash' | 'restore'): Promise<readonly BatchLibraryItemResult[]>;
   restoreLibraryWork?(id: string): Promise<void>;
   purgeLibraryWork?(id: string): Promise<void>;
   emptyLibraryTrash?(): Promise<number>;
@@ -519,6 +522,7 @@ export function useExternalSourceController(options: UseExternalSourceController
     status: 'loading',
   });
   const libraryLoaded = useRef(false);
+  const libraryLoadGeneration = useRef(0);
   const [blockingBusy, setBusy] = useState(false);
   const [readingHistoryLoading, setReadingHistoryLoading] = useState(false);
   const [catalogLoading, setCatalogLoading] = useState(false);
@@ -723,9 +727,10 @@ export function useExternalSourceController(options: UseExternalSourceController
 
   useEffect(() => {
     let current = true;
-    void loadSourceLibrary(optionsRef.current)
+    const generation = ++libraryLoadGeneration.current;
+    void sourceLibraryLoad(loadSourceLibrary(optionsRef.current))
       .then(({ links, novels, subscriptions, preferences }) => {
-        if (!current || !mountedRef.current) return;
+        if (!current || !mountedRef.current || generation !== libraryLoadGeneration.current) return;
         setSubscriptions(subscriptions);
         setReleasePreferences(preferences);
         setLinks(links);
@@ -734,7 +739,7 @@ export function useExternalSourceController(options: UseExternalSourceController
         setLibraryBootstrap({ status: 'ready' });
       })
       .catch(() => {
-        if (current && mountedRef.current && !libraryLoaded.current)
+        if (current && mountedRef.current && generation === libraryLoadGeneration.current && !libraryLoaded.current)
           setLibraryBootstrap({ status: 'failed', message: '소스 작품을 불러오지 못했습니다. 다시 시도해 주세요.' });
       });
     return () => {
@@ -764,10 +769,11 @@ export function useExternalSourceController(options: UseExternalSourceController
   const currentParentRef = breadcrumbs.at(-1)?.parentRef;
 
   const refreshLocalProjection = useCallback(async () => {
+    const generation = ++libraryLoadGeneration.current;
     if (!libraryLoaded.current) setLibraryBootstrap({ status: 'loading' });
     try {
-      const next = await loadSourceLibrary(optionsRef.current);
-      if (!mountedRef.current) return;
+      const next = await sourceLibraryLoad(loadSourceLibrary(optionsRef.current));
+      if (!mountedRef.current || generation !== libraryLoadGeneration.current) return;
       setLinks(next.links);
       setNovels(next.novels);
       setSubscriptions(next.subscriptions);
@@ -775,6 +781,7 @@ export function useExternalSourceController(options: UseExternalSourceController
       libraryLoaded.current = true;
       setLibraryBootstrap({ status: 'ready' });
     } catch (error) {
+      if (!mountedRef.current || generation !== libraryLoadGeneration.current) return;
       if (!libraryLoaded.current)
         setLibraryBootstrap({ status: 'failed', message: '소스 작품을 불러오지 못했습니다. 다시 시도해 주세요.' });
       optionsRef.current.notify(
@@ -4383,6 +4390,28 @@ export function useExternalSourceController(options: UseExternalSourceController
   );
   const restoreLibraryWork = useCallback((id: string) => changeLibraryTrash(id, 'restore'), [changeLibraryTrash]);
   const purgeLibraryWork = useCallback((id: string) => changeLibraryTrash(id, 'purge'), [changeLibraryTrash]);
+  const batchLibraryTrash = useCallback(
+    async (ids: readonly string[], action: 'trash' | 'restore') => {
+      if (busy || libraryTrashBusy.current) throw new Error('현재 작업이 끝난 뒤 다시 시도해 주세요.');
+      libraryTrashBusy.current = true;
+      setBusy(true);
+      subscriptionAbortRef.current?.abort();
+      listAbortRef.current?.abort();
+      resumeAbortRef.current?.abort();
+      try {
+        return await batchSourceLibraryTrash(optionsRef.current.state, ids, action, (next) => {
+          ++libraryLoadGeneration.current;
+          if (mountedRef.current)
+            setSubscriptions((current) => [...current.filter((work) => work.id !== next.id), next]);
+        });
+      } finally {
+        libraryTrashBusy.current = false;
+        if (mountedRef.current) setBusy(false);
+      }
+    },
+    [busy],
+  );
+
   const emptyLibraryTrash = useCallback(async () => {
     if (busy || libraryTrashBusy.current) throw new Error('작업이 끝난 뒤 휴지통을 비워 주세요.');
     libraryTrashBusy.current = true;
@@ -4994,6 +5023,7 @@ export function useExternalSourceController(options: UseExternalSourceController
     libraryWorks,
     libraryBootstrap,
     retryLibrary: refreshLocalProjection,
+    batchLibraryTrash,
     restoreLibraryWork,
     purgeLibraryWork,
     emptyLibraryTrash,

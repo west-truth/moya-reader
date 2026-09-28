@@ -6,7 +6,7 @@ import {
   type ExternalSourceSubscriptionRecord,
 } from '../../external-sources/local-state';
 import { releasePreferenceId } from '../../external-sources/source-user-state';
-import { changeSourceLibraryTrash } from './source-library-trash';
+import { batchSourceLibraryTrash, changeSourceLibraryTrash } from './source-library-trash';
 
 const work: ExternalSourceSubscriptionRecord = {
   id: 'stream-work',
@@ -68,4 +68,20 @@ it('only purges trashed records and keeps the record when history cleanup fails'
   expect(await state.listSubscriptions()).toHaveLength(1);
   await changeSourceLibraryTrash(state, work.id, 'purge', async () => undefined);
   expect(await state.listSubscriptions()).toEqual([]);
+});
+
+it('continues a batch after a failed write and restores successful works without changing read history', async () => {
+  const state = new ExternalSourceLocalStateStore();
+  await state.saveSubscription(work);
+  await state.saveSubscription({ ...work, id: 'failed-work' });
+  const save = state.saveSubscription.bind(state);
+  vi.spyOn(state, 'saveSubscription').mockImplementation(async (next) => {
+    if (next.id === 'failed-work') throw new Error('write failed');
+    await save(next);
+  });
+  const results = await batchSourceLibraryTrash(state, ['failed-work', work.id], 'trash');
+  expect(results.map((item) => item.status)).toEqual(['failed', 'applied']);
+  expect((await state.listSubscriptions()).find((item) => item.id === work.id)?.deletedAt).toBeTruthy();
+  await batchSourceLibraryTrash(state, [work.id], 'restore');
+  expect((await state.listSubscriptions()).find((item) => item.id === work.id)?.deletedAt).toBeUndefined();
 });

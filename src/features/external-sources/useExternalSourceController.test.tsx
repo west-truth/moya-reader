@@ -3575,6 +3575,32 @@ describe('stream-only library works', () => {
     }
   });
 
+  it('ignores an older source snapshot that finishes after a successful retry', async () => {
+    const h = await make();
+    let resolveOld!: (works: ExternalSourceSubscriptionRecord[]) => void;
+    let oldRequest: Promise<void> | undefined;
+    try {
+      const old = new Promise<ExternalSourceSubscriptionRecord[]>((resolve) => {
+        resolveOld = resolve;
+      });
+      vi.mocked(h.state.listSubscriptions).mockImplementationOnce(() => old);
+      await act(async () => {
+        oldRequest = h.controller.retryLibrary?.();
+      });
+      await act(async () => h.controller.retryLibrary?.());
+      expect(h.controller.libraryWorks.map((work) => work.id)).toContain(subscription.id);
+      await act(async () => {
+        resolveOld([]);
+        await oldRequest;
+      });
+      expect(h.controller.libraryWorks.map((work) => work.id)).toContain(subscription.id);
+      expect(h.controller.libraryBootstrap?.status).toBe('ready');
+    } finally {
+      resolveOld?.([]);
+      await act(async () => h.renderer.unmount());
+    }
+  });
+
   it('replaces the previous work before the new library projection or catalog resolves', async () => {
     const h = await make();
     let release!: () => void;
