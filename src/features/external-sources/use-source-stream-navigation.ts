@@ -20,7 +20,14 @@ export function useSourceStreamNavigation(controller: ExternalSourceController, 
   const item = controller.streaming?.item;
   const identity = item && externalItemKeyId(item.key);
   const items = filterAndSortReleases(
-    controller.items.filter((item) => item.release),
+    controller.items.filter(
+      (candidate) =>
+        candidate.release &&
+        !candidate.localOrderOnly &&
+        candidate.key.connectorId === item?.key.connectorId &&
+        candidate.key.accountConnectionId === item?.key.accountConnectionId &&
+        candidate.collection?.remoteId === item?.collection?.remoteId,
+    ),
     '',
     'all',
     'asc',
@@ -87,11 +94,11 @@ export function useSourceStreamNavigation(controller: ExternalSourceController, 
       void operation.then(request.resolve, request.reject).finally(() => setRequest(undefined));
       return;
     }
+    if (controller.catalogLoading || controller.loading) return;
     if (!controller.nextCursor) {
       fail('더 이동할 회차가 없습니다.');
       return;
     }
-    if (controller.catalogLoading || controller.loading) return;
     if (request.seen.has(controller.nextCursor)) {
       fail(controller.listError?.message ?? '다음 회차 목록을 불러오지 못했습니다. 다시 시도해 주세요.');
       return;
@@ -129,11 +136,15 @@ export function useSourceStreamNavigation(controller: ExternalSourceController, 
     busy: Boolean(request),
     nextItem: index >= 0 ? items[index + 1] : undefined,
     previous:
-      index >= 0 && (index > 0 || controller.nextCursor)
+      identity && (index > 0 || controller.nextCursor || controller.catalogLoading || controller.loading)
         ? (isCurrent?: () => boolean) => move(-1, isCurrent)
         : undefined,
     next:
-      index >= 0 && (index + 1 < items.length || controller.nextCursor)
+      identity &&
+      ((index >= 0 && index + 1 < items.length) ||
+        controller.nextCursor ||
+        controller.catalogLoading ||
+        controller.loading)
         ? (isCurrent?: () => boolean) => move(1, isCurrent)
         : undefined,
   };

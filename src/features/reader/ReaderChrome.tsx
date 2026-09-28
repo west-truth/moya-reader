@@ -177,7 +177,7 @@ export function ReaderChrome({
           <button
             className={classNames('icon-btn', 'reader-topbar-secondary', Boolean(activeBookmark) && 'active')}
             onClick={() => void toggleBookmark()}
-            disabled={bookmarkPending}
+            disabled={model.transient || bookmarkPending}
             title={bookmarkPending ? '북마크 저장 중' : activeBookmark ? '북마크 제거' : '북마크'}
             aria-label={bookmarkPending ? '북마크 저장 중' : activeBookmark ? '북마크 제거' : '북마크 추가'}
             aria-busy={bookmarkPending}
@@ -189,7 +189,7 @@ export function ReaderChrome({
             className={classNames('icon-btn', 'reader-topbar-secondary', Boolean(activeHighlight) && 'active')}
             onMouseDown={(event) => event.preventDefault()}
             onClick={addHighlight}
-            disabled={!selection || highlightPending}
+            disabled={model.transient || !selection || highlightPending}
             title={selection ? '선택 문장 하이라이트' : '본문에서 문장을 먼저 선택하세요'}
             aria-label="선택 문장 하이라이트"
           >
@@ -216,6 +216,7 @@ export function ReaderChrome({
             className="icon-btn reader-topbar-secondary"
             onClick={actions.toggleAddon}
             title="부가 기능"
+            disabled={model.transient}
             aria-label="부가 기능 열기"
           >
             <PanelRightOpen size={18} />
@@ -256,7 +257,7 @@ export function ReaderChrome({
           <button
             className="reader-chapter-step"
             type="button"
-            disabled={!viewport || model.chapter.index <= 1}
+            disabled={model.navigation?.busy || !viewport || model.chapter.index <= 1}
             onClick={() => void viewport?.goChapter(-1)}
             title="이전 화"
             aria-label="이전 화"
@@ -279,7 +280,7 @@ export function ReaderChrome({
           <button
             className="reader-chapter-step"
             type="button"
-            disabled={!viewport || model.chapter.index >= model.chapters.length}
+            disabled={model.navigation?.busy || !viewport || model.chapter.index >= model.chapters.length}
             onClick={() => void viewport?.goChapter(1)}
             title="다음 화"
             aria-label="다음 화"
@@ -301,7 +302,7 @@ export function ReaderChrome({
             className={classNames('reader-mobile-tool', Boolean(activeBookmark) && 'active')}
             type="button"
             onClick={() => void toggleBookmark()}
-            disabled={bookmarkPending}
+            disabled={model.transient || bookmarkPending}
             title={bookmarkPending ? '북마크 저장 중' : activeBookmark ? '북마크 제거' : '북마크'}
             aria-label={bookmarkPending ? '북마크 저장 중' : activeBookmark ? '북마크 제거' : '북마크 추가'}
             aria-busy={bookmarkPending}
@@ -314,6 +315,7 @@ export function ReaderChrome({
             type="button"
             onClick={() => actions.startTTS(location?.ttsIndex ?? 0)}
             title="듣기"
+            disabled={model.transient}
             aria-label="듣기 시작"
             aria-pressed={mode === 'listen'}
           >
@@ -353,6 +355,7 @@ export function ReaderChrome({
               className={mode === 'listen' ? 'active' : ''}
               onClick={() => actions.startTTS(location?.ttsIndex ?? 0)}
               title="듣기 모드"
+              disabled={model.transient}
               aria-label="듣기 모드"
               aria-pressed={mode === 'listen'}
             >
@@ -360,6 +363,7 @@ export function ReaderChrome({
             </button>
             <button
               className={classNames('reader-notes-action', model.addonOpen && model.addonTab === 'notes' && 'active')}
+              disabled={model.transient}
               onClick={() => actions.openAddon('notes')}
             >
               <StickyNote size={15} /> 주석
@@ -413,7 +417,7 @@ export function ReaderChrome({
                 <button
                   type="button"
                   role="menuitem"
-                  disabled={!selection || highlightPending}
+                  disabled={model.transient || !selection || highlightPending}
                   onClick={() => runOverflowAction(addHighlight)}
                 >
                   <Highlighter size={15} /> 선택 문장 하이라이트
@@ -421,11 +425,17 @@ export function ReaderChrome({
                 <button
                   type="button"
                   role="menuitem"
+                  disabled={model.transient}
                   onClick={() => runOverflowAction(() => actions.openAddon('notes'))}
                 >
                   <StickyNote size={15} /> 주석
                 </button>
-                <button type="button" role="menuitem" onClick={() => runOverflowAction(actions.openSync)}>
+                <button
+                  type="button"
+                  role="menuitem"
+                  disabled={model.transient}
+                  onClick={() => runOverflowAction(actions.openSync)}
+                >
                   <RefreshCw size={15} /> 동기화
                 </button>
                 <button type="button" role="menuitem" onClick={() => runOverflowAction(() => setQuickViewOpen(true))}>

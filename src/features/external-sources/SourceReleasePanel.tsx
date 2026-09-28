@@ -108,33 +108,6 @@ export function SourceReleasePanel({
           이 페이지 선택
         </label>
       </div>
-      {controller.setAutoDownloadNext && controller.activeSourceId && (
-        <div className="source-auto-download-option">
-          <label>
-            <input
-              type="checkbox"
-              checked={controller.autoDownloadNext ?? false}
-              onChange={(event) => controller.setAutoDownloadNext?.(event.target.checked)}
-            />
-            읽는 동안 다음 회차 자동 다운로드
-          </label>
-          {controller.setAutoDownloadNextCount && (
-            <div className="source-auto-download-count" role="group" aria-label="자동 다운로드 회차 수">
-              {([1, 2, 3] as const).map((count) => (
-                <button
-                  key={count}
-                  type="button"
-                  aria-pressed={(controller.autoDownloadNextCount ?? 1) === count}
-                  disabled={!controller.autoDownloadNext}
-                  onClick={() => controller.setAutoDownloadNextCount?.(count)}
-                >
-                  {count}화
-                </button>
-              ))}
-            </div>
-          )}
-        </div>
-      )}
       <div className="chapter-toolbar">
         <label className="chapter-search">
           <Search size={16} />

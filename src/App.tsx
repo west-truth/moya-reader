@@ -780,27 +780,27 @@ export default function App() {
     [baseBookAITTSPreparationRunner, extensionRuntime, managedBookWorkflow.active],
   );
   const readingProfile = useMemo(
-    () => resolveReadingProfile(settings, selectedNovel?.id),
-    [selectedNovel?.id, settings],
+    () => resolveReadingProfile(settings, view !== 'library' ? selectedNovel?.id : undefined),
+    [selectedNovel?.id, settings, view],
   );
   const effectiveReaderSettings = useMemo(
-    () => settingsWithResolvedReadingProfile(settings, selectedNovel?.id),
-    [selectedNovel?.id, settings],
+    () => settingsWithResolvedReadingProfile(settings, view !== 'library' ? selectedNovel?.id : undefined),
+    [selectedNovel?.id, settings, view],
   );
-  const readingBookOverrideEnabled = hasBookReadingProfile(settings, selectedNovel?.id);
+  const readingBookOverrideEnabled = view !== 'library' && hasBookReadingProfile(settings, selectedNovel?.id);
   const activeReaderFont = useActiveReaderFont(personalizationRepository, readingProfile.fontId);
   useEffect(() => {
     if (activeReaderFont.failed) showToast('사용자 글꼴을 불러오지 못해 기본 글꼴로 표시합니다.', 'warning');
   }, [activeReaderFont.failed, showToast]);
   const changeReadingProfile = (patch: Parameters<typeof updateGlobalReadingProfile>[1]) => {
     updateSettings((previous) =>
-      selectedNovel && hasBookReadingProfile(previous, selectedNovel.id)
+      view !== 'library' && selectedNovel && hasBookReadingProfile(previous, selectedNovel.id)
         ? updateBookReadingProfile(previous, selectedNovel.id, patch)
         : updateGlobalReadingProfile(previous, patch),
     );
   };
   const setReadingBookOverrideEnabled = (enabled: boolean) => {
-    if (!selectedNovel) return;
+    if (!selectedNovel || view === 'library') return;
     updateSettings((previous) =>
       enabled
         ? updateBookReadingProfile(previous, selectedNovel.id, {})
@@ -1483,6 +1483,7 @@ export default function App() {
   const externalSourceFeature = useExternalSourceController({
     getParagraphPage: (chapterId, pageIndex, signal) => readerRepository.getParagraphPage(chapterId, pageIndex, signal),
     saveStreamPosition: bookWorkspace.saveFixedDocumentPage,
+    saveTextPosition: (input) => readerRepository.saveReadingPosition(input),
     downloadPolicy: settings.downloadPolicy ?? legacyDownloads,
     updateDownloadPolicy: (patch) =>
       updateSettings((previous) => ({
@@ -6193,6 +6194,22 @@ export default function App() {
       )}
       {ProductLifecycle && <ProductLifecycle busy={productWorkBusy} reading={view === 'reader'} />}
       <BookWorkspaceScreens
+        textReader={{
+          settings: effectiveReaderSettings,
+          settingsOpen: readerSettingsController.open,
+          actions: {
+            openSettings: readerScreenHandle.getActions().openSettings,
+            flushReadingSettings: readerScreenHandle.getActions().flushReadingSettings,
+            retryReadingSettings: readerScreenHandle.getActions().retryReadingSettings,
+            adjustFontSize: readerScreenHandle.getActions().adjustFontSize,
+            adjustContentWidth: readerScreenHandle.getActions().adjustContentWidth,
+            toggleNightTheme: readerScreenHandle.getActions().toggleNightTheme,
+            updateReadingProfile: changeReadingProfile,
+            setReadingBookOverride: () => showToast('작품별 설정은 서재에 저장한 작품에서 사용할 수 있습니다.', 'info'),
+            closeActiveLayer: closeActiveAppLayer,
+            notify: showToast,
+          },
+        }}
         libraryNotice={
           ProductLibraryNotice && (
             <ProductLibraryNotice
@@ -6614,7 +6631,7 @@ export default function App() {
             setBookOverrideEnabled={setReadingBookOverrideEnabled}
             resetProfile={() =>
               updateSettings((previous) =>
-                selectedNovel && hasBookReadingProfile(previous, selectedNovel.id)
+                view !== 'library' && selectedNovel && hasBookReadingProfile(previous, selectedNovel.id)
                   ? resetBookReadingProfile(previous, selectedNovel.id)
                   : updateGlobalReadingProfile(previous, DEFAULT_READING_PROFILE),
               )

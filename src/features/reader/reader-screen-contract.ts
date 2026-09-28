@@ -59,6 +59,16 @@ export interface ReaderOverlayState {
 }
 
 export interface ReaderScreenModel {
+  readonly transient?: boolean;
+  readonly navigation?: {
+    readonly busy: boolean;
+    readonly error?: string;
+    /** Streaming can discover the next chapter ID only after loading another catalog page. */
+    readonly scope?: string;
+    readonly nextScope?: string;
+    openNext?(isCurrent: () => boolean): Promise<void>;
+    retry(): void;
+  };
   readonly novel: Pick<
     Novel,
     'id' | 'title' | 'totalChapters' | 'lastReadChapterId' | 'activeContentRevisionId' | 'format'
@@ -173,6 +183,13 @@ const NO_ACTIONS: ReaderScreenActions = {
 export class ReaderScreenHandle {
   readonly decorations = new ReaderDecorationStore();
 
+  private runtimeFlow?: { bookId: string; flow: 'scroll' | 'paginated' };
+  getReadingFlow(bookId: string): 'scroll' | 'paginated' {
+    return this.runtimeFlow?.bookId === bookId ? this.runtimeFlow.flow : 'scroll';
+  }
+  setReadingFlow(bookId: string, flow: 'scroll' | 'paginated'): void {
+    this.runtimeFlow = { bookId, flow };
+  }
   private actions: ReaderScreenActions = NO_ACTIONS;
   private commands?: ReaderScreenCommands;
   private openSequence = 0;

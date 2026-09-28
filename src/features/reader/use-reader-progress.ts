@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useLayoutEffect, useRef } from 'react';
 import type { Chapter, Novel, Paragraph } from '../../domain/types';
-import type { ReaderRepository } from '../../repositories/reader-repository';
+import type { ReaderBodyRepository } from '../../repositories/reader-repository';
 import { clamp } from '../../utils/format';
 import type { ReaderLocationSnapshot } from './reader-screen-contract';
 import {
@@ -20,7 +20,7 @@ export interface ReaderProgressOptions {
   readonly isActive?: boolean;
   readonly positionPersistence?: SerializedProgressPersistence;
   readonly rootRef: React.RefObject<HTMLDivElement>;
-  readonly repository: ReaderRepository;
+  readonly repository: ReaderBodyRepository;
   readonly novel: Pick<Novel, 'id' | 'totalChapters' | 'activeContentRevisionId'>;
   readonly chapter: Chapter;
   readonly getVisibleParagraph: () => { index?: number; paragraph?: Paragraph };
@@ -36,7 +36,7 @@ export interface ReaderProgressController {
 }
 
 interface PendingReaderPosition {
-  readonly repository: ReaderRepository;
+  readonly repository: ReaderBodyRepository;
   readonly novel: Pick<Novel, 'id' | 'totalChapters' | 'activeContentRevisionId'>;
   readonly chapter: Chapter;
   readonly location: ReaderLocationSnapshot;

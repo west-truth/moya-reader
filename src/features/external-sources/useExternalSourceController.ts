@@ -1,4 +1,4 @@
-import { savedFirstSourceStream } from '../../external-sources/saved-source-stream';
+import { isTextStream, type SourceReadingPort } from '../../external-sources/source-text-stream';
 import { sourceReadingPreferences } from '../../external-sources/source-reading-preferences';
 import { taskProgressPercent } from '../../components/task-progress';
 import { randomUuid } from '../../utils/random-uuid';
@@ -79,7 +79,6 @@ import {
 } from './serial-work-projection';
 import { projectImportProgress, type ImportTaskView } from '../import/import-task-projection';
 import { externalDocumentCollectionId } from '../../external-sources/series/document-series-identity';
-import { MAX_SOURCE_COVER_BYTES, persistSourceCover, sourceCoverContentType } from './source-cover';
 import {
   collectSubscriptionReleasePages,
   mergeSeriesCatalogItems,
@@ -265,12 +264,16 @@ export interface ExternalSourceController {
   readonly streamingBookId?: string;
   readonly streaming?: {
     item: ExternalSourceItemView;
-    port: import('../../external-sources/source-stream').SourceStreamPort;
+    port: SourceReadingPort;
     historyKey?: string;
     fromStart?: boolean;
   };
   closeStream?(): void;
   openStreamItem?(item: ExternalSourceItemView): Promise<void>;
+  saveTextStreamPosition?(
+    item: ExternalSourceItemView,
+    position: { paragraphIndex: number; offset: number; textHash: string; count: number },
+  ): Promise<void>;
   saveStream?(item: ExternalSourceItemView): Promise<void>;
   saveStreamPosition?(item: ExternalSourceItemView, page: number, count: number): Promise<void>;
   canStreamItem?(item: ExternalSourceItemView): boolean;
@@ -317,6 +320,7 @@ export interface ExternalSourceNavigationSnapshot {
 }
 
 export interface UseExternalSourceControllerOptions {
+  saveTextPosition?: import('../../repositories/reader-repository').ReaderRepository['saveReadingPosition'];
   getParagraphPage?: import('../../repositories/reader-repository').ReaderRepository['getParagraphPage'];
   saveStreamPosition?(pageIndex: number, chapter: Chapter, novel: Novel): Promise<void>;
   readonly downloadPolicy?: import('../../domain/types').DownloadPolicy;
@@ -436,6 +440,7 @@ async function persistentThumbnailUrl(value: string | undefined): Promise<string
   try {
     const response = await fetch(value);
     if (!response.ok) return undefined;
+    const { MAX_SOURCE_COVER_BYTES, sourceCoverContentType } = await import('./source-cover');
     const declaredLength = Number(response.headers.get('Content-Length'));
     if (Number.isFinite(declaredLength) && declaredLength > MAX_SOURCE_COVER_BYTES) return undefined;
     const blob = await response.blob();
@@ -1578,9 +1583,7 @@ export function useExternalSourceController(options: UseExternalSourceController
         ? new Set(knownChapters.map((chapter) => chapter.documentSectionId))
         : undefined;
     const remoteItems = localSeriesPageSeedRef.current?.remoteItems;
-    const remoteKeys = remoteItems?.length
-      ? new Set(remoteItems.map((item) => externalItemKeyId(item.key)))
-      : undefined;
+    const remoteKeys = remoteItems ? new Set(remoteItems.map((item) => externalItemKeyId(item.key))) : undefined;
     return rawItems.map((item) => {
       const key = externalItemKeyId(item.key);
       const preference = preferenceByKey.get(key);
@@ -2129,7 +2132,9 @@ export function useExternalSourceController(options: UseExternalSourceController
                 if (!coverAttempted && (sourceThumbnailUrl || sourceDetail?.coverRef)) {
                   coverAttempted = true;
                   try {
-                    await persistSourceCover(
+                    await (
+                      await import('./source-cover')
+                    ).persistSourceCover(
                       optionsRef.current.assets,
                       novel,
                       async () => (sourceThumbnailUrl ??= await resolveDetailThumbnail(sourceDetail!, abort.signal)),
@@ -2698,7 +2703,9 @@ export function useExternalSourceController(options: UseExternalSourceController
           if (!coverAttempted && (sourceThumbnailUrl || sourceDetail?.coverRef)) {
             coverAttempted = true;
             try {
-              await persistSourceCover(
+              await (
+                await import('./source-cover')
+              ).persistSourceCover(
                 optionsRef.current.assets,
                 importedNovel,
                 async () => (sourceThumbnailUrl ??= await resolveDetailThumbnail(sourceDetail!, abort.signal)),
@@ -3318,9 +3325,11 @@ export function useExternalSourceController(options: UseExternalSourceController
   const automaticDownload = useNextReleaseDownload({
     policy: options.downloadPolicy,
     updatePolicy: options.updateDownloadPolicy,
-    readingKey: options.readingTarget
-      ? JSON.stringify([options.readingTarget.novelId, options.readingTarget.sectionId])
-      : undefined,
+    readingKey: streaming
+      ? `stream:${externalItemKeyId(streaming.item.key)}`
+      : options.readingTarget
+        ? JSON.stringify([options.readingTarget.novelId, options.readingTarget.sectionId])
+        : undefined,
     busy: busy || importBusy || blockingBusy,
     reportError: () =>
       optionsRef.current.notify(
@@ -3329,17 +3338,26 @@ export function useExternalSourceController(options: UseExternalSourceController
       ),
     run: async (signal, count) => {
       const target = optionsRef.current.readingTarget;
-      if (!target) return;
+      const streamItem = streaming?.item;
+      if (!target && !streamItem) return;
       const allLinks = await optionsRef.current.state.listLinks();
-      const related = allLinks.filter((link) => link.localBookId === target.novelId && link.collectionRemoteId);
-      const link = related[0];
-      if (!link?.collectionRemoteId) return;
-      const sourceId = link.source.connectorId as ExtensionContributionId;
+      const link = streamItem
+        ? (allLinks.find((link) => externalItemKeyId(link.source) === externalItemKeyId(streamItem.key)) ??
+          allLinks.find(
+            (link) =>
+              link.collectionRemoteId === streamItem.collection?.remoteId &&
+              link.source.connectorId === streamItem.key.connectorId &&
+              link.source.accountConnectionId === streamItem.key.accountConnectionId,
+          ))
+        : allLinks.find((link) => link.localBookId === target!.novelId && link.collectionRemoteId);
+      const collectionRemoteId = streamItem?.collection?.remoteId ?? link?.collectionRemoteId;
+      const source = streamItem?.key ?? link?.source;
+      if (!source || !collectionRemoteId) return;
+      const sourceId = source.connectorId as ExtensionContributionId;
       const context = optionsRef.current.hostContext;
       const connection = optionsRef.current.registry.getExternalSourceStatus(sourceId, context);
-      if (connection.state !== 'connected' || connection.accountConnectionId !== link.source.accountConnectionId)
-        return;
-      const input = { parentRef: link.collectionRemoteId };
+      if (connection.state !== 'connected' || connection.accountConnectionId !== source.accountConnectionId) return;
+      const input = { parentRef: collectionRemoteId };
       const id = cachePageId(
         sourceId,
         connection.accountConnectionId,
@@ -3389,17 +3407,22 @@ export function useExternalSourceController(options: UseExternalSourceController
         return;
       const ordered = filterAndSortReleases(
         catalog
-          .filter((item) => item.release && item.collection?.remoteId === link.collectionRemoteId)
+          .filter((item) => item.release && item.collection?.remoteId === collectionRemoteId)
           .map((item) => ({ ...item, selected: false, importState: 'available' as const })),
         '',
         'all',
         'asc',
       );
-      const index = ordered.findIndex((item) => externalItemSectionId(item) === target.sectionId);
+      const index = ordered.findIndex((item) =>
+        streamItem
+          ? externalItemKeyId(item.key) === externalItemKeyId(streamItem.key)
+          : externalItemSectionId(item) === target!.sectionId,
+      );
       if (index < 0) return;
       const upcoming = ordered.slice(index + 1, index + 1 + count);
       // Check the active stored chapters, including downloads completed while metadata was loading.
-      const chapters = await optionsRef.current.listChapters(target.novelId);
+      const novelId = streamItem ? link?.localBookId : target!.novelId;
+      const chapters = novelId ? await optionsRef.current.listChapters(novelId) : [];
       const next = upcoming.filter(
         (item): item is SerialSourceItem =>
           isSerialSourceItem(item) &&
@@ -3416,6 +3439,8 @@ export function useExternalSourceController(options: UseExternalSourceController
         importRef.current
       )
         return;
+      // Once accepted, a streaming background download belongs to the queue, not
+      // to the episode on screen. Moving ahead must not cancel that download.
       await importSerialItems(sourceId, next, signal);
     },
   });
@@ -3431,30 +3456,25 @@ export function useExternalSourceController(options: UseExternalSourceController
     const port = optionsRef.current.registry.getSourceStream?.(item.key.connectorId as ExtensionContributionId);
     if (!port) return false;
     const { assets, getParagraphPage } = optionsRef.current;
-    const savedPort =
-      assets && getParagraphPage
-        ? savedFirstSourceStream(port, {
-            assets,
-            getParagraphPage,
-            find: async (remoteId) => {
-              const current = optionsRef.current;
-              const link = (await current.state.listLinks(item.key.connectorId)).find(
-                (candidate) =>
-                  !candidate.pendingImport &&
-                  externalItemKeyId(candidate.source) === externalItemKeyId({ ...item.key, remoteId }),
-              );
-              if (!link) return undefined;
-              const novel = await current.getNovel(link.localBookId);
-              if (!novel || novel.deletedAt)
-                throw new Error('저장된 회차를 찾을 수 없습니다. 회차 목록을 확인해 주세요.');
-              return {
-                novel,
-                chapters: await current.listChapters(novel.id),
-                sectionId: externalItemSectionId({ ...item, key: { ...item.key, remoteId } }),
-              };
+    const savedPort: SourceReadingPort =
+      isTextStream(port) && getParagraphPage
+        ? {
+            kind: 'text',
+            open: async (remoteId, signal, remoteRevision) => {
+              const { savedSourceStream } = await import('./source-stream-library');
+              const saved = savedSourceStream(port, () => optionsRef.current, item);
+              return saved.open(remoteId, signal, remoteRevision);
             },
-          })
-        : port;
+          }
+        : !isTextStream(port) && assets && getParagraphPage
+          ? {
+              open: async (remoteId: string, signal: AbortSignal) => {
+                const { savedSourceStream } = await import('./source-stream-library');
+                const saved = savedSourceStream(port, () => optionsRef.current, item);
+                return saved.open(remoteId, signal);
+              },
+            }
+          : port;
     setStreaming((current) => ({
       item,
       fromStart,
@@ -3519,6 +3539,14 @@ export function useExternalSourceController(options: UseExternalSourceController
         if (reportRejection) throw new Error('저장된 회차를 찾을 수 없습니다. 회차 목록을 확인해 주세요.');
         return;
       }
+      if (
+        item.release &&
+        optionsRef.current.assets &&
+        optionsRef.current.getParagraphPage &&
+        sourceReadingPreferences().mode !== 'download' &&
+        beginStream(item)
+      )
+        return;
       if (item.release) {
         const chapters = await optionsRef.current.listChapters(novel.id);
         setLocalSeriesBookId(novel.id);
@@ -3541,7 +3569,7 @@ export function useExternalSourceController(options: UseExternalSourceController
       else await optionsRef.current.openNovel(novel);
       setOpen(false);
     },
-    [blockingBusy, rawItems, refreshLocalProjection],
+    [blockingBusy, rawItems, refreshLocalProjection, beginStream],
   );
 
   const cancel = useCallback(() => {
@@ -4433,24 +4461,23 @@ export function useExternalSourceController(options: UseExternalSourceController
             if (!item.release || !beginStream(item, true)) throw new Error('이 회차를 바로 열 수 없습니다.');
           }
         : undefined,
+    saveTextStreamPosition: (item, position) => {
+      const run = async () => {
+        const current = optionsRef.current;
+        const { saveTextStreamPosition } = await import('./source-stream-library');
+        await saveTextStreamPosition(current, item, position);
+      };
+      const pending = streamPositionWrites.current.then(run);
+      streamPositionWrites.current = pending.catch(() =>
+        optionsRef.current.notify('읽던 위치를 저장하지 못했습니다.', 'warning'),
+      );
+      return streamPositionWrites.current;
+    },
     saveStreamPosition: (item, page, count) => {
       const run = async () => {
         const current = optionsRef.current;
-        if (!current.saveStreamPosition) return;
-        const link = (await current.state.listLinks(item.key.connectorId)).find(
-          (link) => externalItemKeyId(link.source) === externalItemKeyId(item.key) && !link.pendingImport,
-        );
-        if (!link) return;
-        const novel = await current.getNovel(link.localBookId);
-        if (!novel || novel.deletedAt) return;
-        const ordered = (await current.listChapters(novel.id)).sort((a, b) => a.index - b.index);
-        const chapters = ordered.filter((chapter) => chapter.documentSectionId === externalItemSectionId(item));
-        if (chapters.length !== count || !chapters[page]) return;
-        await current.saveStreamPosition(
-          ordered.findIndex((chapter) => chapter.id === chapters[page].id),
-          chapters[page],
-          novel,
-        );
+        const { saveImageStreamPosition } = await import('./source-stream-library');
+        await saveImageStreamPosition(current, item, page, count);
       };
       const pending = streamPositionWrites.current.then(run);
       streamPositionWrites.current = pending.catch(() => {

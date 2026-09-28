@@ -25,7 +25,7 @@ export interface ExternalSourceContributionView {
 
 /** The host-facing source port shared by built-in connectors and source plugins. */
 export interface ExternalSourceRegistryPort {
-  getSourceStream?(id: ExtensionContributionId): import('./source-stream').SourceStreamPort | undefined;
+  getSourceStream?(id: ExtensionContributionId): import('./source-text-stream').SourceReadingPort | undefined;
   getHostedDocumentImport?(
     contributionId: ExtensionContributionId,
   ): import('../services/import/hosted-document-import').HostedDocumentImportPort | undefined;

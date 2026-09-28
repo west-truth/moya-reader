@@ -36,8 +36,8 @@ export function DownloadSettingsPanel({ controller }: { readonly controller: Ext
         {cacheError && <p role="alert">{cacheError}</p>}
         <label className="reader-settings-select-row">
           <span>
-            <strong>다운로드하지 않은 만화 열기</strong>
-            <small>망가요미·APK 이미지 소스에서 지원합니다.</small>
+            <strong>다운로드하지 않은 회차 열기</strong>
+            <small>바로 읽기를 지원하는 만화·소설 소스에 적용됩니다.</small>
           </span>
           <select
             value={sourceReading.mode}
@@ -99,8 +99,10 @@ export function DownloadSettingsPanel({ controller }: { readonly controller: Ext
         </label>
         <label className="reader-settings-select-row">
           <span>
-            <strong>다음 이미지 미리 불러오기</strong>
-            <small>데이터 절약 모드에서는 현재 페이지만 불러옵니다.</small>
+            <strong>다음 본문 미리 불러오기</strong>
+            <small>
+              만화는 선택한 장수, 소설은 다음 한 회차를 준비합니다. 데이터 절약 모드에서는 미리 불러오지 않습니다.
+            </small>
           </span>
           <select
             value={sourceReading.prefetch}

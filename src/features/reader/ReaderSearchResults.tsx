@@ -16,7 +16,9 @@ function searchSnippet(text: string, query: string): string {
 export function ReaderSearchResults({
   search,
   chapters,
+  chapterOnly = false,
 }: {
+  readonly chapterOnly?: boolean;
   readonly search: ReaderSearchController;
   readonly chapters: readonly Chapter[];
 }) {
@@ -59,6 +61,8 @@ export function ReaderSearchResults({
           </button>
           <button
             type="button"
+            disabled={chapterOnly}
+            title={chapterOnly ? '스트리밍에서는 현재 화를 검색합니다.' : undefined}
             className={search.scope === 'book' ? 'active' : undefined}
             onClick={() => search.setScope('book')}
           >

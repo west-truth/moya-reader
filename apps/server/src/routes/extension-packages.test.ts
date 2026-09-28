@@ -53,6 +53,7 @@ describe('authenticated installed source HTTP flow', () => {
       const inventory = await app.inject({ method: 'GET', url: '/api/extensions/packages', headers });
       expect(inventory.json().packages[0].active).not.toHaveProperty('archive');
       expect(inventory.json().sources).toHaveLength(1);
+      expect(inventory.json().sourceTextStreaming).toBe(true);
       const listing = await app.inject({
         method: 'POST',
         url: `/api/extensions/sources/${id}/list`,

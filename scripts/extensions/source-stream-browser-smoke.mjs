@@ -22,7 +22,7 @@ import '${root}/src/styles/tokens.css';import '${root}/src/styles/base.css';impo
 globalThis.positionWrites=[];globalThis.calls=[];globalThis.saves=[];globalThis.closedStreams=0;globalThis.opens=[];globalThis.expireNext=false;globalThis.retryPage=false;globalThis.repairCorrupt=false;
 const params=new URLSearchParams(location.search);localStorage.setItem('moya.source-reading.v1',JSON.stringify({mode:params.get('mode'),prefetch:Number(params.get('prefetch')??8)}));
 const failed=new Set();
-const remotePort={open:async(id)=>{opens.push(id);return {pageCount:30,close(){globalThis.closedStreams++},loadPage:async(index,signal)=>{calls.push([id,index]);if(globalThis.expireNext){globalThis.expireNext=false;throw new Error('source_stream_expired');}if(index===5&&!globalThis.retryPage){throw new Error('연결을 확인해 주세요.');}if(index===6&&!globalThis.repairCorrupt)return new Blob(['broken image'],{type:'image/png'});return (await fetch('/image',{signal})).blob();}}}};
+const remotePort={open:async(id)=>{opens.push(id);if(params.has('stress')&&id==='fixture-2')await new Promise(resolve=>globalThis.releaseOpen=resolve);if(params.has('stress')&&id==='fixture-3'&&!globalThis.retryChapter){throw Error('회차 연결 재시도');}return {pageCount:30,close(){globalThis.closedStreams++},loadPage:async(index,signal)=>{calls.push([id,index]);if(globalThis.expireNext){globalThis.expireNext=false;throw new Error('source_stream_expired');}if(index===5&&!globalThis.retryPage){throw new Error('연결을 확인해 주세요.');}if(index===6&&!globalThis.repairCorrupt)return new Blob(['broken image'],{type:'image/png'});return (await fetch('/image',{signal})).blob();}}}};
 globalThis.savedEpisodes=[];globalThis.savedReads=[];globalThis.remoteOpens=[];
 const originalOpen=remotePort.open;remotePort.open=async(id,signal)=>{remoteOpens.push(id);return originalOpen(id,signal)};
 const port=savedFirstSourceStream(remotePort,{
@@ -33,12 +33,12 @@ const port=savedFirstSourceStream(remotePort,{
 saveSourceStreamPosition('fixture-2',{page:15,fraction:0.5,ratio:1.5,count:30});
 function Fixture(){
  const [episode,setEpisode]=React.useState(1);
- const [saved,setSaved]=React.useState(params.get('mixed')==='true'?[2]:[]);
+ const [saved,setSaved]=React.useState(params.has('stress')?[4]:params.get('mixed')==='true'?[2]:[]);
  globalThis.episode=episode;globalThis.savedEpisodes=saved;
- const save=async(n)=>{saves.push(n);setSaved(value=>[...value,n]);};
+ const save=async(n)=>{saves.push(n);if(params.has('stress')&&!globalThis.downloadReleased)await new Promise(resolve=>{(globalThis.releaseSaves??=[]).push(resolve)});setSaved(value=>[...value,n]);};
  const items=Array.from({length:4},(_,i)=>({key:{connectorId:'fixture',remoteId:'fixture-'+(i+1)},title:(i+1)+'화',release:{title:(i+1)+'화',sourceOrder:i+1},importState:saved.includes(i+1)?'imported':'available'}));
  const nav=useSourceStreamNavigation({streaming:{item:items[episode-1]},items,openStreamItem:async item=>setEpisode(Number(item.key.remoteId.split('-')[1])),openImported:async()=>{throw Error('viewer must stay mounted')},closeStream:()=>{throw Error('viewer must stay mounted')}});
- return React.createElement(SourceStreamReader,{title:'검증용 만화 '+episode+'화',remoteId:'fixture-'+episode,profileKey:'fixture-'+episode,fromStart:episode>1,port,saved:saved.includes(episode),onClose:()=>globalThis.closedStreams++,onSave:()=>save(episode),onPageSettled:(page)=>positionWrites.push([episode,page]),previous:nav.previous,next:nav.next,navigationBusy:nav.busy,nextEpisode:episode<4?{remoteId:'fixture-'+(episode+1),title:(episode+1)+'화',saved:saved.includes(episode+1),busy:false,save:()=>save(episode+1)}:undefined});
+ return React.createElement(SourceStreamReader,{title:'검증용 만화 '+episode+'화',remoteId:'fixture-'+episode,profileKey:'fixture-'+episode,fromStart:episode>1,port,saved:saved.includes(episode),onClose:()=>globalThis.closedStreams++,onSave:()=>save(episode),onPageSettled:(page)=>positionWrites.push([episode,page]),previous:nav.previous,next:nav.next,navigationBusy:nav.busy,nextEpisode:episode<4?{remoteId:'fixture-'+(episode+1),title:(episode+1)+'화'}:undefined});
 }
 void new IndexedDbComicReadingProfileRepository().save('fixture',{...DEFAULT_COMIC_READING_PROFILE,mode:params.get('view')||'vertical',seamlessVertical:true,fit:'width',pageTurnMotion:'instant'}).then(()=>createRoot(document.getElementById('root')).render(React.createElement(Fixture)));`;
 const result = await build({
@@ -104,7 +104,7 @@ try {
     ['stream', 1280, 'spread', 0],
     ['stream', 390, 'vertical', 8, true],
     ['stream', 1280, 'spread', 8, true],
-  ]) {
+  ].filter(() => !process.env.SOURCE_STREAM_STRESS_ONLY)) {
     const page = await browser.newPage({ viewport: { width, height: 844 } }),
       errors = [];
     page.setDefaultTimeout(10000);
@@ -130,8 +130,14 @@ try {
       await page.waitForFunction(() => calls.some(([id, index]) => id === 'fixture-2' && index === 4));
       assert.equal(await page.evaluate(() => opens.filter((id) => id === 'fixture-2').length), 1);
     }
-    if (mode === 'stream-save') await page.waitForFunction(() => saves.includes(1) && saves.includes(2));
-    else assert.deepEqual(await page.evaluate(() => saves), []);
+    if (mode === 'stream-save') {
+      await page.waitForFunction(() => saves.includes(1));
+      assert.deepEqual(
+        await page.evaluate(() => saves),
+        [1],
+        'Neighbor prefetch must not bypass the automatic download policy',
+      );
+    } else assert.deepEqual(await page.evaluate(() => saves), []);
     assert((await page.evaluate(() => document.documentElement.scrollWidth)) <= width);
     await page.screenshot({ path: root + `/.tmp/source-stream-review/shared-${view}-${mode}-${width}.png` });
     if (view === 'vertical') {
@@ -270,6 +276,85 @@ try {
     }
     assert.deepEqual(errors, []);
     console.log(JSON.stringify({ mode, width, view, prefetch, mixed, passed: true }));
+    await page.close();
+  }
+  // Keep full episode saves pending while repeatedly pulling the same displayed
+  // chapter across a delayed session open. A later saved chapter must not win.
+  for (const prefetch of [0, 8]) {
+    const page = await browser.newPage({ viewport: { width: 390, height: 844 } });
+    const errors = [];
+    page.on('pageerror', (error) => errors.push(error.message));
+    page.setDefaultTimeout(10000);
+    await page.goto(
+      `http://127.0.0.1:${server.address().port}/?mode=stream-save&view=vertical&prefetch=${prefetch}&stress=1`,
+    );
+    await page.waitForFunction(() => document.querySelector('.fixed-doc-pages img')?.naturalWidth > 0);
+    await page.evaluate(() => {
+      globalThis.retryPage = true;
+      globalThis.repairCorrupt = true;
+    });
+    await page.locator('article[data-page-index="29"]').scrollIntoViewIfNeeded();
+    await page.waitForFunction(() => document.querySelector('article[data-page-index="29"] img')?.naturalWidth > 0);
+    await page.evaluate(() => {
+      const root = document.querySelector('.fixed-doc-viewport');
+      root.scrollTop = root.scrollHeight;
+    });
+    const box = await page.locator('.fixed-doc-viewport').boundingBox();
+    await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+    await page.waitForTimeout(400);
+    await page.mouse.wheel(0, 160);
+    await page.waitForFunction(() => episode === 2 && typeof globalThis.releaseOpen === 'function');
+    for (let i = 0; i < 5; i++) {
+      await page.waitForTimeout(350);
+      await page.mouse.wheel(0, 160);
+    }
+    assert.equal(await page.evaluate(() => episode), 2, 'Repeated pulls on chapter 1 must request only chapter 2');
+    assert.deepEqual(await page.evaluate(() => saves), [1], 'A pending save must not block chapter navigation');
+    await page.evaluate(() => globalThis.releaseOpen());
+    await page.waitForFunction(
+      () =>
+        document.querySelector('.fixed-doc-header strong')?.textContent.includes('2화') &&
+        document.querySelector('article[data-page-index="0"] img')?.naturalWidth > 0,
+    );
+    await page.waitForFunction(() => saves.includes(2));
+    await reveal(page);
+    const next = page.locator('.fixed-doc-footer').getByRole('button', { name: '다음 회차', exact: true });
+    await next.evaluate((button) => {
+      for (let i = 0; i < 6; i++) button.click();
+    });
+    await page.getByRole('alert').filter({ hasText: '회차 연결 재시도' }).waitFor();
+    assert.equal(await page.evaluate(() => episode), 3);
+    assert(
+      (await page.locator('.fixed-doc-header strong').innerText()).includes('2화'),
+      'Failed next open keeps the displayed chapter',
+    );
+    await page.evaluate(() => {
+      globalThis.retryChapter = true;
+    });
+    await page.getByRole('button', { name: '다시 시도', exact: true }).click();
+    await page.waitForFunction(
+      () =>
+        document.querySelector('.fixed-doc-header strong')?.textContent.includes('3화') &&
+        document.querySelector('article[data-page-index="0"] img')?.naturalWidth > 0,
+    );
+    await page.waitForFunction(() => saves.includes(3));
+    await reveal(page);
+    await next.click();
+    await page.waitForFunction(
+      () =>
+        document.querySelector('.fixed-doc-header strong')?.textContent.includes('4화') &&
+        document.querySelector('article[data-page-index="0"] img')?.naturalWidth > 0,
+    );
+    assert.equal(await page.evaluate(() => remoteOpens.includes('fixture-4')), false);
+    assert.deepEqual(await page.evaluate(() => saves), [1, 2, 3]);
+    await page.evaluate(() => {
+      globalThis.downloadReleased = true;
+      globalThis.releaseSaves.forEach((resolve) => resolve());
+    });
+    await page.waitForFunction(() => savedEpisodes.length === 4);
+    assert.equal(await page.evaluate(() => episode), 4, 'Download completion cannot navigate the reader');
+    assert.deepEqual(errors, []);
+    console.log(JSON.stringify({ rapidNavigation: true, prefetch, pendingSaves: true, retry: true, passed: true }));
     await page.close();
   }
 } finally {
