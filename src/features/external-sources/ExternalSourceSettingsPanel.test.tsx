@@ -63,3 +63,28 @@ it('lists a few sources without search and filters', () => {
   expect(renderer.root.findAllByType('select')).toHaveLength(0);
   expect(renderer.root.findAllByProps({ className: 'external-source-settings-card' })).toHaveLength(1);
 });
+
+it('does not keep filtering after removing sources hides the filter controls', () => {
+  vi.stubGlobal('localStorage', { getItem: () => null, setItem: vi.fn() });
+  const sources = Array.from({ length: 7 }, (_, index) => ({
+    id: `source-${index}`,
+    title: `소스 ${index}`,
+    origin: 'plugin',
+    connection: { state: 'connected' },
+  }));
+  const controller = { sources } as unknown as ExternalSourceController;
+  let renderer!: ReactTestRenderer;
+  act(() => {
+    renderer = create(<ExternalSourceSettingsPanel controller={controller} />);
+  });
+  act(() => renderer.root.findByProps({ type: 'search' }).props.onChange({ target: { value: '소스 6' } }));
+  expect(renderer.root.findAllByProps({ className: 'external-source-settings-card' })).toHaveLength(1);
+  act(() =>
+    renderer.update(
+      <ExternalSourceSettingsPanel controller={{ ...controller, sources: controller.sources.slice(0, 6) }} />,
+    ),
+  );
+  expect(renderer.root.findAllByProps({ type: 'search' })).toHaveLength(0);
+  expect(renderer.root.findAllByProps({ className: 'external-source-settings-card' })).toHaveLength(6);
+  act(() => renderer.unmount());
+});

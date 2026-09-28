@@ -69,6 +69,8 @@ export function ModalDrawer({
       className="modal-drawer-layer"
       data-side={side}
       data-state={closing ? 'closed' : 'open'}
+      {...(closing ? { inert: '' } : {})}
+      aria-hidden={closing || undefined}
       onClick={closeFromBackdrop}
     >
       <aside

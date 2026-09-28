@@ -83,12 +83,13 @@ describe('ImportDialog', () => {
           pendingFiles: [selectedFile],
           progress: {
             jobId: 'job-1',
-            status: 'writing',
+            status: 'reading',
+            subphase: 'reading_chunks',
             bytesRead: 1024,
             totalBytes: 2048,
             chaptersDetected: 3,
             paragraphsWritten: 20,
-            message: '책장에 저장하는 중입니다.',
+            message: '파일을 읽는 중입니다.',
           },
           batch: { total: 1, current: 1, completed: 0, failed: 0, skipped: 0, currentFileName: '연재본.txt' },
           uploadSessions: [
@@ -112,7 +113,7 @@ describe('ImportDialog', () => {
     );
 
     expect(markup).toContain('연재본.txt');
-    expect(markup).toContain('책장에 저장하는 중입니다.');
+    expect(markup).toContain('파일을 읽는 중입니다.');
     expect(markup).toContain('role="progressbar"');
     expect(markup).toContain('aria-valuenow="50"');
     expect(markup).toContain('중단된 서버 업로드');
@@ -138,7 +139,8 @@ describe('ImportDialog', () => {
       />,
     );
     expect(markup).toContain('이미지 저장 45개');
-    expect(markup).not.toContain('role="progressbar"');
+    expect(markup).toContain('is-indeterminate');
+    expect(markup).not.toContain('aria-valuenow=');
     expect(markup).not.toContain('100%');
   });
 
