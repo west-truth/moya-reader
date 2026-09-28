@@ -65,6 +65,9 @@ try {
   );
   assert.equal(await page.evaluate(() => navigator.serviceWorker.controller.scriptURL), origin + base + 'sw.js');
   const introduction = page.getByRole('complementary', { name: '브라우저 서재 안내' });
+  // Service-worker activation can finish before the library's asynchronous bootstrap renders its notice.
+  await introduction.getByRole('button', { name: '인터넷 없이 읽기', exact: true }).waitFor();
+  await introduction.getByRole('button', { name: '서재 안내 닫기', exact: true }).waitFor();
   assert.equal(await introduction.getByRole('button').count(), 2, 'Keep only the offline link and dismiss action');
   await page.setViewportSize({ width: 390, height: 844 });
   await mkdir('.tmp/web-pages-check', { recursive: true });
