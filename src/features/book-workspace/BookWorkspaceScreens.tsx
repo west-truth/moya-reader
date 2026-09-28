@@ -212,7 +212,6 @@ export function BookWorkspaceScreens({
     externalSources.close();
     controller.setLibraryQuery('');
     controller.setLibraryFilter('all');
-    libraryManagement.setActiveShelf(undefined);
     if (libraryManagement.selectionMode) libraryManagement.clearSelection();
     closeInspector();
     controller.setView('library');
