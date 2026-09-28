@@ -142,6 +142,39 @@ const library = {
 } as unknown as LibraryScreenProps;
 
 describe('SourceHubScreen', () => {
+  it.each([undefined, testNovel({ totalChapters: 0 })])(
+    'continues a streamed episode even without downloaded chapters',
+    async (book) => {
+      const resumeCurrentWork = vi.fn(async () => undefined);
+      let renderer!: ReactTestRenderer;
+      await act(async () => {
+        renderer = create(
+          <SourceHubScreen
+            controller={controller({
+              detail: { title: '스트리밍 작품' },
+              localSeriesNovel: book,
+              canResumeCurrentWork: true,
+              resumeCurrentWork,
+            })}
+            library={library}
+            openSourceSettings={vi.fn()}
+          />,
+        );
+      });
+      try {
+        const button = renderer.root
+          .findAllByType('button')
+          .find((button) => button.props['aria-label'] === '이어 보기');
+        expect(button).toBeDefined();
+        expect(button!.props.disabled).toBe(false);
+        await act(async () => button!.props.onClick());
+        expect(resumeCurrentWork).toHaveBeenCalledOnce();
+      } finally {
+        await act(async () => renderer.unmount());
+      }
+    },
+  );
+
   it.each([
     ['imported', true, '보기', 'lucide-book-open'],
     ['available', true, '바로 읽기', 'lucide-play'],

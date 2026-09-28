@@ -500,7 +500,7 @@ describe('text serial download task parity', () => {
       supportsIncrementalImageSeriesAppend: true,
       supportsExpectedSourceContentHash: true,
       novelOverrides: { format: 'image_archive', documentSectionCount: 1 },
-      chapters: [testChapter(1, { documentSectionId: 'work-1' })],
+      chapters: [testChapter(1, { documentSectionId: 'work-1', documentSectionTitle: '1화' })],
     });
     try {
       await act(async () => {
@@ -560,7 +560,7 @@ describe('text serial download task parity', () => {
         supportsExpectedSourceContentHash: true,
         novelOverrides: { format: 'image_archive', documentSectionCount: 1 },
         chapters: [
-          testChapter(1, { documentSectionId: 'work-1' }),
+          testChapter(1, { documentSectionId: 'work-1', documentSectionTitle: '1화' }),
           ...(alreadyStored ? [testChapter(2, { documentSectionId: 'work-2' })] : []),
         ],
       });
@@ -2962,9 +2962,9 @@ describe('source streaming connection', () => {
           count: 3,
         });
       });
-      expect(h.controller.items.map((item) => item.readingState)).toEqual(['read', 'read']);
+      expect(h.controller.items.map((item) => item.readingState)).toEqual(['read', 'current']);
       await h.refreshLibrary(1);
-      expect(h.controller.items.map((item) => item.readingState)).toEqual(['read', 'read']);
+      expect(h.controller.items.map((item) => item.readingState)).toEqual(['read', 'current']);
       await act(async () => {
         await h.controller.setReleasesRead!([h.controller.items[0]], false);
       });
@@ -2973,9 +2973,131 @@ describe('source streaming connection', () => {
       await act(async () => {
         await h.controller.saveStreamPosition!(h.controller.items[0], 0, 3);
       });
-      expect(h.controller.items[0].readingState).toBe('read');
+      expect(h.controller.items.map((item) => item.readingState)).toEqual(['current', 'read']);
     } finally {
       await act(async () => h.renderer.unmount());
+    }
+  });
+
+  it.each([false, true])('moves current and resume beyond the downloaded episode (text=%s)', async (text) => {
+    const storage = new Map<string, string>();
+    vi.stubGlobal('localStorage', {
+      getItem: (key: string) => storage.get(key) ?? null,
+      setItem: (key: string, value: string) => storage.set(key, value),
+    });
+    const { externalItemKeyId } = await import('../../external-sources/contracts');
+    const { saveSourceStreamPosition, readSourceStreamPosition } =
+      await import('../../external-sources/source-stream-history');
+    const { sourceTextDocument } = await import('./source-text-document');
+    const { defaultSettings } = await import('../../repositories/reader-defaults');
+    const documentInput = {
+      text: Array.from({ length: 8 }, (_, i) => `본문 ${i} 문단의 이어 읽기 위치입니다.`).join('\n\n'),
+      title: '회차',
+      workId: 'work',
+      settings: defaultSettings,
+    };
+    const chapters = [testChapter(1, { documentSectionId: 'work-1', documentSectionTitle: '1화' })];
+    const book = novel({
+      format: text ? 'txt' : 'image_archive',
+      documentSectionCount: 1,
+      lastReadChapterId: chapters[0].id,
+      lastReadChapterIndex: 1,
+      lastReadAt: '2026-08-24T00:00:00.000Z',
+    });
+    const preferences = new Map<string, import('../../external-sources/source-user-state').SourceReleasePreference>();
+    const make = async () => {
+      const h = await createHarness({
+        downloadedContent: '',
+        serial: true,
+        documentSerial: text,
+        serialCount: 3,
+        chapters,
+        getNovel: async () => book,
+        libraryBooks: async () => [book],
+        initialLinkOverrides: { collectionRemoteId: 'manga:1' },
+      });
+      chapters[0] = { ...chapters[0], documentSectionId: externalItemSectionId(h.controller.items[0]) };
+      h.state.listReleasePreferences = async () => [...preferences.values()];
+      h.state.saveReleasePreferences = async (records) => {
+        records.forEach((record) => preferences.set(record.id, record));
+      };
+      h.registry.getSourceStream = () => (text ? { kind: 'text', open: vi.fn() } : { open: vi.fn() });
+      await h.refreshLibrary(1);
+      await act(async () => h.controller.showLocalSeries(book));
+      return h;
+    };
+    let h = await make();
+    const visit = async (index: number) =>
+      act(async () => {
+        const item = h.controller.items[index];
+        const historyKey = JSON.stringify([undefined, externalItemKeyId(item.key)]);
+        if (text) {
+          const document = await sourceTextDocument({
+            ...documentInput,
+            episodeId: item.key.remoteId,
+            historyKey,
+            onPosition: (position) => h.controller.saveTextStreamPosition!(item, position),
+          });
+          await document.repository.saveReadingPosition({
+            novelId: document.novel.id,
+            chapterId: document.chapter.id,
+            expectedContentRevisionId: document.novel.activeContentRevisionId,
+            paragraphIndex: 3,
+            offsetInParagraph: 7,
+            chapterProgress: 0.4,
+            scrollTop: 0,
+          });
+        } else {
+          saveSourceStreamPosition(historyKey, { page: 3, count: 8, fraction: 0.42, ratio: 5 });
+          await h.controller.saveStreamPosition!(item, 3, 8);
+        }
+      });
+    try {
+      expect(h.controller.items.map((item) => item.readingState)).toEqual(['current', 'unread', 'unread']);
+      await visit(1);
+      expect(h.controller.items.map((item) => item.readingState)).toEqual(['read', 'current', 'unread']);
+      await visit(2);
+      await visit(1); // Revisiting a read episode must move current back to it.
+      expect(h.controller.items.map((item) => item.readingState)).toEqual(['read', 'current', 'read']);
+      await h.refreshLibrary(2); // The downloaded book still points to episode 1.
+      expect(h.controller.items.map((item) => item.readingState)).toEqual(['read', 'current', 'read']);
+      await act(async () => h.renderer.unmount());
+      h = await make(); // Restore from durable preferences, not the open stream state.
+      expect(h.controller.items.map((item) => item.readingState)).toEqual(['read', 'current', 'read']);
+      await act(async () => h.controller.close()); // Resume from the library card, with SourceHub closed.
+      expect(h.controller.open).toBe(false);
+      await act(async () => {
+        expect(await h.controller.continueSourceReading!(book)).toBe(true);
+      });
+      expect(h.controller.streaming?.item.key.remoteId).toBe('work-2');
+      expect(h.controller.streaming?.fromStart).toBe(false);
+      expect(h.controller.streaming?.historyKey).toContain('work-2');
+      if (text) {
+        const restored = await sourceTextDocument({
+          ...documentInput,
+          episodeId: 'work-2',
+          historyKey: h.controller.streaming!.historyKey!,
+        });
+        expect(restored.position).toMatchObject({ paragraphIndex: 3, offsetInParagraph: 7 });
+      } else {
+        expect(readSourceStreamPosition(h.controller.streaming!.historyKey!)).toMatchObject({
+          page: 3,
+          fraction: 0.42,
+          count: 8,
+        });
+      }
+      expect(h.controller.open).toBe(true);
+      expect(h.openNovel).not.toHaveBeenCalled();
+      await act(async () => h.controller.closeStream!());
+      await h.read(book.id, externalItemSectionId(h.controller.items[0]));
+      await act(async () => {
+        await vi.waitFor(() => expect(h.controller.items[0].readingState).toBe('current'));
+      });
+      expect(h.controller.items[1].readingState).toBe('read');
+      expect(await h.controller.continueSourceReading!(book)).toBe(false); // Native position is now authoritative.
+    } finally {
+      await act(async () => h.renderer.unmount());
+      vi.unstubAllGlobals();
     }
   });
 
@@ -2985,7 +3107,10 @@ describe('source streaming connection', () => {
     const save = vi.fn(async (_page: number, chapter: Chapter) => {
       book = { ...book, lastReadChapterId: chapter.id };
     });
-    const chapters = [testChapter(1, { documentSectionId: 'work-1' }), testChapter(2, { documentSectionId: 'work-1' })];
+    const chapters = [
+      testChapter(1, { documentSectionId: 'work-1', documentSectionTitle: '1화' }),
+      testChapter(2, { documentSectionId: 'work-1' }),
+    ];
     const h = await createHarness({
       downloadedContent: '',
       serial: true,

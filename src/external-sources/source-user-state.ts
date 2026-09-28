@@ -7,6 +7,10 @@ export interface SourceReleasePreference {
   readonly title?: string;
   readonly read?: boolean;
   readonly readChangedAt?: string;
+  /** Actual reader visits, independent of manual read/unread and background downloads. */
+  readonly lastReadAt?: string;
+  readonly readingMode?: 'stream' | 'download';
+  readonly collectionRemoteId?: string;
   readonly updatedAt: string;
 }
 
@@ -52,6 +56,16 @@ export function validReleasePreference(value: unknown): value is SourceReleasePr
     Number.isFinite(Date.parse(item.updatedAt)) &&
     (item.readChangedAt === undefined ||
       (typeof item.readChangedAt === 'string' && Number.isFinite(Date.parse(item.readChangedAt)))) &&
+    (item.readingMode === undefined || item.readingMode === 'stream' || item.readingMode === 'download') &&
+    (item.lastReadAt === undefined ||
+      (typeof item.lastReadAt === 'string' &&
+        Number.isFinite(Date.parse(item.lastReadAt)) &&
+        typeof item.collectionRemoteId === 'string' &&
+        item.collectionRemoteId.length > 0)) &&
+    (item.collectionRemoteId === undefined ||
+      (typeof item.collectionRemoteId === 'string' &&
+        item.collectionRemoteId.length > 0 &&
+        item.collectionRemoteId.length <= 1024)) &&
     (item.title === undefined ||
       (typeof item.title === 'string' && item.title.trim().length > 0 && item.title.length <= 200)) &&
     (item.read === undefined || typeof item.read === 'boolean')
@@ -73,5 +87,8 @@ export function normalizeReleasePreference(item: SourceReleasePreference): Sourc
     ...(item.title !== undefined ? { title: item.title } : {}),
     ...(item.read !== undefined ? { read: item.read } : {}),
     ...(item.readChangedAt ? { readChangedAt: item.readChangedAt } : {}),
+    ...(item.lastReadAt ? { lastReadAt: item.lastReadAt } : {}),
+    ...(item.readingMode ? { readingMode: item.readingMode } : {}),
+    ...(item.collectionRemoteId ? { collectionRemoteId: item.collectionRemoteId } : {}),
   };
 }

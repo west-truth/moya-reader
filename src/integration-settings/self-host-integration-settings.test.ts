@@ -16,6 +16,9 @@ it('round-trips personal release state through hosted normalization and strips u
     title: '개인 제목',
     read: false,
     readChangedAt: now,
+    collectionRemoteId: 'work',
+    lastReadAt: now,
+    readingMode: 'stream',
     updatedAt: now,
   };
   const document = validDocument();

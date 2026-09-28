@@ -22,6 +22,16 @@ function sourceState(
 }
 
 describe('Library source-series navigation', () => {
+  it('uses the saved streamed episode before the older downloaded book position', async () => {
+    const book = testNovel();
+    const workspace = { continueReading: vi.fn() };
+    const sources = { close: vi.fn(), continueSourceReading: vi.fn(async () => true) };
+    await continueLibraryBook(book, workspace, sources);
+    expect(sources.continueSourceReading).toHaveBeenCalledWith(book);
+    expect(workspace.continueReading).not.toHaveBeenCalled();
+    expect(sources.close).not.toHaveBeenCalled();
+  });
+
   it.each(['txt', 'image_archive'] as const)(
     'closes the SourceHub back layer before continuing a %s book',
     async (format) => {
