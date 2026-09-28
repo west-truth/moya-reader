@@ -11,6 +11,7 @@ export function useSourceStreamNavigation(controller: ExternalSourceController, 
     seen: Set<string>;
     loading: boolean;
     opening: boolean;
+    catalogRetried?: boolean;
     resolve(): void;
     reject(error: Error): void;
     isCurrent(): boolean;
@@ -19,8 +20,23 @@ export function useSourceStreamNavigation(controller: ExternalSourceController, 
   pending.current = request;
   const item = controller.streaming?.item;
   const identity = item && externalItemKeyId(item.key);
+  const catalog = controller.streamCatalog;
+  const catalogLoading = catalog ? catalog.loading : controller.catalogLoading || controller.loading;
+  const catalogCursor = catalog ? undefined : controller.nextCursor;
+  const known = new Map(controller.items.map((candidate) => [externalItemKeyId(candidate.key), candidate]));
+  const navigationItems = catalog
+    ? (catalog.items ?? []).map((candidate) => ({
+        ...candidate,
+        selected: false,
+        importState:
+          candidate.importability === 'unsupported'
+            ? ('unsupported' as const)
+            : (known.get(externalItemKeyId(candidate.key))?.importState ?? ('available' as const)),
+        localOrderOnly: false,
+      }))
+    : controller.items;
   const items = filterAndSortReleases(
-    controller.items.filter(
+    navigationItems.filter(
       (candidate) =>
         candidate.release &&
         !candidate.localOrderOnly &&
@@ -38,7 +54,7 @@ export function useSourceStreamNavigation(controller: ExternalSourceController, 
   useEffect(() => {
     if (warming.current.identity !== identity) warming.current = { identity, cursors: new Set(), busy: false };
     const state = warming.current;
-    const cursor = controller.nextCursor;
+    const cursor = catalogCursor;
     if (
       !prefetchEnabled ||
       !identity ||
@@ -46,8 +62,7 @@ export function useSourceStreamNavigation(controller: ExternalSourceController, 
       items[index + 1] ||
       !cursor ||
       request ||
-      controller.loading ||
-      controller.catalogLoading ||
+      catalogLoading ||
       state.busy ||
       state.cursors.has(cursor) ||
       state.cursors.size >= 32
@@ -62,7 +77,7 @@ export function useSourceStreamNavigation(controller: ExternalSourceController, 
         state.busy = false;
         setWarmRevision((value) => value + 1);
       });
-  }, [prefetchEnabled, identity, index, items, controller, request, warmRevision]);
+  }, [prefetchEnabled, identity, index, items, controller, request, warmRevision, catalogCursor, catalogLoading]);
   const latest = useRef(controller);
   latest.current = controller;
   useEffect(() => () => pending.current?.reject(new Error('회차 이동이 취소됐습니다.')), []);
@@ -70,7 +85,7 @@ export function useSourceStreamNavigation(controller: ExternalSourceController, 
     if (!request || request.opening || request.loading) return;
     const fail = (message: string) => {
       request.reject(new Error(message));
-      setRequest(undefined);
+      setRequest((current) => (current === request ? undefined : current));
     };
     if (identity !== request.origin || !request.isCurrent()) {
       fail('회차 이동이 취소됐습니다.');
@@ -91,19 +106,37 @@ export function useSourceStreamNavigation(controller: ExternalSourceController, 
               latest.current.closeStream?.();
             })()
           : latest.current.importAndOpen(target);
-      void operation.then(request.resolve, request.reject).finally(() => setRequest(undefined));
+      void operation
+        .then(request.resolve, request.reject)
+        .finally(() => setRequest((current) => (current === request ? undefined : current)));
       return;
     }
-    if (controller.catalogLoading || controller.loading) return;
-    if (!controller.nextCursor) {
+    if (catalog?.error) {
+      if (request.catalogRetried) {
+        fail(catalog.error);
+        return;
+      }
+      request.catalogRetried = true;
+      request.loading = true;
+      void catalog.retry().then(
+        () => {
+          request.loading = false;
+          setRequest((current) => (current === request ? { ...request } : current));
+        },
+        (error: unknown) => fail(error instanceof Error ? error.message : '목차를 확인하지 못했습니다.'),
+      );
+      return;
+    }
+    if (catalogLoading) return;
+    if (!catalogCursor) {
       fail('더 이동할 회차가 없습니다.');
       return;
     }
-    if (request.seen.has(controller.nextCursor)) {
+    if (request.seen.has(catalogCursor)) {
       fail(controller.listError?.message ?? '다음 회차 목록을 불러오지 못했습니다. 다시 시도해 주세요.');
       return;
     }
-    request.seen.add(controller.nextCursor);
+    request.seen.add(catalogCursor);
     request.loading = true;
     void controller.loadMore().then(
       () => {
@@ -112,7 +145,7 @@ export function useSourceStreamNavigation(controller: ExternalSourceController, 
       },
       (error: unknown) => fail(error instanceof Error ? error.message : '회차 목록을 불러오지 못했습니다.'),
     );
-  }, [request, identity, index, items, controller]);
+  }, [request, identity, index, items, controller, catalog, catalogLoading, catalogCursor]);
   const move = (offset: number, isCurrent = () => true) =>
     new Promise<void>((resolve, reject) => {
       if (!identity || pending.current) {
@@ -136,15 +169,11 @@ export function useSourceStreamNavigation(controller: ExternalSourceController, 
     busy: Boolean(request),
     nextItem: index >= 0 ? items[index + 1] : undefined,
     previous:
-      identity && (index > 0 || controller.nextCursor || controller.catalogLoading || controller.loading)
+      identity && (index > 0 || catalogCursor || catalogLoading || catalog?.error)
         ? (isCurrent?: () => boolean) => move(-1, isCurrent)
         : undefined,
     next:
-      identity &&
-      ((index >= 0 && index + 1 < items.length) ||
-        controller.nextCursor ||
-        controller.catalogLoading ||
-        controller.loading)
+      identity && ((index >= 0 && index + 1 < items.length) || catalogCursor || catalogLoading || catalog?.error)
         ? (isCurrent?: () => boolean) => move(1, isCurrent)
         : undefined,
   };

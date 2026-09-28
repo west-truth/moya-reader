@@ -196,7 +196,7 @@ describe('source release lists', () => {
   it('does not drive network paging from renders and keeps cached rows selectable during background checks', async () => {
     const loadMore = vi.fn(async () => undefined);
     let view = control({ loadMore, catalogLoading: true });
-    const items = releases(10);
+    let items = releases(10);
     let renderer!: ReactTestRenderer;
     const update = async () =>
       act(async () => {
@@ -209,13 +209,15 @@ describe('source release lists', () => {
       await update();
       expect(loadMore).not.toHaveBeenCalled();
       expect(renderer.root.findByProps({ type: 'checkbox' }).props.disabled).toBe(false);
-      const apply = vi.fn();
-      view = { ...view, catalogLoading: false, catalogUpdateAvailable: true, applyCatalogUpdate: apply };
+      items = releases(11);
+      view = { ...view, catalogLoading: false };
       await update();
       expect(renderer.root.findAllByType('article')[0]!.children[0]).toBe('1화 이야기');
-      const button = renderer.root.findAllByType('button').find((entry) => entry.children.includes('새 목차 적용'))!;
-      await act(async () => button.props.onClick());
-      expect(apply).toHaveBeenCalledOnce();
+      await act(async () => renderer.root.findByProps({ 'aria-label': '2페이지' }).props.onClick());
+      expect(renderer.root.findAllByType('article')[0]!.children[0]).toBe('11화 이야기');
+      expect(renderer.root.findAllByType('button').some((entry) => entry.children.includes('새 목차 적용'))).toBe(
+        false,
+      );
       expect(loadMore).not.toHaveBeenCalled();
     } finally {
       await act(async () => renderer.unmount());

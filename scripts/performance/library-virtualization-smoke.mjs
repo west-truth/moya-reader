@@ -59,7 +59,7 @@ try {
   });
   await page.keyboard.press('Control+K');
   assert.equal(await page.evaluate(() => document.activeElement?.getAttribute('aria-label')), '책장 검색');
-  // With 1,000 local books, source placeholders stay at their real tail slots.
+  // Until source metadata arrives, a few anonymous placeholders mark the pending lookup.
   // They should only mount when that part of the virtual list is near the viewport.
   await page.evaluate(() => {
     globalThis.libraryFixture.update({ sourceStatus: 'loading' });
@@ -78,6 +78,37 @@ try {
     document.querySelector('.library-main').scrollTop = 0;
   });
   await page.locator('.library-source-placeholder').first().waitFor({ state: 'detached' });
+  await page.evaluate(() => {
+    const work = (id, title, day) => ({
+      id,
+      title,
+      availableReleaseCount: 10,
+      newReleaseCount: 0,
+      addedAt: `2026-07-0${day}T00:00:00.000Z`,
+      updatedAt: `2026-07-0${day}T00:00:00.000Z`,
+      lastReadAt: `2026-07-0${day}T00:00:00.000Z`,
+    });
+    globalThis.libraryFixture.update({
+      sort: 'recent',
+      remoteWorks: [work('newest', 'A streamed newest', 3), work('oldest', 'Z streamed oldest', 1)],
+    });
+  });
+  await page.getByRole('button', { name: 'A streamed newest 원격 회차 열기', exact: true }).waitFor();
+  assert.equal(await page.locator('.book-card h3').first().textContent(), 'A streamed newest');
+  assert.equal(await page.locator('.book-card h3').nth(1).textContent(), 'Synthetic novel 0000');
+  await page.evaluate(() => {
+    const main = document.querySelector('.library-main');
+    main.scrollTop = main.scrollHeight;
+  });
+  await page.getByRole('button', { name: 'Z streamed oldest 원격 회차 열기', exact: true }).waitFor();
+  assert.equal(await page.locator('.book-card h3').last().textContent(), 'Z streamed oldest');
+  await page.evaluate(() => {
+    globalThis.libraryFixture.update({ sort: 'title', remoteWorks: [] });
+    document.querySelector('.library-main').scrollTop = 0;
+  });
+  await page
+    .getByRole('button', { name: 'Z streamed oldest 원격 회차 열기', exact: true })
+    .waitFor({ state: 'detached' });
   const evidence = [];
   for (const viewport of [
     { width: 1440, height: 900 },

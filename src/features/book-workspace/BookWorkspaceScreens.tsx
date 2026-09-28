@@ -262,6 +262,7 @@ export function BookWorkspaceScreens({
     sync,
     externalSources: {
       libraryBootstrap: externalSources.libraryBootstrap,
+      bookReadingActivity: externalSources.sourceWorkProgress?.byNovelId,
       active: externalSources.open,
       activeSourceId: externalSources.activeSourceId,
       busy: externalSources.busy,

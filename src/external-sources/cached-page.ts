@@ -57,3 +57,23 @@ export async function saveSourceCache(
     /* A full/disabled cache must not turn a successful request into an error. */
   }
 }
+
+export function cachePageId(
+  sourceId: string,
+  accountConnectionId: string | undefined,
+  input: ExternalSourceListInput,
+  scope = 'local',
+  generation?: string,
+): string {
+  return JSON.stringify([
+    scope,
+    generation ?? '',
+    sourceId,
+    accountConnectionId ?? '',
+    input.parentRef ?? '',
+    input.query?.trim() ?? '',
+    input.browseMode ?? '',
+    JSON.stringify(input.filters ?? []),
+    input.cursor ?? '',
+  ]);
+}

@@ -10,7 +10,6 @@ import { WorkViewControl } from '../../components/WorkViewControl';
 import {
   AlertTriangle,
   ArrowLeft,
-  Bell,
   BookOpen,
   Check,
   ChevronRight,
@@ -21,7 +20,6 @@ import {
   FilePlus2,
   Folder,
   LoaderCircle,
-  ListChecks,
   Pencil,
   Pin,
   PinOff,
@@ -1013,32 +1011,6 @@ export default function SourceHubScreen({
                   라이브러리에 추가해도 회차는 자동으로 다운로드하지 않습니다.
                 </p>
               </details>
-            )}
-
-            {controller.activeSubscription && controller.activeSubscription.newReleaseIds.length > 0 && (
-              <div className="source-hub-new-release-actions" role="status">
-                <Bell size={18} />
-                <span>
-                  <strong>새 회차 {controller.activeSubscription.newReleaseIds.length}개가 있습니다.</strong>
-                  원하는 회차만 선택해 기존 일괄 가져오기로 받을 수 있습니다.
-                </span>
-                <button
-                  type="button"
-                  className="primary-btn"
-                  disabled={controller.busy}
-                  onClick={controller.selectNewReleases}
-                >
-                  <ListChecks size={15} /> 새 회차 선택
-                </button>
-                <button
-                  type="button"
-                  className="ghost-btn"
-                  disabled={controller.busy}
-                  onClick={() => void controller.acknowledgeNewReleases()}
-                >
-                  확인 완료
-                </button>
-              </div>
             )}
 
             {!hasWorkHero && (controller.breadcrumbs.length > 0 || controller.stale) && (

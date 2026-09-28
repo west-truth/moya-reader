@@ -1,7 +1,7 @@
 import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it, vi } from 'vitest';
 import { defaultSettings } from '../../repositories/reader-defaults';
-import type { ReaderSettings } from '../../domain/types';
+import type { Novel, ReaderSettings } from '../../domain/types';
 import type { SourceTextReaderOptions } from '../external-sources/SourceTextStreamReader';
 import type { ExternalSourceController } from '../external-sources/useExternalSourceController';
 import type { LibraryManagementController } from '../library/useLibraryManagementController';
@@ -22,8 +22,12 @@ const sourceBook = testNovel({
   lastReadAt: '2026-09-02T00:00:00.000Z',
 });
 
-function render(settings: ReaderSettings, libraryBootstrap?: ExternalSourceController['libraryBootstrap']) {
-  const state = testWorkspaceState({ view: 'library', novels: [sourceBook] });
+function render(
+  settings: ReaderSettings,
+  libraryBootstrap?: ExternalSourceController['libraryBootstrap'],
+  otherBook?: Novel,
+) {
+  const state = testWorkspaceState({ view: 'library', novels: otherBook ? [sourceBook, otherBook] : [sourceBook] });
   const projection = buildBookWorkspaceLibraryProjection(state) as BookWorkspaceProjection;
   const externalSources = {
     sources: [],
@@ -32,7 +36,9 @@ function render(settings: ReaderSettings, libraryBootstrap?: ExternalSourceContr
     open: false,
     busy: false,
     sourceWorkProgress: {
-      byNovelId: new Map([['source-book', { readCount: 30, totalCount: 120, progress: 0.25 }]]),
+      byNovelId: new Map([
+        ['source-book', { readCount: 30, totalCount: 120, progress: 0.25, lastReadAt: '2026-09-25T00:00:00.000Z' }],
+      ]),
       bySubscriptionId: new Map(),
     },
     close: vi.fn(),
@@ -108,3 +114,16 @@ it('keeps downloaded cards usable while source works load or fail', () => {
   expect(failed).toContain('다시 시도');
   expect(render(defaultSettings, { status: 'ready' })).toContain('class="book-card');
 });
+
+it.each([false, true])(
+  'sorts a downloaded source book by its latest stream visit regardless of progress basis (%s)',
+  (downloaded) => {
+    const otherBook = testNovel({ id: 'ordinary', title: '일반 작품', lastReadAt: '2026-09-15T00:00:00.000Z' });
+    const markup = render(
+      { ...defaultSettings, ...(downloaded && { sourceProgressBasis: 'downloaded' as const }) },
+      undefined,
+      otherBook,
+    );
+    expect([...markup.matchAll(/<h3>([^<]+)<\/h3>/g)].map((match) => match[1])).toEqual(['소스 작품', '일반 작품']);
+  },
+);

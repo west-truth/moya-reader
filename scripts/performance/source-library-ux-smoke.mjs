@@ -69,6 +69,11 @@ try {
       const { releasePreferenceId } = await import('/src/external-sources/source-user-state.ts');
       const state = new ExternalSourceLocalStateStore();
       const now = new Date().toISOString();
+      const { getNovels } = await import('/src/storage/db.ts');
+      const local = (await getNovels())[0];
+      const middle = Date.parse(local.updatedAt);
+      const oldest = new Date(middle - 86400000).toISOString();
+      const newest = new Date(middle + 86400000).toISOString();
       for (let i = 0; i < 12; i++) {
         const remoteId = 'work-' + i;
         await state.saveSubscription({
@@ -83,8 +88,8 @@ try {
           availableReleaseCount: 10,
           releaseBaselineComplete: true,
           lastCheckedAt: now,
-          createdAt: now,
-          updatedAt: now,
+          createdAt: i === 0 ? newest : oldest,
+          updatedAt: i === 0 ? newest : oldest,
           schemaVersion: 1,
         });
       }
@@ -96,7 +101,7 @@ try {
           source,
           collectionRemoteId: 'work-0',
           read: true,
-          lastReadAt: now,
+          lastReadAt: newest,
           updatedAt: now,
         },
       ]);
@@ -115,15 +120,40 @@ try {
     });
     await page.reload();
     await page.locator('.library-source-placeholder').first().waitFor();
-    const reservedSlot = await page.locator('.library-source-placeholder').first().boundingBox();
     await page.locator('.external-work-card').first().waitFor();
-    const loadedSlot = await page.locator('.external-work-card').first().boundingBox();
-    assert(
-      Math.abs(reservedSlot.x - loadedSlot.x) <= 1 && Math.abs(reservedSlot.y - loadedSlot.y) <= 1,
-      JSON.stringify({ reservedSlot, loadedSlot }),
-    );
     const firstCards = await page.evaluate(() => globalThis.libraryCardSnapshots[0]);
     assert(firstCards.total === 1 && firstCards.remote === 0 && firstCards.sourceSkeleton, JSON.stringify(firstCards));
+    const setSort = async (sort) => {
+      if (width >= 700) return page.getByRole('combobox', { name: '책장 정렬' }).selectOption(sort);
+      await page.getByRole('button', { name: '정렬 및 보기', exact: true }).click();
+      await page
+        .locator('.library-mobile-display')
+        .getByRole('button', {
+          name: { recent: '최근 읽은 순', added: '최근 추가 순', title: '제목 순' }[sort],
+          exact: true,
+        })
+        .click();
+    };
+    for (const view of ['grid', 'compact', 'list', 'text']) {
+      await page.getByRole('combobox', { name: '라이브러리 보기 방식' }).selectOption(view);
+      for (const sort of ['recent', 'added', 'title']) {
+        await setSort(sort);
+        const titles = await page.locator('.books-grid h3, .books-list h3').allTextContents();
+        assert.equal(titles.length, 13);
+        if (sort === 'title')
+          assert.deepEqual(
+            titles,
+            [...titles].sort((a, b) => a.localeCompare(b, 'ko')),
+          );
+        else {
+          assert.equal(titles[0], '검증 작품 0');
+          assert(titles[1].startsWith('샘플:'), JSON.stringify(titles));
+          assert(titles.slice(2).every((title) => title.startsWith('검증 작품 ')));
+        }
+      }
+    }
+    await page.getByRole('combobox', { name: '라이브러리 보기 방식' }).selectOption('grid');
+    await setSort('recent');
     const before = await page.evaluate(
       async () =>
         await new (
@@ -270,7 +300,7 @@ try {
         menuViews: 4,
         batchTrashRestore: true,
         independentLoadingAndRetry: true,
-        placeholderReplacedInPlace: true,
+        mixedLibraryOrder: true,
       }),
     );
     await context.close();

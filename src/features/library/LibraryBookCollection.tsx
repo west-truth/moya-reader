@@ -1,3 +1,4 @@
+import { orderedLibraryWorks } from './library-work-order';
 import { LibrarySourcePlaceholder, sourceLibraryLoadingState } from './LibrarySourceLoading';
 import { externalSelectionId } from './library-batch';
 import { LibraryCountLabel } from './LibraryCountLabel';
@@ -303,57 +304,56 @@ export function LibraryBookCollection(props: LibraryScreenProps) {
   const placeholders = sourceLibraryLoadingState(props.model)?.status === 'loading' ? [0, 1, 2, 3] : [];
   const items = [
     ...standaloneTasks.map((task) => ({ kind: 'task' as const, key: `task:${task.id}`, task })),
-    ...props.model.collection.visibleBooks.map((book) => ({
-      kind: 'book' as const,
-      key: `book:${book.novel.id}`,
-      book,
-    })),
-    ...externalWorks.map((work) => ({ kind: 'external' as const, key: `external:${work.id}`, work })),
+    ...orderedLibraryWorks(
+      props.model.collection.visibleBooks,
+      externalWorks,
+      props.model.sort,
+      props.model.externalSources.bookReadingActivity,
+    ),
     ...placeholders.map((index) => ({ kind: 'placeholder' as const, key: `source-loading:${index}` })),
   ];
-  if (items.length > 100) {
-    const renderItem = (index: number) => {
-      const item = items[index];
-      if (item.kind === 'placeholder')
-        return <LibrarySourcePlaceholder key={item.key} viewMode={props.model.viewMode} />;
-      if (item.kind === 'task') {
-        return isCoverView(props.model.viewMode) ? (
-          <LibraryImportTaskCard key={item.key} task={item.task} actions={props.actions} />
-        ) : (
-          <LibraryImportTaskListRow key={item.key} task={item.task} actions={props.actions} />
-        );
-      }
-      if (item.kind === 'external') {
-        return isCoverView(props.model.viewMode) ? (
-          <ExternalWorkCard
-            showReadingCounts={props.model.presentation.showReadingCounts}
-            key={item.key}
-            work={item.work}
-            selectionMode={props.model.management.selectionMode}
-            selected={props.model.management.selectedBookIds.has(externalSelectionId(item.work.id))}
-            busy={props.model.management.busy}
-            actions={props.actions}
-            importTask={taskForExternalWork(item.work.id)}
-          />
-        ) : (
-          <ExternalWorkListRow
-            showCover={props.model.viewMode !== 'text'}
-            key={item.key}
-            work={item.work}
-            selectionMode={props.model.management.selectionMode}
-            selected={props.model.management.selectedBookIds.has(externalSelectionId(item.work.id))}
-            busy={props.model.management.busy}
-            actions={props.actions}
-            importTask={taskForExternalWork(item.work.id)}
-          />
-        );
-      }
+  const renderItem = (index: number) => {
+    const item = items[index];
+    if (item.kind === 'placeholder') return <LibrarySourcePlaceholder key={item.key} viewMode={props.model.viewMode} />;
+    if (item.kind === 'task') {
       return isCoverView(props.model.viewMode) ? (
-        <LibraryBookCard key={item.key} book={item.book} importTask={taskForBook(item.book.novel.id)} {...props} />
+        <LibraryImportTaskCard key={item.key} task={item.task} actions={props.actions} />
       ) : (
-        <LibraryBookListRow key={item.key} book={item.book} importTask={taskForBook(item.book.novel.id)} {...props} />
+        <LibraryImportTaskListRow key={item.key} task={item.task} actions={props.actions} />
       );
-    };
+    }
+    if (item.kind === 'external') {
+      return isCoverView(props.model.viewMode) ? (
+        <ExternalWorkCard
+          showReadingCounts={props.model.presentation.showReadingCounts}
+          key={item.key}
+          work={item.work}
+          selectionMode={props.model.management.selectionMode}
+          selected={props.model.management.selectedBookIds.has(externalSelectionId(item.work.id))}
+          busy={props.model.management.busy}
+          actions={props.actions}
+          importTask={taskForExternalWork(item.work.id)}
+        />
+      ) : (
+        <ExternalWorkListRow
+          showCover={props.model.viewMode !== 'text'}
+          key={item.key}
+          work={item.work}
+          selectionMode={props.model.management.selectionMode}
+          selected={props.model.management.selectedBookIds.has(externalSelectionId(item.work.id))}
+          busy={props.model.management.busy}
+          actions={props.actions}
+          importTask={taskForExternalWork(item.work.id)}
+        />
+      );
+    }
+    return isCoverView(props.model.viewMode) ? (
+      <LibraryBookCard key={item.key} book={item.book} importTask={taskForBook(item.book.novel.id)} {...props} />
+    ) : (
+      <LibraryBookListRow key={item.key} book={item.book} importTask={taskForBook(item.book.novel.id)} {...props} />
+    );
+  };
+  if (items.length > 100) {
     return (
       <>
         {props.model.management.selectionMode && (
@@ -404,48 +404,7 @@ export function LibraryBookCollection(props: LibraryScreenProps) {
             <span>작업</span>
           </div>
         )}
-        {standaloneTasks.map((task) =>
-          isCoverView(props.model.viewMode) ? (
-            <LibraryImportTaskCard key={task.id} task={task} actions={props.actions} />
-          ) : (
-            <LibraryImportTaskListRow key={task.id} task={task} actions={props.actions} />
-          ),
-        )}
-        {props.model.collection.visibleBooks.map((book) =>
-          isCoverView(props.model.viewMode) ? (
-            <LibraryBookCard key={book.novel.id} book={book} importTask={taskForBook(book.novel.id)} {...props} />
-          ) : (
-            <LibraryBookListRow key={book.novel.id} book={book} importTask={taskForBook(book.novel.id)} {...props} />
-          ),
-        )}
-        {externalWorks.map((work) =>
-          isCoverView(props.model.viewMode) ? (
-            <ExternalWorkCard
-              showReadingCounts={props.model.presentation.showReadingCounts}
-              key={work.id}
-              work={work}
-              selectionMode={props.model.management.selectionMode}
-              selected={props.model.management.selectedBookIds.has(externalSelectionId(work.id))}
-              busy={props.model.management.busy}
-              actions={props.actions}
-              importTask={taskForExternalWork(work.id)}
-            />
-          ) : (
-            <ExternalWorkListRow
-              showCover={props.model.viewMode !== 'text'}
-              key={work.id}
-              work={work}
-              selectionMode={props.model.management.selectionMode}
-              selected={props.model.management.selectedBookIds.has(externalSelectionId(work.id))}
-              busy={props.model.management.busy}
-              actions={props.actions}
-              importTask={taskForExternalWork(work.id)}
-            />
-          ),
-        )}
-        {placeholders.map((index) => (
-          <LibrarySourcePlaceholder key={`source-loading:${index}`} viewMode={props.model.viewMode} />
-        ))}
+        {items.map((_, index) => renderItem(index))}
       </div>
     </>
   );

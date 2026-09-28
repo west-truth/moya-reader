@@ -36,7 +36,7 @@ function Fixture() {
     novels,
     query: state.query,
     filter: 'all',
-    sort: 'title',
+    sort: state.sort ?? 'title',
     readState: { hasReadActivity: () => false, isFinished: () => false },
   });
   const model = {
@@ -45,6 +45,7 @@ function Fixture() {
     query: state.query,
     sync: { label: 'local', tone: 'local' },
     externalSources: {
+      libraryWorks: state.remoteWorks ?? [],
       libraryBootstrap: state.sourceStatus ? { status: state.sourceStatus } : undefined,
       active: false,
       busy: false,
@@ -55,7 +56,7 @@ function Fixture() {
     },
     importTasks: [],
     filter: 'all',
-    sort: 'title',
+    sort: state.sort ?? 'title',
     viewMode: state.viewMode,
     collection,
     presentation: { layoutMode: 'wide', inspectorOpen: false, shelfBookCounts: new Map() },
