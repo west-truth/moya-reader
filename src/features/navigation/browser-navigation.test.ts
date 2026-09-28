@@ -140,16 +140,18 @@ describe('browser app navigation', () => {
 
   it('updates a screen snapshot without recording each query or reading position change', async () => {
     const h = fixture();
+    // Hex-only queries can coincidentally occur in a random session UUID.
+    const query = 'private library query';
     try {
       h.show('source', 'a');
       h.show('source', 'ab');
-      h.show('source', 'abc');
+      h.show('source', query);
       expect(h.b.entries).toHaveLength(3);
-      expect(JSON.stringify(h.b.entries)).not.toContain('abc');
+      expect(JSON.stringify(h.b.entries)).not.toContain(query);
       expect(h.b.window.history.state.foreign).toBe('preserved');
       h.show('detail');
       h.navigation.back();
-      await vi.waitFor(() => expect(h.current().query).toBe('abc'));
+      await vi.waitFor(() => expect(h.current().query).toBe(query));
     } finally {
       h.navigation.dispose();
     }

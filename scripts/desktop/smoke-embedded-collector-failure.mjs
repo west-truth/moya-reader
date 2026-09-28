@@ -38,6 +38,7 @@ try {
 } finally {
   await server?.stop().catch(() => undefined);
   await rm(missingRuntime, { force: true });
-  if (passed) await rm(profileDir, { recursive: true, force: true });
+  // Windows can retain directory handles briefly after the processes have exited.
+  if (passed) await rm(profileDir, { recursive: true, force: true, maxRetries: 10, retryDelay: 250 });
   else console.error(`Collector failure profile retained for diagnostics: ${profileDir}`);
 }

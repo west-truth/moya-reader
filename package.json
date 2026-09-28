@@ -1,6 +1,6 @@
 {
   "name": "moya-reader",
-  "version": "0.1.0",
+  "version": "0.1.1-beta.2",
   "description": "모야 - 텍스트 및 만화 뷰어",
   "license": "Apache-2.0",
   "private": true,
