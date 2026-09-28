@@ -1,3 +1,5 @@
+import type { Novel } from '../../domain/types';
+import { releasePreferenceId } from '../../external-sources/source-user-state';
 import { PARAGRAPHS_PER_PAGE } from '../../repositories/reader-defaults';
 import {
   isTextStream,
@@ -101,7 +103,7 @@ export async function saveTextStreamPosition(
   current: LibraryOptions,
   item: ExternalSourceItemView,
   position: { paragraphIndex: number; offset: number; textHash: string; count: number },
-): Promise<void> {
+): Promise<Novel | undefined> {
   if (!current.getParagraphPage || !current.saveTextPosition) return;
   const link = (await current.state.listLinks(item.key.connectorId)).find(
     (link) => !link.pendingImport && externalItemKeyId(link.source) === externalItemKeyId(item.key),
@@ -133,7 +135,7 @@ export async function saveTextStreamPosition(
       chapterProgress: (index - 1) / Math.max(1, chapter.paragraphCount),
       scrollTop: 0,
     });
-    break;
+    return current.getNovel(novel.id);
   }
 }
 
@@ -142,7 +144,7 @@ export async function saveImageStreamPosition(
   item: ExternalSourceItemView,
   page: number,
   count: number,
-): Promise<void> {
+): Promise<Novel | undefined> {
   if (!current.saveStreamPosition) return;
   const link = (await current.state.listLinks(item.key.connectorId)).find(
     (link) => externalItemKeyId(link.source) === externalItemKeyId(item.key) && !link.pendingImport,
@@ -158,4 +160,24 @@ export async function saveImageStreamPosition(
     chapters[page],
     novel,
   );
+  return current.getNovel(novel.id);
+}
+
+export async function recordStreamReleaseRead(current: LibraryOptions, item: ExternalSourceItemView, readAt: string) {
+  if (!item.release || !current.state.saveReleasePreferences || !current.state.listReleasePreferences) return;
+  const id = releasePreferenceId(item.key);
+  const existing = (await current.state.listReleasePreferences()).find((record) => record.id === id);
+  if (existing?.read || (existing?.readChangedAt && existing.readChangedAt > readAt)) return existing;
+  const now = new Date().toISOString();
+  const record = {
+    ...existing,
+    id,
+    kind: 'releasePreference' as const,
+    source: item.key,
+    read: true,
+    readChangedAt: readAt,
+    updatedAt: now,
+  };
+  await current.state.saveReleasePreferences([record]);
+  return record;
 }

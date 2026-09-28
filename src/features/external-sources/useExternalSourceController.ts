@@ -1,3 +1,4 @@
+import { useSourceStreamProgress } from './use-source-stream-progress';
 import { useStreamSaveQueue } from './use-stream-save-queue';
 import { isTextStream, type SourceReadingPort } from '../../external-sources/source-text-stream';
 import { sourceReadingPreferences } from '../../external-sources/source-reading-preferences';
@@ -478,7 +479,6 @@ function filterChanges(
 }
 
 export function useExternalSourceController(options: UseExternalSourceControllerOptions): ExternalSourceController {
-  const streamPositionWrites = useRef<Promise<void>>(Promise.resolve());
   const [streaming, setStreaming] = useState<ExternalSourceController['streaming']>();
   const [workLayout] = useSourceWorkLayout();
   const optionsRef = useRef(options);
@@ -738,6 +738,36 @@ export function useExternalSourceController(options: UseExternalSourceController
       );
     }
   }, []);
+
+  const streamProgress = useSourceStreamProgress({
+    current: () => optionsRef.current,
+    isRead: (item) => preferenceByKey.get(externalItemKeyId(item.key))?.read === true,
+    onRead: (preference) => {
+      if (mountedRef.current)
+        setReleasePreferences((previous) => [...previous.filter((record) => record.id !== preference.id), preference]);
+    },
+    onSaved: (novel) => {
+      if (mountedRef.current) setNovels((previous) => [...previous.filter((record) => record.id !== novel.id), novel]);
+    },
+  });
+  const { reconcile: reconcileStreamProgress } = streamProgress;
+  // Background imports can finish after the reader has already moved to another episode.
+  const streamLibraryVersion = JSON.stringify([
+    links
+      .map((link) =>
+        JSON.stringify([
+          externalItemKeyId(link.source),
+          link.localBookId,
+          link.pendingImport,
+          link.activeContentRevisionId,
+        ]),
+      )
+      .sort(),
+    novels.map((novel) => JSON.stringify([novel.id, novel.activeContentRevisionId])).sort(),
+  ]);
+  useEffect(() => {
+    void reconcileStreamProgress();
+  }, [streamLibraryVersion, reconcileStreamProgress]);
 
   const publishCommittedNovel = useCallback(
     async (novel: Novel) => {
@@ -4482,37 +4512,24 @@ export function useExternalSourceController(options: UseExternalSourceController
             novels.some((novel) => novel.id === link.localBookId && !novel.deletedAt),
         )?.localBookId
       : undefined,
-    closeStream: () => setStreaming(undefined),
+    closeStream: () => {
+      setStreaming(undefined);
+      void streamProgress
+        .reconcile()
+        .then(async () => {
+          await optionsRef.current.onLibraryChanged();
+          await refreshLocalProjection();
+        })
+        .catch(() => optionsRef.current.notify('읽던 위치를 새로고침하지 못했습니다.', 'warning'));
+    },
     openStreamItem:
       options.assets && options.getParagraphPage
         ? async (item) => {
             if (!item.release || !beginStream(item, true)) throw new Error('이 회차를 바로 열 수 없습니다.');
           }
         : undefined,
-    saveTextStreamPosition: (item, position) => {
-      const run = async () => {
-        const current = optionsRef.current;
-        const { saveTextStreamPosition } = await import('./source-stream-library');
-        await saveTextStreamPosition(current, item, position);
-      };
-      const pending = streamPositionWrites.current.then(run);
-      streamPositionWrites.current = pending.catch(() =>
-        optionsRef.current.notify('읽던 위치를 저장하지 못했습니다.', 'warning'),
-      );
-      return streamPositionWrites.current;
-    },
-    saveStreamPosition: (item, page, count) => {
-      const run = async () => {
-        const current = optionsRef.current;
-        const { saveImageStreamPosition } = await import('./source-stream-library');
-        await saveImageStreamPosition(current, item, page, count);
-      };
-      const pending = streamPositionWrites.current.then(run);
-      streamPositionWrites.current = pending.catch(() => {
-        optionsRef.current.notify('읽던 위치를 저장하지 못했습니다. 연결 상태를 확인해 주세요.', 'warning');
-      });
-      return streamPositionWrites.current;
-    },
+    saveTextStreamPosition: (item, position) => streamProgress.record(item, { kind: 'text', ...position }),
+    saveStreamPosition: (item, page, count) => streamProgress.record(item, { kind: 'image', page, count }),
     saveStream,
     canStreamItem: (item) =>
       sourceReadingPreferences().mode !== 'download' &&

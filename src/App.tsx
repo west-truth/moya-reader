@@ -1490,7 +1490,17 @@ export default function App() {
   });
   const externalSourceFeature = useExternalSourceController({
     getParagraphPage: (chapterId, pageIndex, signal) => readerRepository.getParagraphPage(chapterId, pageIndex, signal),
-    saveStreamPosition: bookWorkspace.saveFixedDocumentPage,
+    saveStreamPosition: (pageIndex, chapter, novel) =>
+      readerRepository.saveReadingPosition({
+        novelId: novel.id,
+        expectedContentRevisionId: novel.activeContentRevisionId,
+        chapterId: chapter.id,
+        documentSectionId: chapter.documentSectionId,
+        scrollTop: pageIndex,
+        chapterProgress: 1,
+        paragraphIndex: 1,
+        offsetInParagraph: 0,
+      }),
     saveTextPosition: (input) => readerRepository.saveReadingPosition(input),
     downloadPolicy: settings.downloadPolicy ?? legacyDownloads,
     updateDownloadPolicy: (patch) =>
