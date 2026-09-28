@@ -533,7 +533,11 @@ export default function SourceHubScreen({
     return tasks;
   }, [controller.tasks]);
   const seriesNovel = localSeriesNovel ?? controller.localSeriesNovel;
-  const readingActionLabel = seriesNovel?.totalChapters === 0 ? '다운로드한 회차 없음' : undefined;
+  const readingActionLabel = controller.canResumeCurrentWork
+    ? '이어 보기'
+    : seriesNovel?.totalChapters === 0
+      ? '다운로드한 회차 없음'
+      : undefined;
   const activeSource = controller.sources.find((source) =>
     seriesNovel ? source.id === controller.localSeriesSourceId : source.id === controller.activeSourceId,
   );
@@ -797,22 +801,31 @@ export default function SourceHubScreen({
                       </div>
                     )}
                     <div className="detail-hero-actions">
-                      {seriesNovel && (
+                      {(seriesNovel || controller.canResumeCurrentWork) && (
                         <button
                           type="button"
                           className="primary-btn source-hub-reading-button"
                           aria-label={readingActionLabel ?? (seriesCanContinue ? '이어 보기' : '첫 회차 보기')}
                           title={readingActionLabel ?? (seriesCanContinue ? '이어 보기' : '첫 회차 보기')}
-                          disabled={controller.blockingBusy || controller.loading || seriesNovel.totalChapters === 0}
-                          onClick={() => void library.actions.books.continueReading(seriesNovel)}
+                          disabled={
+                            controller.blockingBusy ||
+                            controller.loading ||
+                            (!controller.canResumeCurrentWork && seriesNovel?.totalChapters === 0)
+                          }
+                          onClick={() => {
+                            if (controller.canResumeCurrentWork) void controller.resumeCurrentWork?.();
+                            else if (seriesNovel) void library.actions.books.continueReading(seriesNovel);
+                          }}
                         >
                           <Play size={16} fill="currentColor" />
                           <span className="source-hub-reading-label">
-                            {seriesNovel.totalChapters === 0
-                              ? '다운로드한 회차 없음'
-                              : seriesCanContinue
-                                ? '이어 보기'
-                                : '첫 회차 보기'}
+                            {controller.canResumeCurrentWork
+                              ? '이어 보기'
+                              : seriesNovel?.totalChapters === 0
+                                ? '다운로드한 회차 없음'
+                                : seriesCanContinue
+                                  ? '이어 보기'
+                                  : '첫 회차 보기'}
                           </span>
                         </button>
                       )}

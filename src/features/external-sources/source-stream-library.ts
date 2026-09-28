@@ -163,11 +163,20 @@ export async function saveImageStreamPosition(
   return current.getNovel(novel.id);
 }
 
-export async function recordStreamReleaseRead(current: LibraryOptions, item: ExternalSourceItemView, readAt: string) {
+export async function recordStreamReleaseRead(
+  current: LibraryOptions,
+  item: ExternalSourceItemView,
+  readAt: string,
+  readingMode: 'stream' | 'download' = 'stream',
+) {
   if (!item.release || !current.state.saveReleasePreferences || !current.state.listReleasePreferences) return;
   const id = releasePreferenceId(item.key);
   const existing = (await current.state.listReleasePreferences()).find((record) => record.id === id);
-  if (existing?.read || (existing?.readChangedAt && existing.readChangedAt > readAt)) return existing;
+  if (
+    (existing?.readChangedAt && existing.readChangedAt > readAt) ||
+    (existing?.lastReadAt && existing.lastReadAt > readAt)
+  )
+    return existing;
   const now = new Date().toISOString();
   const record = {
     ...existing,
@@ -176,8 +185,37 @@ export async function recordStreamReleaseRead(current: LibraryOptions, item: Ext
     source: item.key,
     read: true,
     readChangedAt: readAt,
+    ...(item.collection ? { collectionRemoteId: item.collection.remoteId, lastReadAt: readAt, readingMode } : {}),
     updatedAt: now,
   };
   await current.state.saveReleasePreferences([record]);
   return record;
+}
+
+export async function sourceReadingTargetItem(
+  current: LibraryOptions,
+  target: { novelId: string; sectionId: string },
+): Promise<ExternalSourceItemView | undefined> {
+  const { externalDocumentReleaseSourceId } = await import('../../external-sources/series/document-series-identity');
+  const links = await current.state.listLinks();
+  const link = links.find(
+    (link) =>
+      link.localBookId === target.novelId &&
+      link.collectionRemoteId &&
+      !link.pendingImport &&
+      (link.source.remoteId === target.sectionId ||
+        externalDocumentReleaseSourceId(link.source, link.collectionRemoteId) === target.sectionId),
+  );
+  if (!link?.collectionRemoteId) return;
+  return {
+    key: link.source,
+    kind: 'file',
+    title: target.sectionId,
+    collection: { remoteId: link.collectionRemoteId, title: '' },
+    release: { title: target.sectionId },
+    importability: 'supported',
+    selected: false,
+    importState: 'imported',
+    localBookId: target.novelId,
+  };
 }

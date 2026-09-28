@@ -5,6 +5,7 @@ import {
   releasePreferenceId,
   sourceDownloadQueueId,
   validReleasePreference,
+  normalizeReleasePreference,
   type SourceDownloadQueue,
 } from './source-user-state';
 
@@ -48,10 +49,14 @@ describe('durable source user state', () => {
       kind: 'releasePreference' as const,
       source,
       title: 'My title',
+      collectionRemoteId: 'work',
+      lastReadAt: new Date().toISOString(),
+      readingMode: 'stream' as const,
       read: false,
       readChangedAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
     };
+    expect(normalizeReleasePreference(pref)).toEqual(pref);
     await store.saveReleasePreferences([pref]);
     await store.saveDownloadQueue(queue([item(1)]));
     const shared = await store.exportSharedState();
@@ -75,6 +80,9 @@ describe('durable source user state', () => {
     expect(validReleasePreference(pref)).toBe(true);
     expect(validReleasePreference({ ...pref, readChangedAt: 'invalid' })).toBe(false);
     expect(validReleasePreference({ ...pref, title: '' })).toBe(false);
+    expect(validReleasePreference({ ...pref, lastReadAt: 'invalid', collectionRemoteId: 'work' })).toBe(false);
+    expect(validReleasePreference({ ...pref, lastReadAt: pref.updatedAt })).toBe(false);
+    expect(validReleasePreference({ ...pref, readingMode: 'invalid' })).toBe(false);
     expect(validReleasePreference({ ...pref, source: { ...source, remoteId: 'different' } })).toBe(false);
   });
 });

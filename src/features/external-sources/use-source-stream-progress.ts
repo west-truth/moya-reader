@@ -12,18 +12,21 @@ export type StreamReadingPosition =
 export function useSourceStreamProgress(options: {
   current(): UseExternalSourceControllerOptions;
   isRead?(item: ExternalSourceItemView): boolean;
+  lastReadAt?: string;
   onRead(preference: SourceReleasePreference): void;
   onSaved(novel: Novel): void;
 }) {
   const latest = useRef(options);
   latest.current = options;
   const queue = useRef(Promise.resolve());
-  const unreadWrites = useRef(new Map<string, { item: ExternalSourceItemView; readAt: string }>());
+  const unreadWrites = useRef(
+    new Map<string, { item: ExternalSourceItemView; readAt: string; mode: 'stream' | 'download' }>(),
+  );
   const markRead = useCallback(async (key: string) => {
     const entry = unreadWrites.current.get(key);
     if (!entry) return;
     const { recordStreamReleaseRead } = await import('./source-stream-library');
-    const preference = await recordStreamReleaseRead(latest.current.current(), entry.item, entry.readAt);
+    const preference = await recordStreamReleaseRead(latest.current.current(), entry.item, entry.readAt, entry.mode);
     if (preference) latest.current.onRead(preference);
     if (unreadWrites.current.get(key) === entry) unreadWrites.current.delete(key);
   }, []);
@@ -43,6 +46,31 @@ export function useSourceStreamProgress(options: {
     if (novel) latest.current.onSaved(novel);
     return Boolean(novel);
   }, []);
+  const visits = useRef(new Map<string, string>());
+  const visitClock = useRef(0);
+  const prepareVisit = useCallback((item: ExternalSourceItemView, mode: 'stream' | 'download') => {
+    const workKey = externalItemKeyId({ ...item.key, remoteId: item.collection?.remoteId ?? item.key.remoteId });
+    const itemKey = externalItemKeyId(item.key);
+    if (visits.current.get(workKey) !== `${mode}:${itemKey}` || latest.current.isRead?.(item) === false) {
+      visitClock.current = Math.max(
+        Date.now(),
+        visitClock.current + 1,
+        (Date.parse(latest.current.lastReadAt ?? '') || 0) + 1,
+      );
+      unreadWrites.current.set(itemKey, { item, readAt: new Date(visitClock.current).toISOString(), mode });
+      visits.current.set(workKey, `${mode}:${itemKey}`);
+    }
+    return { workKey, itemKey };
+  }, []);
+  const recordVisit = useCallback(
+    (item: ExternalSourceItemView) => {
+      const { workKey, itemKey } = prepareVisit(item, 'download');
+      // A normal downloaded reader now owns the position; do not replay an older stream later.
+      positions.current.delete(workKey);
+      return enqueue(() => markRead(itemKey));
+    },
+    [enqueue, markRead, prepareVisit],
+  );
   const record = useCallback(
     (item: ExternalSourceItemView, position: StreamReadingPosition) => {
       if (
@@ -55,9 +83,7 @@ export function useSourceStreamProgress(options: {
             position.paragraphIndex > position.count)
       )
         return Promise.resolve();
-      const workKey = externalItemKeyId({ ...item.key, remoteId: item.collection?.remoteId ?? item.key.remoteId });
-      const itemKey = externalItemKeyId(item.key);
-      if (!latest.current.isRead?.(item)) unreadWrites.current.set(itemKey, { item, readAt: new Date().toISOString() });
+      const { workKey, itemKey } = prepareVisit(item, 'stream');
       const entry = { item, position };
       positions.current.set(workKey, entry);
       return enqueue(async () => {
@@ -71,7 +97,7 @@ export function useSourceStreamProgress(options: {
           positions.current.delete(workKey);
       });
     },
-    [enqueue, markRead, persist],
+    [enqueue, markRead, persist, prepareVisit],
   );
   const reconcile = useCallback(
     () =>
@@ -84,5 +110,5 @@ export function useSourceStreamProgress(options: {
       }),
     [enqueue, markRead, persist],
   );
-  return { record, reconcile };
+  return { record, recordVisit, reconcile };
 }

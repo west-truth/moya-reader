@@ -1,3 +1,4 @@
+import { latestSourceVisits, sourceReleaseReadingState } from './source-release-reading';
 import { useSourceStreamProgress } from './use-source-stream-progress';
 import { useStreamSaveQueue } from './use-stream-save-queue';
 import { isTextStream, type SourceReadingPort } from '../../external-sources/source-text-stream';
@@ -247,6 +248,9 @@ export interface ExternalSourceController {
   openDiscovery?(sourceId: ExtensionContributionId, input: ExternalSourceListInput, title?: string): Promise<void>;
   show(sourceId?: ExtensionContributionId): void;
   showLocalSeries(novel: Novel): Promise<void>;
+  continueSourceReading?(novel: Novel): Promise<boolean>;
+  canResumeCurrentWork?: boolean;
+  resumeCurrentWork?(): Promise<void>;
   close(): void;
   selectSource(id: ExtensionContributionId): Promise<void>;
   setQuery(value: string): void;
@@ -570,6 +574,7 @@ export function useExternalSourceController(options: UseExternalSourceController
   const [checkingSubscriptions, setCheckingSubscriptions] = useState(false);
   const [brokerRevision, setBrokerRevision] = useState(0);
   const listAbortRef = useRef<AbortController>();
+  const resumeAbortRef = useRef<AbortController>();
   const localSeriesPageSeedRef = useRef<{
     sourceId?: string;
     accountConnectionId?: string;
@@ -679,6 +684,7 @@ export function useExternalSourceController(options: UseExternalSourceController
     mountedRef.current = true;
     return () => {
       mountedRef.current = false;
+      resumeAbortRef.current?.abort();
       listAbortRef.current?.abort();
       downloadAbortRef.current?.abort();
       subscriptionAbortRef.current?.abort();
@@ -741,6 +747,11 @@ export function useExternalSourceController(options: UseExternalSourceController
 
   const streamProgress = useSourceStreamProgress({
     current: () => optionsRef.current,
+    lastReadAt: releasePreferences.reduce(
+      (latest, preference) =>
+        preference.lastReadAt && preference.lastReadAt > latest ? preference.lastReadAt : latest,
+      '',
+    ),
     isRead: (item) => preferenceByKey.get(externalItemKeyId(item.key))?.read === true,
     onRead: (preference) => {
       if (mountedRef.current)
@@ -750,7 +761,26 @@ export function useExternalSourceController(options: UseExternalSourceController
       if (mountedRef.current) setNovels((previous) => [...previous.filter((record) => record.id !== novel.id), novel]);
     },
   });
-  const { reconcile: reconcileStreamProgress } = streamProgress;
+  const { reconcile: reconcileStreamProgress, recordVisit } = streamProgress;
+  const streamReadingActive = Boolean(streaming);
+  const normalReadingBookId = options.readingTarget?.novelId;
+  const normalReadingSectionId = options.readingTarget?.sectionId;
+  useEffect(() => {
+    if (streamReadingActive || !normalReadingBookId || !normalReadingSectionId) return;
+    let active = true;
+    void import('./source-stream-library')
+      .then(async ({ sourceReadingTargetItem }) => {
+        const item = await sourceReadingTargetItem(optionsRef.current, {
+          novelId: normalReadingBookId,
+          sectionId: normalReadingSectionId,
+        });
+        if (active && item) await recordVisit(item);
+      })
+      .catch(() => optionsRef.current.notify('읽던 회차를 저장하지 못했습니다.', 'warning'));
+    return () => {
+      active = false;
+    };
+  }, [normalReadingBookId, normalReadingSectionId, streamReadingActive, recordVisit]);
   // Background imports can finish after the reader has already moved to another episode.
   const streamLibraryVersion = JSON.stringify([
     links
@@ -1280,6 +1310,7 @@ export function useExternalSourceController(options: UseExternalSourceController
   );
 
   const close = useCallback(() => {
+    resumeAbortRef.current?.abort();
     const wasOpen = openRef.current;
     listAbortRef.current?.abort();
     pendingCatalogApplyRef.current = undefined;
@@ -1300,6 +1331,7 @@ export function useExternalSourceController(options: UseExternalSourceController
 
   const showLocalSeries = useCallback(
     async (novel: Novel) => {
+      resumeAbortRef.current?.abort();
       if (blockingBusy) return;
       listAbortRef.current?.abort();
       const navigation = new AbortController();
@@ -1599,6 +1631,7 @@ export function useExternalSourceController(options: UseExternalSourceController
     () => new Map(tasks.flatMap((task) => (task.externalItemKey ? [[task.externalItemKey, task] as const] : []))),
     [tasks],
   );
+  const sourceVisits = useMemo(() => latestSourceVisits(releasePreferences), [releasePreferences]);
   const items = useMemo<readonly ExternalSourceItemView[]>(() => {
     const readAtBySection = new Map(
       [...localSeriesChapters, ...(catalogChapters?.chapters ?? [])].map((chapter) => [
@@ -1650,18 +1683,23 @@ export function useExternalSourceController(options: UseExternalSourceController
         localBookId: localNovel?.id,
         localBookTitle: localNovel?.title,
         localOrderOnly: Boolean(localSeriesBookId && remoteKeys && !remoteKeys.has(key)),
-        readingState: useReadOverride
-          ? preference!.read
-            ? 'read'
-            : 'unread'
-          : item.release
-            ? ((localSeriesBookId ? effectiveLocalSeriesReadingStates : catalogReadingStates).get(
-                externalItemSectionId(item),
-              ) ?? 'unread')
-            : undefined,
+        readingState: sourceReleaseReadingState(
+          item,
+          useReadOverride
+            ? preference!.read
+              ? 'read'
+              : 'unread'
+            : item.release
+              ? ((localSeriesBookId ? effectiveLocalSeriesReadingStates : catalogReadingStates).get(
+                  externalItemSectionId(item),
+                ) ?? 'unread')
+              : undefined,
+          sourceVisits,
+        ),
       };
     });
   }, [
+    sourceVisits,
     preferenceByKey,
     localSeriesChapters,
     linkByKey,
@@ -1698,7 +1736,13 @@ export function useExternalSourceController(options: UseExternalSourceController
               kind: 'releasePreference' as const,
               source: item.key,
               ...patch,
-              ...(patch.read !== undefined ? { readChangedAt: currentIso() } : {}),
+              ...(patch.read !== undefined
+                ? {
+                    readChangedAt: new Date(
+                      Math.max(Date.now(), Date.parse(byId.get(id)?.lastReadAt ?? '') || 0),
+                    ).toISOString(),
+                  }
+                : {}),
               updatedAt: currentIso(),
             };
           });
@@ -3511,6 +3555,7 @@ export function useExternalSourceController(options: UseExternalSourceController
   );
 
   const beginStream = useCallback((item: ExternalSourceItemView, fromStart = false) => {
+    resumeAbortRef.current?.abort();
     const port = optionsRef.current.registry.getSourceStream?.(item.key.connectorId as ExtensionContributionId);
     if (!port) return false;
     const { assets, getParagraphPage } = optionsRef.current;
@@ -3545,6 +3590,94 @@ export function useExternalSourceController(options: UseExternalSourceController
     }));
     return true;
   }, []);
+
+  const resumeSourceVisit = useCallback(
+    async (visit: SourceReleasePreference) => {
+      if (!visit.collectionRemoteId) return;
+      resumeAbortRef.current?.abort();
+      const abort = new AbortController();
+      resumeAbortRef.current = abort;
+      try {
+        const current = optionsRef.current;
+        const sourceId = visit.source.connectorId as ExtensionContributionId;
+        if (!current.registry.getSourceStream?.(sourceId))
+          throw new Error('이 소스에서 이어 읽기를 지원하지 않습니다.');
+        const connection = current.registry.getExternalSourceStatus(sourceId, current.hostContext);
+        if (connection.state !== 'connected' || connection.accountConnectionId !== visit.source.accountConnectionId)
+          throw new Error('마지막으로 읽은 회차를 열려면 해당 소스 계정으로 연결해 주세요.');
+        const key = externalItemKeyId(visit.source);
+        let item = rawItems.find((item) => externalItemKeyId(item.key) === key);
+        if (!item) {
+          const input = { parentRef: visit.collectionRemoteId };
+          const cached = await current.state.getCachePage(
+            cachePageId(
+              sourceId,
+              connection.accountConnectionId,
+              input,
+              current.settingsScope,
+              connection.connectionGeneration,
+            ),
+          );
+          item = cached?.items.find((item) => externalItemKeyId(item.key) === key);
+          if (!item) {
+            const signal = abort.signal;
+            const read = (cursor?: string) =>
+              current.registry.listExternalSource(sourceId, current.hostContext, { ...input, cursor }, signal);
+            const catalog = await completeSeriesCatalog(await read(), (cursor) => read(cursor), signal);
+            item = catalog.items.find((item) => externalItemKeyId(item.key) === key);
+          }
+        }
+        abort.signal.throwIfAborted();
+        if (!mountedRef.current) return;
+        if (!item?.release) throw new Error('마지막으로 읽은 회차를 소스 목록에서 찾지 못했습니다.');
+        beginStream({ ...item, selected: false, importState: 'available' });
+      } catch (error) {
+        if (abort.signal.aborted) return;
+        optionsRef.current.notify(error instanceof Error ? error.message : '읽던 회차를 열지 못했습니다.', 'warning');
+      }
+    },
+    [rawItems, beginStream],
+  );
+  const continueSourceReading = useCallback(
+    async (novel: Novel) => {
+      if (!linkedSeriesBookIds.has(novel.id)) return false;
+      await reconcileStreamProgress();
+      const current = optionsRef.current;
+      const [preferences, bookLinks] = await Promise.all([
+        current.state.listReleasePreferences?.() ?? [],
+        current.state.listLinks(),
+      ]);
+      const visits = latestSourceVisits(preferences);
+      const visit = bookLinks
+        .filter((link) => link.localBookId === novel.id && link.collectionRemoteId)
+        .map((link) => visits.get(externalItemKeyId({ ...link.source, remoteId: link.collectionRemoteId! })))
+        .filter((visit): visit is SourceReleasePreference => Boolean(visit))
+        .sort((a, b) => b.lastReadAt!.localeCompare(a.lastReadAt!))[0];
+      if (!visit || visit.readingMode !== 'stream') return false;
+      await showLocalSeries(novel);
+      await resumeSourceVisit(visit);
+      // Failure must not silently open an older downloaded episode.
+      return true;
+    },
+    [linkedSeriesBookIds, reconcileStreamProgress, resumeSourceVisit, showLocalSeries],
+  );
+  const currentWorkItem = rawItems.find((item) => item.collection);
+  const currentWorkVisit = currentWorkItem?.collection
+    ? sourceVisits.get(externalItemKeyId({ ...currentWorkItem.key, remoteId: currentWorkItem.collection.remoteId }))
+    : undefined;
+  const canResumeCurrentWork = currentWorkVisit?.readingMode === 'stream';
+  const resumeCurrentWork = useCallback(async () => {
+    if (!currentWorkVisit?.collectionRemoteId) return;
+    await reconcileStreamProgress();
+    const preferences = (await optionsRef.current.state.listReleasePreferences?.()) ?? [];
+    const latest = latestSourceVisits(preferences).get(
+      externalItemKeyId({
+        ...currentWorkVisit.source,
+        remoteId: currentWorkVisit.collectionRemoteId,
+      }),
+    );
+    if (latest) await resumeSourceVisit(latest);
+  }, [currentWorkVisit, reconcileStreamProgress, resumeSourceVisit]);
 
   const importAndOpen = useCallback(
     async (item: ExternalSourceItemView) => {
@@ -4488,6 +4621,9 @@ export function useExternalSourceController(options: UseExternalSourceController
     removeLibraryWork,
     show,
     showLocalSeries,
+    continueSourceReading,
+    canResumeCurrentWork,
+    resumeCurrentWork,
     close,
     selectSource,
     setQuery,

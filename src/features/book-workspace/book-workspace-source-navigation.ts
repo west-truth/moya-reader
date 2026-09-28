@@ -44,8 +44,9 @@ export async function returnToSourceSeriesDetails(
 export async function continueLibraryBook(
   novel: Novel,
   workspace: Pick<BookWorkspaceController, 'continueReading'>,
-  sources: Pick<ExternalSourceController, 'close'>,
+  sources: Pick<ExternalSourceController, 'close' | 'continueSourceReading'>,
 ): Promise<void> {
+  if (await sources.continueSourceReading?.(novel)) return;
   sources.close();
   await workspace.continueReading(novel);
 }
