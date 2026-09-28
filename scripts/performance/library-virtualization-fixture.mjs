@@ -6,6 +6,7 @@ import '../../src/styles/tokens.css';
 import '../../src/styles/base.css';
 import '../../src/styles/shell.css';
 import '../../src/styles/library.css';
+import '../../src/styles/feedback.css';
 import '../../src/styles/dialogs-import.css';
 
 const novels = Array.from({ length: 1000 }, (_, index) => ({
@@ -44,6 +45,7 @@ function Fixture() {
     query: state.query,
     sync: { label: 'local', tone: 'local' },
     externalSources: {
+      libraryBootstrap: state.sourceStatus ? { status: state.sourceStatus } : undefined,
       active: false,
       busy: false,
       sources: [

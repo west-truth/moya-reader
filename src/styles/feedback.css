@@ -390,3 +390,43 @@
     animation: none;
   }
 }
+
+.library-source-loading {
+  margin-top: 20px;
+}
+.library-source-loading-status {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 14px;
+  color: var(--app-text-muted);
+  font-size: 13px;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .library-source-loading {
+    animation: loading-appear 160ms ease 180ms both;
+  }
+}
+
+.library-source-placeholder {
+  pointer-events: none;
+}
+.library-source-placeholder .book-cover {
+  padding: 0;
+  border: 0;
+}
+.library-source-placeholder .book-info,
+.library-source-placeholder .book-list-main {
+  display: grid;
+  gap: 10px;
+}
+.library-source-placeholder .book-info {
+  padding: 12px 0;
+}
+@media (prefers-reduced-motion: no-preference) {
+  .library-source-placeholder {
+    animation: loading-appear 160ms ease 180ms both;
+  }
+}

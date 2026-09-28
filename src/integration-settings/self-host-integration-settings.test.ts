@@ -187,3 +187,28 @@ describe('self-host integration settings contract', () => {
     ).toBe(true);
   });
 });
+
+it('preserves source trash membership in hosted settings and applies a newer restore', () => {
+  const base = validDocument();
+  const work = base.externalSources.subscriptions[0]!;
+  const trashed = {
+    ...base,
+    externalSources: { ...base.externalSources, subscriptions: [{ ...work, deletedAt: now }] },
+  };
+  expect(normalizeSelfHostIntegrationSettings(trashed)?.externalSources.subscriptions[0]?.deletedAt).toBe(now);
+  expect(
+    normalizeSelfHostIntegrationSettings({
+      ...trashed,
+      externalSources: { ...trashed.externalSources, subscriptions: [{ ...work, deletedAt: 'invalid' }] },
+    }),
+  ).toBeUndefined();
+  const restored = {
+    ...base,
+    externalSources: { ...base.externalSources, subscriptions: [{ ...work, updatedAt: '2026-09-05T00:00:00.000Z' }] },
+  };
+  const merged = mergeInitialSelfHostIntegrationSettings(
+    normalizeSelfHostIntegrationSettings(trashed)!,
+    normalizeSelfHostIntegrationSettings(restored)!,
+  );
+  expect(merged.externalSources.subscriptions[0]?.deletedAt).toBeUndefined();
+});

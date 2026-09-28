@@ -1,3 +1,4 @@
+import { externalSelectionId } from '../library/library-batch';
 import type { SourceTextReaderOptions } from '../external-sources/SourceTextStreamReader';
 import { SaveDiscoveryList } from '../discovery/SaveDiscoveryList';
 import type { DiscoveryController } from '../discovery/useDiscoveryController';
@@ -189,10 +190,11 @@ export function BookWorkspaceScreens({
     );
     return {
       ...base,
-      totalBooks: base.totalBooks + remoteLibraryWorks.length,
+      totalBooks: base.totalBooks + remoteLibraryWorks.filter((work) => !work.deletedAt).length,
       filterCounts: {
         ...base.filterCounts,
-        all: base.filterCounts.all + remoteLibraryWorks.length,
+        all: base.filterCounts.all + remoteLibraryWorks.filter((work) => !work.deletedAt).length,
+        trash: base.filterCounts.trash + remoteLibraryWorks.filter((work) => work.deletedAt).length,
         unread: base.filterCounts.unread + remoteCounts.unread,
         reading: base.filterCounts.reading + remoteCounts.reading,
         finished: base.filterCounts.finished + remoteCounts.finished,
@@ -254,11 +256,12 @@ export function BookWorkspaceScreens({
 
   const libraryModel: LibraryScreenModel = {
     discovery: discovery ? { active: discovery.active && !externalSources.open, scope: discovery.scope } : undefined,
-    bootstrap: { status: bootstrap.status, message: bootstrap.message },
+    bootstrap,
     drop: libraryDrop,
     query: state.libraryQuery,
     sync,
     externalSources: {
+      libraryBootstrap: externalSources.libraryBootstrap,
       active: externalSources.open,
       activeSourceId: externalSources.activeSourceId,
       busy: externalSources.busy,
@@ -281,6 +284,7 @@ export function BookWorkspaceScreens({
         newReleaseCount: work.newReleaseIds.length,
         addedAt: work.createdAt,
         updatedAt: work.updatedAt,
+        deletedAt: work.deletedAt,
       })),
       browse: externalSources.catalogBrowse
         ? {
@@ -302,12 +306,12 @@ export function BookWorkspaceScreens({
       shelfBookCounts,
     },
     management: {
-      available: libraryManagement.available,
+      available: libraryManagement.available || Boolean(externalSources.batchLibraryTrash),
       shelves: libraryManagement.shelves,
       activeShelfId: libraryManagement.activeShelfId,
       selectionMode: libraryManagement.selectionMode,
       selectedBookIds: libraryManagement.selectedBookIds,
-      busy: libraryManagement.busy,
+      busy: libraryManagement.busy || externalSources.busy,
       lastBatchReceipt: libraryManagement.lastBatchReceipt,
     },
   };
@@ -325,6 +329,7 @@ export function BookWorkspaceScreens({
         : undefined,
       setQuery: controller.setLibraryQuery,
       retryBootstrap: bootstrap.retry,
+      retrySourceLibrary: () => void externalSources.retryLibrary?.(),
       openSync,
       openSettings,
       openBackup,
@@ -359,7 +364,7 @@ export function BookWorkspaceScreens({
       },
       setSort: controller.setLibrarySort,
       setViewMode: controller.setLibraryViewMode,
-      emptyTrash: controller.emptyTrash,
+      emptyTrash: () => controller.emptyTrash(externalSources.emptyLibraryTrash),
       setShelf: (shelfId) => {
         discovery?.setActive(false);
         externalSources.close();
@@ -368,9 +373,29 @@ export function BookWorkspaceScreens({
       },
       openShelves: libraryManagement.openShelves,
       startSelection: libraryManagement.startSelection,
-      selectVisible: () => libraryManagement.selectBooks(libraryCollection.visibleBooks.map((book) => book.novel.id)),
+      selectVisible: () =>
+        libraryManagement.selectBooks([
+          ...libraryCollection.visibleBooks
+            .filter((book) => !bookHasActiveImport(book.novel.id))
+            .map((book) => book.novel.id),
+          ...remoteWorksInView
+            .filter((work) => !externalWorkHasActiveImport(work.id))
+            .map((work) => externalSelectionId(work.id)),
+        ]),
       clearSelection: libraryManagement.clearSelection,
-      applyBatch: (command) => libraryManagement.applyBatch(command, state.novels),
+      applyBatch: (command) =>
+        libraryManagement.applyBatch(
+          command,
+          state.novels.filter((book) => !bookHasActiveImport(book.id)),
+          externalSources.batchLibraryTrash
+            ? {
+                ids: externalSources.libraryWorks
+                  .filter((work) => !externalWorkHasActiveImport(work.id))
+                  .map((work) => work.id),
+                apply: externalSources.batchLibraryTrash,
+              }
+            : undefined,
+        ),
       exportSelectedMetadata: () => libraryManagement.exportSelectedMetadata(state.novels),
     },
     books: {
@@ -385,7 +410,12 @@ export function BookWorkspaceScreens({
       editMetadata: (novel) => {
         if (!bookHasActiveImport(novel.id)) libraryManagement.openMetadata(novel);
       },
-      toggleSelected: (novel) => libraryManagement.toggleSelected(novel.id),
+      toggleSelected: (novel) => {
+        if (!bookHasActiveImport(novel.id)) libraryManagement.toggleSelected(novel.id);
+      },
+      toggleSelectedExternal: (id) => {
+        if (!externalWorkHasActiveImport(id)) libraryManagement.toggleSelected(externalSelectionId(id));
+      },
       openExternal: async (workId) => {
         const work = externalSources.libraryWorks.find((candidate) => candidate.id === workId);
         if (!work) return;
@@ -396,6 +426,8 @@ export function BookWorkspaceScreens({
         controller.setView('library');
         await externalSources.continueLibraryWork(workId);
       },
+      restoreExternal: (id) => externalSources.restoreLibraryWork?.(id),
+      purgeExternal: (id) => externalSources.purgeLibraryWork?.(id),
       removeExternal: async (workId) => {
         if (externalWorkHasActiveImport(workId)) return;
         const work = externalSources.libraryWorks.find((candidate) => candidate.id === workId);

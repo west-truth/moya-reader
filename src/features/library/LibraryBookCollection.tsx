@@ -1,3 +1,5 @@
+import { LibrarySourcePlaceholder, sourceLibraryLoadingState } from './LibrarySourceLoading';
+import { externalSelectionId } from './library-batch';
 import { LibraryCountLabel } from './LibraryCountLabel';
 import { isCoverView } from '../../components/work-view';
 import { Check, Pencil, Play, RotateCcw, Star, Trash2 } from 'lucide-react';
@@ -274,10 +276,8 @@ function LibraryBookListRow(props: LibraryBookItemProps) {
 
 export function LibraryBookCollection(props: LibraryScreenProps) {
   const collectionClass = isCoverView(props.model.viewMode) ? 'books-grid' : 'books-list';
-  const externalWorks = props.model.management.selectionMode ? [] : (props.model.externalSources.libraryWorks ?? []);
-  const tasks = props.model.management.selectionMode
-    ? []
-    : props.model.importTasks.filter((task) => task.phase !== 'complete');
+  const externalWorks = props.model.externalSources.libraryWorks ?? [];
+  const tasks = props.model.importTasks.filter((task) => task.phase !== 'complete');
   const taskForBook = (bookId: string) => tasks.find((task) => task.targetBookId === bookId);
   const taskForExternalWork = (workId: string) => tasks.find((task) => task.externalWorkId === workId);
   const visibleBookIds = new Set(props.model.collection.visibleBooks.map((book) => book.novel.id));
@@ -293,25 +293,29 @@ export function LibraryBookCollection(props: LibraryScreenProps) {
   );
   const query = props.model.query.trim().toLocaleLowerCase();
   const standaloneTasks =
-    props.model.filter === 'all' && !props.model.management.activeShelfId
+    !props.model.management.selectionMode && props.model.filter === 'all' && !props.model.management.activeShelfId
       ? tasks.filter(
           (task) =>
             !boundTaskIds.has(task.id) &&
             (!query || [task.title, task.fileName].some((value) => value?.toLocaleLowerCase().includes(query))),
         )
       : [];
+  const placeholders = sourceLibraryLoadingState(props.model)?.status === 'loading' ? [0, 1, 2, 3] : [];
   const items = [
     ...standaloneTasks.map((task) => ({ kind: 'task' as const, key: `task:${task.id}`, task })),
-    ...externalWorks.map((work) => ({ kind: 'external' as const, key: `external:${work.id}`, work })),
     ...props.model.collection.visibleBooks.map((book) => ({
       kind: 'book' as const,
       key: `book:${book.novel.id}`,
       book,
     })),
+    ...externalWorks.map((work) => ({ kind: 'external' as const, key: `external:${work.id}`, work })),
+    ...placeholders.map((index) => ({ kind: 'placeholder' as const, key: `source-loading:${index}` })),
   ];
   if (items.length > 100) {
     const renderItem = (index: number) => {
       const item = items[index];
+      if (item.kind === 'placeholder')
+        return <LibrarySourcePlaceholder key={item.key} viewMode={props.model.viewMode} />;
       if (item.kind === 'task') {
         return isCoverView(props.model.viewMode) ? (
           <LibraryImportTaskCard key={item.key} task={item.task} actions={props.actions} />
@@ -325,6 +329,9 @@ export function LibraryBookCollection(props: LibraryScreenProps) {
             showReadingCounts={props.model.presentation.showReadingCounts}
             key={item.key}
             work={item.work}
+            selectionMode={props.model.management.selectionMode}
+            selected={props.model.management.selectedBookIds.has(externalSelectionId(item.work.id))}
+            busy={props.model.management.busy}
             actions={props.actions}
             importTask={taskForExternalWork(item.work.id)}
           />
@@ -333,6 +340,9 @@ export function LibraryBookCollection(props: LibraryScreenProps) {
             showCover={props.model.viewMode !== 'text'}
             key={item.key}
             work={item.work}
+            selectionMode={props.model.management.selectionMode}
+            selected={props.model.management.selectedBookIds.has(externalSelectionId(item.work.id))}
+            busy={props.model.management.busy}
             actions={props.actions}
             importTask={taskForExternalWork(item.work.id)}
           />
@@ -401,12 +411,22 @@ export function LibraryBookCollection(props: LibraryScreenProps) {
             <LibraryImportTaskListRow key={task.id} task={task} actions={props.actions} />
           ),
         )}
+        {props.model.collection.visibleBooks.map((book) =>
+          isCoverView(props.model.viewMode) ? (
+            <LibraryBookCard key={book.novel.id} book={book} importTask={taskForBook(book.novel.id)} {...props} />
+          ) : (
+            <LibraryBookListRow key={book.novel.id} book={book} importTask={taskForBook(book.novel.id)} {...props} />
+          ),
+        )}
         {externalWorks.map((work) =>
           isCoverView(props.model.viewMode) ? (
             <ExternalWorkCard
               showReadingCounts={props.model.presentation.showReadingCounts}
               key={work.id}
               work={work}
+              selectionMode={props.model.management.selectionMode}
+              selected={props.model.management.selectedBookIds.has(externalSelectionId(work.id))}
+              busy={props.model.management.busy}
               actions={props.actions}
               importTask={taskForExternalWork(work.id)}
             />
@@ -415,18 +435,17 @@ export function LibraryBookCollection(props: LibraryScreenProps) {
               showCover={props.model.viewMode !== 'text'}
               key={work.id}
               work={work}
+              selectionMode={props.model.management.selectionMode}
+              selected={props.model.management.selectedBookIds.has(externalSelectionId(work.id))}
+              busy={props.model.management.busy}
               actions={props.actions}
               importTask={taskForExternalWork(work.id)}
             />
           ),
         )}
-        {props.model.collection.visibleBooks.map((book) =>
-          isCoverView(props.model.viewMode) ? (
-            <LibraryBookCard key={book.novel.id} book={book} importTask={taskForBook(book.novel.id)} {...props} />
-          ) : (
-            <LibraryBookListRow key={book.novel.id} book={book} importTask={taskForBook(book.novel.id)} {...props} />
-          ),
-        )}
+        {placeholders.map((index) => (
+          <LibrarySourcePlaceholder key={`source-loading:${index}`} viewMode={props.model.viewMode} />
+        ))}
       </div>
     </>
   );

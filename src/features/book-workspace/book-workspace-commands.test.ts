@@ -10,6 +10,18 @@ import {
 } from './book-workspace-test-fixtures';
 
 describe('BookWorkspaceController commands', () => {
+  it('empties streamed trash through the existing confirmation, including stream-only libraries', async () => {
+    const harness = createBookWorkspaceTestHarness();
+    const external = vi.fn(async () => 2);
+    const controller = new BookWorkspaceController(harness.ports, testWorkspaceState({}));
+    await controller.emptyTrash(external);
+    expect(external).toHaveBeenCalledOnce();
+    expect(harness.notices.some((notice) => notice.message.includes('2권'))).toBe(true);
+    const cancelled = createBookWorkspaceTestHarness({ confirm: false });
+    await new BookWorkspaceController(cancelled.ports, testWorkspaceState({})).emptyTrash(external);
+    expect(external).toHaveBeenCalledTimes(1);
+  });
+
   it('shows safe reading-position diagnostics without exposing the underlying server error', () => {
     const harness = createBookWorkspaceTestHarness({ novel: testNovel() });
     const notify = vi.fn();

@@ -59,6 +59,25 @@ try {
   });
   await page.keyboard.press('Control+K');
   assert.equal(await page.evaluate(() => document.activeElement?.getAttribute('aria-label')), '책장 검색');
+  // With 1,000 local books, source placeholders stay at their real tail slots.
+  // They should only mount when that part of the virtual list is near the viewport.
+  await page.evaluate(() => {
+    globalThis.libraryFixture.update({ sourceStatus: 'loading' });
+    document.querySelector('.library-main').scrollTop = 0;
+  });
+  await page.getByText('소스 작품 불러오는 중', { exact: true }).waitFor({ state: 'attached' });
+  assert.equal(await page.locator('.library-source-placeholder').count(), 0);
+  await page.evaluate(() => {
+    const scroll = document.querySelector('.library-main');
+    scroll.scrollTop = scroll.scrollHeight;
+  });
+  await page.locator('.library-source-placeholder').first().waitFor();
+  assert.equal(await page.locator('.library-source-placeholder').count(), 4);
+  await page.evaluate(() => {
+    globalThis.libraryFixture.update({ sourceStatus: 'ready' });
+    document.querySelector('.library-main').scrollTop = 0;
+  });
+  await page.locator('.library-source-placeholder').first().waitFor({ state: 'detached' });
   const evidence = [];
   for (const viewport of [
     { width: 1440, height: 900 },

@@ -17,7 +17,7 @@ export function remoteLibraryReadCounts(
   progress?: ReadonlyMap<string, SourceWorkProgress>,
 ) {
   const counts = { unread: 0, reading: 0, finished: 0 };
-  for (const work of works) counts[remoteWorkStatus(progress?.get(work.id))] += 1;
+  for (const work of works) if (!work.deletedAt) counts[remoteWorkStatus(progress?.get(work.id))] += 1;
   return counts;
 }
 
@@ -27,10 +27,14 @@ export function visibleRemoteLibraryWorks(
   view: { shelved: boolean; filter: LibraryFilter; query: string; sort: LibrarySort },
   progress?: ReadonlyMap<string, SourceWorkProgress>,
 ): ExternalSourceLibraryWork[] {
-  if (view.shelved || view.filter === 'favorite' || view.filter === 'trash') return [];
+  if ((view.shelved && view.filter !== 'trash') || view.filter === 'favorite') return [];
   const query = view.query.trim().toLocaleLowerCase();
   return works
-    .filter((work) => view.filter === 'all' || view.filter === remoteWorkStatus(progress?.get(work.id)))
+    .filter((work) =>
+      view.filter === 'trash'
+        ? Boolean(work.deletedAt)
+        : !work.deletedAt && (view.filter === 'all' || view.filter === remoteWorkStatus(progress?.get(work.id))),
+    )
     .filter(
       (work) =>
         !query ||

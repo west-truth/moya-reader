@@ -2840,3 +2840,18 @@
 .book-card .card-row:has(.library-reading-count) .card-actions {
   flex-shrink: 0;
 }
+
+.library-external-work-menu {
+  position: relative;
+  z-index: 2;
+  flex: 0 0 auto;
+  margin-left: auto;
+}
+.library-external-work-menu > button {
+  pointer-events: auto;
+  width: 32px;
+  min-height: 32px;
+  padding: 4px;
+  border: 0;
+  background: transparent;
+}

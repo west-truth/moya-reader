@@ -383,3 +383,21 @@ describe('browser-local bookshelf selection', () => {
     expect(readLibraryViewPreferences()).toEqual({ librarySort: 'title' });
   });
 });
+
+it('keeps only failed stream selections selected after a partial batch', async () => {
+  const mounted = await harness({ current: novel() });
+  act(() => mounted.controller.selectBooks(['external:one', 'external:two']));
+  await act(async () => {
+    await mounted.controller.applyBatch({ kind: 'move_to_trash' }, [], {
+      ids: ['one', 'two'],
+      apply: async () => [
+        { bookId: 'one', status: 'applied' },
+        { bookId: 'two', status: 'failed', reason: 'unavailable' },
+      ],
+    });
+  });
+  expect(mounted.controller.selectedBookIds).toEqual(new Set(['external:two']));
+  expect(mounted.controller.selectionMode).toBe(true);
+  expect(mounted.notify).toHaveBeenCalledWith('1권 처리, 1권 실패', 'warning');
+  act(() => mounted.renderer.unmount());
+});

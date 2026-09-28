@@ -44,3 +44,12 @@ describe('streamed library filtering', () => {
     expect(visibleRemoteLibraryWorks(works, { ...view, shelved: true }, progress)).toEqual([]);
   });
 });
+
+it('keeps streamed trash out of active counts and lists and shows it in the trash', () => {
+  const deleted = { ...works[1]!, deletedAt: '2026-09-20T00:00:00.000Z' };
+  const all = [works[0]!, deleted];
+  expect(remoteLibraryReadCounts(all, progress)).toEqual({ unread: 1, reading: 0, finished: 0 });
+  const view = { shelved: false, filter: 'all' as const, query: '', sort: 'recent' as const };
+  expect(visibleRemoteLibraryWorks(all, view, progress)).toEqual([works[0]]);
+  expect(visibleRemoteLibraryWorks(all, { ...view, filter: 'trash', shelved: true }, progress)).toEqual([deleted]);
+});

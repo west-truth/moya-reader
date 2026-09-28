@@ -140,7 +140,11 @@ export function BookCover({ novel, className, children }: BookCoverProps) {
 
   return (
     <div ref={rootRef} className={className}>
-      {novel.coverAssetId && shouldLoad ? <ResolvedCoverImage novel={novel} /> : <FallbackCover novel={novel} />}
+      {novel.coverAssetId && shouldLoad ? (
+        <ResolvedCoverImage key={`${novel.id}:${novel.coverAssetId}:${novel.coverContentHash}`} novel={novel} />
+      ) : (
+        <FallbackCover novel={novel} />
+      )}
       {children}
     </div>
   );

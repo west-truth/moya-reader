@@ -149,6 +149,7 @@ export interface ExternalSourceSubscriptionRecord {
   readonly collectionRemoteId: string;
   readonly navigationRef: string;
   readonly sourceNavigationRef?: string;
+  readonly deletedAt?: string;
   readonly title: string;
   readonly author?: string;
   readonly description?: string;

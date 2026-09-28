@@ -11,6 +11,7 @@ import type { ImportTaskView } from '../import/import-task-projection';
 type MaybePromise = void | Promise<void>;
 
 export interface LibraryExternalWorkView {
+  readonly deletedAt?: string;
   readonly id: string;
   readonly title: string;
   readonly author?: string;
@@ -42,6 +43,7 @@ export interface LibraryScreenModel {
     tone: string;
   };
   externalSources: {
+    libraryBootstrap?: { status: 'loading' | 'ready' | 'failed'; message?: string };
     active: boolean;
     activeSourceId?: ExtensionContributionId;
     busy: boolean;
@@ -93,6 +95,7 @@ export interface LibraryScreenActions {
     saveDiscoveryList?(): void;
     setQuery(value: string): void;
     retryBootstrap(): void;
+    retrySourceLibrary?(): void;
     openSync(): void;
     openSettings(): void;
     openBackup(): void;
@@ -137,10 +140,13 @@ export interface LibraryScreenActions {
     addSample(): MaybePromise;
     editMetadata(novel: Novel): void;
     toggleSelected(novel: Novel): void;
+    toggleSelectedExternal?(id: string): void;
     openExternal(workId: string): MaybePromise;
     /** Resume the last visited release of a streamed work, or open its first release. */
     continueExternal?(workId: string): MaybePromise;
     removeExternal(workId: string): MaybePromise;
+    restoreExternal?(workId: string): MaybePromise;
+    purgeExternal?(workId: string): MaybePromise;
   };
   imports: {
     open(task?: ImportTaskView): void;

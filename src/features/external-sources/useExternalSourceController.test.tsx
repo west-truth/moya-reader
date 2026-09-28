@@ -3550,6 +3550,120 @@ describe('stream-only library works', () => {
       resolveCover: async () => 'data:image/png;base64,AQID',
     });
 
+  it('reports initial source membership loading and retries an unavailable library', async () => {
+    const snapshots: { status?: string; count: number }[] = [];
+    let unavailable = true;
+    const h = await createHarness({
+      downloadedContent: '',
+      subscriptions: [subscription],
+      libraryBooks: async () => {
+        if (unavailable) throw new Error('offline');
+        return [];
+      },
+      onRender: (c) => snapshots.push({ status: c.libraryBootstrap?.status, count: c.libraryWorks.length }),
+    });
+    try {
+      expect(snapshots[0]?.status).toBe('loading');
+      expect(h.controller.libraryBootstrap?.status).toBe('failed');
+      unavailable = false;
+      await act(async () => h.controller.retryLibrary?.());
+      expect(h.controller.libraryBootstrap?.status).toBe('ready');
+      expect(h.controller.libraryWorks.map((work) => work.id)).toContain(subscription.id);
+      expect(snapshots.filter((s) => s.status === 'ready').every((s) => s.count === 1)).toBe(true);
+    } finally {
+      await act(async () => h.renderer.unmount());
+    }
+  });
+
+  it('ignores an older source snapshot that finishes after a successful retry', async () => {
+    const h = await make();
+    let resolveOld!: (works: ExternalSourceSubscriptionRecord[]) => void;
+    let oldRequest: Promise<void> | undefined;
+    try {
+      const old = new Promise<ExternalSourceSubscriptionRecord[]>((resolve) => {
+        resolveOld = resolve;
+      });
+      vi.mocked(h.state.listSubscriptions).mockImplementationOnce(() => old);
+      await act(async () => {
+        oldRequest = h.controller.retryLibrary?.();
+      });
+      await act(async () => h.controller.retryLibrary?.());
+      expect(h.controller.libraryWorks.map((work) => work.id)).toContain(subscription.id);
+      await act(async () => {
+        resolveOld([]);
+        await oldRequest;
+      });
+      expect(h.controller.libraryWorks.map((work) => work.id)).toContain(subscription.id);
+      expect(h.controller.libraryBootstrap?.status).toBe('ready');
+    } finally {
+      resolveOld?.([]);
+      await act(async () => h.renderer.unmount());
+    }
+  });
+
+  it('replaces the previous work before the new library projection or catalog resolves', async () => {
+    const h = await make();
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    let opening: Promise<void> | undefined;
+    try {
+      await act(async () => h.controller.openSubscription(subscription));
+      const oldCover = h.controller.detail?.thumbnailUrl;
+      expect(oldCover).toBeTruthy();
+      const next = {
+        ...subscription,
+        id: 'other',
+        collectionRemoteId: 'manga:2',
+        navigationRef: 'manga:2',
+        title: '다른 작품',
+        thumbnailUrl: 'https://example.test/new.jpg',
+      };
+      const listLinks = h.state.listLinks;
+      h.state.listLinks = async () => {
+        await gate;
+        return listLinks();
+      };
+      vi.mocked(h.registry.listExternalSource).mockImplementation(async () => ({
+        items: [],
+        detail: { title: next.title, thumbnailUrl: next.thumbnailUrl },
+      }));
+      await act(async () => {
+        opening = h.controller.openSubscription(next);
+      });
+      expect(h.controller.loading).toBe(true);
+      expect(h.controller.detail).toMatchObject({ title: next.title, thumbnailUrl: next.thumbnailUrl });
+      expect(h.controller.detail?.thumbnailUrl).not.toBe(oldCover);
+      expect(h.controller.items).toEqual([]);
+      await act(async () => {
+        release();
+        await opening;
+      });
+      expect(h.controller.detail?.title).toBe(next.title);
+    } finally {
+      release();
+      await opening;
+      await act(async () => h.renderer.unmount());
+    }
+  });
+
+  it('moves a stream-only work to trash and restores its existing subscription', async () => {
+    const h = await make();
+    try {
+      await act(async () => h.controller.removeLibraryWork(subscription));
+      expect(h.subscriptions[0]?.deletedAt).toBeTruthy();
+      expect(h.state.deleteSubscription).not.toHaveBeenCalled();
+      expect(h.controller.open).toBe(false);
+      expect(h.controller.libraryWorks[0]?.deletedAt).toBeTruthy();
+      await act(async () => h.controller.restoreLibraryWork?.(subscription.id));
+      expect(h.subscriptions[0]?.deletedAt).toBeUndefined();
+      expect(h.subscriptions[0]?.knownReleaseIds).toEqual(subscription.knownReleaseIds);
+    } finally {
+      await act(async () => h.renderer.unmount());
+    }
+  });
+
   it('restores artwork without downloading a book and starts the earliest release across pages', async () => {
     const h = await make();
     try {
