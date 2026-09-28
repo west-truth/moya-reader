@@ -131,6 +131,12 @@ describe('ReaderSettingsPanel', () => {
     expect(storageMarkup).toContain('소스 다운로드 · 자동 정리');
     expect(syncMarkup).not.toContain('백업과 복원 열기');
     expect(syncMarkup).toContain('동기화 상태 열기');
+    const embeddedSync = renderToStaticMarkup(
+      <ReaderSettingsPanel {...common} initialTab="sync" syncContent={<section>연결된 계정</section>} />,
+    );
+    expect(embeddedSync).toContain('연결된 계정');
+    expect(embeddedSync).not.toContain('동기화 상태 열기');
+    expect(embeddedSync.match(/role="dialog"/g)).toHaveLength(1);
     const serverMarkup = renderToStaticMarkup(<ReaderSettingsPanel {...common} serverApiBaseUrl="/api" />);
     expect(serverMarkup.match(/role="tab"/g)).toHaveLength(9);
     expect(serverMarkup).toContain('원격 접속');

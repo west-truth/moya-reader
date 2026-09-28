@@ -1,7 +1,7 @@
 import { useCallback, useLayoutEffect, useRef, useState, type RefObject, type SetStateAction } from 'react';
 
 const values = new Map<string, unknown>();
-function remember(key: string, value: unknown) {
+export function rememberNavigationViewState(key: string, value: unknown) {
   if (typeof window === 'undefined') return;
   values.delete(key);
   values.set(key, value);
@@ -31,7 +31,7 @@ export function useNavigationViewState<T>(
       setState((current) => {
         const previous = current.key === key ? current.value : read();
         const next = typeof update === 'function' ? (update as (value: T) => T)(previous) : update;
-        remember(key, next);
+        rememberNavigationViewState(key, next);
         return { key, value: next };
       }),
     [key, read],
@@ -47,7 +47,7 @@ export function useNavigationScroll(ref: RefObject<HTMLElement>, key: string, re
     const target = Number(values.get(storageKey) ?? 0);
     let restoring = true;
     const save = () => {
-      if (!restoring) remember(storageKey, element.scrollTop);
+      if (!restoring) rememberNavigationViewState(storageKey, element.scrollTop);
     };
     element.addEventListener('scroll', save, { passive: true });
     element.scrollTop = target;

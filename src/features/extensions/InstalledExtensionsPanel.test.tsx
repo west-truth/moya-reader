@@ -68,3 +68,26 @@ it('finishes repository installation and publisher acknowledgement inside the ch
   expect(renderer.root.findAllByProps({ 'aria-label': '확장 설치 확인' })).toHaveLength(0);
   act(() => renderer.unmount());
 });
+
+it('opens and checks the update list from a notification request, including while the panel is already open', async () => {
+  vi.useFakeTimers();
+  const snapshot = { available: true, packages: [], sources: [], errors: [], revision: 1 };
+  const manager = {
+    target: 'server',
+    subscribe: () => () => {},
+    getSnapshot: () => snapshot,
+  } as unknown as InstalledExtensionManager;
+  const renderer = create(<InstalledExtensionsPanel manager={manager} />);
+  try {
+    expect(renderer.root.findAllByProps({ 'aria-label': '소스 업데이트' })).toHaveLength(0);
+    act(() => renderer.update(<InstalledExtensionsPanel manager={manager} updatesRequest={1} />));
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(1);
+    });
+    expect(renderer.root.findAllByProps({ 'aria-label': '소스 업데이트' })).toHaveLength(1);
+    expect(JSON.stringify(renderer.toJSON())).toContain('업데이트가 없습니다.');
+  } finally {
+    act(() => renderer.unmount());
+    vi.useRealTimers();
+  }
+});

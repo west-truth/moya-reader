@@ -628,6 +628,8 @@ export interface ReaderSettings {
    * everything the source lists (default), or the downloaded chapters as for any local book.
    */
   sourceProgressBasis?: SourceProgressBasis;
+  /** Device startup destination; absent preserves the last library shelf. */
+  startupScreen?: { kind: 'library'; shelfId?: string } | { kind: 'discovery'; tabId?: string };
   /** Custom application colors. Kept separate from book-specific Reader colors. */
   applicationThemeColors?: Partial<ApplicationThemeColors>;
   theme: ReaderTheme;

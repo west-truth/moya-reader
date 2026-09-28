@@ -33,13 +33,13 @@ function classNames(...values: Array<string | false | undefined>): string {
   return values.filter(Boolean).join(' ');
 }
 
-export default function SyncPanel({ data, actions }: SyncPanelProps) {
+export default function SyncPanel({ data, actions, embedded = false }: SyncPanelProps) {
   const panelRef = useRef<HTMLElement>(null);
   const closeRef = useRef<HTMLButtonElement>(null);
   const titleId = useId();
   const [remoteSnapshots, setRemoteSnapshots] = useState<Record<string, RemoteSnapshotState>>({});
   useDismissibleLayer({
-    open: true,
+    open: !embedded,
     modal: true,
     containerRef: panelRef,
     initialFocusRef: closeRef,
@@ -114,22 +114,24 @@ export default function SyncPanel({ data, actions }: SyncPanelProps) {
   const aiTtsDescription = syncConfigured && detailsComplete ? aiTtsSyncConflictDescription(aiTtsSummary) : undefined;
 
   return (
-    <div className="settings-layer">
-      <button className="panel-scrim" onClick={actions.close} aria-label="동기화 패널 배경 닫기" />
+    <div className={embedded ? 'sync-settings-content' : 'settings-layer'}>
+      {!embedded && <button className="panel-scrim" onClick={actions.close} aria-label="동기화 패널 배경 닫기" />}
       <aside
         ref={panelRef}
-        className="settings-panel sync-panel"
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby={titleId}
+        className={embedded ? 'sync-panel sync-panel-embedded' : 'settings-panel sync-panel'}
+        role={embedded ? undefined : 'dialog'}
+        aria-modal={embedded ? undefined : true}
+        aria-labelledby={embedded ? undefined : titleId}
         tabIndex={-1}
       >
-        <header>
-          <h2 id={titleId}>동기화</h2>
-          <button ref={closeRef} className="icon-btn" onClick={actions.close} aria-label="동기화 패널 닫기">
-            <X size={18} />
-          </button>
-        </header>
+        {!embedded && (
+          <header>
+            <h2 id={titleId}>동기화</h2>
+            <button ref={closeRef} className="icon-btn" onClick={actions.close} aria-label="동기화 패널 닫기">
+              <X size={18} />
+            </button>
+          </header>
+        )}
         <CloudAccountsPanel controller={data.cloudVault} />
         {syncConfigured && (
           <section>

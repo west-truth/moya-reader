@@ -268,3 +268,11 @@ describe('SyncPanel', () => {
     expect(markup).not.toContain('placeholder="8자 이상"');
   });
 });
+
+it('embeds sync content without a second dialog or close button', () => {
+  const markup = renderToStaticMarkup(<SyncPanel embedded data={data()} actions={actions()} />);
+  expect(markup).toContain('sync-panel-embedded');
+  expect(markup).not.toContain('role="dialog"');
+  expect(markup).not.toContain('panel-scrim');
+  expect(markup).not.toContain('동기화 패널 닫기');
+});

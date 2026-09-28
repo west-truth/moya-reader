@@ -28,6 +28,28 @@ describe('device reader settings boundary', () => {
     ]);
     expect(await getSettings()).toMatchObject({ fontSize: 26, applicationTheme: 'sepia', ttsSpeed: 1.6 });
   });
+  it('persists startup destinations per device and keeps them out of sync payloads', async () => {
+    const startupScreen = { kind: 'library' as const, shelfId: 'normal' };
+    await saveSettings({ ...(await getSettings()), startupScreen });
+    expect((await new IndexedDbReaderRepository().getSettings()).startupScreen).toEqual(startupScreen);
+    expect(await listSyncOutbox()).toEqual([]);
+    const client = {
+      readerSettingsScope: 'startup-preference',
+      getSettings: vi.fn(async () => ({ settings: structuredClone(defaultSettings) })),
+      saveSettings: vi.fn(),
+    };
+    const remote = new RemoteReaderRepository(client as unknown as RemoteApiClient);
+    await remote.saveSettings({
+      ...(await remote.getSettings()),
+      startupScreen: { kind: 'discovery', tabId: 'browse' },
+    });
+    expect(
+      (await new RemoteReaderRepository(client as unknown as RemoteApiClient).getSettings()).startupScreen,
+    ).toEqual({ kind: 'discovery', tabId: 'browse' });
+    expect(client.saveSettings).not.toHaveBeenCalled();
+    await remote.saveSettings({ ...(await remote.getSettings()), startupScreen: undefined });
+    expect((await remote.getSettings()).startupScreen).toBeUndefined();
+  });
   it('keeps the source progress basis on this device in local and self-hosted libraries', async () => {
     expect((await getSettings()).sourceProgressBasis).toBeUndefined();
     await saveSettings({ ...(await getSettings()), sourceProgressBasis: 'downloaded' });

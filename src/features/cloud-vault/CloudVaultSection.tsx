@@ -123,6 +123,7 @@ export function CloudVaultSection({
             <label>
               <input
                 type="checkbox"
+                className="switch"
                 checked={config?.autoSync ?? true}
                 onChange={(event) => void controller.setAutoSync(event.target.checked)}
                 disabled={busy || !config || !controller.connected}

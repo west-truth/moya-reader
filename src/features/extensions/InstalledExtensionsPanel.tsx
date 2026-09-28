@@ -19,8 +19,10 @@ export function InstalledExtensionsPanel({
   suwayomi,
   sourceTarget,
   onSourceTargetChange,
+  updatesRequest = 0,
 }: {
   manager: InstalledExtensionManager;
+  updatesRequest?: number;
   suwayomi?: SourceExtensionManager;
   sourceTarget?: 'device' | 'server';
   onSourceTargetChange?: (target: 'device' | 'server') => void;
@@ -33,7 +35,15 @@ export function InstalledExtensionsPanel({
   const snapshot = useSyncExternalStore(manager.subscribe, manager.getSnapshot, manager.getSnapshot);
   const input = useRef<HTMLInputElement>(null);
   const [showRepositories, setShowRepositories] = useState(false);
-  const [showUpdates, setShowUpdates] = useState(false);
+  const [showUpdates, setShowUpdates] = useState(updatesRequest > 0);
+  useEffect(() => {
+    if (!updatesRequest) return;
+    setShowUpdates(true);
+    setShowRepositories(false);
+    setShowApk(false);
+    setShowMangayomi(false);
+    setShowSuwayomi(false);
+  }, [updatesRequest]);
   const [review, setReview] = useState<{ file: File; plan: PackageReview }>();
   const reviewFocus = useRef<HTMLElement>(null);
   useEffect(() => {
@@ -326,7 +336,7 @@ export function InstalledExtensionsPanel({
       </div>
       <PortableSourceVault manager={manager} />
       <SourceNetworkSettingsPanel manager={manager} />
-      {showUpdates && <ExtensionUpdatesPanel manager={manager} suwayomi={suwayomi} />}
+      {showUpdates && <ExtensionUpdatesPanel manager={manager} suwayomi={suwayomi} autoCheck={updatesRequest > 0} />}
       {showSuwayomi && suwayomi && <SourceExtensionManagerPanel manager={suwayomi} initialRepository={apkRepository} />}
       {showApk && manager.apk && (
         <ApkExtensionsPanel manager={manager.apk} initialRepository={apkRepository} target={manager.target} />

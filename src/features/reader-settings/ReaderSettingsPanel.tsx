@@ -1,6 +1,6 @@
+import { StartupScreenSettings } from './StartupScreenSettings';
 import {
   ArrowLeft,
-  ArrowUpRight,
   ChevronRight,
   Download,
   Hand,
@@ -14,7 +14,7 @@ import {
   Type,
   type LucideIcon,
 } from 'lucide-react';
-import { useContext, useRef, useState, type KeyboardEvent, type ReactNode } from 'react';
+import { useEffect, useContext, useRef, useState, type KeyboardEvent, type ReactNode } from 'react';
 import { EmbeddedAccessContext } from '../../platform/embedded-access-context';
 import type { GestureBindings, ReadingProfile, ReadingProfileOverride } from '../../domain/types';
 import type { PlatformRuntimeInfo, ProviderExecutionRuntimeKind } from '../../platform/runtime';
@@ -64,7 +64,7 @@ const SETTINGS_SECTIONS: readonly SettingsSection[] = [
   {
     id: 'appearance',
     label: '모양',
-    detail: '앱 테마',
+    detail: '시작 화면, 앱 테마',
     icon: Palette,
   },
   {
@@ -132,6 +132,10 @@ export interface ReaderSettingsPanelProps {
   readonly libraryCount?: number;
   readonly storage?: StorageSettingsProps;
   readonly initialTab?: SettingsTab;
+  readonly updatesRequest?: number;
+  readonly startupShelves?: readonly { id: string; name: string }[];
+  readonly startupTabs?: readonly { id: string; title: string; hidden?: boolean }[];
+  readonly syncContent?: ReactNode;
   readonly openSync: () => void;
   readonly openBackup: () => void;
   renderExtensionDetails?(extension: AppExtensionSnapshot): ReactNode;
@@ -160,10 +164,28 @@ export default function ReaderSettingsPanel(props: ReaderSettingsPanelProps) {
   const [storageBusy, setStorageBusy] = useState(false);
   const [focusDownloads, setFocusDownloads] = useState(props.initialTab === 'downloads');
   const titleRef = useRef<HTMLHeadingElement>(null);
+  const handledUpdatesRequest = useRef(0);
+  useEffect(() => {
+    if (
+      !props.updatesRequest ||
+      props.initialTab !== 'sources' ||
+      storageBusy ||
+      handledUpdatesRequest.current === props.updatesRequest
+    )
+      return;
+    handledUpdatesRequest.current = props.updatesRequest;
+    setTab('sources');
+    setMobileDetail(true);
+    const frame = requestAnimationFrame(() => {
+      titleRef.current?.focus({ preventScroll: true });
+      const content = titleRef.current?.closest('.reader-settings-content');
+      if (content) content.scrollTop = 0;
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [props.updatesRequest, props.initialTab, storageBusy]);
   const embedded = useContext(EmbeddedAccessContext);
-  // Without an embedded server the sync page is only a link, so the category opens the sync panel directly;
-  // remote access is hidden when this library lives only in the browser.
-  const syncOpensPanel = !embedded;
+  // Remote access is hidden when this library lives only in the browser.
+
   const sections = SETTINGS_SECTIONS.filter(
     (section) => section.id !== 'remote-access' || Boolean(embedded) || Boolean(props.serverApiBaseUrl),
   );
@@ -238,7 +260,7 @@ export default function ReaderSettingsPanel(props: ReaderSettingsPanelProps) {
           {sections.map((section, index) => {
             const Icon = section.icon;
             const selected = section.id === tab;
-            const opensPanel = section.id === 'sync' && syncOpensPanel;
+
             return (
               <button
                 key={section.id}
@@ -250,7 +272,7 @@ export default function ReaderSettingsPanel(props: ReaderSettingsPanelProps) {
                 aria-selected={selected}
                 tabIndex={0}
                 className={selected ? 'active' : ''}
-                onClick={() => (opensPanel ? openDestination(props.openSync) : selectTab(section.id))}
+                onClick={() => selectTab(section.id)}
                 onKeyDown={(event) => navigateTabs(event, index)}
               >
                 <Icon size={18} aria-hidden="true" />
@@ -258,11 +280,7 @@ export default function ReaderSettingsPanel(props: ReaderSettingsPanelProps) {
                   <strong>{section.label}</strong>
                   <small>{section.detail}</small>
                 </span>
-                {opensPanel ? (
-                  <ArrowUpRight size={15} aria-hidden="true" />
-                ) : (
-                  <ChevronRight size={15} aria-hidden="true" />
-                )}
+                <ChevronRight size={15} aria-hidden="true" />
               </button>
             );
           })}
@@ -299,13 +317,20 @@ export default function ReaderSettingsPanel(props: ReaderSettingsPanelProps) {
               className="reader-settings-panel"
             >
               {tab === 'appearance' && (
-                <ReaderSettingsAppearance
-                  controller={controller}
-                  profile={profile}
-                  updateProfile={props.updateProfile}
-                  personalizationRepository={props.personalizationRepository}
-                  themeTarget="application"
-                />
+                <>
+                  <StartupScreenSettings
+                    controller={controller}
+                    shelves={props.startupShelves}
+                    tabs={props.startupTabs}
+                  />
+                  <ReaderSettingsAppearance
+                    controller={controller}
+                    profile={profile}
+                    updateProfile={props.updateProfile}
+                    personalizationRepository={props.personalizationRepository}
+                    themeTarget="application"
+                  />
+                </>
               )}
               {tab === 'layout' && (
                 <>
@@ -374,7 +399,9 @@ export default function ReaderSettingsPanel(props: ReaderSettingsPanelProps) {
                   onBusyChange={setStorageBusy}
                 />
               )}
-              {tab === 'sync' && <SyncSettings openSync={() => openDestination(props.openSync)} />}
+              {tab === 'sync' && (
+                <SyncSettings openSync={() => openDestination(props.openSync)}>{props.syncContent}</SyncSettings>
+              )}
               {tab === 'remote-access' && <RemoteAccessSettings serverApiBaseUrl={props.serverApiBaseUrl} />}
               {tab === 'application' && (
                 <ApplicationInfoSettings
