@@ -666,7 +666,8 @@ describe('SourceHubScreen', () => {
     expect(detailMarkup).not.toContain('기본 폴더로 설정');
     expect(detailMarkup).toContain('휴지통으로 이동');
     expect(detailMarkup).not.toContain('라이브러리에서 제거');
-    expect(detailMarkup).toContain('새 회차 선택');
+    expect(detailMarkup).not.toContain('새 회차 선택');
+    expect(detailMarkup).not.toContain('source-hub-new-release-actions');
   });
 
   it('shows fetched text-source artwork for an existing book without replacing a saved cover', () => {

@@ -401,27 +401,6 @@
   color: var(--muted);
   font-size: var(--ui-label-size);
 }
-.source-hub-new-release-actions {
-  display: grid;
-  grid-template-columns: auto minmax(0, 1fr) auto auto;
-  align-items: center;
-  gap: 10px;
-  margin-bottom: 20px;
-  padding: 12px 14px;
-  color: var(--primary);
-  background: color-mix(in srgb, var(--primary) 8%, var(--app-surface));
-  border: 1px solid color-mix(in srgb, var(--primary) 24%, var(--border));
-  border-radius: var(--radius-control);
-}
-.source-hub-new-release-actions > span {
-  display: grid;
-  gap: 3px;
-  color: var(--text-2);
-  font-size: var(--ui-label-size);
-}
-.source-hub-new-release-actions strong {
-  color: var(--text);
-}
 .source-hub-folder-section,
 .source-hub-items {
   margin-top: 24px;
@@ -1091,13 +1070,6 @@
   }
   .source-hub-subscription-grid {
     grid-template-columns: minmax(0, 1fr);
-  }
-  .source-hub-new-release-actions {
-    grid-template-columns: auto minmax(0, 1fr);
-  }
-  .source-hub-new-release-actions > button {
-    grid-column: 1 / -1;
-    justify-content: center;
   }
   .source-hub-folder-grid,
   .source-hub-card-grid {

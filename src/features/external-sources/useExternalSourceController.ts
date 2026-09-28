@@ -1,3 +1,4 @@
+import { useSourceReaderCatalog, type SourceReaderCatalog } from './use-source-reader-catalog';
 import { sourceLibraryLoad } from './source-library-load';
 import type { BatchLibraryItemResult } from '../../repositories/library-catalog-repository';
 import { batchSourceLibraryTrash, changeSourceLibraryTrash } from './source-library-trash';
@@ -16,7 +17,7 @@ import { taskProgressPercent } from '../../components/task-progress';
 import { randomUuid } from '../../utils/random-uuid';
 import { useSourceWorkLayout } from './source-work-layout';
 import { sourceCachePolicy, sourcePageTime, transientSourceFailure } from '../../external-sources/cache-policy';
-import { storedSourcePage, saveSourceCache } from '../../external-sources/cached-page';
+import { storedSourcePage, saveSourceCache, cachePageId } from '../../external-sources/cached-page';
 import type { HostedImageDownload, PreparedServerImport } from '../../services/import/hosted-image-import';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { TextServerRequestError } from '../../external-sources/text-server/text-server-errors';
@@ -212,8 +213,6 @@ export interface ExternalSourceController {
   readonly loading: boolean;
   readonly catalogLoading?: boolean;
   readonly catalogPreparing?: boolean;
-  readonly catalogUpdateAvailable?: boolean;
-  applyCatalogUpdate?(): void;
   readonly busy: boolean;
   readonly blockingBusy: boolean;
   readonly importBusy: boolean;
@@ -289,6 +288,7 @@ export interface ExternalSourceController {
   readonly readingHistoryRevision?: number;
   resetCurrentWorkHistory?(): Promise<void>;
   clearBookSourceHistory?(novel: Novel): Promise<void>;
+  readonly streamCatalog?: SourceReaderCatalog;
   readonly streaming?: {
     item: ExternalSourceItemView;
     port: SourceReadingPort;
@@ -393,26 +393,6 @@ async function loadSourceLibrary(options: UseExternalSourceControllerOptions) {
     recoverSourceStreamVisits(options.settingsScope, options.state),
   ]);
   return { links: reconciled, novels, subscriptions, preferences };
-}
-
-function cachePageId(
-  sourceId: string,
-  accountConnectionId: string | undefined,
-  input: ExternalSourceListInput,
-  scope = 'local',
-  generation?: string,
-): string {
-  return JSON.stringify([
-    scope,
-    generation ?? '',
-    sourceId,
-    accountConnectionId ?? '',
-    input.parentRef ?? '',
-    input.query?.trim() ?? '',
-    input.browseMode ?? '',
-    JSON.stringify(input.filters ?? []),
-    input.cursor ?? '',
-  ]);
 }
 
 function queryFingerprint(input: ExternalSourceListInput): string {
@@ -526,13 +506,7 @@ export function useExternalSourceController(options: UseExternalSourceController
   const [blockingBusy, setBusy] = useState(false);
   const [readingHistoryLoading, setReadingHistoryLoading] = useState(false);
   const [catalogLoading, setCatalogLoading] = useState(false);
-  const [catalogUpdateAvailable, setCatalogUpdateAvailable] = useState(false);
-  const pendingCatalogApplyRef = useRef<() => void>();
-  const applyCatalogUpdate = useCallback(() => {
-    pendingCatalogApplyRef.current?.();
-    pendingCatalogApplyRef.current = undefined;
-    setCatalogUpdateAvailable(false);
-  }, []);
+  const streamCatalog = useSourceReaderCatalog(streaming?.item, options, loading || catalogLoading);
   const [importBusy, setImportBusy] = useState(false);
   const [selectedBatchActive, setSelectedBatchActive] = useState(false);
   const [tasks, setTasks] = useState<ImportTaskView[]>([]);
@@ -942,8 +916,6 @@ export function useExternalSourceController(options: UseExternalSourceController
       const sourceId = sourceOverride ?? activeSourceId;
       if (!sourceId || blockingBusy) return undefined;
       listAbortRef.current?.abort();
-      pendingCatalogApplyRef.current = undefined;
-      setCatalogUpdateAvailable(false);
       setListFailure(undefined);
       const connection = optionsRef.current.registry.getExternalSourceStatus(sourceId, optionsRef.current.hostContext);
       const seed = localSeriesPageSeedRef.current;
@@ -1041,6 +1013,7 @@ export function useExternalSourceController(options: UseExternalSourceController
         setStale(Date.parse(snapshot.expiresAt) <= Date.now());
         if (
           !forceRefresh &&
+          (!snapshot.items.some((item) => item.release && item.collection) || snapshot.completeSeries === true) &&
           Date.parse(snapshot.expiresAt) > Date.now() &&
           Date.parse(snapshot.fetchedAt) + sourceCachePolicy(input).fresh > Date.now()
         ) {
@@ -1067,7 +1040,13 @@ export function useExternalSourceController(options: UseExternalSourceController
           (initialConnection.accountConnectionId ?? '') !== (connection.accountConnectionId ?? '')
         )
           return;
-        const series = !normalizedInput.cursor && Boolean(page.detail && !page.browse);
+        const series =
+          !normalizedInput.cursor &&
+          !page.browse &&
+          Boolean(
+            page.detail ||
+            page.items.some((item) => item.release && item.collection?.remoteId === normalizedInput.parentRef),
+          );
         if (series) {
           if (!snapshot) setDetail(page.detail ?? localSeed?.detail);
           page = await completeSeriesCatalog(
@@ -1096,17 +1075,7 @@ export function useExternalSourceController(options: UseExternalSourceController
         if (snapshot && series) {
           setStale(page.cache?.stale === true);
           const nextStored = storedSourcePage(id, sourceId, normalizedInput, page, optionsRef.current.settingsScope);
-          const nextItems = nextStored.items;
-          if (
-            JSON.stringify(snapshot.items) !== JSON.stringify(nextItems) ||
-            JSON.stringify(snapshot.detail) !== JSON.stringify(nextStored.detail)
-          ) {
-            const update = page;
-            pendingCatalogApplyRef.current = () => {
-              if (connectionIsCurrent()) publish(update);
-            };
-            setCatalogUpdateAvailable(true);
-          }
+          publish(page);
           await saveSourceCache(optionsRef.current.state, {
             ...nextStored,
             completeSeries: true,
@@ -1359,8 +1328,6 @@ export function useExternalSourceController(options: UseExternalSourceController
     resumeAbortRef.current?.abort();
     const wasOpen = openRef.current;
     listAbortRef.current?.abort();
-    pendingCatalogApplyRef.current = undefined;
-    setCatalogUpdateAvailable(false);
     setCatalogLoading(false);
     setListFailure(undefined);
     openRef.current = false;
@@ -3721,6 +3688,7 @@ export function useExternalSourceController(options: UseExternalSourceController
         if (connection.state !== 'connected' || connection.accountConnectionId !== visit.source.accountConnectionId)
           throw new Error('마지막으로 읽은 회차를 열려면 해당 소스 계정으로 연결해 주세요.');
         const key = externalItemKeyId(visit.source);
+        let resumeCatalog: ExternalItemPage | undefined;
         let item = rawItems.find((item) => externalItemKeyId(item.key) === key);
         if (!item) {
           const input = { parentRef: visit.collectionRemoteId };
@@ -3739,6 +3707,7 @@ export function useExternalSourceController(options: UseExternalSourceController
             const read = (cursor?: string) =>
               current.registry.listExternalSource(sourceId, current.hostContext, { ...input, cursor }, signal);
             const catalog = await completeSeriesCatalog(await read(), (cursor) => read(cursor), signal);
+            resumeCatalog = catalog;
             item = catalog.items.find((item) => externalItemKeyId(item.key) === key);
           }
         }
@@ -3751,6 +3720,26 @@ export function useExternalSourceController(options: UseExternalSourceController
           latestConnection.connectionGeneration !== connection.connectionGeneration
         ) {
           throw new Error('소스 연결이 변경되었습니다. 다시 열어 주세요.');
+        }
+        if (resumeCatalog) {
+          const input = { parentRef: visit.collectionRemoteId, accountConnectionId: connection.accountConnectionId };
+          await saveSourceCache(current.state, {
+            ...storedSourcePage(
+              cachePageId(
+                sourceId,
+                connection.accountConnectionId,
+                input,
+                current.settingsScope,
+                connection.connectionGeneration,
+              ),
+              sourceId,
+              input,
+              resumeCatalog,
+              current.settingsScope,
+            ),
+            completeSeries: true,
+          });
+          abort.signal.throwIfAborted();
         }
         if (!item?.release) throw new Error('마지막으로 읽은 회차를 소스 목록에서 찾지 못했습니다.');
         beginStream({ ...item, selected: false, importState: 'available' });
@@ -4506,7 +4495,6 @@ export function useExternalSourceController(options: UseExternalSourceController
         (current.accountConnectionId ?? '') === (source.connection.accountConnectionId ?? '')
       );
     };
-    const previousNewCount = targets.reduce((total, item) => total + item.newReleaseIds.length, 0);
     try {
       for (const subscription of orderedTargets.slice(0, 50)) {
         if (!isCurrent() || remainingPages === 0) break;
@@ -4554,13 +4542,6 @@ export function useExternalSourceController(options: UseExternalSourceController
       const next = await optionsRef.current.state.listSubscriptions();
       if (!mountedRef.current || !isCurrent()) return;
       setSubscriptions(next);
-      const nextNewCount = next
-        .filter(
-          (item) =>
-            item.connectorId === activeSourceId &&
-            (item.accountConnectionId ?? '') === (source.connection.accountConnectionId ?? ''),
-        )
-        .reduce((total, item) => total + item.newReleaseIds.length, 0);
       if (incomplete > 0 || targets.length > checked + failed) {
         optionsRef.current.notify(
           `일부 회차 목록만 확인했습니다. ${incomplete}개 작품의 새 회차 판단이 미완료이며 기존 표시는 유지됩니다.${
@@ -4575,8 +4556,6 @@ export function useExternalSourceController(options: UseExternalSourceController
           `라이브러리 작품 ${checked}개를 확인했고 ${failed}개는 확인하지 못했습니다.`,
           'warning',
         );
-      } else if (nextNewCount > previousNewCount) {
-        optionsRef.current.notify(`새 회차 ${nextNewCount - previousNewCount}개를 찾았습니다.`, 'success');
       }
     } finally {
       if (subscriptionAbortRef.current === abort) subscriptionAbortRef.current = undefined;
@@ -4674,14 +4653,23 @@ export function useExternalSourceController(options: UseExternalSourceController
           return;
         }
         if (!current.registry.getSourceStream?.(sourceId)) throw new Error('이 소스에서 스트리밍을 지원하지 않습니다.');
+        const input = { parentRef: work.navigationRef, accountConnectionId: connection.accountConnectionId };
+        const id = cachePageId(
+          sourceId,
+          connection.accountConnectionId,
+          input,
+          current.settingsScope,
+          connection.connectionGeneration,
+        );
+        const cached = await current.state.getCachePage(id).catch(() => undefined);
+        const completeCache =
+          cached?.completeSeries &&
+          !cached.nextCursor &&
+          Date.parse(cached.fetchedAt) + sourceCachePolicy(input).keep > Date.now();
+
         const read = (cursor?: string) =>
-          current.registry.listExternalSource(
-            sourceId,
-            current.hostContext,
-            { parentRef: work.navigationRef, cursor },
-            abort.signal,
-          );
-        const catalog = await completeSeriesCatalog(await read(), read, abort.signal);
+          current.registry.listExternalSource(sourceId, current.hostContext, { ...input, cursor }, abort.signal);
+        const catalog = completeCache ? cached : await completeSeriesCatalog(await read(), read, abort.signal);
         abort.signal.throwIfAborted();
         if (!mountedRef.current) return;
         const first = filterAndSortReleases(
@@ -4704,6 +4692,13 @@ export function useExternalSourceController(options: UseExternalSourceController
           latestConnection.connectionGeneration !== connection.connectionGeneration
         ) {
           throw new Error('소스 연결이 변경되었습니다. 다시 열어 주세요.');
+        }
+        if (!completeCache) {
+          await saveSourceCache(current.state, {
+            ...storedSourcePage(id, sourceId, input, catalog, current.settingsScope),
+            completeSeries: true,
+          });
+          abort.signal.throwIfAborted();
         }
         beginStream(first);
       } catch (error) {
@@ -4913,8 +4908,6 @@ export function useExternalSourceController(options: UseExternalSourceController
         return;
       }
     }
-    pendingCatalogApplyRef.current = undefined;
-    setCatalogUpdateAvailable(false);
     setCatalogLoading(false);
     setLoading(false);
     setListFailure(undefined);
@@ -4984,8 +4977,6 @@ export function useExternalSourceController(options: UseExternalSourceController
     catalogPreparing: Boolean(
       catalogLoading && localSeriesPageSeedRef.current && !localSeriesPageSeedRef.current.remoteItems.length,
     ),
-    catalogUpdateAvailable,
-    applyCatalogUpdate,
     importBusy,
     selectedBatchActive,
     deletingDownloads,
@@ -5059,6 +5050,7 @@ export function useExternalSourceController(options: UseExternalSourceController
     importItem,
     importAndOpen,
     streaming,
+    streamCatalog,
     resetCurrentWorkHistory,
     clearBookSourceHistory,
     readingHistoryRevision,

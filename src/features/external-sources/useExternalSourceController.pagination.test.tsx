@@ -16,6 +16,8 @@ import {
 } from '../../external-sources/local-state';
 import { testChapter, testNovel } from '../book-workspace/book-workspace-test-fixtures';
 import { externalItemSectionId } from './serial-work-projection';
+import { useSourceStreamNavigation } from './use-source-stream-navigation';
+import type { BookAssetRepository } from '../../repositories/book-asset-repository';
 import { SourceReleasePanel } from './SourceReleasePanel';
 import {
   useExternalSourceController,
@@ -67,7 +69,7 @@ function subscription(connectorId: string): ExternalSourceSubscriptionRecord {
   };
 }
 
-async function fixture(format: 'txt' | 'image_archive' = 'txt', showPanel = false) {
+async function fixture(format: 'txt' | 'image_archive' = 'txt', showPanel = false, withStream = false) {
   const novel = testNovel({ id: 'book', format, documentSectionCount: 3 });
   const otherNovel = testNovel({ id: 'other-book', format: 'txt', documentSectionCount: 1 });
   const chapters = [1, 2, 3].map((id) =>
@@ -140,15 +142,20 @@ async function fixture(format: 'txt' | 'image_archive' = 'txt', showPanel = fals
     ),
     disconnectExternalSource: vi.fn(async () => undefined),
     downloadExternalSource: download,
+    getSourceStream: withStream
+      ? () => (format === 'txt' ? { kind: 'text', open: vi.fn() } : { open: vi.fn() })
+      : undefined,
   } as unknown as ExternalSourceRegistryPort;
   const notify = vi.fn();
   const listNovels = vi.fn(async () => [novel, otherNovel]);
   const getNovel = vi.fn(async (id: string) => (id === novel.id ? novel : otherNovel));
   let controller!: ExternalSourceController;
+  let navigation!: ReturnType<typeof useSourceStreamNavigation>;
   let renderer!: ReactTestRenderer;
   function Harness() {
     controller = useExternalSourceController({
       registry,
+      ...(withStream ? { assets: {} as BookAssetRepository, getParagraphPage: vi.fn() } : {}),
       hostContext: { brokers: { get: () => undefined } },
       state,
       importService: { importFile: vi.fn() },
@@ -161,6 +168,7 @@ async function fixture(format: 'txt' | 'image_archive' = 'txt', showPanel = fals
       notify,
       confirm: () => true,
     });
+    navigation = useSourceStreamNavigation(controller, false);
     return showPanel && controller.localSeriesNovel ? (
       <SourceReleasePanel
         controller={controller}
@@ -175,6 +183,9 @@ async function fixture(format: 'txt' | 'image_archive' = 'txt', showPanel = fals
   return {
     get controller() {
       return controller;
+    },
+    get navigation() {
+      return navigation;
     },
     renderer,
     novel,
@@ -298,7 +309,130 @@ describe('source series pagination integration', () => {
     },
   );
 
-  it('publishes the first complete snapshot once, reuses it without requests, and stages background changes', async () => {
+  it.each([
+    { format: 'txt', mode: 'stream' },
+    { format: 'image_archive', mode: 'stream' },
+    { format: 'txt', mode: 'stream-save' },
+    { format: 'image_archive', mode: 'stream-save' },
+  ] as const)(
+    'resumes a partly downloaded $format series in $mode mode using the cached full catalog',
+    async ({ format, mode }) => {
+      const storage = new Map<string, string>([['moya.source-reading.v1', JSON.stringify({ mode })]]);
+      vi.stubGlobal('localStorage', {
+        getItem: (key: string) => storage.get(key) ?? null,
+        setItem: (key: string, value: string) => {
+          storage.set(key, value);
+        },
+      });
+      const h = await fixture(format, false, true);
+      h.state.listReleasePreferences = async () => [
+        {
+          id: 'stream-visit',
+          kind: 'releasePreference',
+          source: release(3, format).key,
+          collectionRemoteId: 'work',
+          readingMode: 'stream',
+          lastReadAt: '2026-09-28T00:00:00Z',
+          updatedAt: '2026-09-28T00:00:00Z',
+        },
+      ];
+      // Three downloaded episodes, five known source episodes. No detail visit in this session.
+      h.setPage(async (cursor) =>
+        cursor
+          ? { items: [release(2, format), release(1, format)] }
+          : {
+              detail: { title: 'Work' },
+              items: [release(5, format), release(4, format), release(3, format)],
+              nextCursor: 'older',
+            },
+      );
+      try {
+        await act(async () => {
+          expect(await h.controller.continueSourceReading!(h.novel)).toBe(true);
+        });
+        expect(h.controller.streaming?.item.key.remoteId).toBe('release-3');
+        expect(h.controller.streaming?.fromStart).toBe(false);
+        expect(h.navigation.nextItem?.key.remoteId).toBe('release-4');
+        expect(h.registry.listExternalSource).toHaveBeenCalledTimes(2);
+        let moving!: Promise<void>;
+        await act(async () => {
+          moving = h.navigation.next!();
+        });
+        await moving;
+        expect(h.controller.streaming?.item.key.remoteId).toBe('release-4');
+        expect(h.registry.listExternalSource).toHaveBeenCalledTimes(2);
+        expect(h.download).not.toHaveBeenCalled();
+        await act(async () => h.controller.close());
+        await act(async () => {
+          await h.controller.continueSourceReading!(h.novel);
+        });
+        expect(h.controller.streaming?.item.key.remoteId).toBe('release-3');
+        expect(h.controller.streaming?.fromStart).toBe(false);
+        expect(h.registry.listExternalSource).toHaveBeenCalledTimes(2);
+      } finally {
+        await act(async () => h.renderer.unmount());
+        vi.unstubAllGlobals();
+      }
+    },
+  );
+
+  it('starts an unread streaming work with one catalog request shared by detail, start and next', async () => {
+    const h = await fixture('txt', false, true);
+    const work = { ...subscription(sourceId), thumbnailUrl: 'https://example.test/cover.png' };
+    h.setSubscriptions([work]);
+    h.setPage(async () => ({
+      detail: { title: 'Work', thumbnailUrl: work.thumbnailUrl },
+      items: [1, 2, 3, 4].map((id) => release(id)),
+    }));
+    try {
+      await act(async () => h.controller.continueLibraryWork!(work.id));
+      expect(h.controller.streaming?.item.key.remoteId).toBe('release-1');
+      expect(h.navigation.nextItem?.key.remoteId).toBe('release-2');
+      expect(h.registry.listExternalSource).toHaveBeenCalledOnce();
+    } finally {
+      await act(async () => h.renderer.unmount());
+    }
+  });
+
+  it('lets next wait for an in-flight detail catalog without issuing another request', async () => {
+    const h = await fixture('txt', false, true);
+    let finish!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      finish = resolve;
+    });
+    h.setPage(async () => {
+      await gate;
+      return { detail: { title: 'Work' }, items: [1, 2, 3, 4].map((id) => release(id)) };
+    });
+    let opening!: Promise<void>;
+    try {
+      await act(async () => {
+        opening = h.controller.showLocalSeries(h.novel);
+        await vi.waitFor(() => expect(h.registry.listExternalSource).toHaveBeenCalledOnce());
+      });
+      await act(async () => h.controller.openStreamItem!(h.controller.items[2]));
+      expect(h.controller.streaming?.item.key.remoteId).toBe('release-3');
+      let moving!: Promise<void>;
+      await act(async () => {
+        moving = h.navigation.next!();
+      });
+      expect(h.controller.streaming?.item.key.remoteId).toBe('release-3');
+      expect(h.registry.listExternalSource).toHaveBeenCalledOnce();
+      await act(async () => {
+        finish();
+        await opening;
+      });
+      await moving;
+      expect(h.controller.streaming?.item.key.remoteId).toBe('release-4');
+      expect(h.registry.listExternalSource).toHaveBeenCalledOnce();
+    } finally {
+      finish();
+      await opening;
+      await act(async () => h.renderer.unmount());
+    }
+  });
+
+  it('publishes the first complete snapshot once, reuses it without requests, and automatically applies background changes', async () => {
     const h = await fixture();
     let finish!: () => void;
     let gate = new Promise<void>((resolve) => {
@@ -346,9 +480,7 @@ describe('source series pagination integration', () => {
       expect(h.controller.items.map((item) => item.key.remoteId)).toEqual(initialKeys);
       finish();
       await act(async () => pending);
-      expect(h.controller.catalogUpdateAvailable).toBe(true);
-      expect(h.controller.items.map((item) => item.key.remoteId)).toEqual(initialKeys);
-      await act(async () => h.controller.applyCatalogUpdate?.());
+      expect(h.controller.catalogLoading).toBe(false);
       expect(h.controller.items[0]!.key.remoteId).toBe('release-10');
       expect(h.download).not.toHaveBeenCalled();
     } finally {
@@ -415,8 +547,7 @@ describe('source series pagination integration', () => {
       expect(h.controller.items.map((item) => item.key.remoteId)).toEqual(['release-1', 'release-2', 'release-3']);
       h.setPage(async () => ({ detail: { title: 'Work' }, items: [release(2, format), release(4, format)] }));
       await act(async () => h.controller.refresh());
-      expect(h.controller.catalogUpdateAvailable).toBe(true);
-      await act(async () => h.controller.applyCatalogUpdate?.());
+      expect(h.controller.catalogLoading).toBe(false);
       expect(h.controller.items.map((item) => item.key.remoteId)).toEqual([
         'release-2',
         'release-4',

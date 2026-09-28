@@ -80,18 +80,6 @@ export function SourceReleasePanel({
               <LoaderCircle size={14} className="spin" /> 다운로드 삭제 중
             </span>
           )}
-          {controller.catalogUpdateAvailable && (
-            <button
-              type="button"
-              className="ghost-btn"
-              onClick={() => {
-                controller.applyCatalogUpdate?.();
-                setRequestedPage(1);
-              }}
-            >
-              새 목차 적용
-            </button>
-          )}
         </div>
         <label>
           <input
