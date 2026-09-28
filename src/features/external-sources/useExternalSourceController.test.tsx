@@ -3421,6 +3421,28 @@ describe('stream-only library works', () => {
     }
   });
 
+  it('recovers an interrupted visit before continuing a stream-only library work', async () => {
+    const values = new Map<string, string>();
+    vi.stubGlobal('localStorage', {
+      getItem: (key: string) => values.get(key) ?? null,
+      setItem: (key: string, value: string) => values.set(key, value),
+    });
+    const { stageSourceStreamVisit } = await import('../../external-sources/source-stream-visit-journal');
+    stageSourceStreamVisit(undefined, { ...ITEM_KEY, remoteId: 'work-2' }, 'manga:1', '2026-09-28T00:00:00.000Z');
+    const h = await make();
+    try {
+      h.registry.getSourceStream = () => ({ open: vi.fn() });
+      await act(async () => h.controller.close());
+      await act(async () => h.controller.continueLibraryWork(subscription.id));
+      expect(h.controller.streaming?.item.key.remoteId).toBe('work-2');
+      expect(h.controller.sourceWorkProgress?.bySubscriptionId.get(subscription.id)?.readCount).toBe(1);
+      expect(h.registry.downloadExternalSource).not.toHaveBeenCalled();
+    } finally {
+      await act(async () => h.renderer.unmount());
+      vi.unstubAllGlobals();
+    }
+  });
+
   it.each(['close', 'source', 'back'] as const)(
     'does not open a reader after leaving pending library navigation with %s',
     async (navigation) => {

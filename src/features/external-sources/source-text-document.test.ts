@@ -1,3 +1,5 @@
+import { hashSync } from '../../domain/hash';
+import { saveSourceStreamPosition } from '../../external-sources/source-stream-history';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { sourceTextDocument } from './source-text-document';
 import { defaultSettings } from '../../repositories/reader-defaults';
@@ -61,6 +63,73 @@ describe('streamed text in the existing reader', () => {
         signal: new AbortController().signal,
       }),
     ).rejects.toThrow('현재 회차');
+  });
+  it.each(['pending', 'failed'] as const)(
+    'saves a reloadable paragraph and offset before a %s background save',
+    async (mode) => {
+      let release!: () => void;
+      const pending = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      const document = await sourceTextDocument({
+        ...input,
+        onPosition: () => (mode === 'pending' ? pending : Promise.reject(new Error('offline'))),
+      });
+      const saving = document.repository.saveReadingPosition({
+        novelId: document.novel.id,
+        chapterId: document.chapter.id,
+        paragraphIndex: 3,
+        offsetInParagraph: 4,
+        chapterProgress: 0.8,
+        scrollTop: 200,
+      });
+      const settled = saving.catch(() => undefined);
+      const reloaded = await sourceTextDocument(input);
+      expect(reloaded.position).toMatchObject({ paragraphIndex: 3, offsetInParagraph: 4 });
+      release();
+      await settled;
+    },
+  );
+  it('continues saving newer local positions while the background queue is blocked', async () => {
+    const document = await sourceTextDocument({ ...input, onPosition: () => new Promise(() => {}) });
+    for (const paragraphIndex of [1, 2, 3]) {
+      await document.repository.saveReadingPosition({
+        novelId: document.novel.id,
+        chapterId: document.chapter.id,
+        paragraphIndex,
+        offsetInParagraph: 2,
+        chapterProgress: 0.5,
+        scrollTop: 100,
+      });
+    }
+    expect((await sourceTextDocument(input)).position).toMatchObject({ paragraphIndex: 3, offsetInParagraph: 2 });
+  });
+  it('keeps the position when a downloaded copy reconstructs the same paragraphs', async () => {
+    const document = await sourceTextDocument({ ...input, text: '\n\n' + input.text + '\n\n' });
+    await document.repository.saveReadingPosition({
+      novelId: document.novel.id,
+      chapterId: document.chapter.id,
+      paragraphIndex: 3,
+      offsetInParagraph: 2,
+      chapterProgress: 0.5,
+      scrollTop: 100,
+    });
+    const page = await document.repository.getParagraphPage(document.chapter.id, 0);
+    const savedText = page!.paragraphs.map((p) => p.text).join('\n\n');
+    expect((await sourceTextDocument({ ...input, text: savedText })).position).toMatchObject({
+      paragraphIndex: 3,
+      offsetInParagraph: 2,
+    });
+  });
+  it('restores positions written with the previous raw text hash', async () => {
+    const text = '\n\n' + input.text + '\n\n';
+    saveSourceStreamPosition(`${input.historyKey}:text:${hashSync(text)}`, {
+      page: 2,
+      count: 3,
+      fraction: 0,
+      ratio: 1,
+    });
+    expect((await sourceTextDocument({ ...input, text })).position?.paragraphIndex).toBe(3);
   });
   it('rejects empty content and aborted page reads', async () => {
     await expect(sourceTextDocument({ ...input, text: '' })).rejects.toThrow();

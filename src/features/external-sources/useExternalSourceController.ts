@@ -1,3 +1,4 @@
+import { recoverSourceStreamVisits } from '../../external-sources/source-stream-visit-journal';
 import { latestSourceVisits, sourceReleaseReadingState } from './source-release-reading';
 import type { SourceWorkProgressProjection } from './source-work-progress';
 import { useLibraryWorkCovers, type LibraryCoverWork } from './use-library-work-covers';
@@ -371,7 +372,7 @@ async function loadSourceLibrary(options: UseExternalSourceControllerOptions) {
     links: reconciled,
     novels,
     subscriptions: await options.state.listSubscriptions(),
-    preferences: (await options.state.listReleasePreferences?.()) ?? [],
+    preferences: await recoverSourceStreamVisits(options.settingsScope, options.state),
   };
 }
 
@@ -3687,7 +3688,7 @@ export function useExternalSourceController(options: UseExternalSourceController
       await reconcileStreamProgress();
       const current = optionsRef.current;
       const [preferences, bookLinks] = await Promise.all([
-        current.state.listReleasePreferences?.() ?? [],
+        recoverSourceStreamVisits(current.settingsScope, current.state),
         current.state.listLinks(),
       ]);
       const visits = latestSourceVisits(preferences);
@@ -3712,7 +3713,7 @@ export function useExternalSourceController(options: UseExternalSourceController
   const resumeCurrentWork = useCallback(async () => {
     if (!currentWorkVisit?.collectionRemoteId) return;
     await reconcileStreamProgress();
-    const preferences = (await optionsRef.current.state.listReleasePreferences?.()) ?? [];
+    const preferences = await recoverSourceStreamVisits(optionsRef.current.settingsScope, optionsRef.current.state);
     const latest = latestSourceVisits(preferences).get(
       externalItemKeyId({
         ...currentWorkVisit.source,
@@ -4466,7 +4467,7 @@ export function useExternalSourceController(options: UseExternalSourceController
         await opening;
         abort.signal.throwIfAborted();
         await reconcileStreamProgress();
-        const preferences = (await current.state.listReleasePreferences?.()) ?? [];
+        const preferences = await recoverSourceStreamVisits(current.settingsScope, current.state);
         abort.signal.throwIfAborted();
         if (!mountedRef.current) return;
         const visit = latestSourceVisits(preferences).get(

@@ -9,6 +9,9 @@ import{RuntimeProvider}from'${root}/src/app/runtime/RuntimeProvider.tsx';
 import{SourceStreamReader}from'${root}/src/features/external-sources/SourceStreamReader.tsx';
 import{useSourceStreamNavigation}from'${root}/src/features/external-sources/use-source-stream-navigation.ts';
 import{defaultSettings}from'${root}/src/repositories/reader-defaults.ts';
+import{useSourceStreamProgress}from'${root}/src/features/external-sources/use-source-stream-progress.ts';
+import{recoverSourceStreamVisits}from'${root}/src/external-sources/source-stream-visit-journal.ts';
+import{latestSourceVisits}from'${root}/src/features/external-sources/source-release-reading.ts';
 import ReaderScreen from '${root}/src/features/reader/ReaderScreen.tsx';
 import{sourceTextDocument}from'${root}/src/features/external-sources/source-text-document.ts';
 import{ReaderScreenHandle}from'${root}/src/features/reader/reader-screen-contract.ts';
@@ -16,21 +19,24 @@ ${['tokens', 'base', 'shell', 'reader-shell', 'reader-content', 'reader-addons',
 const params=new URLSearchParams(location.search);
 localStorage.setItem('moya.source-reading.v1',JSON.stringify({mode:params.get('mode')||'stream-save',prefetch:Number(params.get('prefetch')??8)}));
 globalThis.opens=[];globalThis.saves=[];globalThis.targets=[];globalThis.positions=[];
-const port={kind:'text',open:async(id,signal)=>{opens.push(id);if(id==='2')await new Promise((resolve,reject)=>{globalThis.releaseOpen=resolve;signal.addEventListener('abort',()=>reject(signal.reason),{once:true})});if(id==='3'&&!globalThis.repaired)throw Error('본문 연결 재시도');return{text:Array.from({length:180},(_,i)=>id+'화 문단 '+i+' 스트리밍 소설의 본문을 기존 리더로 읽습니다. '.repeat(12)).join('\\n\\n')};}};
+const state={listLinks:async()=>[],listReleasePreferences:async()=>JSON.parse(localStorage.getItem('fixture.preferences')||'[]'),saveReleasePreferences:async records=>{if(globalThis.blockWrites)await new Promise(()=>{});localStorage.setItem('fixture.preferences',JSON.stringify(records));}};
+const progressOptions={settingsScope:'fixture',state,getNovel:async()=>undefined,notify:()=>{}};
+const port={kind:'text',open:async(id,signal)=>{opens.push(id);if(id==='2')await new Promise((resolve,reject)=>{globalThis.releaseOpen=resolve;signal.addEventListener('abort',()=>reject(signal.reason),{once:true})});if(id==='3'&&!globalThis.repaired)throw Error('본문 연결 재시도');return{text:(params.has('reload')&&!sessionStorage.getItem('downloaded-copy')?'\\n\\n':'')+Array.from({length:180},(_,i)=>id+'화 문단 '+i+' 스트리밍 소설의 본문을 기존 리더로 읽습니다. '.repeat(12)).join('\\n\\n')};}};
 const runtime={readerRuntime:{readerRepository:{},bookAssetRepository:{}}};
-function Fixture(){const[episode,setEpisode]=React.useState(1);const[settings,setSettings]=React.useState({...defaultSettings,readingProfile:{...defaultSettings.readingProfile,modeLock:'auto'}});globalThis.episode=episode;
-const items=Array.from({length:4},(_,i)=>({key:{connectorId:'fixture',remoteId:String(i+1)},title:(i+1)+'화',release:{title:(i+1)+'화',sourceOrder:i+1},importState:i===3?'imported':'available'}));
+function Fixture(){const[episode,setEpisode]=React.useState(globalThis.bootEpisode||1);globalThis.jumpEpisode=setEpisode;const[settings,setSettings]=React.useState({...defaultSettings,readingProfile:{...defaultSettings.readingProfile,modeLock:'auto'}});globalThis.episode=episode;
+const items=Array.from({length:4},(_,i)=>({key:{connectorId:'fixture',remoteId:String(i+1)},title:(i+1)+'화',collection:{remoteId:'work'},release:{title:(i+1)+'화',sourceOrder:i+1},importState:i===3?'imported':'available'}));
+const progress=useSourceStreamProgress({current:()=>progressOptions,onRead:()=>{},onSaved:()=>{}});
 const[catalogReady,setCatalogReady]=React.useState(!params.has('catalog'));
 const nav=useSourceStreamNavigation({streaming:{item:items[episode-1]},items:catalogReady?items:items.slice(0,1),nextCursor:catalogReady?undefined:'next',loadMore:async()=>{await new Promise(resolve=>globalThis.releaseCatalog=resolve);setCatalogReady(true)},openStreamItem:async item=>{targets.push(item.key.remoteId);setEpisode(Number(item.key.remoteId))}});
 const actions={...new ReaderScreenHandle().getActions(),notify:message=>console.log(message),updateReadingProfile:patch=>setSettings(s=>({...s,readingProfile:{...s.readingProfile,...patch}}))};
-return <RuntimeProvider runtime={runtime}><SourceStreamReader title={episode+'화'} port={port} remoteId={String(episode)} historyKey={String(episode)} profileKey="work" fromStart={episode>1} textReader={{settings,settingsOpen:false,actions}} onClose={()=>{globalThis.closed=true}} onSave={()=>{saves.push(episode);return new Promise(resolve=>{(globalThis.releaseSaves??=[]).push(resolve)})}} onTextPosition={async p=>positions.push([episode,p])} previous={nav.previous} next={nav.next} navigationBusy={nav.busy} nextEpisode={nav.nextItem?{remoteId:nav.nextItem.key.remoteId,title:nav.nextItem.title}:undefined}/></RuntimeProvider>;
+return <RuntimeProvider runtime={runtime}><SourceStreamReader title={episode+'화'} port={port} remoteId={String(episode)} historyKey={String(episode)} profileKey="work" fromStart={!params.has('reload')&&episode>1} textReader={{settings,settingsOpen:false,actions}} onClose={()=>{globalThis.closed=true}} onSave={()=>{saves.push(episode);return new Promise(resolve=>{(globalThis.releaseSaves??=[]).push(resolve)})}} onTextPosition={async p=>{positions.push([episode,p]);if(params.has('reload'))await progress.record(items[episode-1],{kind:'text',...p});}} previous={nav.previous} next={nav.next} navigationBusy={nav.busy} nextEpisode={nav.nextItem?{remoteId:nav.nextItem.key.remoteId,title:nav.nextItem.title}:undefined}/></RuntimeProvider>;
 }
 function LocalFixture(){const[handle]=React.useState(()=>new ReaderScreenHandle());const[entry,setEntry]=React.useState();const[number,setNumber]=React.useState(1);
 React.useEffect(()=>{void sourceTextDocument({text:Array.from({length:60},(_,i)=>'문단 '+i+' 페이지 모드 유지 검사입니다.'.repeat(20)).join('\\n\\n'),title:number+'화',workId:'local-book',episodeId:String(number),historyKey:String(number),settings:defaultSettings}).then(value=>{handle.prepareOpen(value.chapter.id);setEntry(value);});},[number]);
 handle.setActions({...handle.getActions(),openChapter:async()=>{setEntry(undefined);setNumber(n=>n+1)}});
 if(!entry)return null;const chapter={...entry.chapter,index:1};return <RuntimeProvider runtime={runtime}><ReaderScreen screenHandle={handle} repository={entry.repository} model={{novel:entry.novel,chapter,chapters:[chapter,{...chapter,id:'next',index:2}],settings:defaultSettings,bookmarks:[],highlights:[],addonOpen:false,addonTab:'outline',overlays:{settingsOpen:false,syncPanelOpen:false,importOpen:false},canRestoreSavedPosition:false,statsVisible:false,openRequestVersion:number}}/></RuntimeProvider>;
 }
-createRoot(document.getElementById('root')).render(params.has('local')?<LocalFixture/>:<Fixture/>);`;
+void (async()=>{if(params.has('reload')){const records=await recoverSourceStreamVisits('fixture',state);const visit=[...latestSourceVisits(records).values()].sort((a,b)=>b.lastReadAt.localeCompare(a.lastReadAt))[0];globalThis.bootEpisode=Number(visit?.source.remoteId||1);}createRoot(document.getElementById('root')).render(params.has('local')?<LocalFixture/>:<Fixture/>);})();`;
 const result = await build({
   root,
   configFile: false,
@@ -85,7 +91,67 @@ const browser = await chromium.launch({
     ? { executablePath: process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH }
     : {}),
 });
-try {
+async function checkReload() {
+  for (const width of [390, 1280]) {
+    const page = await browser.newPage({ viewport: { width, height: 844 } });
+    const errors = [];
+    page.on('pageerror', (error) => errors.push(error.message));
+    await page.goto('http://127.0.0.1:' + server.address().port + '/?reload=1&prefetch=0&mode=stream');
+    await page.waitForFunction(() =>
+      document.querySelector('.reader-scroll.is-active:not(.is-opening) [data-paragraph-id]'),
+    );
+    await page.evaluate(() => {
+      globalThis.blockWrites = true;
+      globalThis.jumpEpisode(4);
+    });
+    await page.waitForFunction(
+      () =>
+        document.querySelector('.reader-title strong')?.textContent === '4화' &&
+        document.querySelector('.reader-scroll.is-active:not(.is-opening) [data-paragraph-id]'),
+    );
+    for (const top of [2500, 6000]) {
+      await page.locator('.reader-scroll.is-active').evaluate((node, y) => {
+        node.scrollTop = y;
+      }, top);
+      await page.waitForTimeout(500);
+    }
+    const before = await page.evaluate(
+      () =>
+        JSON.parse(localStorage.getItem('moya.source-stream-positions.v1')).find(([key]) =>
+          key.startsWith('4:text:'),
+        )[1],
+    );
+    const visibleParagraph = await page.evaluate(() => {
+      const root = document.querySelector('.reader-scroll.is-active');
+      const top = root.getBoundingClientRect().top + (parseFloat(getComputedStyle(root).paddingTop) || 0);
+      const row = [...root.querySelectorAll('[data-index]')].find((node) => node.getBoundingClientRect().bottom > top);
+      return Number(row.dataset.index) + 1;
+    });
+    assert(before.page > 0);
+    assert.equal(
+      await page.evaluate(
+        () =>
+          JSON.parse(localStorage.getItem('moya.source-stream-pending-visits.v1')).at(-1).preference.source.remoteId,
+      ),
+      '4',
+    );
+    await page.evaluate(() => sessionStorage.setItem('downloaded-copy', '1'));
+    await page.reload();
+    await page.waitForFunction(
+      () => episode === 4 && document.querySelector('.reader-scroll.is-active:not(.is-opening) [data-paragraph-id]'),
+    );
+    await page.waitForTimeout(650);
+    const restored = await page.evaluate(() => positions.at(-1)?.[1]?.paragraphIndex);
+
+    assert(Math.abs(restored - visibleParagraph) <= 1, `restored paragraph ${restored}, expected ${visibleParagraph}`);
+    assert.equal(await page.evaluate(() => saves.length), 0);
+    assert.deepEqual(errors, []);
+    console.log(`PASS ${width}px: blocked background save, reload restores episode 4 and paragraph ${restored}`);
+    await page.close();
+  }
+}
+
+async function checkNavigation() {
   if (!process.env.SOURCE_TEXT_SCROLL_ONLY) {
     const local = await browser.newPage({ viewport: { width: 390, height: 844 } });
     local.setDefaultTimeout(10000);
@@ -256,6 +322,11 @@ try {
   await cancel.waitForFunction(() => document.querySelector('.reader-title strong')?.textContent === '2화');
   console.log('PASS automatic navigation cancellation and manual retry');
   await cancel.close();
+}
+
+try {
+  if (process.env.SOURCE_TEXT_RELOAD_ONLY) await checkReload();
+  else await checkNavigation();
 } finally {
   await browser.close();
   await new Promise((resolve) => server.close(resolve));
