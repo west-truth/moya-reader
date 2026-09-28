@@ -1,3 +1,4 @@
+import type { SourceWorkProgress } from '../external-sources/source-work-progress';
 import type {
   ExternalSourceController,
   ExternalSourceLibraryWork,
@@ -6,14 +7,30 @@ import type { LibraryFilter, LibrarySort } from '../library/library-screen-model
 import { useScreenMotion } from '../navigation/screen-motion';
 import type { BookWorkspaceState } from './book-workspace-contract';
 
-/** Remote library works only appear in unfiltered, unshelved library views that match the query. */
+function remoteWorkStatus(progress?: SourceWorkProgress): 'unread' | 'reading' | 'finished' {
+  if (progress && progress.totalCount > 0 && progress.readCount >= progress.totalCount) return 'finished';
+  return progress && (progress.readCount > 0 || progress.lastReadAt) ? 'reading' : 'unread';
+}
+
+export function remoteLibraryReadCounts(
+  works: readonly ExternalSourceLibraryWork[],
+  progress?: ReadonlyMap<string, SourceWorkProgress>,
+) {
+  const counts = { unread: 0, reading: 0, finished: 0 };
+  for (const work of works) counts[remoteWorkStatus(progress?.get(work.id))] += 1;
+  return counts;
+}
+
+/** Streamed works participate in read filters using the same release progress shown on their cards. */
 export function visibleRemoteLibraryWorks(
   works: readonly ExternalSourceLibraryWork[],
   view: { shelved: boolean; filter: LibraryFilter; query: string; sort: LibrarySort },
+  progress?: ReadonlyMap<string, SourceWorkProgress>,
 ): ExternalSourceLibraryWork[] {
-  if (view.shelved || (view.filter !== 'all' && view.filter !== 'unread')) return [];
+  if (view.shelved || view.filter === 'favorite' || view.filter === 'trash') return [];
   const query = view.query.trim().toLocaleLowerCase();
   return works
+    .filter((work) => view.filter === 'all' || view.filter === remoteWorkStatus(progress?.get(work.id)))
     .filter(
       (work) =>
         !query ||
@@ -24,7 +41,9 @@ export function visibleRemoteLibraryWorks(
     .sort((left, right) => {
       if (view.sort === 'title') return left.title.localeCompare(right.title, 'ko');
       if (view.sort === 'added') return right.createdAt.localeCompare(left.createdAt);
-      return right.updatedAt.localeCompare(left.updatedAt);
+      return (progress?.get(right.id)?.lastReadAt ?? right.updatedAt).localeCompare(
+        progress?.get(left.id)?.lastReadAt ?? left.updatedAt,
+      );
     });
 }
 

@@ -17,6 +17,10 @@ export interface LibraryExternalWorkView {
   readonly thumbnailUrl?: string;
   readonly sourceLabel?: string;
   readonly availableReleaseCount: number;
+  /** Releases read out of `availableReleaseCount`. */
+  readonly readReleaseCount?: number;
+  /** Latest visit to any release; decides between continuing and starting from the first release. */
+  readonly lastReadAt?: string;
   readonly newReleaseCount: number;
   readonly addedAt: string;
   readonly updatedAt: string;
@@ -133,6 +137,8 @@ export interface LibraryScreenActions {
     editMetadata(novel: Novel): void;
     toggleSelected(novel: Novel): void;
     openExternal(workId: string): MaybePromise;
+    /** Resume the last visited release of a streamed work, or open its first release. */
+    continueExternal?(workId: string): MaybePromise;
     removeExternal(workId: string): MaybePromise;
   };
   imports: {

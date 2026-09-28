@@ -1,9 +1,10 @@
 import { isCoverView } from '../../components/work-view';
-import { BookOpen, Check, Pencil, Play, RotateCcw, Star, Trash2 } from 'lucide-react';
+import { Check, Pencil, Play, RotateCcw, Star, Trash2 } from 'lucide-react';
 import { bookFormatLabel, isFixedDocumentFormat } from '../../domain/book-format';
-import { formatCount, formatProgress } from '../../utils/format';
+import { formatProgress } from '../../utils/format';
 import type { LibraryBookView } from './library-screen-model';
-import type { LibraryExternalWorkView, LibraryScreenProps } from './library-screen-contract';
+import type { LibraryScreenProps } from './library-screen-contract';
+import { ExternalWorkCard, ExternalWorkListRow } from './LibraryExternalWorkItems';
 import { LibraryReadingProgress } from './LibraryReadingProgress';
 import { BookCover } from './BookCover';
 import { VirtualizedLibraryCollection } from './VirtualizedLibraryCollection';
@@ -132,124 +133,6 @@ function SelectionMark({ selected }: { readonly selected: boolean }) {
     <span className="book-selection-mark" aria-hidden="true">
       {selected && <Check size={15} />}
     </span>
-  );
-}
-
-function ExternalWorkCover({ work, thumbnail }: { work: LibraryExternalWorkView; thumbnail: boolean }) {
-  return (
-    <div className={classNames('book-cover', !thumbnail && 'thumb', thumbnail && 'has-remote-cover')}>
-      {work.thumbnailUrl ? (
-        <img src={work.thumbnailUrl} alt="" loading="lazy" decoding="async" referrerPolicy="no-referrer" />
-      ) : (
-        <span className="external-work-cover-fallback" aria-hidden="true">
-          <BookOpen size={32} />
-        </span>
-      )}
-    </div>
-  );
-}
-
-function ExternalWorkActions({
-  work,
-  actions,
-  importTask,
-}: Pick<LibraryScreenProps, 'actions'> & { work: LibraryExternalWorkView; importTask?: ImportTaskView }) {
-  return (
-    <div className="card-actions">
-      <button
-        type="button"
-        className="mini-icon-btn book-remove-action"
-        title="라이브러리에서 제거"
-        aria-label={`${work.title} 라이브러리에서 제거`}
-        disabled={Boolean(importTask && importTaskIsActive(importTask))}
-        onClick={() => void actions.books.removeExternal(work.id)}
-      >
-        <Trash2 size={15} />
-      </button>
-    </div>
-  );
-}
-
-function ExternalWorkCard({
-  work,
-  actions,
-  importTask,
-}: Pick<LibraryScreenProps, 'actions'> & { work: LibraryExternalWorkView; importTask?: ImportTaskView }) {
-  return (
-    <article className="book-card external-work-card" role="listitem">
-      <button
-        type="button"
-        className="book-card-open"
-        aria-label={`${work.title} 원격 회차 열기`}
-        onClick={() => void actions.books.openExternal(work.id)}
-      />
-      <div className="book-cover-wrap">
-        <ExternalWorkCover work={work} thumbnail />
-        {importTask && <LibraryImportTaskOverlay task={importTask} />}
-      </div>
-      <div className="book-info">
-        <div className="book-title-line">
-          <h3>{work.title}</h3>
-        </div>
-        <p>{[work.author, work.sourceLabel].filter(Boolean).join(' · ')}</p>
-        <div className="card-row">
-          <strong>{formatCount(work.availableReleaseCount)}화</strong>
-          <span>{work.newReleaseCount > 0 ? `새 회차 ${work.newReleaseCount}개` : '새 회차 확인됨'}</span>
-          {importTask?.phase === 'failed' ? (
-            <LibraryImportTaskActions task={importTask} actions={actions} />
-          ) : (
-            <ExternalWorkActions work={work} actions={actions} importTask={importTask} />
-          )}
-        </div>
-      </div>
-    </article>
-  );
-}
-
-function ExternalWorkListRow({
-  work,
-  actions,
-  importTask,
-  showCover = true,
-}: Pick<LibraryScreenProps, 'actions'> & {
-  work: LibraryExternalWorkView;
-  importTask?: ImportTaskView;
-  showCover?: boolean;
-}) {
-  return (
-    <article className="book-list-row external-work-list-row" role="listitem">
-      <button
-        type="button"
-        className="book-card-open"
-        aria-label={`${work.title} 원격 회차 열기`}
-        onClick={() => void actions.books.openExternal(work.id)}
-      />
-      {showCover && (
-        <div className="book-cover-wrap">
-          <ExternalWorkCover work={work} thumbnail={false} />
-          {importTask && <LibraryImportTaskOverlay task={importTask} />}
-        </div>
-      )}
-      <div className="book-list-main">
-        <div className="book-list-title">
-          <h3>{work.title}</h3>
-        </div>
-        <p>
-          {[work.author, work.sourceLabel, `원격 회차 ${formatCount(work.availableReleaseCount)}개`]
-            .filter(Boolean)
-            .join(' · ')}
-        </p>
-      </div>
-      <div className="book-list-progress">
-        <strong>{work.newReleaseCount > 0 ? `새 회차 ${work.newReleaseCount}` : '최신'}</strong>
-        <span>{importTask ? importTaskLabel(importTask) : '원격 작품'}</span>
-      </div>
-      {importTask?.phase === 'failed' ? (
-        <LibraryImportTaskActions task={importTask} actions={actions} />
-      ) : (
-        <ExternalWorkActions work={work} actions={actions} importTask={importTask} />
-      )}
-    </article>
   );
 }
 

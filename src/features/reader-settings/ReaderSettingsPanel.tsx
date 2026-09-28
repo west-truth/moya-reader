@@ -32,6 +32,7 @@ import { ExternalSourceSettingsPanel } from '../external-sources/ExternalSourceS
 import type { ExternalSourceController } from '../external-sources/useExternalSourceController';
 import { ApplicationInfoSettings } from './ApplicationInfoSettings';
 import { StorageSettingsPanel, type StorageSettingsProps } from './StorageSettingsPanel';
+import { SourceAdvancedSettings } from './SourceAdvancedSettings';
 import { ReaderGestureSettings } from './ReaderGestureSettings';
 import { ReaderSettingsAppearance } from './ReaderSettingsAppearance';
 import { ReaderSettingsLayout } from './ReaderSettingsLayout';
@@ -361,6 +362,7 @@ export default function ReaderSettingsPanel(props: ReaderSettingsPanelProps) {
                     </span>
                     <ChevronRight size={16} aria-hidden="true" />
                   </button>
+                  <SourceAdvancedSettings controller={controller} />
                 </div>
               )}
               {tab === 'storage' && (

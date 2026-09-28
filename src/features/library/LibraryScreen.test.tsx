@@ -245,6 +245,36 @@ describe('LibraryScreen', () => {
     expect(markup).not.toContain('읽을 파일을 책장에 추가하세요');
   });
 
+  it('shows releases read out of the source total on a remote work', () => {
+    const work = {
+      id: 'external-work-1',
+      title: '서른의 봄',
+      availableReleaseCount: 120,
+      newReleaseCount: 0,
+      addedAt: '2026-08-26T00:00:00.000Z',
+      updatedAt: '2026-08-26T00:00:00.000Z',
+    };
+    const render = (readReleaseCount?: number) =>
+      renderToStaticMarkup(
+        <LibraryScreen
+          model={model([], {
+            externalSources: {
+              active: false,
+              busy: false,
+              sources: [],
+              libraryWorks: [{ ...work, readReleaseCount }],
+            },
+          })}
+          actions={actions()}
+        />,
+      );
+
+    expect(render(3)).toContain('3/120화');
+    expect(render(0)).toContain('120화');
+    expect(render(0)).not.toContain('0/120화');
+    expect(render(undefined)).not.toContain('/120화');
+  });
+
   it('shows connected sources in the sidebar without the former topbar shortcut', () => {
     const screenActions = actions();
     const unavailableMarkup = renderToStaticMarkup(<LibraryScreen model={model([novel()])} actions={screenActions} />);

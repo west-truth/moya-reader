@@ -95,6 +95,7 @@ export function readerSettingsEqual(left: ReaderSettings, right: ReaderSettings)
   return (
     left.applicationTheme === right.applicationTheme &&
     Boolean(left.hideAppLogo) === Boolean(right.hideAppLogo) &&
+    (left.sourceProgressBasis ?? 'source') === (right.sourceProgressBasis ?? 'source') &&
     JSON.stringify(left.applicationThemeColors) === JSON.stringify(right.applicationThemeColors) &&
     left.theme === right.theme &&
     left.font === right.font &&

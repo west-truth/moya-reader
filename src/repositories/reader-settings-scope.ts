@@ -4,6 +4,7 @@ import type { ReaderSettings } from '../domain/types';
 export const DEVICE_READER_SETTING_KEYS = [
   'applicationTheme',
   'hideAppLogo',
+  'sourceProgressBasis',
   'applicationThemeColors',
   'theme',
   'font',

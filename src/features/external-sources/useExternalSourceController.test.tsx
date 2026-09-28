@@ -2475,7 +2475,8 @@ describe('useExternalSourceController remote updates', () => {
         if (hosted) expect(harness.importFile).not.toHaveBeenCalled();
         else expect(harness.importFile.mock.calls[0]![0]).not.toHaveProperty('importMode');
         if (unchanged) expect(port.assemble).not.toHaveBeenCalled();
-        if (transport === 'cover-reference') expect(resolveCover).toHaveBeenCalledTimes(1);
+        // The library resolves artwork independently of the downloaded book cover.
+        if (transport === 'cover-reference') expect(resolveCover).toHaveBeenCalledTimes(2);
         expect(harness.notify).toHaveBeenCalledWith(expect.stringContaining('1개 회차'), 'success');
       } finally {
         vi.stubGlobal('createImageBitmap', previousCreateImageBitmap);
@@ -3341,6 +3342,128 @@ describe('source streaming connection', () => {
         chapters[1],
         expect.objectContaining({ id: 'book-1', activeContentRevisionId: 'content-old' }),
       );
+    } finally {
+      await act(async () => h.renderer.unmount());
+    }
+  });
+});
+
+describe('stream-only library works', () => {
+  const subscription: ExternalSourceSubscriptionRecord = {
+    id: 'stream-library',
+    connectorId: SOURCE_ID,
+    accountConnectionId: 'fixture-account',
+    collectionRemoteId: 'manga:1',
+    navigationRef: 'manga:1',
+    title: '스트리밍 작품',
+    knownReleaseIds: ['work-1', 'work-2', 'work-3'],
+    newReleaseIds: [],
+    availableReleaseCount: 3,
+    createdAt: '2026-09-01T00:00:00.000Z',
+    updatedAt: '2026-09-01T00:00:00.000Z',
+    lastCheckedAt: '2026-09-01T00:00:00.000Z',
+    schemaVersion: 1,
+  };
+  const make = () =>
+    createHarness({
+      downloadedContent: '',
+      serial: true,
+      serialCount: 3,
+      libraryBooks: async () => [],
+      subscriptions: [subscription],
+      detail: { title: subscription.title, coverRef: ITEM_KEY },
+      resolveCover: async () => 'data:image/png;base64,AQID',
+    });
+
+  it('restores artwork without downloading a book and starts the earliest release across pages', async () => {
+    const h = await make();
+    try {
+      expect(h.controller.libraryWorks[0]?.thumbnailUrl).toBe('data:image/png;base64,AQID');
+      expect(h.importFile).not.toHaveBeenCalled();
+      const episodes = h.controller.items;
+      h.registry.getSourceStream = () => ({ open: vi.fn() });
+      vi.mocked(h.registry.listExternalSource).mockImplementation(async (_id, _host, input) => ({
+        items: input.cursor ? [episodes[0]!] : [episodes[2]!, episodes[1]!],
+        nextCursor: input.cursor ? undefined : 'page-2',
+      }));
+      await act(async () => h.controller.close());
+      await act(async () => h.controller.continueLibraryWork(subscription.id));
+      expect(h.controller.streaming?.item.key.remoteId).toBe('work-1');
+      expect(h.registry.downloadExternalSource).not.toHaveBeenCalled();
+      expect(h.importFile).not.toHaveBeenCalled();
+    } finally {
+      await act(async () => h.renderer.unmount());
+    }
+  });
+
+  it('resumes a durable stream visit without a local book', async () => {
+    const h = await make();
+    try {
+      h.registry.getSourceStream = () => ({ open: vi.fn() });
+      h.state.listReleasePreferences = async () => [
+        {
+          id: 'visit-2',
+          kind: 'releasePreference',
+          source: { ...ITEM_KEY, remoteId: 'work-2' },
+          collectionRemoteId: 'manga:1',
+          lastReadAt: '2026-09-02T00:00:00.000Z',
+          updatedAt: '2026-09-02T00:00:00.000Z',
+          readingMode: 'stream',
+          read: true,
+        },
+      ];
+      await act(async () => h.controller.close());
+      await act(async () => h.controller.continueLibraryWork(subscription.id));
+      expect(h.controller.streaming?.item.key.remoteId).toBe('work-2');
+      expect(h.registry.downloadExternalSource).not.toHaveBeenCalled();
+    } finally {
+      await act(async () => h.renderer.unmount());
+    }
+  });
+
+  it.each(['close', 'source', 'back'] as const)(
+    'does not open a reader after leaving pending library navigation with %s',
+    async (navigation) => {
+      const h = await make();
+      try {
+        h.registry.getSourceStream = () => ({ open: vi.fn() });
+        let release!: () => void;
+        const gate = new Promise<void>((resolve) => {
+          release = resolve;
+        });
+        const items = h.controller.items;
+        vi.mocked(h.registry.listExternalSource).mockImplementation(async () => {
+          await gate;
+          return { items };
+        });
+        let pending!: Promise<void>;
+        await act(async () => {
+          pending = h.controller.continueLibraryWork(subscription.id);
+        });
+        let leaving: Promise<void> | undefined;
+        await act(async () => {
+          if (navigation === 'close') h.controller.close();
+          else leaving = navigation === 'source' ? h.controller.selectSource(SOURCE_ID) : h.controller.goBack();
+        });
+        await act(async () => {
+          release();
+          await Promise.all([pending, leaving]);
+        });
+        expect(h.controller.streaming).toBeUndefined();
+      } finally {
+        await act(async () => h.renderer.unmount());
+      }
+    },
+  );
+
+  it('does not resume a subscription with another connected account', async () => {
+    const h = await make();
+    try {
+      h.registry.getExternalSourceStatus = () => ({ state: 'connected', accountConnectionId: 'other-account' });
+      h.registry.getSourceStream = () => ({ open: vi.fn() });
+      await act(async () => h.controller.continueLibraryWork(subscription.id));
+      expect(h.controller.streaming).toBeUndefined();
+      expect(h.notify).toHaveBeenCalledWith(expect.stringContaining('다시 연결'), 'warning');
     } finally {
       await act(async () => h.renderer.unmount());
     }

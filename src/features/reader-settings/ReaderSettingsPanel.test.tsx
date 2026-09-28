@@ -121,7 +121,9 @@ describe('ReaderSettingsPanel', () => {
     const sourceMarkup = renderToStaticMarkup(<ReaderSettingsPanel {...common} initialTab="sources" />);
     const extensionMarkup = renderToStaticMarkup(<ReaderSettingsPanel {...common} initialTab="extensions" />);
     expect(sourceMarkup).toContain('설치된 소스 패키지');
+    expect(sourceMarkup).toContain('확장 소스 고급');
     expect(extensionMarkup).not.toContain('설치된 소스 패키지');
+    expect(extensionMarkup).not.toContain('확장 소스 고급');
     expect(extensionMarkup).toContain('커뮤니티 기능 확장');
     const storageMarkup = renderToStaticMarkup(<ReaderSettingsPanel {...common} initialTab="storage" />);
     const syncMarkup = renderToStaticMarkup(<ReaderSettingsPanel {...common} initialTab="sync" />);

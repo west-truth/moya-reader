@@ -101,6 +101,7 @@ function controller(overrides: Partial<ExternalSourceController> = {}): External
     selectNewReleases: vi.fn(),
     checkSubscriptions: vi.fn(async () => undefined),
     openSubscription: vi.fn(async () => undefined),
+    continueLibraryWork: vi.fn(async () => undefined),
     ...overrides,
   };
 }

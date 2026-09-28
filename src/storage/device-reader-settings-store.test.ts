@@ -28,6 +28,25 @@ describe('device reader settings boundary', () => {
     ]);
     expect(await getSettings()).toMatchObject({ fontSize: 26, applicationTheme: 'sepia', ttsSpeed: 1.6 });
   });
+  it('keeps the source progress basis on this device in local and self-hosted libraries', async () => {
+    expect((await getSettings()).sourceProgressBasis).toBeUndefined();
+    await saveSettings({ ...(await getSettings()), sourceProgressBasis: 'downloaded' });
+    expect(await listSyncOutbox()).toEqual([]);
+    expect((await new IndexedDbReaderRepository().getSettings()).sourceProgressBasis).toBe('downloaded');
+
+    const client = {
+      readerSettingsScope: 'device-progress',
+      getSettings: vi.fn(async () => ({ settings: structuredClone(defaultSettings) })),
+      saveSettings: vi.fn(async () => undefined),
+    };
+    const remote = new RemoteReaderRepository(client as unknown as RemoteApiClient);
+    await remote.saveSettings({ ...(await remote.getSettings()), sourceProgressBasis: 'downloaded' });
+    expect(client.saveSettings).not.toHaveBeenCalled();
+    expect(
+      (await new RemoteReaderRepository(client as unknown as RemoteApiClient).getSettings()).sourceProgressBasis,
+    ).toBe('downloaded');
+  });
+
   it('seeds legacy local settings once and saves presentation without adding sync work', async () => {
     await putItem('settings', { ...defaultSettings, fontSize: 23, applicationTheme: 'sepia' });
     expect(await getSettings()).toMatchObject({ fontSize: 23, applicationTheme: 'sepia' });
