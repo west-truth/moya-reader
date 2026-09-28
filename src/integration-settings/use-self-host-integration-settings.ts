@@ -36,11 +36,11 @@ function comparable(settings: SelfHostIntegrationSettingsV1): string {
 }
 
 /** Mirrors non-secret integration preferences through the self-host account while this tab is alive. */
-export function useSelfHostIntegrationSettings(input: SelfHostIntegrationSettingsInput): void {
+export function useSelfHostIntegrationSettings(input: SelfHostIntegrationSettingsInput): () => Promise<void> {
   const inputRef = useRef(input);
   inputRef.current = input;
   const hydratedRef = useRef(false);
-  const hydrationInFlightRef = useRef(false);
+  const hydrationPromiseRef = useRef<Promise<void>>();
   const applyingRef = useRef(false);
   const saveTimerRef = useRef<number>();
   const saveInFlightRef = useRef(false);
@@ -146,6 +146,7 @@ export function useSelfHostIntegrationSettings(input: SelfHostIntegrationSetting
   useEffect(() => {
     if (!input.enabled || !input.client) {
       hydratedRef.current = false;
+      hydrationPromiseRef.current = undefined;
       return;
     }
     hydratedRef.current = false;
@@ -153,10 +154,11 @@ export function useSelfHostIntegrationSettings(input: SelfHostIntegrationSetting
     lastSavedContentRef.current = undefined;
     legacyImportCompletedRef.current = false;
     let active = true;
+    let inFlight = false;
 
     const hydrate = async () => {
-      if (hydrationInFlightRef.current || hydratedRef.current) return;
-      hydrationInFlightRef.current = true;
+      if (inFlight || hydratedRef.current) return;
+      inFlight = true;
       try {
         const { settings } = await input.client!.getIntegrationSettings();
         if (!active) return;
@@ -183,6 +185,7 @@ export function useSelfHostIntegrationSettings(input: SelfHostIntegrationSetting
           lastSavedContentRef.current = comparable(response.settings);
           inputRef.current.onApplied();
         }
+        if (!active) return;
         hydratedRef.current = true;
         lastRemoteCheckRef.current = Date.now();
         errorNotifiedRef.current = false;
@@ -196,12 +199,15 @@ export function useSelfHostIntegrationSettings(input: SelfHostIntegrationSetting
           'warning',
         );
       } finally {
-        hydrationInFlightRef.current = false;
+        inFlight = false;
       }
     };
 
-    void hydrate();
-    const retryTimer = window.setInterval(() => void hydrate(), HYDRATION_RETRY_MS);
+    const startHydration = () => {
+      if (!inFlight && !hydratedRef.current) hydrationPromiseRef.current = hydrate();
+    };
+    startHydration();
+    const retryTimer = window.setInterval(startHydration, HYDRATION_RETRY_MS);
     return () => {
       active = false;
       window.clearInterval(retryTimer);
@@ -281,10 +287,21 @@ export function useSelfHostIntegrationSettings(input: SelfHostIntegrationSetting
     };
   }, [apply, input.client, input.enabled]);
 
+  // Reading actions must distinguish an empty history from a snapshot that has not arrived yet.
+  const waitUntilReady = useCallback(async () => {
+    const { enabled, client } = inputRef.current;
+    if (!enabled) return;
+    await hydrationPromiseRef.current;
+    if (!client || inputRef.current.client !== client || !hydratedRef.current) {
+      throw new Error('읽기 기록을 불러오지 못했습니다. 잠시 후 다시 시도해 주세요.');
+    }
+  }, []);
+
   useEffect(
     () => () => {
       if (saveTimerRef.current !== undefined) window.clearTimeout(saveTimerRef.current);
     },
     [],
   );
+  return waitUntilReady;
 }

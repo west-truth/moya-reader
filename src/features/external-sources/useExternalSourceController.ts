@@ -256,6 +256,8 @@ export interface ExternalSourceController {
   openDiscovery?(sourceId: ExtensionContributionId, input: ExternalSourceListInput, title?: string): Promise<void>;
   show(sourceId?: ExtensionContributionId): void;
   showLocalSeries(novel: Novel): Promise<void>;
+  resolveSourceSeriesBook?(novel: Novel): Promise<boolean | undefined>;
+  readonly readingHistoryLoading?: boolean;
   continueSourceReading?(novel: Novel): Promise<boolean>;
   canResumeCurrentWork?: boolean;
   resumeCurrentWork?(): Promise<void>;
@@ -344,6 +346,7 @@ export interface UseExternalSourceControllerOptions {
   readonly downloadPolicy?: import('../../domain/types').DownloadPolicy;
   readonly updateDownloadPolicy?: (patch: Partial<import('../../domain/types').DownloadPolicy>) => void;
   readonly settingsScope?: string;
+  readonly waitForReadingHistory?: () => Promise<void>;
   readonly readingActive?: boolean;
   readonly readingTarget?: { readonly novelId: string; readonly sectionId: string };
   readonly registry: ExternalSourceRegistryPort;
@@ -368,6 +371,7 @@ export interface UseExternalSourceControllerOptions {
 }
 
 async function loadSourceLibrary(options: UseExternalSourceControllerOptions) {
+  await options.waitForReadingHistory?.();
   // Read links first: a catalog snapshot taken before a new link must never prune it.
   const links = await options.state.listLinks();
   const novels = await options.listNovels({ includeTrash: true });
@@ -507,6 +511,7 @@ export function useExternalSourceController(options: UseExternalSourceController
   }, [open]);
   const [loading, setLoading] = useState(false);
   const [blockingBusy, setBusy] = useState(false);
+  const [readingHistoryLoading, setReadingHistoryLoading] = useState(false);
   const [catalogLoading, setCatalogLoading] = useState(false);
   const [catalogUpdateAvailable, setCatalogUpdateAvailable] = useState(false);
   const pendingCatalogApplyRef = useRef<() => void>();
@@ -1343,6 +1348,28 @@ export function useExternalSourceController(options: UseExternalSourceController
     if (importBusy && wasOpen) optionsRef.current.notify('다운로드는 백그라운드에서 계속됩니다.');
   }, [importBusy]);
 
+  const resolveSourceSeriesBook = useCallback(async (novel: Novel) => {
+    resumeAbortRef.current?.abort();
+    const abort = new AbortController();
+    resumeAbortRef.current = abort;
+    if (novel.format === 'image_archive') return true;
+    if (novel.format !== 'txt' || novel.documentSectionCount === undefined) return false;
+    try {
+      const current = optionsRef.current;
+      await current.waitForReadingHistory?.();
+      const links = await current.state.listLinks();
+      if (abort.signal.aborted || !mountedRef.current) return undefined;
+      return links.some((link) => link.localBookId === novel.id && !link.pendingImport && link.collectionRemoteId);
+    } catch (error) {
+      if (!abort.signal.aborted && mountedRef.current)
+        optionsRef.current.notify(
+          error instanceof Error ? error.message : '작품 정보를 불러오지 못했습니다.',
+          'warning',
+        );
+      return undefined;
+    }
+  }, []);
+
   const showLocalSeries = useCallback(
     async (novel: Novel) => {
       resumeAbortRef.current?.abort();
@@ -1370,10 +1397,12 @@ export function useExternalSourceController(options: UseExternalSourceController
       setOpen(true);
       let localData;
       try {
+        await optionsRef.current.waitForReadingHistory?.();
         localData = await Promise.all([
           optionsRef.current.state.listLinks(),
           optionsRef.current.listChapters(novel.id),
           optionsRef.current.getNovel(novel.id),
+          recoverSourceStreamVisits(optionsRef.current.settingsScope, optionsRef.current.state),
         ]);
       } catch {
         if (!mountedRef.current || navigation.signal.aborted || listAbortRef.current !== navigation) return;
@@ -1382,7 +1411,8 @@ export function useExternalSourceController(options: UseExternalSourceController
         return;
       }
       if (!mountedRef.current || navigation.signal.aborted || listAbortRef.current !== navigation) return;
-      const [allLinks, chapters, freshNovel] = localData;
+      const [allLinks, chapters, freshNovel, preferences] = localData;
+      setReleasePreferences(preferences);
       if (!freshNovel || freshNovel.deletedAt) {
         setLoading(false);
         setOpen(false);
@@ -1394,8 +1424,10 @@ export function useExternalSourceController(options: UseExternalSourceController
       novel = freshNovel;
       const sourceId = relatedLinks[0]?.source.connectorId as ExtensionContributionId | undefined;
       const collectionRemoteId = relatedLinks[0]?.collectionRemoteId;
-      const source = sourceId ? sources.find((candidate) => candidate.id === sourceId) : undefined;
-      const canLoadCatalog = Boolean(sourceId && collectionRemoteId && source?.connection.state === 'connected');
+      const connection = sourceId
+        ? optionsRef.current.registry.getExternalSourceStatus(sourceId, optionsRef.current.hostContext)
+        : undefined;
+      const canLoadCatalog = Boolean(sourceId && collectionRemoteId && connection?.state === 'connected');
       // Mark provisional local rows before publishing them, including unbatched async renders.
       setLoading(false);
       setCatalogLoading(canLoadCatalog);
@@ -1436,7 +1468,7 @@ export function useExternalSourceController(options: UseExternalSourceController
       if (!mountedRef.current || loaded === undefined || localSeriesPageSeedRef.current !== localSeed) return;
       setDetail((current) => current ?? localSeriesDetail(novel));
     },
-    [blockingBusy, loadPage, sources],
+    [blockingBusy, loadPage],
   );
 
   const selectSource = useCallback(
@@ -3683,6 +3715,14 @@ export function useExternalSourceController(options: UseExternalSourceController
         }
         abort.signal.throwIfAborted();
         if (!mountedRef.current) return;
+        const latestConnection = current.registry.getExternalSourceStatus(sourceId, current.hostContext);
+        if (
+          latestConnection.state !== 'connected' ||
+          latestConnection.accountConnectionId !== connection.accountConnectionId ||
+          latestConnection.connectionGeneration !== connection.connectionGeneration
+        ) {
+          throw new Error('소스 연결이 변경되었습니다. 다시 열어 주세요.');
+        }
         if (!item?.release) throw new Error('마지막으로 읽은 회차를 소스 목록에서 찾지 못했습니다.');
         beginStream({ ...item, selected: false, importState: 'available' });
       } catch (error) {
@@ -3694,27 +3734,48 @@ export function useExternalSourceController(options: UseExternalSourceController
   );
   const continueSourceReading = useCallback(
     async (novel: Novel) => {
-      if (!linkedSeriesBookIds.has(novel.id)) return false;
-      await reconcileStreamProgress();
-      const current = optionsRef.current;
-      const [preferences, bookLinks] = await Promise.all([
-        recoverSourceStreamVisits(current.settingsScope, current.state),
-        current.state.listLinks(),
-      ]);
-      const visits = latestSourceVisits(preferences);
-      const visit = bookLinks
-        .filter((link) => link.localBookId === novel.id && link.collectionRemoteId)
-        .map((link) => visits.get(externalItemKeyId({ ...link.source, remoteId: link.collectionRemoteId! })))
-        .filter((visit): visit is SourceReleasePreference => Boolean(visit))
-        .sort((a, b) => b.lastReadAt!.localeCompare(a.lastReadAt!))[0];
-      if (!visit || visit.readingMode !== 'stream') return false;
-      await showLocalSeries(novel);
-      await resumeSourceVisit(visit);
-      // Failure must not silently open an older downloaded episode.
+      resumeAbortRef.current?.abort();
+      const abort = new AbortController();
+      resumeAbortRef.current = abort;
+      try {
+        const current = optionsRef.current;
+        await current.waitForReadingHistory?.();
+        abort.signal.throwIfAborted();
+        await reconcileStreamProgress();
+        const [preferences, bookLinks] = await Promise.all([
+          recoverSourceStreamVisits(current.settingsScope, current.state),
+          current.state.listLinks(),
+        ]);
+        abort.signal.throwIfAborted();
+        if (!mountedRef.current) return true;
+        const visits = latestSourceVisits(preferences);
+        const visit = bookLinks
+          .filter((link) => link.localBookId === novel.id && link.collectionRemoteId)
+          .map((link) => visits.get(externalItemKeyId({ ...link.source, remoteId: link.collectionRemoteId! })))
+          .filter((visit): visit is SourceReleasePreference => Boolean(visit))
+          .sort((a, b) => b.lastReadAt!.localeCompare(a.lastReadAt!))[0];
+        if (!visit || visit.readingMode !== 'stream') return false;
+        const opening = showLocalSeries(novel);
+        // Opening detail cancels the previous resume; guard the newly opened navigation.
+        const navigation = new AbortController();
+        resumeAbortRef.current = navigation;
+        await opening;
+        navigation.signal.throwIfAborted();
+        if (mountedRef.current) await resumeSourceVisit(visit);
+      } catch (error) {
+        if (!(error instanceof Error && error.name === 'AbortError')) {
+          optionsRef.current.notify(
+            error instanceof Error ? error.message : '읽기 기록을 확인하지 못했습니다.',
+            'warning',
+          );
+        }
+      }
+      // Unknown history or cancelled navigation must never fall back to episode one.
       return true;
     },
-    [linkedSeriesBookIds, reconcileStreamProgress, resumeSourceVisit, showLocalSeries],
+    [reconcileStreamProgress, resumeSourceVisit, showLocalSeries],
   );
+
   const currentWorkItem = rawItems.find((item) => item.collection);
   const currentWorkVisit = currentWorkItem?.collection
     ? sourceVisits.get(externalItemKeyId({ ...currentWorkItem.key, remoteId: currentWorkItem.collection.remoteId }))
@@ -4424,8 +4485,8 @@ export function useExternalSourceController(options: UseExternalSourceController
       resumeAbortRef.current?.abort();
       const sourceId = subscription.connectorId as ExtensionContributionId;
       if (blockingBusy || (importBusy && sourceId !== activeSourceId)) return;
-      const source = sources.find((candidate) => candidate.id === sourceId);
-      if (source?.connection.state !== 'connected') {
+      const connection = optionsRef.current.registry.getExternalSourceStatus(sourceId, optionsRef.current.hostContext);
+      if (connection.state !== 'connected' || connection.accountConnectionId !== subscription.accountConnectionId) {
         optionsRef.current.notify('작품 소스에 다시 연결한 뒤 회차를 확인할 수 있습니다.', 'warning');
         return;
       }
@@ -4453,27 +4514,29 @@ export function useExternalSourceController(options: UseExternalSourceController
       if (navigation.signal.aborted) return;
       await loadPage({ parentRef: subscription.navigationRef }, false, sourceId);
     },
-    [activeSourceId, blockingBusy, importBusy, loadPage, refreshLocalProjection, sources],
+    [activeSourceId, blockingBusy, importBusy, loadPage, refreshLocalProjection],
   );
 
   const continueLibraryWork = useCallback(
     async (workId: string) => {
-      const work = subscriptions.find((candidate) => candidate.id === workId);
-      if (!work || blockingBusy || importBusy) return;
-      const current = optionsRef.current;
-      const sourceId = work.connectorId as ExtensionContributionId;
-      const connection = sources.some((source) => source.id === sourceId)
-        ? current.registry.getExternalSourceStatus(sourceId, current.hostContext)
-        : undefined;
-      if (connection?.state !== 'connected' || connection.accountConnectionId !== work.accountConnectionId) {
-        current.notify('작품 소스에 다시 연결한 뒤 읽을 수 있습니다.', 'warning');
-        return;
-      }
-      const opening = openSubscription(work);
+      if (blockingBusy || importBusy) return;
       resumeAbortRef.current?.abort();
-      const abort = new AbortController();
+      let abort = new AbortController();
       resumeAbortRef.current = abort;
+      const current = optionsRef.current;
       try {
+        await current.waitForReadingHistory?.();
+        const work = (await current.state.listSubscriptions?.())?.find((candidate) => candidate.id === workId);
+        abort.signal.throwIfAborted();
+        if (!work || !mountedRef.current) return;
+        const sourceId = work.connectorId as ExtensionContributionId;
+        const connection = current.registry.getExternalSourceStatus(sourceId, current.hostContext);
+        if (connection.state !== 'connected' || connection.accountConnectionId !== work.accountConnectionId) {
+          throw new Error('작품 소스에 다시 연결한 뒤 읽을 수 있습니다.');
+        }
+        const opening = openSubscription(work);
+        abort = new AbortController();
+        resumeAbortRef.current = abort;
         await opening;
         abort.signal.throwIfAborted();
         await reconcileStreamProgress();
@@ -4529,16 +4592,7 @@ export function useExternalSourceController(options: UseExternalSourceController
           current.notify(error instanceof Error ? error.message : '회차를 열지 못했습니다.', 'warning');
       }
     },
-    [
-      subscriptions,
-      sources,
-      blockingBusy,
-      importBusy,
-      openSubscription,
-      reconcileStreamProgress,
-      resumeSourceVisit,
-      beginStream,
-    ],
+    [blockingBusy, importBusy, openSubscription, reconcileStreamProgress, resumeSourceVisit, beginStream],
   );
 
   useEffect(() => {
@@ -4859,6 +4913,8 @@ export function useExternalSourceController(options: UseExternalSourceController
     removeLibraryWork,
     show,
     showLocalSeries,
+    resolveSourceSeriesBook,
+    readingHistoryLoading,
     continueSourceReading,
     canResumeCurrentWork,
     resumeCurrentWork,
@@ -4891,6 +4947,7 @@ export function useExternalSourceController(options: UseExternalSourceController
         )?.localBookId
       : undefined,
     closeStream: () => {
+      setReadingHistoryLoading(true);
       setStreaming(undefined);
       void streamProgress
         .reconcile()
@@ -4898,7 +4955,10 @@ export function useExternalSourceController(options: UseExternalSourceController
           await optionsRef.current.onLibraryChanged();
           await refreshLocalProjection();
         })
-        .catch(() => optionsRef.current.notify('읽던 위치를 새로고침하지 못했습니다.', 'warning'));
+        .catch(() => optionsRef.current.notify('읽던 위치를 새로고침하지 못했습니다.', 'warning'))
+        .finally(() => {
+          if (mountedRef.current) setReadingHistoryLoading(false);
+        });
     },
     openStreamItem:
       options.assets && options.getParagraphPage

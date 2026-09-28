@@ -164,6 +164,35 @@ describe('source release lists', () => {
     },
   );
 
+  it('waits for the final streaming position when returning from the reader', async () => {
+    const rows = (current: number) =>
+      releases(125).map((item, index) => ({
+        ...item,
+        readingState: index === current ? ('current' as const) : ('unread' as const),
+      }));
+    let renderer!: ReactTestRenderer;
+    await act(async () => {
+      renderer = create(
+        <SourceReleasePanel
+          controller={control({ readingHistoryLoading: true })}
+          items={rows(0)}
+          renderItem={renderItem}
+        />,
+      );
+    });
+    await act(async () =>
+      renderer.update(
+        <SourceReleasePanel
+          controller={control({ readingHistoryLoading: false })}
+          items={rows(114)}
+          renderItem={renderItem}
+        />,
+      ),
+    );
+    expect(renderer.root.findByProps({ 'aria-label': '12페이지' }).props['aria-current']).toBe('page');
+    await act(async () => renderer.unmount());
+  });
+
   it('does not drive network paging from renders and keeps cached rows selectable during background checks', async () => {
     const loadMore = vi.fn(async () => undefined);
     let view = control({ loadMore, catalogLoading: true });

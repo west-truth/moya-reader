@@ -70,6 +70,8 @@ function novel(overrides: Partial<Novel> = {}): Novel {
 }
 
 async function createHarness(input: {
+  onRender?: (controller: ExternalSourceController) => void;
+  waitForReadingHistory?: () => Promise<void>;
   clearReadingHistory?: (id: string) => Promise<void>;
   saveTextPosition?: import('../../repositories/reader-repository').ReaderRepository['saveReadingPosition'];
   getParagraphPage?: import('../../repositories/reader-repository').ReaderRepository['getParagraphPage'];
@@ -287,6 +289,7 @@ async function createHarness(input: {
   }) {
     controller = useExternalSourceController({
       saveStreamPosition: input.saveStreamPosition,
+      waitForReadingHistory: input.waitForReadingHistory,
       saveTextPosition: input.saveTextPosition,
       clearReadingHistory: input.clearReadingHistory,
       getParagraphPage: input.getParagraphPage,
@@ -324,6 +327,7 @@ async function createHarness(input: {
       notify,
       confirm,
     });
+    input.onRender?.(controller);
     return null;
   }
 
@@ -2938,6 +2942,125 @@ describe('source streaming connection', () => {
     },
   );
 
+  it.each([false, true])(
+    'resolves a streamed visit from storage even with the first unhydrated callback (text=%s)',
+    async (text) => {
+      let first: ExternalSourceController | undefined;
+      const h = await createHarness({
+        downloadedContent: '',
+        serial: true,
+        serialCount: 3,
+        documentSerial: text,
+        initialLinkOverrides: { collectionRemoteId: 'manga:1' },
+        onRender: (controller) => {
+          first ??= controller;
+        },
+      });
+      try {
+        expect(first!.linkedSeriesBookIds.size).toBe(0);
+        expect(await first!.resolveSourceSeriesBook!({ ...novel(), format: 'txt', documentSectionCount: 3 })).toBe(
+          true,
+        );
+        h.registry.getSourceStream = () => (text ? { kind: 'text', open: vi.fn() } : { open: vi.fn() });
+        h.state.listReleasePreferences = async () => [
+          {
+            id: 'saved-visit',
+            kind: 'releasePreference',
+            source: { ...ITEM_KEY, remoteId: 'work-3' },
+            collectionRemoteId: 'manga:1',
+            lastReadAt: '2026-09-28T00:00:00Z',
+            updatedAt: '2026-09-28T00:00:00Z',
+            read: true,
+            readingMode: 'stream',
+          },
+        ];
+        let handled;
+        await act(async () => {
+          handled = await first!.continueSourceReading!(novel());
+        });
+        expect(handled).toBe(true);
+        expect(h.controller.streaming?.item.key.remoteId).toBe('work-3');
+        expect(h.controller.streaming?.fromStart).toBe(false);
+        expect(h.openNovel).not.toHaveBeenCalled();
+      } finally {
+        await act(async () => h.renderer.unmount());
+      }
+    },
+  );
+
+  it.each(['continue', 'close', 'failure'] as const)(
+    'guards mixed-library resume while history hydrates: %s',
+    async (action) => {
+      let finish!: () => void;
+      let fail!: (error: Error) => void;
+      const gate = new Promise<void>((resolve, reject) => {
+        finish = resolve;
+        fail = reject;
+      });
+      const waitForReadingHistory = vi.fn(async (): Promise<void> => undefined);
+      const h = await createHarness({
+        downloadedContent: '',
+        serial: true,
+        serialCount: 3,
+        initialLinkOverrides: { collectionRemoteId: 'manga:1' },
+        waitForReadingHistory,
+      });
+      waitForReadingHistory.mockImplementation(() => gate);
+      h.registry.getSourceStream = () => ({ open: vi.fn() });
+      let continuing!: Promise<boolean>;
+      try {
+        await act(async () => {
+          continuing = h.controller.continueSourceReading!(novel());
+        });
+        expect(h.controller.streaming).toBeUndefined();
+        if (action === 'close') await act(async () => h.controller.close());
+        h.state.listReleasePreferences = async () => [
+          {
+            id: 'late-visit',
+            kind: 'releasePreference',
+            source: { ...ITEM_KEY, remoteId: 'work-3' },
+            collectionRemoteId: 'manga:1',
+            read: true,
+            readingMode: 'stream',
+            lastReadAt: '2026-09-28T00:00:00Z',
+            updatedAt: '2026-09-28T00:00:00Z',
+          },
+        ];
+        await act(async () => {
+          if (action === 'failure') fail(new Error('history unavailable'));
+          else finish();
+          expect(await continuing).toBe(true);
+        });
+        expect(h.controller.streaming?.item.key.remoteId).toBe(action === 'continue' ? 'work-3' : undefined);
+        expect(h.openNovel).not.toHaveBeenCalled();
+      } finally {
+        await act(async () => h.renderer.unmount());
+      }
+    },
+  );
+
+  it('keeps the returning chapter page pending until the final visit projection is refreshed', async () => {
+    const h = await createHarness({ downloadedContent: '', serial: true });
+    let finish!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      finish = resolve;
+    });
+    h.state.listReleasePreferences = async () => {
+      await gate;
+      return [];
+    };
+    try {
+      await act(async () => h.controller.closeStream!());
+      expect(h.controller.readingHistoryLoading).toBe(true);
+      await act(async () => {
+        finish();
+      });
+      expect(h.controller.readingHistoryLoading).toBe(false);
+    } finally {
+      await act(async () => h.renderer.unmount());
+    }
+  });
+
   it('opens a stream without downloading or importing the entire episode first', async () => {
     const h = await createHarness({ downloadedContent: '', serial: true, localBookMissing: true });
     const port = { open: vi.fn() };
@@ -3472,6 +3595,58 @@ describe('stream-only library works', () => {
       await act(async () => h.renderer.unmount());
     }
   });
+
+  it.each(['continue', 'close', 'failure'] as const)(
+    'guards stream-only resume while history hydrates: %s',
+    async (action) => {
+      let finish!: () => void;
+      let fail!: (error: Error) => void;
+      const gate = new Promise<void>((resolve, reject) => {
+        finish = resolve;
+        fail = reject;
+      });
+      const waitForReadingHistory = vi.fn(async (): Promise<void> => undefined);
+      const h = await createHarness({
+        downloadedContent: '',
+        serial: true,
+        serialCount: 3,
+        libraryBooks: async () => [],
+        subscriptions: [subscription],
+        waitForReadingHistory,
+      });
+      waitForReadingHistory.mockImplementation(() => gate);
+      h.registry.getSourceStream = () => ({ open: vi.fn() });
+      let continuing!: Promise<void>;
+      try {
+        await act(async () => {
+          continuing = h.controller.continueLibraryWork(subscription.id);
+        });
+        expect(h.controller.streaming).toBeUndefined();
+        if (action === 'close') await act(async () => h.controller.close());
+        h.state.listReleasePreferences = async () => [
+          {
+            id: 'late-visit',
+            kind: 'releasePreference',
+            source: { ...ITEM_KEY, remoteId: 'work-3' },
+            collectionRemoteId: 'manga:1',
+            read: true,
+            readingMode: 'stream',
+            lastReadAt: '2026-09-28T00:00:00Z',
+            updatedAt: '2026-09-28T00:00:00Z',
+          },
+        ];
+        await act(async () => {
+          if (action === 'failure') fail(new Error('history unavailable'));
+          else finish();
+          await continuing;
+        });
+        expect(h.controller.streaming?.item.key.remoteId).toBe(action === 'continue' ? 'work-3' : undefined);
+        expect(h.openNovel).not.toHaveBeenCalled();
+      } finally {
+        await act(async () => h.renderer.unmount());
+      }
+    },
+  );
 
   it('recovers an interrupted visit before continuing a stream-only library work', async () => {
     const values = new Map<string, string>();
