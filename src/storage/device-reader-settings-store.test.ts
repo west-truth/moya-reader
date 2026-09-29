@@ -14,6 +14,22 @@ import { putItem } from './indexeddb-transaction';
 beforeEach(() => resetReaderDbForTests());
 
 describe('device reader settings boundary', () => {
+  it('retains hidden format badges across local and self-host repository recreation without syncing', async () => {
+    await saveSettings({ ...(await getSettings()), showLibraryFormatBadge: false });
+    expect((await new IndexedDbReaderRepository().getSettings()).showLibraryFormatBadge).toBe(false);
+    expect(await listSyncOutbox()).toEqual([]);
+    const client = {
+      readerSettingsScope: 'format-badge-preference',
+      getSettings: vi.fn(async () => ({ settings: structuredClone(defaultSettings) })),
+      saveSettings: vi.fn(),
+    };
+    const remote = new RemoteReaderRepository(client as unknown as RemoteApiClient);
+    await remote.saveSettings({ ...(await remote.getSettings()), showLibraryFormatBadge: false });
+    expect(
+      (await new RemoteReaderRepository(client as unknown as RemoteApiClient).getSettings()).showLibraryFormatBadge,
+    ).toBe(false);
+    expect(client.saveSettings).not.toHaveBeenCalled();
+  });
   it('persists library cover counts locally without synchronizing them', async () => {
     await saveSettings({ ...(await getSettings()), showLibraryReadingCounts: true });
     expect((await getSettings()).showLibraryReadingCounts).toBe(true);

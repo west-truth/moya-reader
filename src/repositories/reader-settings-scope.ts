@@ -5,6 +5,7 @@ export const DEVICE_READER_SETTING_KEYS = [
   'applicationTheme',
   'hideAppLogo',
   'showLibraryReadingCounts',
+  'showLibraryFormatBadge',
   'sourceProgressBasis',
   'startupScreen',
   'applicationThemeColors',

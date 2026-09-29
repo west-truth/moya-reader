@@ -164,7 +164,7 @@ function LibraryBookCard(props: LibraryBookItemProps) {
       <div className="book-cover-wrap">
         <BookCover novel={book.novel} className={classNames('book-cover', book.coverClass)}>
           {model.management.selectionMode && <SelectionMark selected={selected} />}
-          {!model.management.selectionMode && (
+          {!model.management.selectionMode && model.presentation.showFormatBadge !== false && (
             <span className="book-format-overlay">{bookFormatLabel(book.novel)}</span>
           )}
         </BookCover>
@@ -236,7 +236,7 @@ function LibraryBookListRow(props: LibraryBookItemProps) {
         <div className="book-cover-wrap">
           <BookCover novel={book.novel} className={classNames('book-cover thumb', book.coverClass)}>
             {model.management.selectionMode && <SelectionMark selected={selected} />}
-            {!model.management.selectionMode && (
+            {!model.management.selectionMode && model.presentation.showFormatBadge !== false && (
               <span className="book-format-overlay">{bookFormatLabel(book.novel)}</span>
             )}
           </BookCover>

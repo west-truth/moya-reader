@@ -314,6 +314,7 @@ export function BookWorkspaceScreens({
     presentation: {
       layoutMode,
       showReadingCounts: textReader?.settings.showLibraryReadingCounts === true,
+      showFormatBadge: textReader?.settings.showLibraryFormatBadge !== false,
       focusedBookId,
       inspectorOpen: layoutMode === 'wide' || inspectorOpen,
       shelfBookCounts,

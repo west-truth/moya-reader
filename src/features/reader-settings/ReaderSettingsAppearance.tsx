@@ -154,6 +154,14 @@ export function ReaderSettingsAppearance({
           <label className="reader-settings-check">
             <input
               type="checkbox"
+              checked={controller.settings.showLibraryFormatBadge !== false}
+              onChange={(event) => controller.updateSettings({ showLibraryFormatBadge: event.target.checked })}
+            />
+            표지에 파일 형식 표시 (TXT, EPUB 등)
+          </label>
+          <label className="reader-settings-check">
+            <input
+              type="checkbox"
               checked={controller.settings.showLibraryReadingCounts === true}
               onChange={(event) => controller.updateSettings({ showLibraryReadingCounts: event.target.checked })}
             />

@@ -3,6 +3,10 @@ import { defaultSettings } from '../../repositories/reader-defaults';
 import { readerSettingsEqual } from './reader-settings-model';
 
 describe('readerSettingsEqual', () => {
+  it('treats missing format badge preference as enabled and detects disabling it', () => {
+    expect(readerSettingsEqual(defaultSettings, { ...defaultSettings, showLibraryFormatBadge: true })).toBe(true);
+    expect(readerSettingsEqual(defaultSettings, { ...defaultSettings, showLibraryFormatBadge: false })).toBe(false);
+  });
   it('detects startup destination changes including a shelf or tab within the same screen', () => {
     const settings = { ...defaultSettings, startupScreen: { kind: 'library' as const, shelfId: 'normal' } };
     expect(readerSettingsEqual(settings, structuredClone(settings))).toBe(true);

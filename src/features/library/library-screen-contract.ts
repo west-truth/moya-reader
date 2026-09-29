@@ -68,6 +68,7 @@ export interface LibraryScreenModel {
   presentation: {
     layoutMode: ResponsiveLayoutMode;
     showReadingCounts?: boolean;
+    showFormatBadge?: boolean;
     focusedBookId?: string;
     inspectorOpen: boolean;
     shelfBookCounts: ReadonlyMap<string, number>;

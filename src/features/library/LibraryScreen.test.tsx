@@ -477,6 +477,17 @@ describe('LibraryScreen', () => {
     expect(markup.match(/<article class="book-card/g)).toHaveLength(2);
   });
 
+  it.each(['grid', 'compact', 'list'] as const)('can hide file format badges in %s view', (viewMode) => {
+    const screenModel = model([novel()], { viewMode });
+    expect(renderToStaticMarkup(<LibraryScreen model={screenModel} actions={actions()} />)).toContain(
+      'book-format-overlay',
+    );
+    screenModel.presentation.showFormatBadge = false;
+    expect(renderToStaticMarkup(<LibraryScreen model={screenModel} actions={actions()} />)).not.toContain(
+      'book-format-overlay',
+    );
+  });
+
   it('uses the real archive extension for the cover overlay', () => {
     const archive = novel({ sourceFileName: '로컬 만화.zip', format: 'image_archive' });
     const markup = renderToStaticMarkup(<LibraryScreen model={model([archive])} actions={actions()} />);
