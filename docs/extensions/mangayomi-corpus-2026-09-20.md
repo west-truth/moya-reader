@@ -1,5 +1,8 @@
 # Mangayomi JavaScript 원본 corpus와 실사이트 판정
 
+이 문서의 외부 소스 이름·출처는 호환성 검증 기록입니다. 기본 제공 또는 추천 목록이 아니며,
+실제 서비스의 현재 이용 가능 여부를 보장하지 않습니다. [이용 안내 및 면책](../../DISCLAIMER.md)을 참고하세요.
+
 기준일: 2026-09-20. 원본 저장소 revision:
 [`6004f1f8d1a56f882dadb734ce26f50c626a3850`](https://github.com/kodjodevf/mangayomi-extensions/tree/6004f1f8d1a56f882dadb734ce26f50c626a3850/javascript).
 검사는 운영 Moya 설치 상태와 사용자 계정을 사용하지 않았다. 원본 23개 파일은 manga index의

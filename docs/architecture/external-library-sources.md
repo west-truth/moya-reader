@@ -354,13 +354,13 @@ Suwayomi overlay 조합, 필수 credential 누락 실패, 공식 stable image의
 health boundary도 확인했다. 이는 실제 WireGuard routing, DNS/TLS 인증서, NPM Proxy Host, Hosted OAuth callback,
 volume 재생성 복구나 제3자 Mihon extension browse/import를 대상 서버에서 완료했다는 뜻은 아니다.
 
-HTTP localhost Moya와 공식 계약 fixture에 더해 실제 설치된 Blacktoon/Naver Mihon source를 확인했다. Blacktoon은
-authenticated cover와 HTTP 400 direct-download fallback으로 35-page 회차 import가 통과했다. Naver는
-POPULAR/LATEST와 extension-defined select/sort filter를 실제 목록에 투영했고, `서른의 봄` 01·02를 한 작품으로
+HTTP localhost Moya와 공식 계약 fixture에 더해 실제 설치된 두 Mihon source를 확인했다. 첫 번째 소스는
+authenticated cover와 HTTP 400 direct-download fallback으로 35-page 회차 import가 통과했다. 두 번째 소스는
+POPULAR/LATEST와 extension-defined select/sort filter를 실제 목록에 투영했고, 검증 대상 작품 01·02를 한 작품으로
 가져온 뒤 03을 추가해 3개 회차·212 page가 됐다. Reader 회차 선택, reload 영속성과 안정적인 revision 재조회도
-통과했다. 후속 새 회차 checkpoint는 `서른의 봄`을 Library 원격 작품으로 추가하고 reload 뒤 root 작품 카드와
+통과했다. 후속 새 회차 checkpoint는 검증 대상 작품을 Library 원격 작품으로 추가하고 reload 뒤 root 작품 카드와
 15개 회차 재진입, POPULAR/LATEST preference 복원 및 390×844 레이아웃을 확인했다. 이어서 Source 카드 전체
-상세 진입/원클릭 추가, 영구 원격 표지, text-detail형 상세·회차 표와 작은 `+` 로컬 추가 동선도 실제 Naver
+상세 진입/원클릭 추가, 영구 원격 표지, text-detail형 상세·회차 표와 작은 `+` 로컬 추가 동선도 두 번째
 source에서 확인했다.
 이는 주기적 background polling/notification,
 모든 Mihon extension 호환, HTTPS Web의 HTTP LAN mixed-content/PNA, target-host Docker/NPM 및 Tauri managed

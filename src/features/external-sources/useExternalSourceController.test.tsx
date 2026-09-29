@@ -1884,14 +1884,14 @@ describe('useExternalSourceController remote updates', () => {
       finishNavigation = resolve;
     });
     vi.mocked(harness.registry.listExternalSource).mockImplementation(async (_sourceId, _context, listInput) => {
-      if (listInput.parentRef === 'source:newtoki') await navigationGate;
+      if (listInput.parentRef === 'source:fixture-catalog') await navigationGate;
       return { items: [] };
     });
     const folder = {
-      key: { ...ITEM_KEY, remoteId: 'folder:newtoki' },
+      key: { ...ITEM_KEY, remoteId: 'folder:fixture-catalog' },
       kind: 'folder' as const,
-      title: 'Newtoki 만화 (KO)',
-      navigationRef: 'source:newtoki',
+      title: '테스트 만화 (KO)',
+      navigationRef: 'source:fixture-catalog',
       importability: 'unsupported' as const,
       selected: false,
       importState: 'unsupported' as const,
