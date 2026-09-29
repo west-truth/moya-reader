@@ -33,6 +33,7 @@ async function harness(input: {
   let controller!: LibraryManagementController;
   let renderer!: ReactTestRenderer;
   const notify = vi.fn();
+  const refreshNovels = vi.fn(async () => undefined);
   const catalog = {
     listShelves: input.listShelves ?? vi.fn(async () => []),
     listShelfMemberships: vi.fn(async () => []),
@@ -51,7 +52,7 @@ async function harness(input: {
       catalog,
       assets,
       getNovel,
-      refreshNovels: vi.fn(async () => undefined),
+      refreshNovels,
       refreshAfterMutation: vi.fn(async () => undefined),
       notify,
       confirm: vi.fn(() => true),
@@ -69,6 +70,7 @@ async function harness(input: {
     catalog,
     getNovel,
     notify,
+    refreshNovels,
   };
 }
 
@@ -400,4 +402,60 @@ it('keeps only failed stream selections selected after a partial batch', async (
   expect(mounted.controller.selectionMode).toBe(true);
   expect(mounted.notify).toHaveBeenCalledWith('1권 처리, 1권 실패', 'warning');
   act(() => mounted.renderer.unmount());
+});
+
+it('moves one book to a shelf, adding the destination before removing old memberships', async () => {
+  const mounted = await harness({
+    current: novel(),
+    listShelves: vi.fn(async () => [{ id: 'destination' }] as Shelf[]),
+  });
+  vi.mocked(mounted.catalog.listShelfMemberships).mockResolvedValue([
+    { bookId: 'book-1', shelfId: 'old' },
+    { bookId: 'other', shelfId: 'old' },
+  ] as never);
+  const changes: unknown[] = [];
+  mounted.catalog.setShelfMembership = vi.fn(async (...args) => {
+    changes.push(args);
+  });
+  await act(async () => mounted.controller.moveBookToShelf!('book-1', 'destination'));
+  expect(changes).toEqual([
+    ['destination', 'book-1', true],
+    ['old', 'book-1', false],
+  ]);
+  await act(async () => mounted.renderer.unmount());
+});
+
+it('keeps old memberships when the destination cannot be saved and rejects deleted shelves', async () => {
+  const mounted = await harness({
+    current: novel(),
+    listShelves: vi.fn(async () => [{ id: 'destination' }] as Shelf[]),
+  });
+  mounted.catalog.setShelfMembership = vi.fn(async () => {
+    throw new Error('offline');
+  });
+  await act(async () => {
+    await expect(mounted.controller.moveBookToShelf!('book-1', 'destination')).rejects.toThrow('offline');
+  });
+  expect(mounted.catalog.setShelfMembership).toHaveBeenCalledExactlyOnceWith('destination', 'book-1', true);
+  expect(mounted.controller.busy).toBe(false);
+  await act(async () => {
+    await expect(mounted.controller.moveBookToShelf!('book-1', 'missing')).rejects.toThrow('삭제');
+  });
+  expect(mounted.catalog.setShelfMembership).toHaveBeenCalledTimes(1);
+  await act(async () => mounted.renderer.unmount());
+});
+
+it('renames only the title using the latest metadata revision and rejects a competing title edit', async () => {
+  const book = novel();
+  const mounted = await harness({ current: { ...book, metadataRevision: 2, author: '다른 변경' } });
+  await act(async () => mounted.controller.renameBook!(book, ' 새 제목 '));
+  expect(mounted.catalog.patchMetadata).toHaveBeenCalledExactlyOnceWith(book.id, { title: '새 제목' }, 2);
+  expect(mounted.refreshNovels).toHaveBeenCalledOnce();
+  mounted.getNovel.mockResolvedValue({ ...book, title: '다른 창 제목', metadataRevision: 3 });
+  await act(async () => {
+    await expect(mounted.controller.renameBook!(book, '내 제목')).rejects.toThrow('다른 곳');
+  });
+  expect(mounted.catalog.patchMetadata).toHaveBeenCalledTimes(1);
+  expect(mounted.controller.busy).toBe(false);
+  await act(async () => mounted.renderer.unmount());
 });

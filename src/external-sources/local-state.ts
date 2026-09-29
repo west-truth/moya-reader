@@ -151,6 +151,8 @@ export interface ExternalSourceSubscriptionRecord {
   readonly sourceNavigationRef?: string;
   readonly deletedAt?: string;
   readonly title: string;
+  readonly titleOverride?: string;
+  readonly shelfIds?: readonly string[];
   readonly author?: string;
   readonly description?: string;
   readonly thumbnailUrl?: string;

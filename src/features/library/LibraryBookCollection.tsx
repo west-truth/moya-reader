@@ -1,9 +1,10 @@
+import { LibraryWorkMenu } from './LibraryWorkMenu';
 import { orderedLibraryWorks } from './library-work-order';
 import { LibrarySourcePlaceholder, sourceLibraryLoadingState } from './LibrarySourceLoading';
 import { externalSelectionId } from './library-batch';
 import { LibraryCountLabel } from './LibraryCountLabel';
 import { isCoverView } from '../../components/work-view';
-import { Check, Pencil, Play, RotateCcw, Star, Trash2 } from 'lucide-react';
+import { Check, Play, RotateCcw, Star, Trash2 } from 'lucide-react';
 import { bookFormatLabel, isFixedDocumentFormat } from '../../domain/book-format';
 import { formatProgress } from '../../utils/format';
 import type { LibraryBookView } from './library-screen-model';
@@ -89,16 +90,6 @@ function BookItemActions({ book, model, actions, importTask }: LibraryBookItemPr
     <div className="card-actions">
       <button
         type="button"
-        className="mini-icon-btn book-edit-action"
-        title="작품 정보 편집"
-        aria-label={`${novel.title} 정보 편집`}
-        disabled={importing}
-        onClick={() => actions.books.editMetadata(novel)}
-      >
-        <Pencil size={15} />
-      </button>
-      <button
-        type="button"
         className={classNames('mini-icon-btn book-favorite-action', novel.favorite && 'active')}
         title={novel.favorite ? '즐겨찾기 해제' : '즐겨찾기'}
         aria-label={`${novel.title} ${novel.favorite ? '즐겨찾기 해제' : '즐겨찾기 추가'}`}
@@ -118,17 +109,24 @@ function BookItemActions({ book, model, actions, importTask }: LibraryBookItemPr
         <Play size={13} fill="currentColor" />
         <span>{book.directActionLabel}</span>
       </button>
-      <button
-        type="button"
-        className="mini-icon-btn book-remove-action"
-        title="휴지통으로 이동"
-        aria-label={`${novel.title} 휴지통으로 이동`}
-        disabled={importing}
-        onClick={() => void actions.books.remove(novel)}
-      >
-        <Trash2 size={15} />
-      </button>
     </div>
+  );
+}
+
+function BookMenu({ book, model, actions, importTask }: LibraryBookItemProps) {
+  if (model.management.selectionMode || book.novel.deletedAt) return null;
+  return (
+    <LibraryWorkMenu
+      title={book.novel.title}
+      disabled={model.management.busy || Boolean(importTask && importTaskIsActive(importTask))}
+      rename={() => (actions.books.rename ?? actions.books.editMetadata)(book.novel)}
+      move={actions.books.moveToShelf ? () => actions.books.moveToShelf!(book.novel) : undefined}
+      download={() => (actions.books.downloadFromMenu ?? actions.books.downloadSource)(book.novel)}
+      downloadDisabled={
+        actions.books.canDownloadFromMenu ? !actions.books.canDownloadFromMenu(book.novel) : !book.novel.sourceAssetId
+      }
+      remove={() => actions.books.remove(book.novel)}
+    />
   );
 }
 
@@ -175,6 +173,7 @@ function LibraryBookCard(props: LibraryBookItemProps) {
       <div className="book-info">
         <div className="book-title-line">
           <h3>{book.novel.title}</h3>
+          <BookMenu {...props} />
           {book.novel.favorite && <Star className="book-favorite-mark" size={14} fill="currentColor" />}
         </div>
         <p>{[book.novel.author, book.readingPositionLabel].filter(Boolean).join(' · ')}</p>
@@ -248,6 +247,7 @@ function LibraryBookListRow(props: LibraryBookItemProps) {
         <div className="book-list-title">
           {model.viewMode === 'text' && model.management.selectionMode && <SelectionMark selected={selected} />}
           <h3>{book.novel.title}</h3>
+          <BookMenu {...props} />
           {book.novel.favorite && <Star size={14} fill="currentColor" />}
         </div>
         <p>{[book.novel.author, book.readingPositionLabel, book.readingTimeLabel].filter(Boolean).join(' · ')}</p>

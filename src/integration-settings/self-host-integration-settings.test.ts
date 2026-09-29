@@ -212,3 +212,22 @@ it('preserves source trash membership in hosted settings and applies a newer res
   );
   expect(merged.externalSources.subscriptions[0]?.deletedAt).toBeUndefined();
 });
+
+it('round-trips personal source titles and shelf membership, including clearing a shelf', () => {
+  const base = validDocument();
+  for (const shelfIds of [['shelf-a'], []]) {
+    const work = { ...base.externalSources.subscriptions[0]!, title: '내 제목', titleOverride: '내 제목', shelfIds };
+    const normalized = normalizeSelfHostIntegrationSettings({
+      ...base,
+      externalSources: { ...base.externalSources, subscriptions: [work] },
+    });
+    expect(normalized?.externalSources.subscriptions[0]).toMatchObject({
+      title: '내 제목',
+      titleOverride: '내 제목',
+      shelfIds,
+    });
+    expect(normalizeSelfHostIntegrationSettings(normalized)?.externalSources.subscriptions[0]).toEqual(
+      normalized?.externalSources.subscriptions[0],
+    );
+  }
+});

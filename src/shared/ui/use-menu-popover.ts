@@ -22,7 +22,9 @@ export function useMenuPopover(open: boolean, onOpenChanged: (open: boolean) => 
   useEffect(() => {
     if (!open) return;
     const focusFrame = window.requestAnimationFrame(() => {
-      menuRef.current?.querySelector<HTMLButtonElement>('[role="menuitem"]')?.focus({ preventScroll: true });
+      menuRef.current
+        ?.querySelector<HTMLButtonElement>('[role="menuitem"]:not(:disabled)')
+        ?.focus({ preventScroll: true });
     });
     const handlePointerDown = (event: PointerEvent) => {
       if (!rootRef.current?.contains(event.target as Node) && !menuRef.current?.contains(event.target as Node))
@@ -46,7 +48,9 @@ export function useMenuPopover(open: boolean, onOpenChanged: (open: boolean) => 
 
   const onMenuKeyDown = (event: ReactKeyboardEvent<HTMLDivElement>) => {
     if (!['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(event.key)) return;
-    const items = Array.from(menuRef.current?.querySelectorAll<HTMLButtonElement>('[role="menuitem"]') ?? []);
+    const items = Array.from(
+      menuRef.current?.querySelectorAll<HTMLButtonElement>('[role="menuitem"]:not(:disabled)') ?? [],
+    );
     if (items.length === 0) return;
     event.preventDefault();
     const currentIndex = items.indexOf(document.activeElement as HTMLButtonElement);

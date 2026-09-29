@@ -1,3 +1,4 @@
+import { moveLibraryBookToShelf, renameLibraryBook } from './library-work-mutations';
 import { executeLibraryBatch, type ExternalLibraryBatch } from './library-batch';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { BookMetadataPatch } from '@noveldesk/text-core/library-metadata';
@@ -126,6 +127,8 @@ export interface LibraryManagementController {
   updateShelf(shelf: Shelf, patch: { name?: string; color?: string | null; sortOrder?: number }): Promise<void>;
   deleteShelf(shelf: Shelf): Promise<void>;
   setMembership(shelfId: string, bookId: string, included: boolean): Promise<void>;
+  moveBookToShelf?(bookId: string, shelfId?: string): Promise<void>;
+  renameBook?(book: Novel, title: string): Promise<void>;
   saveBookDetails(book: Novel, patch: BookMetadataPatch, cover: CoverDraftAction): Promise<void>;
   applyBatch(
     command: BatchLibraryCommand,
@@ -292,6 +295,34 @@ export function useLibraryManagementController(
           await input.catalog!.deleteShelf(shelf.id, shelf.revision);
           await refresh();
         }, '책장을 삭제했습니다.');
+      },
+      renameBook: async (book, value) => {
+        if (!input.catalog || busyRef.current) throw new Error('다른 서재 작업이 끝난 뒤 다시 시도해 주세요.');
+        busyRef.current = true;
+        setBusy(true);
+        try {
+          await renameLibraryBook(input.catalog, input.getNovel, book, value);
+          await input.refreshNovels();
+          await input.refreshAfterMutation();
+        } finally {
+          busyRef.current = false;
+          setBusy(false);
+        }
+      },
+      moveBookToShelf: async (bookId, shelfId) => {
+        if (!input.catalog || busyRef.current) throw new Error('다른 서재 작업이 끝난 뒤 다시 시도해 주세요.');
+        busyRef.current = true;
+        setBusy(true);
+        try {
+          const book = await input.getNovel(bookId);
+          if (!book || book.deletedAt) throw new Error('서재에서 작품을 찾을 수 없습니다.');
+          await moveLibraryBookToShelf(input.catalog, bookId, shelfId);
+          await input.refreshAfterMutation();
+        } finally {
+          await refresh();
+          busyRef.current = false;
+          setBusy(false);
+        }
       },
       setMembership: async (shelfId, bookId, included) => {
         if (!input.catalog) return;

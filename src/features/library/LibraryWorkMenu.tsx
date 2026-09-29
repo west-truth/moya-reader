@@ -1,17 +1,25 @@
-import { MoreHorizontal, Trash2 } from 'lucide-react';
+import { Download, FolderInput, MoreHorizontal, Pencil, Trash2 } from 'lucide-react';
 import { useCallback, useEffect, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { useMenuPopover } from '../../shared/ui/use-menu-popover';
 
 /** Membership actions stay available even when the source itself is offline. */
-export function LibraryExternalWorkMenu({
+export function LibraryWorkMenu({
   title,
   disabled,
   remove,
+  rename,
+  move,
+  download,
+  downloadDisabled = false,
 }: {
   title: string;
   disabled: boolean;
   remove(): void | Promise<void>;
+  rename?(): void;
+  move?(): void;
+  download?(): void | Promise<void>;
+  downloadDisabled?: boolean;
 }) {
   const [open, setOpen] = useState(false);
   const [position, setPosition] = useState({ top: 0, left: 0 });
@@ -24,7 +32,7 @@ export function LibraryExternalWorkMenu({
     }
     setPosition({
       left: Math.max(8, Math.min(rect.right - 224, innerWidth - 232)),
-      top: rect.bottom + 60 < innerHeight ? rect.bottom + 4 : Math.max(8, rect.top - 60),
+      top: rect.bottom + 190 < innerHeight ? rect.bottom + 4 : Math.max(8, rect.top - 190),
     });
   }, [menu.triggerRef]);
   useEffect(() => {
@@ -41,7 +49,7 @@ export function LibraryExternalWorkMenu({
     };
   }, [open, menu.menuRef, placeMenu]);
   return (
-    <div className="library-external-work-menu" ref={menu.rootRef}>
+    <div className="library-work-menu" ref={menu.rootRef}>
       <button
         type="button"
         className="icon-btn"
@@ -67,18 +75,30 @@ export function LibraryExternalWorkMenu({
             style={position}
             onKeyDown={menu.onMenuKeyDown}
           >
-            <button
-              role="menuitem"
-              type="button"
-              disabled={disabled}
-              onClick={() => {
-                setOpen(false);
-                menu.triggerRef.current?.focus({ preventScroll: true });
-                void remove();
-              }}
-            >
-              <Trash2 size={16} /> 휴지통으로 이동
-            </button>
+            {[
+              { label: '제목 수정', icon: Pencil, run: rename },
+              { label: '책장 이동', icon: FolderInput, run: move },
+              { label: '다운로드', icon: Download, run: download, unavailable: downloadDisabled },
+              { label: '휴지통으로 이동', icon: Trash2, run: remove, danger: true },
+            ]
+              .filter((action) => action.run)
+              .map(({ label, icon: Icon, run, unavailable, danger }) => (
+                <button
+                  key={label}
+                  role="menuitem"
+                  type="button"
+                  className={danger ? 'danger' : undefined}
+                  disabled={disabled || unavailable}
+                  title={unavailable ? '보관된 원본 파일이 없습니다.' : undefined}
+                  onClick={() => {
+                    setOpen(false);
+                    menu.triggerRef.current?.focus({ preventScroll: true });
+                    void run?.();
+                  }}
+                >
+                  <Icon size={16} /> {label}
+                </button>
+              ))}
           </div>,
           document.body,
         )}

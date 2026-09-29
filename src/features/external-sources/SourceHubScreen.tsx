@@ -1,3 +1,4 @@
+import { useDownloadSelectionFocus, type DownloadSelectionRequest } from './use-download-selection-focus';
 import { isTextStream } from '../../external-sources/source-text-stream';
 import type { SourceTextReaderOptions } from '../external-sources/SourceTextStreamReader';
 import { SourceWorkManagement } from './SourceWorkManagement';
@@ -66,6 +67,7 @@ import type {
 } from './useExternalSourceController';
 
 export interface SourceHubScreenProps {
+  readonly downloadRequest?: DownloadSelectionRequest;
   readonly textReader?: SourceTextReaderOptions;
   readonly controller: ExternalSourceController;
   readonly library: LibraryScreenProps;
@@ -513,6 +515,7 @@ function SourceItemCard({
 }
 
 export default function SourceHubScreen({
+  downloadRequest,
   textReader,
   controller,
   library,
@@ -527,6 +530,13 @@ export default function SourceHubScreen({
   );
   const streamNavigation = useSourceStreamNavigation(controller, sourceReadingPreferences().prefetch > 0);
   const scrollRef = useRef<HTMLDivElement>(null);
+  useDownloadSelectionFocus(
+    scrollRef,
+    downloadRequest,
+    controller.activeSubscription?.id,
+    controller.loading,
+    controller.items.length,
+  );
   const [workLayout, changeWorkLayout] = useSourceWorkLayout();
   const taskByItemKey = useMemo(() => {
     const tasks = new Map<string, ImportTaskView>();

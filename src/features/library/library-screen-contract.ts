@@ -138,8 +138,15 @@ export interface LibraryScreenActions {
     restore(novel: Novel): MaybePromise;
     purge(novel: Novel): MaybePromise;
     downloadSource(novel: Novel): MaybePromise;
+    downloadFromMenu?(novel: Novel): MaybePromise;
+    canDownloadFromMenu?(novel: Novel): boolean;
     addSample(): MaybePromise;
     editMetadata(novel: Novel): void;
+    moveToShelf?(novel: Novel): void;
+    rename?(novel: Novel): void;
+    renameExternal?(id: string): void;
+    moveExternalToShelf?(id: string): void;
+    downloadExternal?(id: string): MaybePromise;
     toggleSelected(novel: Novel): void;
     toggleSelectedExternal?(id: string): void;
     openExternal(workId: string): MaybePromise;

@@ -3550,6 +3550,37 @@ describe('stream-only library works', () => {
       resolveCover: async () => 'data:image/png;base64,AQID',
     });
 
+  it('keeps personal title and shelf metadata through a source refresh', async () => {
+    const saved = { ...subscription, id: externalSourceSubscriptionId(SOURCE_ID, 'fixture-account', 'manga:1') };
+    const h = await createHarness({
+      downloadedContent: '',
+      serial: true,
+      serialCount: 3,
+      libraryBooks: async () => [],
+      subscriptions: [saved],
+      detail: { title: '원본 제목' },
+    });
+    try {
+      await act(async () => h.controller.updateLibraryMetadata!(saved.id, { title: '내 제목', shelfIds: ['normal'] }));
+      expect(h.controller.libraryWorks.find((work) => work.id === saved.id)).toMatchObject({
+        title: '내 제목',
+        shelfIds: ['normal'],
+      });
+      await act(async () =>
+        h.controller.openSubscription(h.controller.libraryWorks.find((work) => work.id === saved.id)!),
+      );
+      await act(async () => h.controller.refresh());
+      expect((await h.state.listSubscriptions()).find((work) => work.id === saved.id)).toMatchObject({
+        title: '내 제목',
+        titleOverride: '내 제목',
+        shelfIds: ['normal'],
+      });
+      expect(h.controller.detail?.title).toBe('내 제목');
+    } finally {
+      await act(async () => h.renderer.unmount());
+    }
+  });
+
   it('reports initial source membership loading and retries an unavailable library', async () => {
     const snapshots: { status?: string; count: number }[] = [];
     let unavailable = true;

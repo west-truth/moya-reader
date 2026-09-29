@@ -24,12 +24,13 @@ export function remoteLibraryReadCounts(
 /** Streamed works participate in read filters using the same release progress shown on their cards. */
 export function visibleRemoteLibraryWorks(
   works: readonly ExternalSourceLibraryWork[],
-  view: { shelved: boolean; filter: LibraryFilter; query: string; sort: LibrarySort },
+  view: { shelved: boolean; shelfId?: string; filter: LibraryFilter; query: string; sort: LibrarySort },
   progress?: ReadonlyMap<string, SourceWorkProgress>,
 ): ExternalSourceLibraryWork[] {
-  if ((view.shelved && view.filter !== 'trash') || view.filter === 'favorite') return [];
+  if ((view.shelved && !view.shelfId && view.filter !== 'trash') || view.filter === 'favorite') return [];
   const query = view.query.trim().toLocaleLowerCase();
   return works
+    .filter((work) => view.filter === 'trash' || !view.shelfId || work.shelfIds?.includes(view.shelfId))
     .filter((work) =>
       view.filter === 'trash'
         ? Boolean(work.deletedAt)
