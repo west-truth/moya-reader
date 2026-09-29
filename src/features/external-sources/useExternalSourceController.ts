@@ -1,3 +1,4 @@
+import { updateSourceLibraryMetadata, type SourceLibraryMetadataPatch } from './source-library-metadata';
 import { useSourceReaderCatalog, type SourceReaderCatalog } from './use-source-reader-catalog';
 import { sourceLibraryLoad } from './source-library-load';
 import type { BatchLibraryItemResult } from '../../repositories/library-catalog-repository';
@@ -326,6 +327,7 @@ export interface ExternalSourceController {
   checkSubscriptions(): Promise<void>;
   continueLibraryWork(workId: string): Promise<void>;
   openSubscription(subscription: ExternalSourceSubscriptionRecord): Promise<void>;
+  updateLibraryMetadata?(id: string, patch: SourceLibraryMetadataPatch): Promise<void>;
 }
 
 /** Session-only metadata snapshot. Never contains source bodies, credentials or download jobs. */
@@ -852,7 +854,7 @@ export function useExternalSourceController(options: UseExternalSourceController
     ) => {
       if (!parentRef || !page.detail || page.cache?.stale) return;
       const id = externalSourceSubscriptionId(sourceId, accountConnectionId, parentRef);
-      const current = (await optionsRef.current.state.listSubscriptions(sourceId, accountConnectionId)).find(
+      let current = (await optionsRef.current.state.listSubscriptions(sourceId, accountConnectionId)).find(
         (item) => item.id === id,
       );
       if (!current || !mountedRef.current || !isCurrent()) return;
@@ -861,9 +863,13 @@ export function useExternalSourceController(options: UseExternalSourceController
         ? current.thumbnailUrl
         : await persistentThumbnailUrl(page.detail.thumbnailUrl);
       if (!mountedRef.current || !isCurrent()) return;
+      current = (await optionsRef.current.state.listSubscriptions(sourceId, accountConnectionId)).find(
+        (item) => item.id === id,
+      );
+      if (!current || current.deletedAt || !mountedRef.current || !isCurrent()) return;
       const next: ExternalSourceSubscriptionRecord = {
         ...current,
-        title: page.detail.title,
+        title: current.titleOverride ?? page.detail.title,
         author: page.detail.author,
         description: page.detail.description,
         thumbnailUrl: thumbnailUrl ?? current.thumbnailUrl,
@@ -2083,7 +2089,7 @@ export function useExternalSourceController(options: UseExternalSourceController
       const importable = filterAndSortReleases(initialItems, '', 'all', 'asc') as SerialSourceItem[];
       const collectionKeys = new Set(importable.map(serialCollectionKey));
       if (collectionKeys.size !== 1) return false;
-      const collection = importable[0]!.collection;
+      let collection = importable[0]!.collection;
       const accountConnectionId = importable[0]!.key.accountConnectionId;
       const currentSubscription =
         subscriptions.find(
@@ -2097,6 +2103,7 @@ export function useExternalSourceController(options: UseExternalSourceController
             .listSubscriptions(sourceId, accountConnectionId)
             .catch(() => [] as readonly ExternalSourceSubscriptionRecord[])
         ).find((record) => record.collectionRemoteId === collection.remoteId);
+      if (currentSubscription?.titleOverride) collection = { ...collection, title: currentSubscription.titleOverride };
       background?.throwIfAborted();
       if (background && automaticDownloadBlockedRef.current) return true;
       const sourceDetail = background || detached ? undefined : detail;
@@ -2212,7 +2219,7 @@ export function useExternalSourceController(options: UseExternalSourceController
             const committedBefore = completed;
             await importDocumentSeries({
               sourceId,
-              items: selectedItems,
+              items: selectedItems.map((item) => ({ ...item, collection })),
               registry: optionsRef.current.registry,
               hostContext: optionsRef.current.hostContext,
               state: optionsRef.current.state,
@@ -4996,7 +5003,10 @@ export function useExternalSourceController(options: UseExternalSourceController
           },
         }
       : undefined,
-    detail,
+    detail:
+      detail && activeSubscription?.titleOverride && !localSeriesNovel
+        ? { ...detail, title: activeSubscription.titleOverride }
+        : detail,
     localSeriesNovel,
     localSeriesSourceId,
     browse,
@@ -5109,6 +5119,11 @@ export function useExternalSourceController(options: UseExternalSourceController
     selectNewReleases,
     checkSubscriptions,
     openSubscription,
+    updateLibraryMetadata: async (id, patch) => {
+      const next = await updateSourceLibraryMetadata(optionsRef.current.state, id, patch);
+      ++libraryLoadGeneration.current;
+      if (mountedRef.current) replaceSubscription(next);
+    },
     continueLibraryWork,
   };
 }

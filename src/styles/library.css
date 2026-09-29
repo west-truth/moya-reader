@@ -2841,17 +2841,36 @@
   flex-shrink: 0;
 }
 
-.library-external-work-menu {
+.library-work-menu {
   position: relative;
   z-index: 2;
   flex: 0 0 auto;
   margin-left: auto;
 }
-.library-external-work-menu > button {
+.library-work-menu > button {
   pointer-events: auto;
   width: 32px;
   min-height: 32px;
   padding: 4px;
   border: 0;
   background: transparent;
+}
+
+.library-work-dialog form {
+  display: grid;
+  gap: 16px;
+}
+.library-work-dialog label {
+  display: grid;
+  gap: 8px;
+}
+.library-work-dialog footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+.library-work-popover button.danger {
+  color: var(--danger);
+  border-top: 1px solid var(--border);
+  margin-top: 4px;
 }

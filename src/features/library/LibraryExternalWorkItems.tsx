@@ -1,4 +1,4 @@
-import { LibraryExternalWorkMenu } from './LibraryExternalWorkMenu';
+import { LibraryWorkMenu } from './LibraryWorkMenu';
 import { LibraryCountLabel } from './LibraryCountLabel';
 import { BookOpen, Check, Play, RotateCcw, Trash2 } from 'lucide-react';
 import { useState } from 'react';
@@ -140,10 +140,13 @@ export function ExternalWorkCard({
         <div className="book-title-line">
           <h3>{work.title}</h3>
           {!selectionMode && !work.deletedAt && (
-            <LibraryExternalWorkMenu
+            <LibraryWorkMenu
               title={work.title}
-              disabled={Boolean(importTask && importTaskIsActive(importTask))}
+              disabled={Boolean(busy || (importTask && importTaskIsActive(importTask)))}
               remove={() => actions.books.removeExternal(work.id)}
+              rename={actions.books.renameExternal ? () => actions.books.renameExternal!(work.id) : undefined}
+              move={actions.books.moveExternalToShelf ? () => actions.books.moveExternalToShelf!(work.id) : undefined}
+              download={actions.books.downloadExternal ? () => actions.books.downloadExternal!(work.id) : undefined}
             />
           )}
         </div>
@@ -227,10 +230,13 @@ export function ExternalWorkListRow({
           {!showCover && selectionMode && <SelectionMark selected={selected} />}
           <h3>{work.title}</h3>
           {!selectionMode && !work.deletedAt && (
-            <LibraryExternalWorkMenu
+            <LibraryWorkMenu
               title={work.title}
-              disabled={Boolean(importTask && importTaskIsActive(importTask))}
+              disabled={Boolean(busy || (importTask && importTaskIsActive(importTask)))}
               remove={() => actions.books.removeExternal(work.id)}
+              rename={actions.books.renameExternal ? () => actions.books.renameExternal!(work.id) : undefined}
+              move={actions.books.moveExternalToShelf ? () => actions.books.moveExternalToShelf!(work.id) : undefined}
+              download={actions.books.downloadExternal ? () => actions.books.downloadExternal!(work.id) : undefined}
             />
           )}
         </div>

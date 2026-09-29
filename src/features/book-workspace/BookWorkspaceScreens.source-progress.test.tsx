@@ -83,6 +83,11 @@ function render(
 }
 
 describe('BookWorkspaceScreens source work progress', () => {
+  it('shows format badges by default and applies the device preference to library cards', () => {
+    expect(render(defaultSettings)).toContain('book-format-overlay');
+    expect(render({ ...defaultSettings, showLibraryFormatBadge: false })).not.toContain('book-format-overlay');
+    expect(render({ ...defaultSettings, showLibraryFormatBadge: true })).toContain('book-format-overlay');
+  });
   it('passes the cover count preference through to cards and retains the progress basis toggle', () => {
     expect(render({ ...defaultSettings, showLibraryReadingCounts: true })).toContain('library-reading-count');
     expect(render(defaultSettings)).not.toContain('library-reading-count');

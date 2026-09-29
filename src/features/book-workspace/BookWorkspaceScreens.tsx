@@ -1,3 +1,5 @@
+import { libraryShelfMemberships } from './library-shelf-memberships';
+import { useLibraryWorkActions } from './use-library-work-actions';
 import { externalSelectionId } from '../library/library-batch';
 import type { SourceTextReaderOptions } from '../external-sources/SourceTextStreamReader';
 import { SaveDiscoveryList } from '../discovery/SaveDiscoveryList';
@@ -124,26 +126,34 @@ export function BookWorkspaceScreens({
     keepInspectorOpen();
     inspectorCloseTimer.current = globalThis.setTimeout(() => setInspectorOpen(false), 140);
   };
+  const workActions = useLibraryWorkActions(externalSources, libraryManagement);
+  const shelfMemberships = useMemo(
+    () => libraryShelfMemberships(libraryManagement.memberships, externalSources.libraryWorks),
+    [libraryManagement.memberships, externalSources.libraryWorks],
+  );
   const activeShelfBookIds = useMemo(
     () =>
       libraryManagement.activeShelfId
         ? new Set(
-            libraryManagement.memberships
+            shelfMemberships
               .filter((membership) => membership.shelfId === libraryManagement.activeShelfId)
               .map((membership) => membership.bookId),
           )
         : undefined,
-    [libraryManagement.activeShelfId, libraryManagement.memberships],
+    [libraryManagement.activeShelfId, shelfMemberships],
   );
   const shelfBookCounts = useMemo(() => {
     const activeBookIds = new Set(state.novels.filter((novel) => !novel.deletedAt).map((novel) => novel.id));
     const counts = new Map<string, number>();
-    libraryManagement.memberships.forEach((membership) => {
+    externalSources.libraryWorks.forEach((work) => {
+      if (!work.deletedAt && !work.localBookId) activeBookIds.add(externalSelectionId(work.id));
+    });
+    shelfMemberships.forEach((membership) => {
       if (!activeBookIds.has(membership.bookId)) return;
       counts.set(membership.shelfId, (counts.get(membership.shelfId) ?? 0) + 1);
     });
     return counts;
-  }, [libraryManagement.memberships, state.novels]);
+  }, [shelfMemberships, state.novels, externalSources.libraryWorks]);
   const connectedExternalSources = useMemo(
     () => externalSources.sources.filter((source) => source.connection.state === 'connected'),
     [externalSources.sources],
@@ -158,6 +168,7 @@ export function BookWorkspaceScreens({
         remoteLibraryWorks,
         {
           shelved: Boolean(activeShelfBookIds),
+          shelfId: libraryManagement.activeShelfId,
           filter: state.libraryFilter,
           query: state.libraryQuery,
           sort: state.librarySort,
@@ -166,6 +177,7 @@ export function BookWorkspaceScreens({
       ),
     [
       activeShelfBookIds,
+      libraryManagement.activeShelfId,
       remoteLibraryWorks,
       state.libraryFilter,
       state.libraryQuery,
@@ -302,6 +314,7 @@ export function BookWorkspaceScreens({
     presentation: {
       layoutMode,
       showReadingCounts: textReader?.settings.showLibraryReadingCounts === true,
+      showFormatBadge: textReader?.settings.showLibraryFormatBadge !== false,
       focusedBookId,
       inspectorOpen: layoutMode === 'wide' || inspectorOpen,
       shelfBookCounts,
@@ -407,6 +420,28 @@ export function BookWorkspaceScreens({
       restore: (novel) => (bookHasActiveImport(novel.id) ? undefined : controller.restoreNovel(novel)),
       purge: (novel) => (bookHasActiveImport(novel.id) ? undefined : controller.purgeNovel(novel)),
       downloadSource: exportSource,
+      downloadFromMenu: async (novel) => {
+        if (bookHasActiveImport(novel.id)) return;
+        const work = externalSources.libraryWorks.find((work) => work.localBookId === novel.id);
+        if (work) {
+          controller.setView('library');
+          await workActions.downloadExternal(work.id);
+        } else await exportSource(novel);
+      },
+      canDownloadFromMenu: (novel) =>
+        Boolean(novel.sourceAssetId || externalSources.libraryWorks.some((work) => work.localBookId === novel.id)),
+      rename: libraryManagement.available ? workActions.rename : undefined,
+      moveToShelf: libraryManagement.available ? workActions.moveToShelf : undefined,
+      renameExternal: externalSources.updateLibraryMetadata ? workActions.renameExternal : undefined,
+      moveExternalToShelf:
+        libraryManagement.available && externalSources.updateLibraryMetadata
+          ? workActions.moveExternalToShelf
+          : undefined,
+      downloadExternal: async (id) => {
+        if (externalWorkHasActiveImport(id)) return;
+        controller.setView('library');
+        await workActions.downloadExternal(id);
+      },
       addSample,
       editMetadata: (novel) => {
         if (!bookHasActiveImport(novel.id)) libraryManagement.openMetadata(novel);
@@ -456,6 +491,7 @@ export function BookWorkspaceScreens({
 
   return (
     <>
+      {workActions.dialog}
       {state.navigationPending && <div className="app-navigation-progress" aria-hidden="true" />}
       {saveListOpen && discovery && (
         <SaveDiscoveryList discovery={discovery} source={externalSources} close={() => setSaveListOpen(false)} />
@@ -480,6 +516,7 @@ export function BookWorkspaceScreens({
       {state.view === 'library' && externalSources.open && (
         <Suspense fallback={<WorkspaceScreenSkeleton model={libraryModel} actions={libraryActions} />}>
           <SourceHubScreen
+            downloadRequest={workActions.downloadRequest}
             textReader={textReader}
             controller={externalSources}
             library={{ model: libraryModel, actions: libraryActions }}

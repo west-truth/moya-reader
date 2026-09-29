@@ -625,6 +625,8 @@ export interface ReaderSettings {
   hideAppLogo?: boolean;
   /** Show numeric reading progress in library cover views on this device. */
   showLibraryReadingCounts?: boolean;
+  /** Show file format badges on library covers on this device (default: true). */
+  showLibraryFormatBadge?: boolean;
   /**
    * How library progress is shown for works added from an extension source: read releases out of
    * everything the source lists (default), or the downloaded chapters as for any local book.

@@ -477,6 +477,17 @@ describe('LibraryScreen', () => {
     expect(markup.match(/<article class="book-card/g)).toHaveLength(2);
   });
 
+  it.each(['grid', 'compact', 'list'] as const)('can hide file format badges in %s view', (viewMode) => {
+    const screenModel = model([novel()], { viewMode });
+    expect(renderToStaticMarkup(<LibraryScreen model={screenModel} actions={actions()} />)).toContain(
+      'book-format-overlay',
+    );
+    screenModel.presentation.showFormatBadge = false;
+    expect(renderToStaticMarkup(<LibraryScreen model={screenModel} actions={actions()} />)).not.toContain(
+      'book-format-overlay',
+    );
+  });
+
   it('uses the real archive extension for the cover overlay', () => {
     const archive = novel({ sourceFileName: '로컬 만화.zip', format: 'image_archive' });
     const markup = renderToStaticMarkup(<LibraryScreen model={model([archive])} actions={actions()} />);
@@ -854,6 +865,37 @@ it.each(['grid', 'compact', 'list', 'text'] as const)(
         const titles = [...markup.matchAll(/<h3>([^<]+)<\/h3>/g)].map((match) => match[1]);
         expect(titles).toEqual(['가 스트리밍', '나 로컬', '다 스트리밍']);
       }
+    }
+  },
+);
+
+it.each(['grid', 'compact', 'list', 'text'] as const)(
+  'shows local and streamed work menus in %s and hides them during selection',
+  (viewMode) => {
+    const local = novel({ title: '로컬 메뉴' });
+    const base = model([local], { viewMode });
+    const source = {
+      id: 'stream-menu',
+      title: '원격 메뉴',
+      availableReleaseCount: 5,
+      newReleaseCount: 0,
+      addedAt: '2026-09-01',
+      updatedAt: '2026-09-01',
+    };
+    for (const selectionMode of [false, true]) {
+      const markup = renderToStaticMarkup(
+        <LibraryScreen
+          model={{
+            ...base,
+            management: { ...base.management, selectionMode },
+            externalSources: { ...base.externalSources, libraryWorks: [source] },
+          }}
+          actions={actions()}
+        />,
+      );
+      for (const title of ['로컬 메뉴', '원격 메뉴'])
+        expect(markup.includes(`aria-label="${title} 더보기"`)).toBe(!selectionMode);
+      expect(markup).not.toContain('book-remove-action');
     }
   },
 );

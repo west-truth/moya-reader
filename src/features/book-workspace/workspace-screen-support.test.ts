@@ -53,3 +53,10 @@ it('keeps streamed trash out of active counts and lists and shows it in the tras
   expect(visibleRemoteLibraryWorks(all, view, progress)).toEqual([works[0]]);
   expect(visibleRemoteLibraryWorks(all, { ...view, filter: 'trash', shelved: true }, progress)).toEqual([deleted]);
 });
+
+it('filters streamed works by their saved shelf and keeps recent reading order', () => {
+  const assigned = works.map((work) => ({ ...work, shelfIds: work.id === 'unread' ? ['other'] : ['normal'] }));
+  const view = { shelved: true, shelfId: 'normal', filter: 'all' as const, query: '', sort: 'recent' as const };
+  expect(visibleRemoteLibraryWorks(assigned, view, progress).map((work) => work.id)).toEqual(['reading', 'finished']);
+  expect(visibleRemoteLibraryWorks(assigned, { ...view, shelfId: 'missing' }, progress)).toEqual([]);
+});

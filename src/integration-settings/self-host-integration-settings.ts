@@ -226,6 +226,8 @@ function subscription(value: unknown): ExternalSourceSubscriptionRecord | undefi
   const accountConnectionId = optionalText('accountConnectionId', 256);
   const sourceNavigationRef = optionalText('sourceNavigationRef', 2_048);
   const author = optionalText('author', 1_024);
+  const titleOverride = optionalText('titleOverride', 1_024);
+  const shelfIds = input.shelfIds === undefined ? undefined : stringList(input.shelfIds, 256);
   const description = optionalText('description', 32_768);
   const thumbnailUrl = optionalText('thumbnailUrl', 32_768);
   const sourceLabel = optionalText('sourceLabel', 256);
@@ -233,6 +235,8 @@ function subscription(value: unknown): ExternalSourceSubscriptionRecord | undefi
     (input.accountConnectionId !== undefined && !accountConnectionId) ||
     (input.sourceNavigationRef !== undefined && !sourceNavigationRef) ||
     (input.author !== undefined && !author) ||
+    (input.titleOverride !== undefined && !titleOverride) ||
+    (input.shelfIds !== undefined && !shelfIds) ||
     (input.description !== undefined && !description) ||
     (input.thumbnailUrl !== undefined && !thumbnailUrl) ||
     (input.sourceLabel !== undefined && !sourceLabel) ||
@@ -246,6 +250,8 @@ function subscription(value: unknown): ExternalSourceSubscriptionRecord | undefi
     collectionRemoteId,
     navigationRef,
     title,
+    ...(titleOverride ? { titleOverride } : {}),
+    ...(shelfIds ? { shelfIds } : {}),
     knownReleaseIds,
     newReleaseIds,
     ...(typeof input.releaseBaselineComplete === 'boolean'
