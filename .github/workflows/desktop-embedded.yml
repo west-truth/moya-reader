@@ -8,9 +8,13 @@ on:
         type: boolean
         default: false
       upgrade_baseline_run:
-        description: Optional build-only workflow run with the previous installer
+        description: Optional workflow run with the previous installer
         type: string
         default: ''
+      upgrade_baseline_artifact:
+        description: Artifact name containing the previous installer
+        type: string
+        default: 'moya-windows-x64-build-only'
       upgrade_baseline_sha256:
         description: Required SHA-256 when upgrade_baseline_run is supplied
         type: string
@@ -116,7 +120,7 @@ jobs:
         if: ${{ success() && inputs.build_installer && inputs.upgrade_baseline_run != '' }}
         uses: actions/download-artifact@v4
         with:
-          name: moya-windows-x64-build-only
+          name: ${{ inputs.upgrade_baseline_artifact }}
           run-id: ${{ inputs.upgrade_baseline_run }}
           github-token: ${{ github.token }}
           path: .tmp/previous-installer
