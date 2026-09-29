@@ -5,6 +5,7 @@
 
 ## 설치와 운영
 
+- [콘텐츠·운영·외부 서비스 요금 및 면책 안내](../DISCLAIMER.md)
 - [Ubuntu Docker Compose 설치·업데이트·백업](operations/docker-compose-guide-ko.md)
 - [Docker Compose 구성 기술 문서](operations/docker-compose-deployment.md)
 - [WireGuard + Nginx Proxy Manager + Suwayomi 배포](operations/nginx-proxy-manager-wireguard.md)
@@ -43,3 +44,10 @@
 구현 사실과 문서가 다르면 현재 소스와 테스트를 우선하고, 같은 변경에서 해당 공개 문서도 함께 고칩니다.
 
 - [공개 확장 릴리스 절차](extensions/publishing.md): 독립 CLI·게시자 서명·저장소 목록 생성과 검증
+
+## 공개 문서 작성 기준
+
+운영 조사 결과는 구현 원인·수정·검증 한계를 중심으로 기록합니다. 개인 운영 환경의 콘텐츠 사이트명,
+확장 저장소 주소, 작품 식별자와 비공개 로그 경로는 공개 문서에 옮기지 않습니다. 새 합성 테스트와 예제에는
+가상 이름과 `example.com` 또는 `.invalid` 도메인을 사용합니다. 외부 코드의 저작권·라이선스·출처 표시는 유지하고,
+실제 외부 소스를 검증한 기록을 합성 테스트 결과인 것처럼 바꾸지 않습니다.

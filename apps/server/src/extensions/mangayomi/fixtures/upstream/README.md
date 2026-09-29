@@ -1,5 +1,8 @@
 # Original Mangayomi sources for compatibility tests
 
+These snapshots are development fixtures, not a default extension repository or a recommended content-source list.
+The upstream references below document provenance and licensing. See the [usage disclaimer](../../../../../../../DISCLAIMER.md).
+
 The `.js.txt` files are byte-for-byte snapshots, not executable build inputs. Tests load them as original guest
 source in the existing QuickJS runtime. HTTP responses are synthetic local fixtures; no website is contacted.
 

@@ -29,7 +29,7 @@ TOTAL 목록 오류는 별도로 다룬다. 이전 답변의 `source_storage_lim
 
 ### 3. TOTAL 내부 저장 한도는 작은 편이나 이번 장애 원인은 미확정
 
-운영 설치본: TOTAL 토끼 만화 0.1.13, 원본 JS SHA-256 `f1d33f361e18801ec152f66f81a6af53751a6d7c0e7ffc1859a28ca2036163b3`.
+운영 설치본의 이미지 소스로 측정했다. 이 공개 기록에서는 소스 식별 정보를 생략한다.
 
 - 확인 당시 저장값 JSON: **178,062바이트(약 174KiB), 144키**. 상한 262,144바이트의 약 68%다.
 - 큰 값: 상태 데이터 77,822바이트, 작품 연결표 54,000바이트, 한 작품의 회차 경로 14,340바이트, 연결표 조각 7,116바이트. 값의 내용/자격 증명은 기록하지 않았다.
@@ -78,7 +78,7 @@ TOTAL 목록 오류는 별도로 다룬다. 이전 답변의 `source_storage_lim
 ## 근거
 
 - [기존 캐시 정책과 구현 범위](2026-09-20-source-cache-policy-review.md)
-- [기존 TOTAL 네트워크·저장소 검토](2026-09-20-total-source-network-review.md)
+- [기존 소스 네트워크·저장소 검토](2026-09-20-source-network-review.md)
 - [실제 표지 크기와 로딩 측정](2026-09-20-discovery-loading-performance.md)
 - [MDN: Blob URL 수명 관리](https://developer.mozilla.org/en-US/docs/Web/URI/Reference/Schemes/blob): 사용 중인 자원을 너무 일찍 해제하지 않는 원칙.
 - [Chrome web.dev: 이미지 성능](https://web.dev/learn/performance/image-performance): 표시 크기에 맞는 이미지 제공 참고.
