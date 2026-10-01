@@ -407,6 +407,13 @@ export function BookWorkspaceScreens({
                   .filter((work) => !externalWorkHasActiveImport(work.id))
                   .map((work) => work.id),
                 apply: externalSources.batchLibraryTrash,
+                linkedBooks: externalSources.libraryWorks
+                  .filter((work) => work.localBookId && !work.deletedAt)
+                  .map((work) => ({ id: work.id, bookId: work.localBookId! })),
+                setShelfMembership: externalSources.updateLibraryMetadata
+                  ? (id, shelfId, included) =>
+                      externalSources.updateLibraryMetadata!(id, { shelfMembership: { shelfId, included } })
+                  : undefined,
               }
             : undefined,
         ),

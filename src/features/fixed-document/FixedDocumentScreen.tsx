@@ -1,3 +1,4 @@
+import { streamImageWindow } from './stream-image-window';
 import { useComicViewportPosition, type ComicViewportPosition } from './use-comic-viewport-position';
 import { AutoScrollControls } from '../reader/AutoScrollControls';
 import { useComicAutoReading } from './use-comic-auto-reading';
@@ -1048,15 +1049,14 @@ export default function FixedDocumentScreen({
     const displayed = displayedPageKey.split(',').filter(Boolean).map(Number);
     const wanted =
       streamPrefetch !== undefined
-        ? [
-            ...new Set([
-              pageIndex,
-              ...streamVisiblePageKey.split(',').filter(Boolean).map(Number),
-              ...Array.from({ length: streamPrefetch }, (_, offset) => pageIndex + offset + 1),
-            ]),
-          ].filter((index) => index < totalPages)
+        ? streamImageWindow(
+            streamVisiblePageKey.split(',').filter(Boolean).map(Number),
+            pageIndex,
+            totalPages,
+            streamPrefetch,
+          )
         : archiveFullImageWindow(displayed, pageIndex, totalPages);
-    if (!continuousView) return new Set([...wanted, ...nextAutoPages]);
+    if (!continuousView) return new Set(streamPrefetch === 0 ? wanted : [...wanted, ...nextAutoPages]);
     if (!currentDocumentSection) return new Set(wanted);
     const sectionEnd = currentDocumentSection.startPageIndex + currentDocumentSection.pageCount;
     return new Set(wanted.filter((index) => index >= currentDocumentSection.startPageIndex && index < sectionEnd));

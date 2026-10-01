@@ -68,6 +68,8 @@ try {
         await import('/src/external-sources/local-state.ts');
       const { releasePreferenceId } = await import('/src/external-sources/source-user-state.ts');
       const state = new ExternalSourceLocalStateStore();
+      const { createLibraryShelf } = await import('/src/storage/library-management-store.ts');
+      await createLibraryShelf({ name: '일괄 검증 책장' });
       const now = new Date().toISOString();
       const { getNovels } = await import('/src/storage/db.ts');
       const local = (await getNovels())[0];
@@ -244,6 +246,38 @@ try {
     }
     await page.getByRole('button', { name: '모두 선택', exact: true }).click();
     assert.equal(await page.locator('.book-card-open[aria-pressed="true"]').count(), 12);
+    if (width < 700) await page.getByRole('button', { name: '상세 작업 펼치기' }).click();
+    const shelfId = await page.getByRole('combobox', { name: '일괄 작업 책장' }).inputValue();
+    await page.getByRole('button', { name: '선택 책장에 추가', exact: true }).click();
+    await page.locator('.library-batch-bar').waitFor({ state: 'hidden' });
+    const memberships = await page.evaluate(async () => {
+      const { ExternalSourceLocalStateStore } = await import('/src/external-sources/local-state.ts');
+      const { listLibraryShelfMemberships } = await import('/src/storage/library-management-store.ts');
+      return {
+        remote: await new ExternalSourceLocalStateStore().listSubscriptions(),
+        local: await listLibraryShelfMemberships(),
+      };
+    });
+    assert.equal(memberships.remote.filter((work) => work.shelfIds?.includes(shelfId)).length, 11);
+    assert.equal(memberships.local.filter((row) => row.shelfId === shelfId).length, 1);
+    await page.getByRole('button', { name: '선택', exact: true }).click();
+    await page.getByRole('button', { name: '검증 작품 0 선택', exact: true }).click();
+    if (width < 700) await page.getByRole('button', { name: '상세 작업 펼치기' }).click();
+    await page.getByRole('button', { name: '선택 책장에서 제외', exact: true }).click();
+    await page.locator('.library-batch-bar').waitFor({ state: 'hidden' });
+    await page.reload();
+    await page.locator('.external-work-card').first().waitFor();
+    assert.equal(
+      await page.evaluate(async () => {
+        const { ExternalSourceLocalStateStore } = await import('/src/external-sources/local-state.ts');
+        return (await new ExternalSourceLocalStateStore().listSubscriptions()).find(
+          (work) => work.title === '검증 작품 0',
+        ).shelfIds.length;
+      }),
+      0,
+    );
+    await page.getByRole('button', { name: '선택', exact: true }).click();
+    await page.getByRole('button', { name: '모두 선택', exact: true }).click();
     await page.getByRole('button', { name: '선택한 책 휴지통으로 이동' }).click();
     await page.locator('.library-batch-bar').waitFor({ state: 'hidden' });
     assert.equal(await page.locator('.book-card').count(), 0);
@@ -299,6 +333,7 @@ try {
         offlineRemoval: true,
         menuViews: 4,
         batchTrashRestore: true,
+        mixedShelfAddAndStreamRemove: true,
         independentLoadingAndRetry: true,
         mixedLibraryOrder: true,
       }),

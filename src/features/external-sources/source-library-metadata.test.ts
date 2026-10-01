@@ -39,6 +39,21 @@ describe('source library metadata', () => {
     expect(stored.shelfIds).toEqual([]);
     expect(stored.title).toBe('내 제목');
   });
+  it('adds and removes a shelf from the latest saved memberships idempotently', async () => {
+    let stored = { ...work, shelfIds: ['existing'] };
+    const state = {
+      listSubscriptions: async () => [stored],
+      saveSubscription: async (next: ExternalSourceSubscriptionRecord) => {
+        stored = { ...next, shelfIds: [...(next.shelfIds ?? [])] };
+      },
+    };
+    await updateSourceLibraryMetadata(state, work.id, { shelfMembership: { shelfId: 'new', included: true } });
+    await updateSourceLibraryMetadata(state, work.id, { shelfMembership: { shelfId: 'new', included: true } });
+    expect(stored.shelfIds).toEqual(['existing', 'new']);
+    await updateSourceLibraryMetadata(state, work.id, { shelfMembership: { shelfId: 'existing', included: false } });
+    expect(stored.shelfIds).toEqual(['new']);
+    expect(stored.knownReleaseIds).toEqual(work.knownReleaseIds);
+  });
   it('rejects missing or trashed works and invalid titles without writing', async () => {
     const state = { listSubscriptions: async () => [work], saveSubscription: vi.fn() };
     await expect(updateSourceLibraryMetadata(state, 'missing', { title: 'a' })).rejects.toThrow();

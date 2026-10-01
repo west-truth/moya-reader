@@ -29,3 +29,15 @@ it('keeps streaming as the default when only cache options are saved', () => {
   saveSourceReadingPreferences({ coverHours: 1 });
   expect(sourceReadingPreferences()).toMatchObject({ mode: 'stream', coverHours: 1 });
 });
+it('defaults to five images each way and retains explicit existing prefetch choices', () => {
+  storage();
+  expect(sourceReadingPreferences().prefetch).toBe(5);
+  for (const prefetch of [0, 2, 4, 5, 8, 10] as const) {
+    storage(JSON.stringify({ mode: 'stream-save', prefetch }));
+    expect(sourceReadingPreferences()).toMatchObject({ mode: 'stream-save', prefetch });
+    saveSourceReadingPreferences({ coverHours: 24 });
+    expect(sourceReadingPreferences().prefetch).toBe(prefetch);
+  }
+  storage('{"prefetch":999}');
+  expect(sourceReadingPreferences().prefetch).toBe(5);
+});
