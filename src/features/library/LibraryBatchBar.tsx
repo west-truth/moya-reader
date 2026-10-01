@@ -45,9 +45,7 @@ function ActiveLibraryBatchBar({ model, actions }: LibraryScreenProps) {
       </div>
 
       <div className="library-batch-details" id={detailsId}>
-        {includesStreaming && (
-          <span className="library-batch-label">스트리밍 작품은 휴지통 이동·복원을 지원합니다.</span>
-        )}
+        {includesStreaming && <span className="library-batch-label">스트리밍: 책장·휴지통·복원 지원</span>}
         {model.management.shelves.length > 0 && (
           <div className="library-batch-group library-batch-shelf">
             <span className="library-batch-label">책장 · 컬렉션</span>
@@ -60,14 +58,14 @@ function ActiveLibraryBatchBar({ model, actions }: LibraryScreenProps) {
             </select>
             <button
               className="ghost-btn"
-              disabled={includesStreaming || disabled || !shelfId}
+              disabled={disabled || !shelfId}
               onClick={() => void actions.controls.applyBatch({ kind: 'add_to_shelf', shelfId })}
             >
               <FolderPlus size={16} /> 선택 책장에 추가
             </button>
             <button
               className="ghost-btn"
-              disabled={includesStreaming || disabled || !shelfId}
+              disabled={disabled || !shelfId}
               onClick={() => void actions.controls.applyBatch({ kind: 'remove_from_shelf', shelfId })}
             >
               <FolderMinus size={16} /> 선택 책장에서 제외

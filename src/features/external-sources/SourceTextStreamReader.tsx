@@ -6,7 +6,7 @@ import { ReaderScreenHandle, type ReaderScreenActions } from '../reader/reader-s
 import type { ReaderSettings } from '../../domain/types';
 import type { SourceTextStreamPort } from '../../external-sources/source-text-stream';
 import { SourceReadCache } from '../../external-sources/source-read-cache';
-import { sourceReadingPreferences } from '../../external-sources/source-reading-preferences';
+import { useSourceReadingPreferences } from './use-source-reading-preferences';
 import { sourceTextDocument } from './source-text-document';
 import type { SourceStreamReaderProps } from './SourceStreamReader';
 export interface SourceTextReaderOptions {
@@ -46,7 +46,7 @@ export function SourceTextStreamReader(
   const [handle] = useState(() => new ReaderScreenHandle());
   const source = useMemo(() => ({ cache: new SourceReadCache(), port }), [port]);
   const { cache } = source;
-  const [preferences] = useState(sourceReadingPreferences);
+  const preferences = useSourceReadingPreferences();
   const [opened, setOpened] = useState<{
     key: string;
     document: Awaited<ReturnType<typeof sourceTextDocument>>;

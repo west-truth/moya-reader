@@ -605,6 +605,34 @@ describe('LibraryScreen', () => {
     expect(markup).toContain('aria-label="선택 종료"');
   });
 
+  it.each([['external:stream'], ['local', 'external:stream']])(
+    'allows shelf actions for a streaming selection (%j)',
+    (...ids) => {
+      const screenModel = model([novel({ id: 'local' })]);
+      screenModel.management = {
+        ...screenModel.management,
+        selectionMode: true,
+        selectedBookIds: new Set(ids),
+        shelves: [{ id: 'shelf', name: '책장', sortOrder: 0, revision: 1, createdAt: 'now', updatedAt: 'now' }],
+      };
+      const screenActions = actions();
+      let renderer!: ReactTestRenderer;
+      act(() => {
+        renderer = create(<LibraryScreen model={screenModel} actions={screenActions} />);
+      });
+      for (const [text, kind] of [
+        ['선택 책장에 추가', 'add_to_shelf'],
+        ['선택 책장에서 제외', 'remove_from_shelf'],
+      ]) {
+        const button = renderer.root.findAllByType('button').find((node) => renderedText(node).includes(text))!;
+        expect(button.props.disabled).toBe(false);
+        act(() => button.props.onClick());
+        expect(screenActions.controls.applyBatch).toHaveBeenCalledWith({ kind, shelfId: 'shelf' });
+      }
+      act(() => renderer.unmount());
+    },
+  );
+
   it('toggles a selection without opening or focusing the book', () => {
     const selected = novel({ id: 'selected', title: '선택 테스트' });
     const screenActions = actions();

@@ -99,9 +99,9 @@ export function DownloadSettingsPanel({ controller }: { readonly controller: Ext
         </label>
         <label className="reader-settings-select-row">
           <span>
-            <strong>다음 본문 미리 불러오기</strong>
+            <strong>스트리밍 이미지 미리 불러오기</strong>
             <small>
-              만화는 선택한 장수, 소설은 다음 한 회차를 준비합니다. 데이터 절약 모드에서는 미리 불러오지 않습니다.
+              화면 앞뒤로 각각 준비할 장수입니다. 소설은 다음 한 회차를 준비합니다. 데이터 절약 모드에서는 끕니다.
             </small>
           </span>
           <select
@@ -111,9 +111,11 @@ export function DownloadSettingsPanel({ controller }: { readonly controller: Ext
             }
           >
             <option value={0}>사용 안 함</option>
-            <option value={2}>2장</option>
-            <option value={4}>4장</option>
-            <option value={8}>8장</option>
+            <option value={2}>앞뒤 각각 2장</option>
+            <option value={4}>앞뒤 각각 4장</option>
+            <option value={5}>앞뒤 각각 5장 (기본)</option>
+            <option value={8}>앞뒤 각각 8장</option>
+            <option value={10}>앞뒤 각각 10장</option>
           </select>
         </label>
       </section>

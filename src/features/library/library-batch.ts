@@ -9,6 +9,8 @@ import type {
 export const externalSelectionId = (id: string) => `external:${id}`;
 export interface ExternalLibraryBatch {
   readonly ids: readonly string[];
+  readonly linkedBooks?: readonly { id: string; bookId: string }[];
+  setShelfMembership?(id: string, shelfId: string, included: boolean): Promise<void>;
   apply(ids: readonly string[], action: 'trash' | 'restore'): Promise<readonly BatchLibraryItemResult[]>;
 }
 
@@ -22,8 +24,15 @@ export async function executeLibraryBatch(
 ): Promise<BatchLibraryReceipt> {
   const id = globalThis.crypto?.randomUUID?.() ?? `batch-${Date.now()}`;
   const remoteIds = external?.ids.filter((key) => selectedIds.has(externalSelectionId(key))) ?? [];
-  if (remoteIds.length && command.kind !== 'move_to_trash' && command.kind !== 'restore_from_trash')
-    throw new Error('스트리밍 작품이 포함된 선택에서는 휴지통 이동과 복원을 사용할 수 있습니다.');
+  const shelfCommand = command.kind === 'add_to_shelf' || command.kind === 'remove_from_shelf' ? command : undefined;
+  if (remoteIds.length && !shelfCommand && command.kind !== 'move_to_trash' && command.kind !== 'restore_from_trash')
+    throw new Error('스트리밍 작품의 태그·즐겨찾기 일괄 변경은 아직 지원하지 않습니다.');
+  const linked = external?.linkedBooks?.filter((work) => selectedIds.has(work.bookId)) ?? [];
+  if (shelfCommand && (remoteIds.length || linked.length)) {
+    if (!external?.setShelfMembership) throw new Error('스트리밍 작품의 책장 변경을 사용할 수 없습니다.');
+    if (!catalog || !(await catalog.listShelves()).some((shelf) => shelf.id === shelfCommand.shelfId))
+      throw new Error('책장을 찾을 수 없습니다. 책장 목록을 새로고침해 주세요.');
+  }
   const local = books.filter((book) => selectedIds.has(book.id));
   const results: BatchLibraryItemResult[] = [];
   const failure = (bookId: string, error: unknown): BatchLibraryItemResult => ({
@@ -47,7 +56,22 @@ export async function executeLibraryBatch(
       results.push(...local.map((book) => failure(book.id, error)));
     }
   }
-  if (remoteIds.length && external) {
+  if (shelfCommand && external?.setShelfMembership) {
+    for (const target of [
+      ...remoteIds.map((id) => ({ id, bookId: externalSelectionId(id) })),
+      ...linked.filter((work) => results.some((result) => result.bookId === work.bookId && result.status !== 'failed')),
+    ]) {
+      try {
+        await external.setShelfMembership(target.id, shelfCommand.shelfId, shelfCommand.kind === 'add_to_shelf');
+        if (!results.some((result) => result.bookId === target.bookId))
+          results.push({ bookId: target.bookId, status: 'applied' });
+      } catch (error) {
+        const index = results.findIndex((result) => result.bookId === target.bookId);
+        if (index >= 0) results[index] = failure(target.bookId, error);
+        else results.push(failure(target.bookId, error));
+      }
+    }
+  } else if (remoteIds.length && external) {
     try {
       results.push(
         ...(await external.apply(remoteIds, command.kind === 'move_to_trash' ? 'trash' : 'restore')).map((result) => ({

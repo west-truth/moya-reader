@@ -10,7 +10,7 @@ const FixedDocumentScreen = lazy(() => import('../fixed-document/FixedDocumentSc
 import '../fixed-document/fixed-document.css';
 import type { SourceStreamPort, SourceStreamSession } from '../../external-sources/source-stream';
 import { SourceStreamBuffer } from '../../external-sources/source-stream-buffer';
-import { sourceReadingPreferences } from '../../external-sources/source-reading-preferences';
+import { useSourceReadingPreferences } from './use-source-reading-preferences';
 import { readSourceStreamPosition, saveSourceStreamPosition } from '../../external-sources/source-stream-history';
 import { sourceStreamDocument } from './source-stream-document';
 import { stableId } from '../../domain/hash';
@@ -32,7 +32,7 @@ function ComicStreamReader({
   nextEpisode,
   navigationBusy,
 }: Omit<SourceStreamReaderProps, 'port'> & { port: SourceStreamPort }) {
-  const [preferences] = useState(sourceReadingPreferences);
+  const preferences = useSourceReadingPreferences();
   const buffer = useMemo(() => new SourceStreamBuffer(port), [port]);
   const [opened, setOpened] = useState<{
     session: SourceStreamSession;
@@ -115,15 +115,12 @@ function ComicStreamReader({
     void callbacks.current.onSave().catch(() => undefined);
   }, [opened, loaded, historyKey, remoteId, preferences.mode, saved, saveBusy]);
   const nextId = nextEpisode?.remoteId;
+  const prefetchPages =
+    foreground && !(navigator as Navigator & { connection?: { saveData?: boolean } }).connection?.saveData
+      ? preferences.prefetch
+      : 0;
   useEffect(() => {
-    if (
-      !nextId ||
-      !opened ||
-      opened.key !== historyKey ||
-      loaded !== historyKey ||
-      !foreground ||
-      !preferences.prefetch
-    )
+    if (!nextId || !opened || opened.key !== historyKey || loaded !== historyKey || !foreground || !prefetchPages)
       return;
     if ((navigator as Navigator & { connection?: { saveData?: boolean } }).connection?.saveData) return;
     const controller = new AbortController();
@@ -132,7 +129,7 @@ function ComicStreamReader({
       void buffer
         .open(nextId, controller.signal)
         .then(async (session) => {
-          for (let index = 0; index < Math.min(session.pageCount, Math.max(4, preferences.prefetch)); index++) {
+          for (let index = 0; index < Math.min(session.pageCount, prefetchPages); index++) {
             controller.signal.throwIfAborted();
             try {
               await session.loadPage(index, controller.signal);
@@ -148,7 +145,7 @@ function ComicStreamReader({
       window.clearTimeout(timer);
       controller.abort();
     };
-  }, [buffer, nextId, opened, historyKey, loaded, preferences.prefetch, foreground]);
+  }, [buffer, nextId, opened, historyKey, loaded, prefetchPages, foreground]);
   const move = async (action: typeof next, isCurrent?: () => boolean) => {
     if (!action || movingRef.current || navigationBusy || opened?.key !== historyKey || (isCurrent && !isCurrent()))
       return;
@@ -204,7 +201,7 @@ function ComicStreamReader({
             nextScope: `stream:${opened.epoch + 1}`,
             profileKey,
             busy: moving || navigationBusy || opened.key !== historyKey,
-            prefetchPages: foreground ? preferences.prefetch : 0,
+            prefetchPages,
             previous: previous ? (isCurrent) => move(previous, isCurrent) : undefined,
             next: next ? (isCurrent) => move(next, isCurrent) : undefined,
             nextTitle: nextEpisode?.title,

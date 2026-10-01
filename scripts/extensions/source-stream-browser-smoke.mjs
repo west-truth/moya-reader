@@ -16,6 +16,8 @@ import {savedFirstSourceStream} from '${root}/src/external-sources/saved-source-
 import {useSourceStreamNavigation} from '${root}/src/features/external-sources/use-source-stream-navigation.ts';
 import {openReaderDb} from '${root}/src/storage/reader-database.ts';
 globalThis.thumbnailCount=async()=>{const db=await openReaderDb();return new Promise((resolve,reject)=>{const request=db.transaction('document_thumbnail_cache','readonly').objectStore('document_thumbnail_cache').count();request.onsuccess=()=>resolve(request.result);request.onerror=()=>reject(request.error);});};
+import {saveSourceReadingPreferences} from '${root}/src/external-sources/source-reading-preferences.ts';
+globalThis.changePrefetch=prefetch=>saveSourceReadingPreferences({prefetch});
 import {saveSourceStreamPosition} from '${root}/src/external-sources/source-stream-history.ts';
 import {DEFAULT_COMIC_READING_PROFILE} from '${root}/src/features/fixed-document/comic-layout.ts';
 import '${root}/src/styles/tokens.css';import '${root}/src/styles/base.css';import '${root}/src/styles/dialogs-import.css';import '${root}/src/styles/shell.css';import '${root}/src/styles/library.css';
@@ -30,6 +32,7 @@ const port=savedFirstSourceStream(remotePort,{
  getParagraphPage:async(id)=>({paragraphs:[{assetId:id}]}),
  assets:{getEmbeddedResource:async(_,id,signal)=>{const [episode,index]=id.split(':');calls.push([episode,Number(index)]);savedReads.push(episode);return {blob:await(await fetch('/image',{signal})).blob()}}}
 });
+if(params.has('prefetchReview'))saveSourceStreamPosition('fixture-1',{page:15,fraction:0,ratio:1.5,count:30});
 saveSourceStreamPosition('fixture-2',{page:15,fraction:0.5,ratio:1.5,count:30});
 function Fixture(){
  const [episode,setEpisode]=React.useState(1);
@@ -98,11 +101,11 @@ async function reveal(page) {
 }
 try {
   for (const [mode, width, view, prefetch, mixed = false] of [
-    ['stream-save', 390, 'vertical', 8],
-    ['stream', 390, 'vertical', 8],
-    ['stream', 1280, 'single', 8],
+    ['stream-save', 390, 'vertical', 5],
+    ['stream', 390, 'vertical', 5],
+    ['stream', 1280, 'single', 5],
     ['stream', 1280, 'spread', 0],
-    ['stream', 390, 'vertical', 8, true],
+    ['stream', 390, 'vertical', 5, true],
     ['stream', 1280, 'spread', 8, true],
   ].filter(() => !process.env.SOURCE_STREAM_STRESS_ONLY)) {
     const page = await browser.newPage({ viewport: { width, height: 844 } }),
@@ -267,6 +270,46 @@ try {
     }
     assert.deepEqual(errors, []);
     console.log(JSON.stringify({ mode, width, view, prefetch, mixed, passed: true }));
+    await page.close();
+  }
+  // Check actual image requests around a restored viewport and a live preference change.
+  for (const saveData of [false, true]) {
+    const page = await browser.newPage({ viewport: { width: 390, height: 844 } });
+    if (saveData)
+      await page.addInitScript(() =>
+        Object.defineProperty(navigator, 'connection', { value: { saveData: true }, configurable: true }),
+      );
+    await page.goto(`http://127.0.0.1:${server.address().port}/?mode=stream&view=vertical&prefetch=5&prefetchReview=1`);
+    await page.waitForFunction(() => document.querySelector('article[data-page-index="15"] img')?.naturalWidth > 0);
+    if (!saveData) {
+      await page.waitForFunction(() =>
+        [10, 20].every((page) => calls.some(([id, index]) => id === 'fixture-1' && index === page)),
+      );
+    } else {
+      await page.waitForTimeout(400);
+      assert.equal(
+        await page.evaluate(() => calls.some(([id, index]) => id === 'fixture-1' && [10, 20].includes(index))),
+        false,
+      );
+      assert.equal(await page.evaluate(() => opens.includes('fixture-2')), false);
+    }
+    await page.evaluate(() => {
+      changePrefetch(0);
+    });
+    await page.waitForTimeout(200);
+    await page.evaluate(() => {
+      calls.length = 0;
+      const root = document.querySelector('.fixed-doc-viewport');
+      const row = document.querySelector('article[data-page-index="25"]');
+      root.scrollTop += row.getBoundingClientRect().top - root.getBoundingClientRect().top + 120;
+    });
+    await page.waitForFunction(() => document.querySelector('article[data-page-index="25"] img')?.naturalWidth > 0);
+    await page.waitForTimeout(200);
+    assert.equal(
+      await page.evaluate(() => calls.some(([id, index]) => id === 'fixture-1' && [23, 27].includes(index))),
+      false,
+    );
+    console.log(JSON.stringify({ bidirectionalPrefetch: !saveData, saveData, liveDisable: true, passed: true }));
     await page.close();
   }
   // Keep full episode saves pending while repeatedly pulling the same displayed
